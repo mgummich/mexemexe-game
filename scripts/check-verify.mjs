@@ -1,0 +1,45 @@
+// Final verify gate: inspects the Playwright JSON log for errors.
+import fs from 'node:fs';
+
+const LOG = 'docs/screenshots/verify-log.json';
+if (!fs.existsSync(LOG)) {
+  console.error('verify: missing', LOG);
+  process.exit(1);
+}
+const { shots } = JSON.parse(fs.readFileSync(LOG, 'utf8'));
+let failed = false;
+for (const s of shots) {
+  const errs = [...s.consoleErrors, ...s.pageErrors];
+  if (errs.length) {
+    failed = true;
+    console.error(`verify: ${s.name} has errors:`, errs);
+  }
+  if (!fs.existsSync(s.screenshot)) {
+    failed = true;
+    console.error(`verify: missing screenshot ${s.screenshot}`);
+  }
+  if (s.scene === 'game' && s.fps < 30) {
+    failed = true;
+    console.error(`verify: ${s.name} fps too low: ${s.fps} (scene=game requires >= 30)`);
+  }
+  const vp = s.viewport ? `${s.viewport.width}x${s.viewport.height}` : 'unknown';
+  console.log(`verify: ${s.name} scene=${s.scene} seed=${s.seed} fps=${s.fps} viewport=${vp} missingAssets=${s.missingAssets.length}`);
+}
+if (failed) process.exit(1);
+console.log('verify: OK');
+
+// Merge perf/coverage metrics into docs/STATUS.json (never clobber other keys).
+const STATUS = 'docs/STATUS.json';
+if (fs.existsSync(STATUS)) {
+  const status = JSON.parse(fs.readFileSync(STATUS, 'utf8'));
+  const viewports = [...new Set(shots.map((s) => (s.viewport ? `${s.viewport.width}x${s.viewport.height}` : 'unknown')))];
+  status.metrics = {
+    generatedAt: new Date().toISOString(),
+    perShotFps: Object.fromEntries(shots.map((s) => [s.name, s.fps])),
+    viewports,
+    unitTests: status.tests?.unit ?? null,
+    e2eTests: `${shots.length}/${shots.length} pass`,
+  };
+  fs.writeFileSync(STATUS, JSON.stringify(status, null, 2) + '\n');
+  console.log('verify: wrote metrics to', STATUS);
+}

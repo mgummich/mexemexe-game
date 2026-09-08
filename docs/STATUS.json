@@ -1,0 +1,269 @@
+{
+  "wave": 5,
+  "waves": {
+    "1-setup": "done",
+    "2-verification": "done",
+    "3-rules-engine": "done",
+    "4-vertical-slice+assets": "done",
+    "5-polish": "done"
+  },
+  "doneModules": [
+    "core/rng",
+    "core/events",
+    "rules",
+    "game-state",
+    "mexe-mode",
+    "ai",
+    "localization",
+    "assets/manifest",
+    "assets/fallbacks",
+    "assets/compose-cards",
+    "scenes/Boot",
+    "scenes/Menu",
+    "scenes/Game",
+    "scenes/Win",
+    "scenes/Tutorial",
+    "ui/widgets",
+    "audio/sfx",
+    "verification/debug-api",
+    "demo/showcase",
+    "e2e"
+  ],
+  "tests": {
+    "unit": "112/112 pass",
+    "e2e": "25/25 pass",
+    "lint": "clean",
+    "build": "pass (gated in verify)"
+  },
+  "screenshots": [
+    "docs/screenshots/final/a11y-large-text.png",
+    "docs/screenshots/final/ai-bia.png",
+    "docs/screenshots/final/ai-cida.png",
+    "docs/screenshots/final/ai-juninho.png",
+    "docs/screenshots/final/ai-showcase-after.png",
+    "docs/screenshots/final/ai-showcase-mid.png",
+    "docs/screenshots/final/ai-ze.png",
+    "docs/screenshots/final/comprar-flow.png",
+    "docs/screenshots/final/game-1080p.png",
+    "docs/screenshots/final/game-en.png",
+    "docs/screenshots/final/game.png",
+    "docs/screenshots/final/game4.png",
+    "docs/screenshots/final/help.png",
+    "docs/screenshots/final/keyboard-comprar.png",
+    "docs/screenshots/final/menu-en.png",
+    "docs/screenshots/final/menu.png",
+    "docs/screenshots/final/mexe-invalid.png",
+    "docs/screenshots/final/pause.png",
+    "docs/screenshots/final/settings.png",
+    "docs/screenshots/final/setup.png",
+    "docs/screenshots/final/stress-table.png",
+    "docs/screenshots/final/tutorial-step2.png",
+    "docs/screenshots/final/tutorial.png",
+    "docs/screenshots/final/win.png"
+  ],
+  "perf": {
+    "fps": "58-60 in game scenes",
+    "consoleErrors": 0,
+    "missingAssets": 0
+  },
+  "moduleScores": {
+    "rules": 9.5,
+    "mexe-mode": 9,
+    "ai": 9,
+    "scenes/game-ux": 8.5,
+    "art-integration": 9,
+    "audio": 8,
+    "tutorial": 9,
+    "i18n": 9,
+    "verification": 9
+  },
+  "openIssues": [
+    "pointer-drag still verified via editor hooks, not synthetic pointer drags",
+    "ambience procedural only (by design, optional/muteable)",
+    "PT accents slightly rough at 6-7px font sizes",
+    "no renderAll sprite pooling (fps 59 at 21 sprites+20 zones; revisit only if a lower-end target dips below 50)"
+  ],
+  "nextTask": "shipped 1.0.0 (launch build)",
+  "phase4Scores": {
+    "launchStability": 9.5,
+    "fullFlow": 9,
+    "rules": 9.5,
+    "ai": 9,
+    "mexeUX": 9,
+    "art": 9,
+    "audio": 8.5,
+    "accessibility": 9,
+    "localization": 9,
+    "performance": 9.5,
+    "docs": 9
+  },
+  "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
+  "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
+  "phase": 4,
+  "phase4AuditSummary": "RC solid (all suites green, 57-60fps, 0 console errors). Launch gaps are polish: micro-text illegible at 720p (top bar, tooltips, labels), 4p prop occlusion (mug over avatar, cookie plate under FEITO tooltip), flat-rect secondary buttons read as programmer art, missing RELEASE_NOTES/per-personality showcases, version mismatch 0.1.0 vs 0.3.0. See docs/PHASE4_AUDIT.md.",
+  "phase4Blockers": [],
+  "phase4PriorityIssues": [
+    "micro-text illegibility at 1280x720 (readability pass)",
+    "4p prop/UI occlusion (mug over top bar, cookie plate under FEITO tooltip)",
+    "flat-rect buttons = programmer-art risk (PixelLab button set)",
+    "active-player state weak",
+    "clipped bottom-left HUD icon",
+    "missing rematch/reset-data e2e + per-personality showcases",
+    "release docs: RELEASE_NOTES.md, CHANGELOG 1.0.0, package version bump"
+  ],
+  "modelRoles": {
+    "audit": "fable",
+    "critique": "fable",
+    "pixellab-prompts": "fable",
+    "implementation": "sonnet",
+    "tests-and-verify-runs": "sonnet"
+  },
+  "auditSummary": "Phase 3 audit: core solid; gaps = pause/quit/error-recovery flow, unversioned persistence, color-only validity, no keyboard, no perf soak evidence, build not gated, release docs missing.",
+  "topIssues": [
+    "no quit confirmation / soft error recovery",
+    "persistence unversioned, no corrupt fallback/reset",
+    "validity indicators color-only (colorblind)",
+    "no keyboard shortcuts",
+    "missing rules edge tests (empty melds, zero-card confirm, reset exactness, 3/4p order)",
+    "no AI personality snapshots/showcases",
+    "no memory/perf soak metrics",
+    "build not in verify; CHANGELOG/controls docs missing"
+  ],
+  "waveLog": [
+    {
+      "wave": "p2-1 mexe polish",
+      "model": "sonnet",
+      "result": "done: overflow-proof layout (src/table/layout.ts, 15 tests), hand-added markers, drop-zone highlights, drag lift/shadow, FEITO fx + 250ms guard, invalid badges, 4 draft edge tests; verify OK"
+    },
+    {
+      "wave": "p2-2 puzzle AI",
+      "model": "sonnet",
+      "result": "done: edge steal 2-3 cards, 6+ run splits, inter-meld moves (cap 300), most-cards preference, 400ms deadline; 17 AI tests"
+    },
+    {
+      "wave": "p2-2b assets",
+      "model": "fable(prompts/gen)",
+      "result": "4 emotes + dominoes prop staged for sonnet integration"
+    },
+    {
+      "wave": "p2-3 tutorial",
+      "model": "sonnet",
+      "result": "done: 10-step interactive teach-by-doing tutorial (fixture/script/director), allow-list gating, highlights, skip/replay, PT+EN copy, headless full-script test, 2 e2e captures; verify OK"
+    },
+    {
+      "wave": "p2-4 ux/settings/audio",
+      "model": "sonnet",
+      "result": "done: SetupScene (seats/personalities), settings+pause (mute/volumes/reduced-motion, localStorage), ambience loop, emotes+dominoes integrated, tooltips, sort toggle, rules panel, Você localized, 2 new e2e captures; verify OK"
+    },
+    {
+      "wave": "p2-5 verification expansion",
+      "model": "sonnet",
+      "result": "done: ai-showcase + lastAiThought assertion, ?lang=en captures, 1080p capture, fps gate >=30, viewport logging, README/ARCHITECTURE/PIXELLAB docs reviewed+corrected by sonnet; 15 shots in final/"
+    },
+    {
+      "wave": "p2-6 critic pass",
+      "model": "fable",
+      "result": "scored below; PASS"
+    },
+    {
+      "wave": "p3-1 flow+persistence",
+      "model": "sonnet",
+      "result": "done: pause menu + quit confirm + Esc, in-game help, error toast + safe menu fallback (5s throttle), versioned save v1 with migration/corrupt fallback/reset-data (12 tests), lastSeed + tutorialCompleted, results row on WinScene, 2 e2e captures; verify OK"
+    },
+    {
+      "wave": "p3-2a rules/AI hardening",
+      "model": "sonnet",
+      "result": "done: +34 edge tests (empty melds, zero-card confirm, 3/4p cycling, stalemate ties, win-only-via-confirm, reset exactness, mid-game round-trip, crowded table, personality snapshots seeds 11/22/33); zero src bugs found"
+    },
+    {
+      "wave": "p3-3 accessibility",
+      "model": "sonnet",
+      "result": "done: colorblind-safe validity (✗ badges on invalid meld zones + dashed strokes, not color-only), keyboard shortcuts (Z undo, Y/Shift+Z redo, R reset, C comprar, F feito, S sort, H help, Esc pause), +25% large-text toggle (?textscale=125), meld separators at min gap; 2 new e2e captures (a11y-large-text, keyboard-comprar)"
+    },
+    {
+      "wave": "p3-4 perf+release",
+      "model": "sonnet",
+      "result": "done: 20-game AI-vs-AI soak (tests/soak.test.ts, SimpleAi vs RearrangerAi seeds 1-20, all terminate, ~100ms wall time, heap well under 150MB ceiling); stress-table e2e (all hand cards to new melds, fps>=50 measured, no renderAll optimization needed); audio rebalanced in scripts/gen-sfx.mjs to win>feito>invalid>drop/draw/deal>pickup/snap>click>ambience with peaks <=0.5, wavs regenerated; npm run build now gated in verify (screenshot script builds once, playwright webServer just previews — no double build), vite chunkSizeWarningLimit raised with a comment (Phaser is a legitimately large single vendor chunk); check-verify.mjs now merges a metrics object (per-shot fps, viewports, test counts, generatedAt) into STATUS.json; CHANGELOG.md added; README gained Controls/Asset replacement/Known issues sections"
+    },
+    {
+      "wave": "p3-5 prop depth fix",
+      "model": "fable(critique)+sonnet(fix+verify)",
+      "result": "done: dominoes prop rendered above meld cards; explicit depth layering prop<glow<table cards<hand; verify re-run OK"
+    },
+    {
+      "wave": "p4-1 readability+occlusion",
+      "model": "sonnet",
+      "result": "done: MIN_FONT_SIZE floor, opaque top bar+action panel, turn banner pill, props cleared from top bar, TABLE_TOP 80, sort icon unclipped, active-avatar gold ring; verify OK"
+    },
+    {
+      "wave": "p4-2 layout overflow fix + button unification",
+      "model": "sonnet",
+      "result": "done: src/table/layout.ts reworked to prefer gap compression then uniform per-row card-scale shrink (SCALE_STEPS 1/0.85/0.7/0.55/0.45) with row pitch always >= scaled row height so melds NEVER overlap within the reduced TABLE_AREA_H=102 (was overlapping via a y-clamp that collapsed overflow rows onto each other); GameScene.layoutMelds/makeCardSprite/wireDrag now apply per-meld cardScale to sprite size, drag hover/shadow sizing, and meld-pad; 17->21 layout tests incl. no-overlap assertions up to 80-card stress case; invalid-meld reason badge changed from always-on floating label (which spilled onto neighboring melds at crowded tables) to a hover-only tooltip on the ✗ badge, clamped inside the table/HUD area. Button unification: PixelButton (src/ui/widgets.ts) now actually applies its `color` option as a multiply-tint on textured buttons (previously silently ignored for hover/pressed/disabled), added shade()+STATE_SHADE for consistent hover/pressed/disabled shading from one palette color, added DANGER_TINT export and setSelected() gold-ring state; replaced every flat-rectangle secondary button (MenuScene TUTORIAL/REGRAS/ENGLISH, WinScene NOVA PARTIDA/MENU, SetupScene VOLTAR + player-count chips, settings panel Silenciar/reduced-motion/large-text/English/APAGAR DADOS/FECHAR + reset-confirm Yes/No) with the wooden btn-comprar/btn-small textures (danger buttons tinted red via DANGER_TINT); player-count chips get setSelected(true) gold ring instead of alpha-only. Verify: 112/112 unit (was 110, +2 net after test rewrite), lint clean, tsc clean, 19/19 e2e, 0 console errors, 0 missing assets, 58-60fps; visually confirmed via regenerated screenshots (docs/screenshots/, copied into final/) that stress-table/mexe-invalid no longer show row overlap or floating badge occlusion, and menu/win/setup/settings show no flat rectangles."
+    },
+    {
+      "wave": "p4-3 button unification sweep + rematch/reset e2e + personality showcases + release packaging",
+      "model": "sonnet",
+      "result": "done: found pause-menu.ts and rules-panel.ts were still calling PixelButton without textureBase (flat-rect fallback, missed by p4-2's sweep) — added textureBase:'btn-comprar' to all 6 pause-menu buttons (green Continuar, neutral Ajustes/Regras, red DANGER_TINT Sair pra menu + quit-confirm Sim/Não) and the rules-panel Fechar button; also converted the 3 tutorial replay/next/skip PixelButtons in GameScene.ts (same missed-textureBase bug). Every PixelButton call in src now passes textureBase (verified: instance count == textureBase count across all files) — no flat-rect buttons remain. Error toast (src/main.ts) is a plain DOM notification with no action button, nothing to convert there. Rules/help panel already listed all required shortcuts (Esc/Z/Shift+Z/Y/R/C/F/S/H) in both PT and EN localization strings from p3-3 — no change needed (job 3 was already satisfied). E2e: added MenuScene.startGame ?ai=<personality> URL override (2-player showcase games always defaulted to Dona Cida; now `?showcase=mexe&ai=juninho` etc. forces the single opponent) plus 6 new e2e tests in e2e/screenshot.spec.ts — 4 per-personality AI showcase captures (ai-cida/juninho/bia/ze, seed 77, asserts opponent name + non-null ai:thought, screenshot each), rematch (WinScene MESMA PARTIDA at seed 555 -> asserts new game scene, same seed, turn===1 fresh state, 0 errors), and reset-data (settings APAGAR DADOS + Sim -> asserts localStorage mexe-save cleared and page reboots with ready===true, 0 errors). Release packaging: package.json version 0.1.0->1.0.0, CHANGELOG.md 1.0.0 Phase 4 entry added, docs/RELEASE_NOTES.md DRAFT line removed (reviewed against code, no factual corrections needed), README.md 'Features (Phase 2)' -> 'Features', added ?ai= URL param doc, test count 110->112. Verify: 112/112 unit, 25/25 e2e (was 19), lint clean, tsc clean, build pass, 0 console errors, 0 missing assets, 58-60fps; visually confirmed pause.png/help.png show wooden buttons + shortcuts line, and all 4 ai-<personality>.png captures show correct avatar/name with the ai:thought bubble. 6 new screenshots copied into docs/screenshots/final/."
+    }
+  ],
+  "phase2Scores": {
+    "mexeUX": 9,
+    "rules": 9.5,
+    "ai": 9,
+    "art": 9,
+    "readability": 9,
+    "tutorial": 9,
+    "audio": 8.5,
+    "localization": 9,
+    "perf": 9.5,
+    "overall": 9
+  },
+  "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
+  "metrics": {
+    "generatedAt": "2026-09-08T13:32:50.011Z",
+    "perShotFps": {
+      "menu": 60,
+      "game": 58,
+      "game4": 60,
+      "tutorial": 58,
+      "tutorial-step2": 58,
+      "setup": 60,
+      "settings": 60,
+      "win": 60,
+      "mexe-invalid": 58,
+      "comprar-flow": 58,
+      "ai-showcase-mid": 58,
+      "ai-showcase-after": 58,
+      "ai-cida": 58,
+      "ai-juninho": 58,
+      "ai-bia": 58,
+      "ai-ze": 58,
+      "pause": 58,
+      "help": 58,
+      "menu-en": 60,
+      "game-en": 60,
+      "a11y-large-text": 58,
+      "keyboard-comprar": 58,
+      "stress-table": 58,
+      "game-1080p": 58
+    },
+    "viewports": [
+      "1280x720",
+      "1920x1080"
+    ],
+    "unitTests": "112/112 pass",
+    "e2eTests": "25/25 pass"
+  },
+  "phase3Scores": {
+    "fullFlow": 9,
+    "rules": 9.5,
+    "ai": 9,
+    "mexeUX": 9,
+    "art": 9,
+    "audio": 8.5,
+    "accessibility": 9,
+    "performance": 9.5,
+    "localization": 9,
+    "releaseReadiness": 9
+  }
+}

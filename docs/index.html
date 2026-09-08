@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MEXE! Docs</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"
+        integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+"
+        crossorigin="anonymous"></script>
+<style>
+  :root {
+    --bg: #f7f3ec; --fg: #2b2118; --accent: #b5451f; --card: #fffdf8;
+    --border: #e0d5c3; --code-bg: #f0e9dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1d1712; --fg: #ece3d5; --accent: #ff8a5c; --card: #26201a;
+      --border: #3d332a; --code-bg: #2e2620;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid; grid-template-columns: 240px 1fr; min-height: 100vh;
+  }
+  nav {
+    border-right: 1px solid var(--border); padding: 1.2rem 1rem;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  nav h1 { font-size: 1.2rem; margin: 0 0 .2rem; color: var(--accent); }
+  nav .tag { font-size: .75rem; opacity: .7; margin-bottom: 1rem; font-style: italic; }
+  nav a { display: block; padding: .3rem .5rem; border-radius: 6px;
+          color: var(--fg); text-decoration: none; font-size: .9rem; }
+  nav a:hover { background: var(--code-bg); }
+  nav a.active { background: var(--accent); color: #fff; }
+  nav .sep { margin: .8rem 0 .3rem; font-size: .7rem; text-transform: uppercase;
+             letter-spacing: .08em; opacity: .6; }
+  main { padding: 2rem 3rem; max-width: 60rem; }
+  main img { max-width: 100%; border-radius: 8px; border: 1px solid var(--border); }
+  main pre { background: var(--code-bg); padding: 1rem; border-radius: 8px; overflow-x: auto; }
+  main code { background: var(--code-bg); padding: .1em .35em; border-radius: 4px; font-size: .9em; }
+  main pre code { padding: 0; background: none; }
+  main table { border-collapse: collapse; }
+  main th, main td { border: 1px solid var(--border); padding: .4rem .7rem; }
+  main h1, main h2, main h3 { line-height: 1.3; }
+  main h1 { color: var(--accent); }
+  main a { color: var(--accent); }
+  main blockquote { border-left: 3px solid var(--accent); margin-left: 0;
+                    padding-left: 1rem; opacity: .85; }
+  @media (max-width: 720px) {
+    body { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; border-right: 0;
+          border-bottom: 1px solid var(--border); }
+    main { padding: 1.2rem; }
+  }
+</style>
+</head>
+<body>
+<nav id="nav">
+  <h1>MEXE!</h1>
+  <div class="tag">Arruma. Desarruma. Bate.</div>
+  <a href="../" style="font-weight:bold">▶ Play the game</a>
+</nav>
+<main id="content"><p>Loading…</p></main>
+<script>
+const DOCS = [
+  { sep: 'Guides' },
+  { file: 'README.md', title: 'Overview' },
+  { file: 'SELF_HOSTING.md', title: 'Self-hosting' },
+  { file: 'CONTRIBUTING.md', title: 'Contributing' },
+  { sep: 'Design' },
+  { file: 'ARCHITECTURE.md', title: 'Architecture' },
+  { file: 'ART_DIRECTION.md', title: 'Art direction' },
+  { file: 'AUDIO_DIRECTION.md', title: 'Audio direction' },
+  { file: 'PIXELLAB_ASSETS.md', title: 'PixelLab assets' },
+  { sep: 'Releases' },
+  { file: 'CHANGELOG.md', title: 'Changelog' },
+  { file: 'RELEASE_NOTES.md', title: 'Release notes' },
+];
+
+const nav = document.getElementById('nav');
+for (const d of DOCS) {
+  if (d.sep) {
+    const s = document.createElement('div');
+    s.className = 'sep'; s.textContent = d.sep;
+    nav.appendChild(s);
+  } else {
+    const a = document.createElement('a');
+    a.href = '?doc=' + d.file; a.textContent = d.title; a.dataset.file = d.file;
+    nav.appendChild(a);
+  }
+}
+
+// Root-level docs reference images as docs/screenshots/... but everything is
+// flattened next to this page, so strip the leading docs/ from asset paths and
+// route .md links back through the viewer.
+function fixUrl(href) {
+  if (/^(https?:|#|mailto:)/.test(href)) return href;
+  href = href.replace(/^(\.\/)?docs\//, '');
+  if (/\.md(#.*)?$/.test(href)) return '?doc=' + href.split('/').pop();
+  return href;
+}
+const renderer = {
+  link({ href, text }) { return `<a href="${fixUrl(href)}">${text}</a>`; },
+  image({ href, text }) { return `<img src="${fixUrl(href)}" alt="${text}">`; },
+};
+marked.use({ renderer });
+
+async function load() {
+  const file = new URLSearchParams(location.search).get('doc') || 'README.md';
+  document.querySelectorAll('nav a[data-file]').forEach(a =>
+    a.classList.toggle('active', a.dataset.file === file));
+  const content = document.getElementById('content');
+  if (!DOCS.some(d => d.file === file)) { content.innerHTML = '<p>Unknown document.</p>'; return; }
+  try {
+    const res = await fetch(file);
+    if (!res.ok) throw new Error(res.status);
+    content.innerHTML = marked.parse(await res.text());
+  } catch (e) {
+    content.innerHTML = '<p>Failed to load ' + file + '</p>';
+  }
+}
+load();
+</script>
+</body>
+</html>
