@@ -10,11 +10,19 @@ import { debugApi, installDebugApi } from './verification/debug-api';
 
 installDebugApi();
 
+// The world is authored in 480x270 units, but the canvas renders at RENDER_SCALE times that so
+// sprites hit their native texture resolution instead of being crushed (cards are 48x64 files
+// drawn at 24x32 units). Every camera is zoomed by the same factor and re-centred on the world,
+// so scene code keeps using plain 480x270 coordinates.
+const WORLD_W = 480;
+const WORLD_H = 270;
+const RENDER_SCALE = 2;
+
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
-  width: 480,
-  height: 270,
+  width: WORLD_W * RENDER_SCALE,
+  height: WORLD_H * RENDER_SCALE,
   pixelArt: true,
   roundPixels: true,
   backgroundColor: '#1a0f0a',
@@ -23,6 +31,14 @@ const game = new Phaser.Game({
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   scene: [BootScene, MenuScene, SetupScene, GameScene, WinScene, TutorialScene],
+});
+
+game.events.once(Phaser.Core.Events.READY, () => {
+  for (const scene of game.scene.scenes) {
+    scene.events.on(Phaser.Scenes.Events.CREATE, () => {
+      scene.cameras.main.setZoom(RENDER_SCALE).centerOn(WORLD_W / 2, WORLD_H / 2);
+    });
+  }
 });
 
 // Scene-agnostic fps sample for the debug API — every scene, not just GameScene.
