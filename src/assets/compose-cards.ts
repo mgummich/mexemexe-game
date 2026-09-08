@@ -6,8 +6,12 @@ import { rankLabel } from './fallbacks';
  * Composes the 52 card faces from PixelLab-generated parts: blank card face +
  * suit pips + pixel font ranks. Guarantees readable, consistent ranks —
  * AI-generating 52 full faces would scramble glyphs.
- * Canvas is 48x64 (2x logical 24x32) for crisp downscale-free display.
+ * Canvas is 72x96 (3x logical 24x32, matching RENDER_SCALE) for crisp
+ * downscale-free display. Drawing coordinates below stay in the original 48x64
+ * space and are scaled up by TEX_SCALE, so only this constant tracks the change.
  */
+const TEX_SCALE = 1.5;
+
 export function composeCardFaces(scene: Phaser.Scene, fontFamily: string): void {
   if (!scene.textures.exists('card-blank')) return;
   const blank = scene.textures.get('card-blank').getSourceImage() as HTMLImageElement;
@@ -22,9 +26,10 @@ export function composeCardFaces(scene: Phaser.Scene, fontFamily: string): void 
     for (let rank = 1; rank <= 13; rank++) {
       const key = `card-${suit}-${rank}`;
       if (scene.textures.exists(key)) scene.textures.remove(key);
-      const tex = scene.textures.createCanvas(key, 48, 64)!;
+      const tex = scene.textures.createCanvas(key, 48 * TEX_SCALE, 64 * TEX_SCALE)!;
       const ctx = tex.getContext();
       ctx.imageSmoothingEnabled = false;
+      ctx.scale(TEX_SCALE, TEX_SCALE);
       // opaque cream body first — the PixelLab blank may have transparent fill
       ctx.fillStyle = '#f7f2e7';
       ctx.beginPath();
