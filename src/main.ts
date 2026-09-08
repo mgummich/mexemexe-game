@@ -16,7 +16,7 @@ installDebugApi();
 // so scene code keeps using plain 480x270 coordinates.
 const WORLD_W = 480;
 const WORLD_H = 270;
-const RENDER_SCALE = 2;
+const RENDER_SCALE = 3;
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
