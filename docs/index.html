@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MEXE! Docs</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🃏</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"
         integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+"
         crossorigin="anonymous"></script>
@@ -101,11 +102,13 @@ function fixUrl(href) {
   if (/\.md(#.*)?$/.test(href)) return '?doc=' + href.split('/').pop();
   return href;
 }
-const renderer = {
-  link({ href, text }) { return `<a href="${fixUrl(href)}">${text}</a>`; },
-  image({ href, text }) { return `<img src="${fixUrl(href)}" alt="${text}">`; },
-};
-marked.use({ renderer });
+// walkTokens (not a custom renderer) so nested tokens — images inside links,
+// links inside bold — still render through marked's default pipeline.
+marked.use({
+  walkTokens(token) {
+    if (token.type === 'link' || token.type === 'image') token.href = fixUrl(token.href);
+  },
+});
 
 async function load() {
   const file = new URLSearchParams(location.search).get('doc') || 'README.md';
