@@ -5,6 +5,78 @@ wave-by-wave log this summarizes.
 
 ## Unreleased — Rules adaptation
 
+### Phase 8 — playtest-ready public demo
+
+Turns the online beta into something a stranger can be handed. No protocol
+change, no rules change.
+
+- **Session play log** (`src/core/playlog.ts`): a 2000-entry in-memory ring
+  buffer fed by the existing `EventBus`. It records turn starts and durations,
+  cards played, draws, undo/redo/reset, the reason codes behind a blocked
+  FEITO, tutorial progress and skips, and disconnect/reconnect/desync/reject
+  counts. It is session-only — never written to disk, never sent anywhere.
+  Player names and reconnect/session tokens are stripped by an explicit key
+  filter before export, and a test enforces it. `?playlog=0` disables it.
+  Exposed at `window.__MEXE__.playlog`, plus a **COPY TEST LOG** button in the
+  settings panel for testers who will not open a console.
+- **Tutorial teaches the current ruleset**: 10 steps become 12. The set step
+  now states the two constraints that actually reject real plays (a trinca is
+  exactly 3–4 cards, every natural card a different suit), a new step has the
+  player *hit* the duplicate-suit rejection and recover from it, and a new step
+  introduces jokers — wildcard, needs a concrete card it stands for, and every
+  meld needs at least one natural card. All copy is at most two sentences, in
+  PT and EN.
+- **Online errors are readable**: all 15 server error codes now map to
+  player-facing PT/EN copy via `src/net/errors.ts`. Testers used to see
+  `cannot join room: room_full`. A never-reachable server gets its own message
+  instead of looking like a mid-session drop, and an unrecognised code falls
+  back to a generic sentence rather than leaking the raw server string.
+- **Lobby survives impatient humans**: CREATE, JOIN, READY, START and LEAVE
+  are debounced, so a double-click cannot put two `create_room` frames on the
+  wire.
+- Balance knobs stay in one place (`DEFAULT_RULES`, documented in
+  `docs/RULES.md`); the turn timer remains a declared, unimplemented, off-by-
+  default hook and is now documented as such rather than implied.
+- New: `docs/PLAYTEST_GUIDE.md` (how to run, what to test, how to report, and
+  what the log does and does not contain) and `docs/PHASE8_AUDIT.md`.
+
+### Phase 7 — online beta
+
+Protocol **v3**. The online mode moves from alpha to beta: the remaining
+stability, recovery and safety gaps from `docs/PHASE7_AUDIT.md` are closed.
+
+- **Socket liveness**: the server pings every connection every 15s and
+  terminates one that misses a probe, so a half-open socket releases its seat
+  instead of holding it until TCP notices.
+- **Frame size cap**: inbound frames above 16 KiB are dropped by `ws` before
+  any parsing.
+- **Desync detection**: `GameView` carries a `hash` digest of everything all
+  seats can see. A client recomputes it after every sync; on mismatch it locks
+  input and requests a fresh authoritative snapshot with the new `resync`
+  message. The server never reads client state to recover — it only re-sends.
+- **Stalled matches recover**: when the active seat has been gone past the
+  disconnect grace and someone else is still connected, the server plays that
+  seat's draw-and-end-turn so the match keeps moving. It never melds for a
+  player.
+- **Correlatable errors**: `error` now echoes the failing request's `reqId`.
+- **In-canvas join code** replaces the native `window.prompt()`, and the lobby
+  now states why START is disabled.
+- Tests: state-hash agreement across seats, digest divergence, `resync`
+  parsing, stalled-turn recovery (before/after grace, empty room), and room
+  churn/cleanup under repeated create-join-leave. `verify:multiplayer` gained
+  an in-canvas join, hand-privacy and resync round-trip scenario, and its gate
+  now fails on hand leaks or state-hash disagreement.
+
+### Phase 6 — 2–4P online hardening
+
+- Private online rooms now support **2–4 human players** with stable clockwise
+  seat IDs and session tokens; a fifth join and joins after start are rejected.
+- Ready no longer auto-starts a 2P room. The host explicitly starts only when
+  every occupied 2–4P seat is ready. Deals and turn rotation use player count.
+- Added host start UI, 3P/4P server tests and 3P/4P browser rotation captures.
+- Preserved authoritative FEITO validation, per-seat hand redaction, revision
+  safety, reconnect/resync, and the safe reconnect-to-local-menu fallback.
+
 Rules engine, protocol and docs adapted to the final Mexe-Mexe ruleset
 (`docs/RULES.md`), replacing the MVP's single-deck/ace-low/stalemate-by-passing
 approximation.

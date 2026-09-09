@@ -5,11 +5,13 @@ import { CARD_H, CARD_W } from '../assets/manifest';
 import { rankLabel, SUIT_CHAR } from '../assets/fallbacks';
 import { settings } from '../core/settings';
 import { bus } from '../core/events';
+import { playlog } from '../core/playlog';
 import { createNewGame, GameStore } from '../game-state/store';
 import { buildShowcaseState } from '../demo/showcase';
 import { t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
+import { digestOfState, stateHash } from '../net/protocol';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
 import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
@@ -122,6 +124,10 @@ export class GameScene extends Phaser.Scene {
   private online: { client: NetClient; seat: number; code: string; lastRev: number } | null = null;
   /** True from FEITO/COMPRAR submit until state_sync or proposal_rejected — locks all input. */
   private onlinePending = false;
+  /** Count of detected state-hash mismatches this match — surfaced to verify:multiplayer. */
+  private onlineDesyncs = 0;
+  /** Set while a requested resync is outstanding: input stays locked and the overlay shows. */
+  private onlineResyncing = false;
   private lastRejections: string[] = [];
   private onlineStatusDot: Phaser.GameObjects.Arc | null = null;
   private onlineNoticeText: Phaser.GameObjects.Text | null = null;
@@ -255,12 +261,15 @@ export class GameScene extends Phaser.Scene {
       createRoom: () => { /* not applicable mid-match */ },
       joinRoom: () => { /* not applicable mid-match */ },
       setReady: () => { /* not applicable mid-match */ },
+      startGame: () => { /* not applicable mid-match */ },
       comprar: () => this.onComprar(),
       /** Verification-only: submit a raw (possibly illegal) proposal straight to the server,
        * bypassing the editor's client-side gate — the UI itself never constructs an illegal
        * draft, so this is the only way for `verify:multiplayer` to exercise server-side rejection. */
       submitRaw: (rev, melds) => client.submitTurn(rev, melds),
       forceDrop: () => client.forceDrop(),
+      desyncs: () => this.onlineDesyncs,
+      requestResync: () => client.requestResync(),
     };
     this.onOnlineStatusChange(client.getStatus());
   }
@@ -280,7 +289,28 @@ export class GameScene extends Phaser.Scene {
     else this.noteOpponentMove(before, this.store.get(), actingSeat);
     debugApi.state = () => this.store.get();
     this.editor = null;
+    if (!this.verifyOnlineHash(view)) return;
+    this.onlineResyncing = false;
     if (this.store.get().phase === 'playing') this.onTurnStart();
+  }
+
+  /** Compare the server's digest against one recomputed from the local reconstruction. A mismatch
+   * means this client can no longer be trusted to render or propose, so it locks input and asks
+   * for a fresh authoritative snapshot instead of continuing from a bad state. Returns false when
+   * a resync was requested. */
+  private verifyOnlineHash(view: GameView): boolean {
+    if (!this.online) return false;
+    const local = stateHash(digestOfState(this.store.get(), view.rev));
+    if (local === view.hash) return true;
+    this.onlineDesyncs++;
+    console.warn(`state desync at rev ${view.rev}: local ${local} != server ${view.hash}`);
+    playlog.record('desync', { rev: view.rev });
+    if (this.onlineResyncing) return true; // already asked once for this snapshot — take it and move on
+    this.onlineResyncing = true;
+    this.onlinePending = true;
+    this.onlineNoticeText?.setText(t('online.resyncing'));
+    this.online.client.requestResync();
+    return false;
   }
 
   private onOnlineRejected(reasons: ReasonCode[]): void {
@@ -288,6 +318,10 @@ export class GameScene extends Phaser.Scene {
     this.onlinePending = false;
     this.lastRejections = reasons;
     playSfx(this, 'sfx-invalid');
+    // A stale revision means this client acted on a state the server has already moved past —
+    // the local view is behind, so pull the authoritative one rather than letting the player
+    // retry against stale cards.
+    if (reasons.includes('reason.staleRevision')) this.online.client.requestResync();
     // Discard the draft entirely and rebuild from the last synced (committed) state — never a
     // half-applied draft survives a rejection.
     const state = this.store.get();
@@ -405,6 +439,29 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Draft undo/redo/reset — shared by the toolbar buttons, keyboard shortcuts and the e2e hook,
+   * so the playlog record lives in one place instead of five. */
+  private onUndo(): void {
+    if (this.editor?.undo()) {
+      playlog.record('undo');
+      this.refreshDraft();
+    }
+  }
+
+  private onRedo(): void {
+    if (this.editor?.redo()) {
+      playlog.record('redo');
+      this.refreshDraft();
+    }
+  }
+
+  private onReset(): void {
+    if (!this.editor) return;
+    this.editor.reset();
+    playlog.record('reset');
+    this.refreshDraft();
+  }
+
   /** e2e hooks: drive the live editor from Playwright and re-render. */
   private bindMexeHooks(): void {
     const wrap = <A extends unknown[]>(fn: (...args: A) => boolean) => (...args: A): boolean => {
@@ -421,7 +478,11 @@ export class GameScene extends Phaser.Scene {
         if (!this.tutorialAllows({ type: 'moveTableCard', cardId })) return false;
         return this.editor?.moveTableCard(cardId, meldId) ?? false;
       }),
-      undo: wrap(() => this.editor?.undo() ?? false),
+      undo: wrap(() => {
+        const ok = this.editor?.undo() ?? false;
+        if (ok) playlog.record('undo');
+        return ok;
+      }),
       feito: () => {
         if (!this.tutorialAllows({ type: 'feito' })) return false;
         const ok = this.editor?.canConfirm().ok ?? false;
@@ -541,14 +602,9 @@ export class GameScene extends Phaser.Scene {
     this.comprarBtn = new PixelButton(this, 440, 237, t('game.comprar'), () => this.onComprar(), {
       textureBase: 'btn-comprar', w: 64, h: 20, size: 8, tooltip: t('tooltip.comprar'),
     });
-    new PixelButton(this, 414, 260, '↶', () => this.editor && this.editor.undo() && this.refreshDraft(), { textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.undo') });
-    new PixelButton(this, 434, 260, '↷', () => this.editor && this.editor.redo() && this.refreshDraft(), { textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.redo') });
-    new PixelButton(this, 460, 260, '⟲', () => {
-      if (this.editor) {
-        this.editor.reset();
-        this.refreshDraft();
-      }
-    }, { textureBase: 'btn-small', w: 22, h: 14, size: 8, color: 0x8e4632, tooltip: t('tooltip.reset') });
+    new PixelButton(this, 414, 260, '↶', () => this.onUndo(), { textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.undo') });
+    new PixelButton(this, 434, 260, '↷', () => this.onRedo(), { textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.redo') });
+    new PixelButton(this, 460, 260, '⟲', () => this.onReset(), { textureBase: 'btn-small', w: 22, h: 14, size: 8, color: 0x8e4632, tooltip: t('tooltip.reset') });
 
     // shifted off the corner: at (18,254) the table-frame art clipped this icon on both edges.
     new PixelButton(this, 30, 246, '⇅', () => {
@@ -631,18 +687,14 @@ export class GameScene extends Phaser.Scene {
     if (!active || active.isAi || !this.editor) return;
     switch (e.key.toLowerCase()) {
       case 'z':
-        if (e.shiftKey) {
-          if (this.editor.redo()) this.refreshDraft();
-        } else if (this.editor.undo()) {
-          this.refreshDraft();
-        }
+        if (e.shiftKey) this.onRedo();
+        else this.onUndo();
         break;
       case 'y':
-        if (this.editor.redo()) this.refreshDraft();
+        this.onRedo();
         break;
       case 'r':
-        this.editor.reset();
-        this.refreshDraft();
+        this.onReset();
         break;
       case 'c':
         this.onComprar();
@@ -777,6 +829,7 @@ export class GameScene extends Phaser.Scene {
     const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
     if (!check.ok || !heldLongEnough) {
       playSfx(this, 'sfx-invalid');
+      if (!check.ok) playlog.record('feito:blocked', { reasons: check.reasons.join(',') });
       return;
     }
     playSfx(this, 'sfx-feito');
@@ -836,6 +889,7 @@ export class GameScene extends Phaser.Scene {
     const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
     if (!check.ok || !heldLongEnough) {
       playSfx(this, 'sfx-invalid');
+      if (!check.ok) playlog.record('feito:blocked', { reasons: check.reasons.join(',') });
       return;
     }
     playSfx(this, 'sfx-feito');
@@ -953,6 +1007,7 @@ export class GameScene extends Phaser.Scene {
     const dir = this.tutorialDirector;
     if (!dir) return;
     dir.checkComplete(this.store.get(), this.editor?.getDraft() ?? null);
+    if (debugApi.tutorialStep !== dir.stepIndex) playlog.record('tutorial:step', { step: dir.stepIndex });
     debugApi.tutorialStep = dir.stepIndex;
     if (dir.finished && !this.tutorialCompletedRecorded) {
       this.tutorialCompletedRecorded = true;
@@ -997,7 +1052,10 @@ export class GameScene extends Phaser.Scene {
           this.renderAll();
         }, { textureBase: 'btn-comprar', w: 74, h: 14, size: 6, color: 0x2e9e50 }));
       }
-      this.hud.push(new PixelButton(this, cx, panelTop + panelH - 16, t('tutorial.skip'), () => this.scene.start('menu'), {
+      this.hud.push(new PixelButton(this, cx, panelTop + panelH - 16, t('tutorial.skip'), () => {
+        playlog.record('tutorial:skip', { step: dir.stepIndex });
+        this.scene.start('menu');
+      }, {
         textureBase: 'btn-comprar', w: 74, h: 12, size: 6, color: 0x6b6b73,
       }));
     }

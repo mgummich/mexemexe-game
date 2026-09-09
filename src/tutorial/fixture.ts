@@ -5,7 +5,8 @@ import type { Card, GameState, PlayerState } from '../rules/types';
 
 const P0_HAND_IDS = [
   'hearts-9-d0', 'spades-9-d0', 'clubs-9-d0',
-  'diamonds-3-d0', 'diamonds-4-d0', 'diamonds-5-d0', 'diamonds-6-d0',
+  'hearts-9-d1', 'spades-9-d1', 'clubs-9-d1',
+  'diamonds-3-d0', 'diamonds-4-d0', 'diamonds-5-d0', 'diamonds-6-d0', 'joker-d0-1',
   'diamonds-9-d0',
 ];
 // drawPile[0] is drawn by the AI's scripted turn; drawPile[1] is drawn by the

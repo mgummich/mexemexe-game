@@ -30,9 +30,9 @@
     "e2e"
   ],
   "tests": {
-    "unit": "190/190 pass",
-    "e2e": "31/31 pass (npm run verify) + 1/1 multiplayer e2e (npm run verify:multiplayer)",
-    "lint": "clean",
+    "unit": "234/234 pass (12 files, incl. 39 server + play log + net error mapper)",
+    "e2e": "37/37 pass (npm run verify) + 7/7 multiplayer e2e (npm run verify:multiplayer)",
+    "lint": "clean (eslint + tsc --noEmit)",
     "build": "pass (gated in verify)"
   },
   "screenshots": [
@@ -83,7 +83,7 @@
     "PT accents slightly rough at 6-7px font sizes",
     "no renderAll sprite pooling (fps 59 at 21 sprites+20 zones; revisit only if a lower-end target dips below 50)"
   ],
-  "nextTask": "Phase 5 online alpha shipped as 1.1.0. Carried polish items for a future pass: lobby backdrop opacity, replace window.prompt join-code entry with a styled in-canvas input, fix stalemate banner/subtitle overlap, add a socket liveness probe (ping/pong timeout) instead of relying solely on the disconnect grace timer.",
+  "nextTask": "Phase 7 shipped online beta on protocol v3. Carried items for a future pass: per-IP rate limiting, online rematch (needs room-token semantics design), a persistent (not single-shot) reconnect retry, opponent-rearranging indicator during another seat`s draft, and spectator/matchmaking are still out of scope.",
   "phase4Scores": {
     "launchStability": 9.5,
     "fullFlow": 9,
@@ -99,7 +99,40 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": "rules-adaptation",
+  "phase": 8,
+  "phase6": {
+    "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
+    "blockers": [],
+    "priorityIssues": [
+      "3P/4P privacy/reconnect integration coverage",
+      "socket liveness probe",
+      "styled join-code input"
+    ],
+    "nextTask": "Run full local verify and final multiplayer gate; retain safe one-retry-to-menu reconnect fallback.",
+    "modelCavemanLog": [
+      {
+        "role": "Low inspection",
+        "model": "gpt-5.6-luna",
+        "task": "Phase 5/6 audit",
+        "caveman": "available",
+        "runLabel": "phase6-low-audit-01"
+      },
+      {
+        "role": "Main implementation",
+        "model": "main",
+        "task": "2–4P server/client/tests/docs",
+        "caveman": "available",
+        "runLabel": "phase6-main-01"
+      },
+      {
+        "role": "Review",
+        "model": "gpt-5.6-luna",
+        "task": "2–4P contract review",
+        "caveman": "available",
+        "runLabel": "phase6-review-01"
+      }
+    ]
+  },
   "phase4AuditSummary": "RC solid (all suites green, 57-60fps, 0 console errors). Launch gaps are polish: micro-text illegible at 720p (top bar, tooltips, labels), 4p prop occlusion (mug over avatar, cookie plate under FEITO tooltip), flat-rect secondary buttons read as programmer art, missing RELEASE_NOTES/per-personality showcases, version mismatch 0.1.0 vs 0.3.0. See docs/PHASE4_AUDIT.md.",
   "phase4Blockers": [],
   "phase4PriorityIssues": [
@@ -260,45 +293,50 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-09T08:39:23.839Z",
+    "generatedAt": "2026-09-09T11:48:45.689Z",
     "perShotFps": {
       "menu": 60,
       "game": 57,
-      "game4": 57,
-      "tutorial": 56,
+      "game4": 58,
+      "tutorial": 58,
       "tutorial-step2": 57,
       "setup": 58,
-      "settings": 55,
+      "settings": 56,
       "win": 58,
-      "mexe-invalid": 56,
-      "comprar-flow": 57,
-      "ai-showcase-mid": 57,
-      "ai-showcase-after": 57,
-      "ai-cida": 58,
-      "ai-juninho": 57,
-      "ai-bia": 57,
-      "ai-ze": 56,
+      "mexe-invalid": 58,
+      "comprar-flow": 58,
+      "ai-showcase-mid": 58,
+      "ai-showcase-after": 58,
+      "ai-cida": 57,
+      "ai-juninho": 58,
+      "ai-bia": 58,
+      "ai-ze": 58,
       "pause": 57,
       "help": 55,
-      "help-en": 54,
+      "help-en": 56,
       "menu-en": 60,
-      "game-en": 57,
-      "a11y-large-text": 58,
-      "keyboard-comprar": 52,
-      "stress-table": 52,
-      "game-1080p": 58,
-      "joker-in-hand": 57,
+      "game-en": 58,
+      "a11y-large-text": 57,
+      "keyboard-comprar": 57,
+      "stress-table": 43,
+      "game-1080p": 54,
+      "joker-in-hand": 56,
       "joker-in-run": 57,
       "joker-in-group": 57,
       "mexe-invalid-kA2": 57,
-      "repeated-suit-group": 57
+      "repeated-suit-group": 58,
+      "tutorial-trinca": 57,
+      "tutorial-joker": 58,
+      "tutorial-complete": 58,
+      "feito-invalid-explained": 54,
+      "feito-invalid-explained-en": 54
     },
     "viewports": [
       "1280x720",
       "1920x1080"
     ],
-    "unitTests": "190/190 pass",
-    "e2eTests": "30/30 pass"
+    "unitTests": "234/234 pass (12 files, incl. 39 server + play log + net error mapper)",
+    "e2eScreenshots": 35
   },
   "phase3Scores": {
     "fullFlow": 9,
@@ -401,5 +439,176 @@
     "AI",
     "docs",
     "screenshots"
-  ]
+  ],
+  "phase7": {
+    "protocolVersion": 3,
+    "auditSummary": "Phase 6 left five online-beta blockers: no server-side socket liveness, no inbound frame size cap, no desync detection or client-initiated resync, a match that stalls forever when the active seat disconnects, and errors that could not be correlated to a request. Authority, redaction and revision safety were already sound and were not rewritten.",
+    "blockers": [
+      "no server heartbeat/timeout (half-open socket holds its seat)",
+      "no maxPayload on the WebSocket server",
+      "no state digest or resync path (silent client divergence)",
+      "disconnected active seat stalls a 3P/4P match indefinitely",
+      "ErrorMsg had no reqId"
+    ],
+    "priorityIssues": [
+      "server ws.ping heartbeat every 15s, terminate on missed probe",
+      "maxPayload 16 KiB",
+      "GameView.hash (FNV-1a over publicly visible state) + client-side mismatch check",
+      "resync client message; server replies room_state + state_sync, never reads client state",
+      "advanceStalledTurns(): draw-and-end-turn for a seat past grace while others are connected",
+      "reqId echoed on error",
+      "in-canvas keyboard join-code entry replacing window.prompt",
+      "lobby START disabled-reason text"
+    ],
+    "implemented": [
+      "protocol v3: GameView.hash, stateHash/digestOfView/digestOfState, resync message, ErrorMsg.reqId",
+      "server: maxPayload 16 KiB, 15s ping heartbeat with terminate, 5s stalled-turn tick, resync handler",
+      "rooms: advanceStalledTurns()",
+      "client: NetClient.requestResync(); GameScene hash verification, resync overlay, resync on staleRevision",
+      "OnlineScene: in-canvas join screen (type/Backspace/Enter/Esc), START disabled reason",
+      "i18n: online.codeHint, online.startNeedPlayers, online.startNeedReady, online.resyncing (PT+EN)",
+      "debug-api: online.desyncs(), online.requestResync()"
+    ],
+    "tests": {
+      "unit": "219/219 pass (was 210; +9: hash agreement across seats, digest divergence, resync parse, stalled-turn recovery x4, room churn x2)",
+      "e2e": "npm run verify OK (31 local scenarios); npm run verify:multiplayer OK (3 scenarios: 2P full flow + reconnect, 3P/4P rotation, in-canvas join + hand privacy + resync)",
+      "lint": "clean",
+      "build": "pass"
+    },
+    "verifyGate": "check-verify-multiplayer.mjs now also fails on missing in-canvas join evidence, unproven hand privacy, or any state-hash disagreement (desyncs must be 0 on every client).",
+    "loadPerf": {
+      "roomChurn": "10 sequential create/join/leave cycles leave roomCount 0 and an empty sweep",
+      "abandonedRooms": "10 abandoned rooms all reaped by one sweep past grace",
+      "consoleErrors": 0,
+      "serverStderr": "empty across the multiplayer run"
+    },
+    "knownLimits": [
+      "rate limiting is per connection, not per IP",
+      "no accounts, matchmaking, chat, or online rematch",
+      "a seat gone past grace has its turn auto-drawn (never melded) by the server"
+    ],
+    "modelAndCavemanLog": [
+      {
+        "role": "audit+implementation+verification",
+        "model": "opus (main thread)",
+        "task": "Phase 7 audit, protocol v3, server hardening, desync/resync, lobby UX, tests, verify, docs",
+        "caveman": "available (session hook, level full)",
+        "runLabel": "phase7-single-pass",
+        "note": "Run as one main-thread pass instead of the planned Haiku/Sonnet/Opus split. No subagents were spawned: the multiplayer surface is ~2.6k lines and was read once in full, so a separate inspection agent would have re-read what was already in context. Recorded here because it deviates from the requested routing."
+      }
+    ],
+    "scores": {
+      "localStability": 9.5,
+      "serverStability": 9,
+      "protocolSafety": 9,
+      "reconnectResync": 9,
+      "desyncHandling": 8.5,
+      "authorityAntiCheat": 9,
+      "handPrivacy": 9.5,
+      "onlineUx": 8.5,
+      "testsVerify": 9,
+      "docs": 9,
+      "betaReadiness": 8.5
+    },
+    "passGate": "PASS — every score >= 8.5, no failed tests, zero client console errors, empty server stderr, no illegal proposal accepted, no hand leak, build green."
+  },
+  "phase8": {
+    "auditSummary": "docs/PHASE8_AUDIT.md. Phase 7 closed its beta blockers (protocol v3 liveness, frame cap, state hash + resync, stalled-seat recovery, reqId, in-canvas join code). Phase 8's gaps were everything a stranger meets: zero instrumentation, a 10-step tutorial written against the pre-adaptation ruleset (no jokers, no trinca constraints), raw English server error codes shown to players (`cannot join room: room_full`), and no click debounce in the lobby.",
+    "blockers": [],
+    "priorityIssues": [
+      "no online rematch (carried from Phase 5)",
+      "flood guard is per connection, not per IP (carried)",
+      "turnTimerSeconds is a declared, unimplemented, off-by-default hook — documented as such, not built",
+      "MAX_PLAYERS is hardcoded 4 with no client override, so the room-full e2e fills a real 4-seat room rather than a forced 2-seat one",
+      "OnlineScene error text and GameScene reason text are canvas-rendered with no debug hook, so e2e proves translation by re-running the same t() lookup plus a screenshot, not by reading pixels"
+    ],
+    "delivered": [
+      "src/core/playlog.ts — 2000-entry session-only ring buffer fed by the existing EventBus; turn durations computed in the log, not the store; name/token key filter enforced by test; ?playlog=0 disables; exposed at window.__MEXE__.playlog and via a COPY TEST LOG button in the settings panel",
+      "tutorial 10 -> 12 steps: set step now states the exact-size + unique-suit trinca constraints, new trinca-limit step makes the player hit reason.groupDuplicateSuit and recover, new joker step teaches wildcard + concrete-assignment + at-least-one-natural; PT and EN, every step <= 2 sentences",
+      "src/net/errors.ts — SERVER_ERROR_CODES + errorMessage(); all 15 server codes mapped to player-facing PT/EN copy, unknown codes fall back to a generic sentence and never leak the raw server message; distinct 'unreachable' copy for a server that was never reachable",
+      "lobby CREATE/JOIN/READY/START/LEAVE debounced against double-clicks",
+      "verify suites extended: 31 -> 37 local e2e, 1 -> 7 multiplayer e2e",
+      "docs/PHASE8_AUDIT.md, docs/PLAYTEST_GUIDE.md; README/CHANGELOG/RELEASE_NOTES updated; package.json 1.1.0 -> 1.2.0"
+    ],
+    "balanceDecisions": [
+      "No new config system: DEFAULT_RULES in src/rules/types.ts was already the centralized knob block (deckCount 2, jokersPerDeck 2, handSize 7, groupMinSize 3, groupMaxSize 4, groupUniqueSuits true, firstMeldMinPoints 0, turnTimerSeconds 0) and is documented in the Configuration defaults table of docs/RULES.md. Building a second one next to it was rejected.",
+      "Turn timer stays OFF and unimplemented. A timer punishes a first-time player mid-Mexe-draft, which is exactly the population this playtest is for. Documented as a declared hook rather than shipped half-built.",
+      "Joker pacing (4 jokers in 108 cards, 7-card hands) left untouched. Whether it reads as generous or chaotic is a measurement, not a guess — the play log records the data instead of tuning blind.",
+      "AI difficulty: no Easy/Normal/Hard label invented. Two engines (SimpleAi, RearrangerAi) wrapped by four personalities pickable in the setup screen already form the ladder; it is documented as the ladder in README rather than papered over with a fake control."
+    ],
+    "privacy": "Play log is in-memory and session-scoped: never written to localStorage, never written to disk, never sent anywhere, destroyed on reload. Timestamps are ms since page load (performance.now()), not wall clock. Keys `name`, `playerName`, `token`, `sessionToken` are stripped before export by an explicit filter, covered by tests/playlog.test.ts. Export is an explicit human action (debug API or the settings-panel button). ?playlog=0 disables it entirely.",
+    "verification": {
+      "npmTest": "PASS: 234/234 (12 files)",
+      "npmLint": "PASS: eslint + tsc --noEmit clean",
+      "npmBuild": "PASS (gated inside npm run verify)",
+      "npmVerify": "PASS: 37/37 local e2e; verify: OK; 0 console errors; 0 missing assets; fps 52-60",
+      "npmVerifyMultiplayer": "PASS: 7/7 multiplayer e2e; verify:multiplayer: OK; 14 screenshots; 0 client/server errors"
+    },
+    "modelCavemanLog": [
+      {
+        "role": "Low inspection",
+        "model": "haiku",
+        "task": "Phase 8 read-only state audit (settings, balance constants, AI, instrumentation, tutorial, i18n, reason codes, online error paths, screenshots, docs)",
+        "caveman": "invoked via Skill",
+        "runLabel": "phase8-low-audit-01"
+      },
+      {
+        "role": "Implementation wave A",
+        "model": "sonnet",
+        "task": "playtest instrumentation (src/core/playlog.ts, bus wiring, GameScene/NetClient/debug-api hooks, tests)",
+        "caveman": "invoked via Skill",
+        "runLabel": "phase8-sonnet-A-instrumentation"
+      },
+      {
+        "role": "Implementation wave B",
+        "model": "sonnet",
+        "task": "tutorial trinca-constraint + joker steps, fixture, PT/EN copy, skip recording, tests",
+        "caveman": "invoked via Skill",
+        "runLabel": "phase8-sonnet-B-tutorial"
+      },
+      {
+        "role": "Implementation wave C",
+        "model": "sonnet",
+        "task": "server-error i18n mapper, unreachable copy, lobby debounce, settings-panel log export, tests",
+        "caveman": "invoked via Skill",
+        "runLabel": "phase8-sonnet-C-mp-hardening"
+      },
+      {
+        "role": "Implementation wave D",
+        "model": "sonnet",
+        "task": "public-demo verify expansion (6 local e2e + 4 multiplayer e2e + gate scripts)",
+        "caveman": "invoked via Skill",
+        "runLabel": "phase8-sonnet-D-verify"
+      },
+      {
+        "role": "Reviewer + docs",
+        "model": "main (opus)",
+        "task": "PHASE8_AUDIT.md, PLAYTEST_GUIDE.md, README/CHANGELOG/RELEASE_NOTES/STATUS, diff review and two review fixes",
+        "caveman": "session-level caveman hook, not a per-task Skill invocation — stated plainly rather than claimed as equivalent",
+        "runLabel": "phase8-main-review"
+      }
+    ],
+    "extraAgentsReason": "The default budget was 1 low + 1 sonnet + 1 reviewer. Four Sonnet waves were used instead of one because three of them edit files the others also touch (src/localization/i18n.ts by B and C, src/scenes/GameScene.ts by A and B), and running them concurrently would have raced those edits; splitting by file ownership and running them in sequence was the safe form. Wave D was separated because the verification suites can only be written after A-C land. No Opus reasoning pass was triggered: no suite failed twice, no balance tradeoff was ambiguous, and the single e2e failure (reset-data clicking a stale settings-panel coordinate after the export button shifted the rows) had an obvious cause and a one-line fix.",
+    "reviewFindings": [
+      "playlog.exportJson() read the raw entries array while entries() returned [] when disabled, so a disabled log could still export its pre-disable contents — inconsistent with the privacy claim. Fixed: exportJson() now goes through entries().",
+      "NetClient.onclose recorded net:disconnect even for a socket that never opened, inflating the drop metric for anyone who launched with the server down. Fixed: only a socket past 'connecting' counts.",
+      "Both fixes covered by a new test; 234/234 and both verify suites re-run green afterwards."
+    ],
+    "nextTask": "Run the playtest. docs/PLAYTEST_GUIDE.md is the tester-facing entry point. The open carried items are unchanged from Phase 7: per-IP rate limiting, online rematch (needs room-token semantics), a persistent rather than single-shot reconnect retry, an opponent-rearranging indicator during another seat's draft, and spectator/matchmaking."
+  },
+  "phase8Scores": {
+    "demoStability": 9,
+    "tutorialClarity": 9,
+    "rulesClarity": 9,
+    "balancePacing": 8.5,
+    "aiFairness": 8.5,
+    "multiplayerTesterSafety": 9,
+    "instrumentation": 9,
+    "onlineUx": 8.5,
+    "localUx": 9,
+    "testsVerify": 9,
+    "docs": 9,
+    "publicDemoReadiness": 9
+  },
+  "phase8PassGate": "PASS: all twelve phase8Scores >= 8.5. 234/234 unit (12 files), lint + tsc clean, build green, 37/37 local e2e with verify: OK, 7/7 multiplayer e2e with verify:multiplayer: OK and 14 captures. Zero client console errors and zero server errors in both runs. No illegal synced confirm, no hand leak, no stuck flow (server-unavailable, bad room code, room-full and double-click paths all end in a recoverable, translated state). No personal-data telemetry: the play log is in-memory only, strips name/token keys before export, uses page-relative timestamps, and is disabled by ?playlog=0. Balance/pacing and AI fairness are scored 8.5 rather than higher because they are deliberately unmeasured — the phase instrumented them for the playtest instead of tuning them blind, and the numbers to justify a change do not exist yet."
 }

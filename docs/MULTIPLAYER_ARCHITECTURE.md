@@ -1,7 +1,7 @@
 # MEXE! Online Alpha — Multiplayer Architecture
 
 *Design: Opus (reasoning/prose). Implementation + final review: Sonnet.
-Scope: 2-player private rooms, alpha quality. No accounts, matchmaking,
+Scope: 2–4-player private rooms, alpha quality. No accounts, matchmaking,
 ranking, chat, or cosmetics sync.*
 
 *This document was drafted before implementation began. It has been
@@ -49,11 +49,11 @@ cannot leak an opponent's hand in an online match.
 1. **create_room** — server generates a room code (short, unambiguous
    alphabet, no vowels so no accidental words), creates the room with the
    caller as seat 0, issues a session token, replies `room_joined`.
-2. **join_room** — second player joins as seat 1; both get `room_state`. A
-   third join is rejected (`room_full`).
-3. **ready** — each seat toggles ready. When both are ready the server picks
-   the seed, deals, sets `rev = 1`, and broadcasts `game_started` plus each
-   player's first `state_sync`.
+2. **join_room** — players fill stable clockwise seats 1–3; a fifth join is
+   rejected (`room_full`) and joins after start are rejected (`game_started`).
+3. **ready/start** — each occupied seat toggles ready. Seat 0 sends
+   `start_game`; server requires 2–4 occupied ready seats, picks seed, deals,
+   sets `rev = 1`, and broadcasts per-seat `game_started` views.
 4. **playing** — alternating turns; every accepted action increments `rev`.
 5. **game_over** — server broadcasts winner (or stalemate result); room stays
    alive briefly so both clients can read the result, then is reaped.
@@ -63,9 +63,10 @@ cannot leak an opponent's hand in an online match.
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 2` — bumped from 1 for the rules adaptation:
-`GameView` gained `config`, and card ids changed shape with the two-deck/joker
-model); a mismatch is refused at connect with a clear reason rather than
+version (`PROTOCOL_VERSION = 3` — bumped from 2 for the beta: `GameView` gained
+a `hash` digest and the client gained `resync`; v2 bumped from 1 for the rules
+adaptation, when `GameView` gained `config` and card ids changed shape with the
+two-deck/joker model); a mismatch is refused at connect with a clear reason rather than
 producing subtle desyncs. Client-to-server messages carry a client-chosen
 `reqId`; every rejection echoes it, so a client can tie a rejection to the
 submission that caused it.
@@ -78,9 +79,11 @@ submission that caused it.
 | `join_room` | `code`, `name` | replies `room_joined` or `error` |
 | `leave_room` | — | explicit, distinct from a dropped socket |
 | `ready` | `ready: boolean` | idempotent |
+| `start_game` | — | seat-0 host only; requires every occupied 2–4P seat ready |
 | `submit_turn` | `rev`, `melds: [{ id, cardIds[] }]` | card **ids only** |
 | `draw_end_turn` | `rev` | |
 | `reconnect` | `token` | resumes a seat in a live room |
+| `resync` | — | "resend authoritative state"; never carries client state |
 | `ping` | — | |
 
 **Server → client**
@@ -89,13 +92,13 @@ submission that caused it.
 |---|---|---|
 | `room_joined` | `code`, `seat`, `token`, `players` | token is the reconnect key |
 | `room_state` | `players` (each entry carries its own `ready`/`connected`) | lobby updates |
-| `game_started` | `seed`, `view` | broadcast to both seats when `ready` makes both seats ready; there is no separate `start_game` message — `game_started` is both the "match has begun" notice and the first view, and `rev` lives inside `view.rev` rather than as a top-level field |
-| `state_sync` | `view` (redacted, `rev` inside it) | the only source of truth on the client |
+| `game_started` | `view` | broadcast per seat after host `start_game`; the server never sends shuffle seed, and `rev` lives inside `view.rev` |
+| `state_sync` | `view` (redacted, `rev` and `hash` inside it) | the only source of truth on the client |
 | `proposal_rejected` | `reqId`, `reasons: ReasonCode[]` | codes, not prose |
 | `player_disconnected` | `seat` | opponent notice |
 | `player_reconnected` | `seat` | |
 | `game_over` | `winnerId`, `stalemate`, `view` | `view` carries the final redacted state so both clients render the same closing board |
-| `error` | `code`, `message` | protocol-level problems, including `room_closed` (S1/S2: a reaped or abandoned room notifies every attached socket before dropping it) |
+| `error` | `code`, `message`, `reqId?` | protocol-level problems; `reqId` echoes the request that failed, absent for server-initiated errors including `room_closed` (S1/S2: a reaped or abandoned room notifies every attached socket before dropping it) |
 | `pong` | — | |
 
 `ReasonCode` values are the existing localized keys (`reason.duplicateCard`,
@@ -121,7 +124,8 @@ exactly as the server's own state assigned it) → the rehydrated melds are
 passed to the shared `canConfirmTurn(state, draft)` → on `ok`,
 `applyConfirmedTurn` runs, the card-conservation invariant (config-derived:
 `deckCount * (52 + jokersPerDeck)`, not a hardcoded 52) is re-asserted, `rev`
-increments, and the new view is broadcast to both seats. On failure the
+increments, and the new per-seat view is broadcast to every connected room
+seat. On failure the
 server replies `proposal_rejected` with the reason codes and **does not**
 mutate state.
 
@@ -186,6 +190,36 @@ and verified (`e2e-multiplayer/multiplayer.spec.ts` forces a socket drop and
 asserts the client reaches `'reconnecting'` then `'open'` with a resynced
 revision).
 
+### 4a. Desync detection
+
+`GameView.hash` is an FNV-1a digest (`stateHash`) over the parts of the state
+every seat can see: revision, active seat, turn number, phase, per-seat hand
+*counts*, draw-pile *count*, and the table's meld ids and card ids. Hidden card
+identities are deliberately excluded, so all seats at one revision produce the
+same digest and each client can recompute it from its own reconstruction.
+
+After applying a `state_sync`, the client recomputes the digest from its local
+`GameState` and compares. A mismatch means the client can no longer be trusted
+to render or propose: it locks input, shows a resyncing notice, and sends
+`resync`. The server answers with a fresh `room_state` + `state_sync` — it never
+reads or reconciles towards any client value. A stale-revision rejection
+triggers the same request, since it means the client acted on a state the server
+had already moved past. A second consecutive mismatch is accepted rather than
+looping: the authoritative snapshot is the best state available either way.
+
+### 4b. Liveness and stalled matches
+
+The server pings every socket every 15s and terminates one that has not ponged
+by the next probe, so a half-open connection releases its seat instead of
+holding it until TCP gives up. Inbound frames are capped at 16 KiB
+(`maxPayload`) so an oversized payload is dropped before `JSON.parse`.
+
+If the seat whose turn it is has been disconnected past the grace window and at
+least one other seat is still connected, the server plays that seat's only
+always-legal move — draw and end turn — so the remaining players are not stuck
+on a board that can never advance. It never melds on a player's behalf. A room
+with nobody connected is left to the sweep instead.
+
 ## 8. Error handling
 
 Every inbound frame is parsed inside a try/catch; a parse failure or a failed
@@ -206,7 +240,9 @@ and double-submit (revision + in-flight lock), malformed input (boundary
 validation), seed manipulation (server-chosen seed). Explicitly *not*
 mitigated in the alpha: denial of service, room-code brute force at scale,
 timing/behavioural collusion. Rate limiting is a per-connection message
-counter — enough to stop an accidental loop, not a determined attacker.
+counter — enough to stop an accidental loop, not a determined attacker opening
+many sockets. Frame size (16 KiB) and socket liveness are enforced at the
+server; a client-supplied state hash is never accepted, only ever sent.
 
 ## 10. Deployment notes
 
@@ -228,8 +264,8 @@ empty-pile stalemate, disconnect marking, room cleanup, and a malformed-message
 battery (non-JSON, wrong types, missing fields, oversized payloads, unknown
 types) asserting the server stays alive.
 
-**Redaction** — a test asserting that no message the server sends to seat 0
-contains any card id from seat 1's hand or from the draw pile.
+**Redaction** — tests assert that no view for any seat contains an opponent
+hand ID or a draw-pile ID.
 
 **End-to-end (Playwright, two contexts)** — launch server, create room, join by
 code, both ready, start, play a legal turn on one client and observe it on the
@@ -253,8 +289,8 @@ Files:
 - `src/net/viewToState.ts` — projects a `GameView` back into a local-shaped
   `GameState` (placeholder cards for hidden hands/draw pile) so the existing
   offline renderer can draw it unchanged.
-- `src/scenes/OnlineScene.ts` — the lobby scene (idle/lobby/error), including
-  `window.prompt()`-based join-code entry.
+- `src/scenes/OnlineScene.ts` — the lobby scene (idle/join/lobby/error),
+  including the in-canvas keyboard join-code entry.
 - `server/index.ts` — the WebSocket server process: message dispatch,
   broadcast helpers, health check, sweep interval, crash guards.
 - `server/rooms.ts` — `RoomManager`: room lifecycle, seat/ready state, seed

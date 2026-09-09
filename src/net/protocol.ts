@@ -5,7 +5,7 @@
  */
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Redacted view (docs/MULTIPLAYER_ARCHITECTURE.md §2)
@@ -33,11 +33,74 @@ export interface GameView {
   phase: 'playing' | 'finished';
   winnerId: string | null;
   config: RulesConfig;
+  /** Digest of the parts of the authoritative state every seat can see. A client recomputes it
+   * from its own reconstruction and asks for a resync on mismatch (docs/PHASE7_AUDIT.md #3). */
+  hash: string;
+}
+
+/** The seat-independent slice of a game that both sides can hash. Deliberately excludes card
+ * identities in hands and the draw pile — those differ per view, so they cannot be compared. */
+export interface StateDigestInput {
+  rev: number;
+  activeSeat: number;
+  turn: number;
+  phase: string;
+  handCounts: number[];
+  drawCount: number;
+  table: { id: string; cardIds: string[] }[];
+}
+
+/** FNV-1a over a canonical rendering of the digest input. Not cryptographic: this detects
+ * divergence between two honest peers, it is not a tamper check (the server never trusts a
+ * client-supplied hash — it only ever sends its own). */
+export function stateHash(input: StateDigestInput): string {
+  const canonical = [
+    input.rev,
+    input.activeSeat,
+    input.turn,
+    input.phase,
+    input.handCounts.join(','),
+    input.drawCount,
+    input.table.map((m) => `${m.id}:${m.cardIds.join('.')}`).join('|'),
+  ].join(';');
+  let h = 0x811c9dc5;
+  for (let i = 0; i < canonical.length; i++) {
+    h ^= canonical.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+/** Digest input for a redacted view, as a client sees it. */
+export function digestOfView(view: GameView): StateDigestInput {
+  return {
+    rev: view.rev,
+    activeSeat: view.activeSeat,
+    turn: view.turn,
+    phase: view.phase,
+    handCounts: view.players.map((p) => p.handCount),
+    drawCount: view.drawCount,
+    table: view.table.map((m) => ({ id: m.id, cardIds: m.cards.map((c) => c.id) })),
+  };
+}
+
+/** Digest input for a full or reconstructed `GameState` at revision `rev`. Uses only fields a
+ * client can know, so a client's reconstruction hashes to the server's value when in sync. */
+export function digestOfState(state: GameState, rev: number): StateDigestInput {
+  return {
+    rev,
+    activeSeat: state.activePlayerIndex,
+    turn: state.turn,
+    phase: state.phase,
+    handCounts: state.players.map((p) => p.hand.length),
+    drawCount: state.drawPile.length,
+    table: state.table.map((m) => ({ id: m.id, cardIds: m.cards.map((c) => c.id) })),
+  };
 }
 
 /** Pure: build the redacted view for `seat` from the authoritative state at revision `rev`. */
 export function buildView(state: GameState, seat: number, rev: number): GameView {
-  return {
+  const view: GameView = {
     seat,
     players: state.players.map((p, i) => ({
       seat: i,
@@ -54,7 +117,10 @@ export function buildView(state: GameState, seat: number, rev: number): GameView
     phase: state.phase,
     winnerId: state.winnerId,
     config: state.config,
+    hash: '',
   };
+  view.hash = stateHash(digestOfView(view));
+  return view;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +151,12 @@ export interface ReadyMsg {
   reqId: string;
   ready: boolean;
 }
+/** Host-only explicit lobby start. Keeps 3P/4P lobbies open until all invited seats are ready. */
+export interface StartGameMsg {
+  v: number;
+  type: 'start_game';
+  reqId: string;
+}
 export interface SubmitTurnMeld {
   id: string;
   cardIds: string[];
@@ -113,16 +185,25 @@ export interface PingMsg {
   type: 'ping';
   reqId: string;
 }
+/** Client-initiated recovery: "I believe my state is wrong, send me the authoritative one."
+ * Carries no state — the server never reconciles towards a client, it only re-sends. */
+export interface ResyncMsg {
+  v: number;
+  type: 'resync';
+  reqId: string;
+}
 
 export type ClientMessage =
   | CreateRoomMsg
   | JoinRoomMsg
   | LeaveRoomMsg
   | ReadyMsg
+  | StartGameMsg
   | SubmitTurnMsg
   | DrawEndTurnMsg
   | ReconnectMsg
-  | PingMsg;
+  | PingMsg
+  | ResyncMsg;
 
 // ---------------------------------------------------------------------------
 // Server -> client messages
@@ -188,6 +269,9 @@ export interface ErrorMsg {
   type: 'error';
   code: string;
   message: string;
+  /** Echoes the request that failed, when the failure was caused by one. Absent for
+   * server-initiated errors such as `room_closed`. */
+  reqId?: string;
 }
 export interface PongMsg {
   v: number;
@@ -256,6 +340,8 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
       if (typeof o.ready !== 'boolean') return { error: 'bad ready payload' };
       return { v: PROTOCOL_VERSION, type: 'ready', reqId, ready: o.ready };
     }
+    case 'start_game':
+      return { v: PROTOCOL_VERSION, type: 'start_game', reqId };
     case 'submit_turn': {
       if (!isRev(o.rev)) return { error: 'bad rev' };
       if (!Array.isArray(o.melds) || o.melds.length > MAX_MELDS) return { error: 'bad melds' };
@@ -289,6 +375,8 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
     }
     case 'ping':
       return { v: PROTOCOL_VERSION, type: 'ping', reqId };
+    case 'resync':
+      return { v: PROTOCOL_VERSION, type: 'resync', reqId };
     default:
       return { error: 'unknown type' };
   }

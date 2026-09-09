@@ -51,9 +51,11 @@ Full ruleset (authoritative): [`docs/RULES.md`](docs/RULES.md). Summary:
 
 - **Setup screen**: pick 2–4 seats and tap an AI avatar to cycle its
   personality before starting.
-- **Interactive tutorial**: a 10-step teach-by-doing walkthrough over a
+- **Interactive tutorial**: a 12-step teach-by-doing walkthrough over a
   scripted table — drag real cards, gated to the step's goal, with
-  skip/replay and full PT/EN localization.
+  skip/replay and full PT/EN localization. It teaches sets and runs, the
+  exact-size / unique-suit trinca constraints (by letting you hit them), and
+  jokers.
 - **Settings overlay**: mute, separate SFX/music volume sliders, reduced
   motion (disables cosmetic tweens), and language toggle — persisted to
   `localStorage`.
@@ -82,9 +84,9 @@ scene/state — used by the screenshot suite), `?ai=cida|juninho|bia|ze`
 (forces the single opponent's personality in a 2-player showcase game, for
 per-personality e2e captures).
 
-## Online Alpha
+## Online Beta
 
-2-player private rooms over WebSocket, added in 1.1.0. This is an **alpha**:
+2–4-player private rooms over WebSocket. Beta since 1.2.0 (wire protocol v3):
 see Known issues below before you invite anyone to try it.
 
 ### Run the server
@@ -104,7 +106,9 @@ See `SELF_HOSTING.md` for HTTPS/`wss://` deployments.
 
 The server is a plain Node + `ws` process, separate from the Vite dev
 server/static build. It exposes a health check at `GET /health` (`{"ok":true}`)
-and has no other HTTP routes. Local play (menu → JOGAR) never touches this
+and has no other HTTP routes. It caps inbound frames at 16 KiB, probes every
+socket with a WebSocket ping every 15s and terminates one that misses a probe,
+and rate-limits each connection. Local play (menu → JOGAR) never touches this
 process — the game works fully offline with the server down or not running at
 all; only the `ONLINE (ALFA)` menu path needs it.
 
@@ -113,11 +117,14 @@ all; only the `ONLINE (ALFA)` menu path needs it.
 1. Main menu → **ONLINE (ALFA)**.
 2. One player taps **CRIAR SALA** (create room) and gets a 5-character room
    code (vowel-free alphabet, unambiguous to read aloud); **COPIAR** copies it.
-3. The other player taps **ENTRAR** (join) and types the code into the
-   browser's `window.prompt()` dialog (see Known issues).
-4. Both players toggle **PRONTO** (ready); the match starts automatically the
-   moment both seats are ready — there is no separate "start" step.
-5. **VOLTAR** always works, in every lobby state, and leaves the room.
+3. The other player taps **ENTRAR** (join) and types the code on the in-canvas
+   code screen (letters/digits, `Backspace` to correct, `Enter` to join,
+   `Esc` to go back).
+4. Invite 1–3 friends. Every occupied seat toggles **PRONTO**; seat 0 then
+   taps **COMEÇAR**. Start is disabled until all occupied seats are ready.
+5. **VOLTAR** always works, in every lobby state, and leaves the room. When
+   START is greyed out the lobby states why (too few players, or someone is
+   not ready yet).
 
 Play itself is the same Mexe Mode flow as local play, with two differences:
 FEITO and COMPRAR become submit-and-wait (the button locks until the server
@@ -151,18 +158,19 @@ own hand, the opponent as a card count).
 
 ### Alpha limitations and known issues
 
-- **Join code entry uses a native `window.prompt()` dialog** — not a styled,
-  localized in-canvas text input. A deliberate alpha shortcut.
 - **Opponent avatar is the generic player icon online** — there are no
   accounts, so there's no avatar to show.
 - **No accounts, no matchmaking, no ranked play, no chat.**
-- **2 players only** — no 3/4-player online rooms.
+- **2–4 private seats only** — no spectators or public matchmaking. The host
+  starts once every occupied seat is ready.
 - **No online rematch** — the win screen online only offers MENU, never
   "MESMA PARTIDA"; starting another game means returning to the lobby and
   creating/joining a new room.
-- **No socket liveness probe** — the server never actively pings a silent
-  peer, so a half-open (not cleanly closed) connection can hold a seat until
-  the disconnect grace timer eventually notices, rather than immediately.
+- **Rate limiting is per connection, not per IP** — enough to stop a looping
+  client, not a determined attacker opening many sockets.
+- **A seat that stays disconnected is played for you** — after the 30s grace
+  the server draws and ends that seat's turn so the match keeps moving. It
+  never plays melds on your behalf.
 - **Reconnect is a single bounded retry, not a persistent retry loop** — on
   an unexpected disconnect the client attempts one reconnect shortly after;
   if that fails, it falls back to returning you to the local menu with a
@@ -174,7 +182,7 @@ own hand, the opponent as a card count).
 |---|---|
 | `npm run server` | Runs the WebSocket server (`server/index.ts` via `tsx`) |
 | `npm run test:server` | Runs the server unit suite (`tests/server`) only |
-| `npm run verify:multiplayer` | Builds, runs the two-client Playwright multiplayer flow (including a forced disconnect/reconnect), and gates on client console errors, server stderr, and illegal-proposal rejection |
+| `npm run verify:multiplayer` | Builds, runs 2P legal/reconnect safety, 3P/4P turn rotation, and the in-canvas join / hand-privacy / resync flows, then gates on client console errors, server stderr, illegal-proposal rejection, hand privacy and state-hash agreement |
 
 ## Controls
 
@@ -219,7 +227,7 @@ audio; a missing SFX file is a silent no-op.
 ## Test / verify
 
 ```bash
-npm run test        # Vitest — rules engine, Mexe Mode editor, AI, perf soak (112 tests)
+npm run test        # Vitest — rules engine, Mexe Mode editor, AI, play log, perf soak
 npm run lint        # eslint + tsc
 npm run screenshot  # npm run build, then Playwright: boots the game, drives
                     # Mexe Mode via the window.__MEXE__ debug API, captures
@@ -246,6 +254,20 @@ confirm an illegal table, and logs an explanation for every decision
 `src/rules` is a pure, fully-tested rules engine (no Phaser). `src/mexe-mode`
 holds the draft editor with undo/redo/reset. Phaser scenes only render state
 and forward intents. See `ARCHITECTURE.md`.
+
+## Playtesting
+
+Running a playtest session? See **[docs/PLAYTEST_GUIDE.md](docs/PLAYTEST_GUIDE.md)** — what to
+test, how to report a bug, and what the session play log does and does not contain.
+
+The build keeps a session-only, in-memory play log (turn durations, rejected-play reason codes,
+undo/reset counts, tutorial progress, disconnect/reconnect/desync counts). It is never written to
+disk and never sent anywhere; exporting it is an explicit action. Player names and reconnect
+tokens are stripped from any export. `?playlog=0` turns it off.
+
+Balance knobs live in one place — `DEFAULT_RULES` in `src/rules/types.ts`, documented in the
+**Configuration defaults** table of [docs/RULES.md](docs/RULES.md). The turn timer
+(`turnTimerSeconds`) is a declared hook and is **off**; it is not implemented.
 
 ## Contributing & license
 

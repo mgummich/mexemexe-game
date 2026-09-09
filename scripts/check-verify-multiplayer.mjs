@@ -58,6 +58,47 @@ if (
   console.error('verify:multiplayer: reconnect did not resync to the expected revision', rc);
 }
 
+for (const count of [3, 4]) {
+  const run = log.playerCountRuns?.[count];
+  const expectedSeats = Array.from({ length: count }, (_, i) => i);
+  if (!run || JSON.stringify(run.seats) !== JSON.stringify(expectedSeats) || !run.screenshot || !fs.existsSync(run.screenshot)) {
+    failed = true;
+    console.error(`verify:multiplayer: missing ${count}P stable-seat/rotation evidence`, run);
+  }
+}
+
+const kj = log.keyboardJoin;
+if (!kj?.code || !kj.screenshot || !fs.existsSync(kj.screenshot)) {
+  failed = true;
+  console.error('verify:multiplayer: missing in-canvas join-code evidence', kj);
+}
+
+const privacy = log.handPrivacy;
+if (!privacy?.ownRealCards || !privacy.opponentAllPlaceholders || !privacy.drawPileAllPlaceholders) {
+  failed = true;
+  console.error('verify:multiplayer: hand privacy not proven for the observing client', privacy);
+}
+
+const rs = log.resync;
+if (!rs || rs.revisionAfter !== rs.revisionBefore || rs.desyncs?.host !== 0 || rs.desyncs?.guest !== 0) {
+  failed = true;
+  console.error('verify:multiplayer: resync round-trip or state-hash agreement failed', rs);
+}
+
+// Phase 8 Wave D: public-demo tester-risk coverage (server-unavailable, bad room code, room
+// full) — fail loud if any of these named captures never made it to disk.
+const EXPECTED_DEMO_SHOTS = [
+  'docs/screenshots/mp-unreachable.png',
+  'docs/screenshots/mp-room-not-found.png',
+  'docs/screenshots/mp-room-full.png',
+];
+for (const shot of EXPECTED_DEMO_SHOTS) {
+  if (!fs.existsSync(shot)) {
+    failed = true;
+    console.error(`verify:multiplayer: missing public-demo screenshot ${shot}`);
+  }
+}
+
 console.log(`verify:multiplayer: room=${log.roomCode} seed=${log.seed} revisions=${JSON.stringify(log.revisionsObserved)}`);
 console.log(`verify:multiplayer: screenshots=${(log.screenshots ?? []).length}`);
 

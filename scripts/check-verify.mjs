@@ -25,6 +25,23 @@ for (const s of shots) {
   const vp = s.viewport ? `${s.viewport.width}x${s.viewport.height}` : 'unknown';
   console.log(`verify: ${s.name} scene=${s.scene} seed=${s.seed} fps=${s.fps} viewport=${vp} missingAssets=${s.missingAssets.length}`);
 }
+// Phase 8 Wave D: public-demo coverage must actually run, not just exist as source — fail loud
+// if any of these named captures never made it into the log (e.g. a test silently skipped).
+const EXPECTED_SHOTS = [
+  'tutorial-trinca',
+  'tutorial-joker',
+  'tutorial-complete',
+  'feito-invalid-explained',
+  'feito-invalid-explained-en',
+];
+const shotNames = new Set(shots.map((s) => s.name));
+for (const name of EXPECTED_SHOTS) {
+  if (!shotNames.has(name)) {
+    failed = true;
+    console.error(`verify: missing expected public-demo screenshot: ${name}`);
+  }
+}
+
 if (failed) process.exit(1);
 console.log('verify: OK');
 
@@ -38,7 +55,8 @@ if (fs.existsSync(STATUS)) {
     perShotFps: Object.fromEntries(shots.map((s) => [s.name, s.fps])),
     viewports,
     unitTests: status.tests?.unit ?? null,
-    e2eTests: `${shots.length}/${shots.length} pass`,
+    // Screenshot captures, not the e2e test count — a spec file can assert without capturing.
+    e2eScreenshots: shots.length,
   };
   fs.writeFileSync(STATUS, JSON.stringify(status, null, 2) + '\n');
   console.log('verify: wrote metrics to', STATUS);

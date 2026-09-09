@@ -3,6 +3,7 @@
  * socket failure surfaces as a status change plus an optional message, never
  * an exception the caller has to catch. See docs/PHASE5_CLIENT_PLAN.md.
  */
+import { playlog } from '../core/playlog';
 import { PROTOCOL_VERSION } from './protocol';
 import type { ClientMessage, ServerMessage, SubmitTurnMeld } from './protocol';
 
@@ -84,6 +85,7 @@ export class NetClient {
     }
     this.ws = ws;
     ws.onopen = () => {
+      if (isRetry) playlog.record('net:reconnect');
       this.reconnectAttempted = false;
       this.setStatus('open');
       this.startPing();
@@ -91,7 +93,17 @@ export class NetClient {
       if (token) this.sendRaw({ v: PROTOCOL_VERSION, type: 'reconnect', reqId: this.nextReqId(), token });
     };
     ws.onclose = () => {
+      // Only a socket that actually opened counts as a disconnect — a refused connection is a
+      // never-reachable server (handled below), and counting it would inflate the drop metric.
+      if (this.status !== 'connecting') playlog.record('net:disconnect');
       this.stopPing();
+      // Never got past 'connecting': the socket never opened at all (server not running/refused),
+      // not a mid-session drop. Distinct terminal status so the scene can show dedicated copy
+      // instead of the generic dropped-connection message.
+      if (this.status === 'connecting') {
+        this.setStatus('error', 'unreachable');
+        return;
+      }
       const token = sessionStorage.getItem(TOKEN_KEY);
       if (!this.explicitClose && token && !this.reconnectAttempted) {
         this.reconnectAttempted = true;
@@ -118,6 +130,7 @@ export class NetClient {
       }
       this.pushTrace('in', msg.type);
       if (msg.type === 'room_joined') sessionStorage.setItem(TOKEN_KEY, msg.token);
+      if (msg.type === 'proposal_rejected') playlog.record('net:reject', { reason: msg.reasons[0] ?? '' });
       const set = this.listeners.get(msg.type);
       if (set) for (const cb of set) cb(msg);
     };
@@ -168,6 +181,10 @@ export class NetClient {
     this.sendRaw({ v: PROTOCOL_VERSION, type: 'ready', reqId: this.nextReqId(), ready });
   }
 
+  startGame(): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'start_game', reqId: this.nextReqId() });
+  }
+
   /** Returns the reqId used, so a caller could correlate a later rejection if it ever needs to. */
   submitTurn(rev: number, melds: SubmitTurnMeld[]): string {
     const reqId = this.nextReqId();
@@ -179,6 +196,12 @@ export class NetClient {
     const reqId = this.nextReqId();
     this.sendRaw({ v: PROTOCOL_VERSION, type: 'draw_end_turn', reqId, rev });
     return reqId;
+  }
+
+  /** Ask the server to re-send authoritative state. Used when the local reconstruction's hash
+   * disagrees with the server's, or after a stale-revision rejection. */
+  requestResync(): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'resync', reqId: this.nextReqId() });
   }
 
   private startPing(): void {
