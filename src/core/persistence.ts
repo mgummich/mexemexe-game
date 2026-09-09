@@ -4,6 +4,8 @@ export interface Settings {
   muted: boolean;
   sfxVolume: number; // 0-100
   musicVolume: number; // 0-100
+  /** Ambient background music on/off, independent of the volume slider. */
+  musicEnabled: boolean;
   reducedMotion: boolean;
   locale: Locale;
   /** +25% UI text size, for readability. */
@@ -21,7 +23,7 @@ export interface Save {
   progress: Progress;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, reducedMotion: false, locale: 'pt', largeText: false };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, reducedMotion: false, locale: 'pt', largeText: false };
 export const DEFAULT_PROGRESS: Progress = { lastSeed: null, tutorialCompleted: false };
 const DEFAULT_SAVE: Save = { version: 1, settings: { ...DEFAULT_SETTINGS }, progress: { ...DEFAULT_PROGRESS } };
 

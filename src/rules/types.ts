@@ -3,9 +3,13 @@ export type Suit = (typeof SUITS)[number];
 export type Rank = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
 
 export interface Card {
-  id: string; // `${suit}-${rank}` — unique in a single 52-card deck
-  suit: Suit;
-  rank: Rank;
+  /** `${suit}-${rank}-d${deckId}` for naturals, `joker-d${deckId}-${n}` (n = 1-based) for jokers. */
+  id: string;
+  /** 0-based deck index. */
+  deckId: number;
+  suit: Suit | null; // null iff isJoker
+  rank: Rank | null; // null iff isJoker
+  isJoker: boolean;
 }
 
 export interface Meld {
@@ -21,6 +25,27 @@ export interface PlayerState {
   hand: Card[];
 }
 
+/** House-rule configuration for one game. `DEFAULT_RULES` is the only enabled variant today. */
+export interface RulesConfig {
+  deckCount: number; // default 2
+  jokersPerDeck: number; // default 2
+  maxGroupSize: number; // default 4 — TOTAL cards in a group, jokers included
+  groupUniqueSuits: boolean; // default false
+  firstMeldMinPoints: number; // default 0 = off (hook only, not enforced by the validator)
+  turnTimerSeconds: number; // default 0 = off
+  handSize: number; // default 7
+}
+
+export const DEFAULT_RULES: RulesConfig = {
+  deckCount: 2,
+  jokersPerDeck: 2,
+  maxGroupSize: 4,
+  groupUniqueSuits: false,
+  firstMeldMinPoints: 0,
+  turnTimerSeconds: 0,
+  handSize: 7,
+};
+
 export interface GameState {
   seed: number;
   players: PlayerState[];
@@ -30,8 +55,7 @@ export interface GameState {
   turn: number;
   winnerId: string | null;
   phase: 'playing' | 'finished';
-  /** Consecutive draw-with-empty-pile turns; full round => stalemate, fewest cards wins. */
-  consecutiveDraws: number;
+  config: RulesConfig;
 }
 
 /** Mexe Mode draft — may be temporarily invalid while editing. */
@@ -46,7 +70,15 @@ export type ReasonCode =
   | 'reason.noHandCard'
   | 'reason.cardMissing'
   | 'reason.duplicateCard'
-  | 'reason.foreignCard';
+  | 'reason.foreignCard'
+  | 'reason.groupTooLarge'
+  | 'reason.jokerUnassignable'
+  | 'reason.runWrap'
+  // Network-only reasons (server validation path, see docs/MULTIPLAYER_ARCHITECTURE.md §5)
+  | 'reason.notYourTurn'
+  | 'reason.staleRevision'
+  | 'reason.alreadySubmitted'
+  | 'reason.unknownCard';
 
 export interface MeldReason {
   meldId: string;
@@ -54,6 +86,17 @@ export interface MeldReason {
 }
 
 export type ConfirmResult = { ok: true } | { ok: false; reasons: ReasonCode[] };
+
+/** Where a joker lands within a valid meld. `suit` is null for group jokers. */
+export interface JokerAssignment {
+  cardId: string;
+  suit: Suit | null;
+  rank: Rank;
+}
+
+export type MeldAnalysis =
+  | { valid: true; kind: 'run' | 'group'; assignments: JokerAssignment[] }
+  | { valid: false; reason: ReasonCode };
 
 export class RulesError extends Error {
   constructor(

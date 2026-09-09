@@ -1,0 +1,522 @@
+import { describe, expect, it } from 'vitest';
+import { RoomManager } from '../../server/rooms';
+import { parseClientMessage, PROTOCOL_VERSION } from '../../src/net/protocol';
+import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
+import { createRng } from '../../src/core/rng';
+import type { Card } from '../../src/rules/types';
+
+function testManager(
+  seed = 1,
+  overrides: Partial<{ disconnectGraceMs: number; idleTimeoutMs: number; maxRooms: number; now: () => number }> = {},
+) {
+  let codeCounter = 0;
+  let tokenCounter = 0;
+  const t = 1000;
+  return new RoomManager({
+    now: () => t,
+    genCode: () => `CODE${++codeCounter}`,
+    genToken: () => `TOKEN${++tokenCounter}`,
+    genSeed: () => seed,
+    ...overrides,
+  });
+}
+
+/** createRoom fails only past MAX_ROOMS; every test below stays well under it, so unwrap the
+ * success case and fail loudly if that ever stops being true. */
+function mustCreate(mgr: RoomManager, name: string) {
+  const result = mgr.createRoom(name);
+  if (!result.ok) throw new Error('unexpected room_limit in test setup');
+  return result;
+}
+
+/** Deal a full room and return both hands + the started room's code/rev, using
+ * the same pure deal logic the server uses, so tests can pick real cards. */
+function dealFor(seed: number): { hands: Card[][] } {
+  const deck = shuffleDeck(createDeck(), createRng(seed));
+  return { hands: dealInitialHands(deck, 2).hands };
+}
+
+/** Find a seed whose seat-0 hand contains a same-rank triple, for legal-turn tests. */
+function findSeedWithSet(): { seed: number; hand: Card[] } {
+  for (let seed = 1; seed < 200; seed++) {
+    const { hands } = dealFor(seed);
+    const hand = hands[0]!.filter((c) => !c.isJoker);
+    const byRank = new Map<number, Card[]>();
+    for (const c of hand) {
+      const arr = byRank.get(c.rank!) ?? [];
+      arr.push(c);
+      byRank.set(c.rank!, arr);
+    }
+    for (const arr of byRank.values()) {
+      if (arr.length >= 3) return { seed, hand };
+    }
+  }
+  throw new Error('no seed found with a set in seat 0 hand (test setup bug)');
+}
+
+/** Find a seed whose seat-0 hand contains a joker plus a same-rank natural pair, so
+ * joker+pair is always a legal group regardless of suits (two decks make same-rank pairs common). */
+function findSeedWithJokerAndPair(): { seed: number; joker: Card; pair: [Card, Card]; rest: Card[] } {
+  for (let seed = 1; seed < 500; seed++) {
+    const { hands } = dealFor(seed);
+    const hand = hands[0]!;
+    const jokers = hand.filter((c) => c.isJoker);
+    if (jokers.length === 0) continue;
+    const naturals = hand.filter((c) => !c.isJoker);
+    const byRank = new Map<number, Card[]>();
+    for (const c of naturals) {
+      const arr = byRank.get(c.rank!) ?? [];
+      arr.push(c);
+      byRank.set(c.rank!, arr);
+    }
+    for (const arr of byRank.values()) {
+      if (arr.length >= 2) {
+        const pair: [Card, Card] = [arr[0]!, arr[1]!];
+        const rest = hand.filter((c) => c.id !== jokers[0]!.id && c.id !== pair[0].id && c.id !== pair[1].id);
+        return { seed, joker: jokers[0]!, pair, rest };
+      }
+    }
+  }
+  throw new Error('no seed found with a joker + same-rank pair in seat 0 hand (test setup bug)');
+}
+
+function startRoom(seed: number) {
+  const mgr = testManager(seed);
+  const { code } = mustCreate(mgr, 'Alice');
+  mgr.joinRoom(code, 'Bob');
+  mgr.setReady(code, 0, true);
+  const result = mgr.setReady(code, 1, true);
+  return { mgr, code, started: result.ok && result.started };
+}
+
+describe('room lifecycle', () => {
+  it('creates a room with seat 0', () => {
+    const mgr = testManager();
+    const { code, seat, token } = mustCreate(mgr, 'Alice');
+    expect(seat).toBe(0);
+    expect(token).toBeTruthy();
+    expect(mgr.getPlayers(code)).toEqual([{ seat: 0, name: 'Alice', ready: false, connected: true }]);
+  });
+
+  it('joins as seat 1', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    const result = mgr.joinRoom(code, 'Bob');
+    expect(result).toMatchObject({ ok: true, seat: 1 });
+    expect(mgr.getPlayers(code)).toHaveLength(2);
+  });
+
+  it('rejects a third join with room_full', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    const third = mgr.joinRoom(code, 'Carol');
+    expect(third).toEqual({ ok: false, error: 'room_full' });
+  });
+
+  it('rejects joining a room that does not exist', () => {
+    const mgr = testManager();
+    expect(mgr.joinRoom('NOPE', 'Bob')).toEqual({ ok: false, error: 'room_not_found' });
+  });
+
+  it('deals and sets rev=1 when both seats ready', () => {
+    const { mgr, code, started } = startRoom(42);
+    expect(started).toBe(true);
+    const room = mgr.getRoom(code);
+    expect(room?.rev).toBe(1);
+    expect(room?.state?.phase).toBe('playing');
+    expect(room?.state?.players).toHaveLength(2);
+    expect(room?.state?.players[0]!.hand).toHaveLength(7);
+  });
+
+  it('deals 7+7 from the full 108-card deck, leaving 94 in the draw pile', () => {
+    const { mgr, code } = startRoom(42);
+    const state = mgr.getRoom(code)!.state!;
+    expect(state.players[0]!.hand).toHaveLength(7);
+    expect(state.players[1]!.hand).toHaveLength(7);
+    expect(state.drawPile).toHaveLength(108 - 14);
+    const all = [...state.players.flatMap((p) => p.hand), ...state.drawPile];
+    expect(all).toHaveLength(108);
+    expect(new Set(all.map((c) => c.id)).size).toBe(108);
+  });
+
+  it('does not start until both seats are ready', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    const result = mgr.setReady(code, 0, true);
+    expect(result.ok && result.started).toBe(false);
+    expect(mgr.getRoom(code)?.state).toBeNull();
+  });
+
+  it('cleans up an empty room', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.leaveRoom(code, 0);
+    expect(mgr.getRoom(code)).toBeNull();
+  });
+});
+
+describe('submit_turn validation', () => {
+  it('accepts a full legal turn and increments rev', () => {
+    const { seed, hand } = findSeedWithSet();
+    const { mgr, code } = startRoom(seed);
+    const set = new Map<number, Card[]>();
+    for (const c of hand) {
+      const arr = set.get(c.rank!) ?? [];
+      arr.push(c);
+      set.set(c.rank!, arr);
+    }
+    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
+    const result = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
+    expect(result).toEqual({ ok: true, gameOver: false });
+    const room = mgr.getRoom(code)!;
+    expect(room.rev).toBe(2);
+    expect(room.state!.table).toHaveLength(1);
+    expect(room.state!.activePlayerIndex).toBe(1);
+    // Rehydration fidelity: the committed card carries the server's real suit/rank.
+    for (const c of triple) {
+      const onTable = room.state!.table[0]!.cards.find((tc) => tc.id === c.id)!;
+      expect(onTable).toEqual(c);
+    }
+  });
+
+  it('rejects an invalid meld (too small)', () => {
+    const { mgr, code } = startRoom(7);
+    const hand = mgr.getRoom(code)!.state!.players[0]!.hand;
+    const result = mgr.submitTurn(code, 0, 1, [
+      { id: 'm1', cardIds: [hand[0]!.id, hand[1]!.id] },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reasons).toContain('reason.meldTooSmall');
+    expect(mgr.getRoom(code)!.rev).toBe(1); // no mutation
+  });
+
+  it('rejects a duplicate card within the proposal', () => {
+    const { mgr, code } = startRoom(7);
+    const hand = mgr.getRoom(code)!.state!.players[0]!.hand;
+    const result = mgr.submitTurn(code, 0, 1, [
+      { id: 'm1', cardIds: [hand[0]!.id, hand[0]!.id, hand[1]!.id] },
+    ]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reasons).toContain('reason.duplicateCard');
+  });
+
+  it('rejects a proposal that returns a committed table card to hand', () => {
+    const { seed, hand } = findSeedWithSet();
+    const { mgr, code } = startRoom(seed);
+    const set = new Map<number, Card[]>();
+    for (const c of hand) set.set(c.rank!, [...(set.get(c.rank!) ?? []), c]);
+    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
+    mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
+    // Seat 1's turn: submit without including seat 0's committed meld.
+    const seat1Hand = mgr.getRoom(code)!.state!.players[1]!.hand;
+    const result = mgr.submitTurn(code, 1, 2, [{ id: 'm2', cardIds: [seat1Hand[0]!.id, seat1Hand[1]!.id, seat1Hand[2]!.id] }]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reasons).toContain('reason.cardMissing');
+  });
+
+  it('rejects a turn with zero hand cards played', () => {
+    const { seed, hand } = findSeedWithSet();
+    const { mgr, code } = startRoom(seed);
+    const set = new Map<number, Card[]>();
+    for (const c of hand) set.set(c.rank!, [...(set.get(c.rank!) ?? []), c]);
+    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
+    mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
+    // Seat 1 resubmits exactly the existing table, adding nothing from hand.
+    const result = mgr.submitTurn(code, 1, 2, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reasons).toContain('reason.noHandCard');
+  });
+
+  it('rejects an unknown/forged card id (server rehydrates by id, never trusts client cards)', () => {
+    const { mgr, code } = startRoom(7);
+    const hand = mgr.getRoom(code)!.state!.players[0]!.hand;
+    const result = mgr.submitTurn(code, 0, 1, [
+      { id: 'm1', cardIds: [hand[0]!.id, hand[1]!.id, 'spades-99'] },
+    ]);
+    expect(result).toEqual({ ok: false, reasons: ['reason.unknownCard'] });
+  });
+
+  it('rejects a proposal from the wrong player', () => {
+    const { mgr, code } = startRoom(7);
+    const seat1Hand = mgr.getRoom(code)!.state!.players[1]!.hand;
+    const result = mgr.submitTurn(code, 1, 1, [{ id: 'm1', cardIds: [seat1Hand[0]!.id] }]);
+    expect(result).toEqual({ ok: false, reasons: ['reason.notYourTurn'] });
+  });
+
+  it('rejects a stale revision', () => {
+    const { mgr, code } = startRoom(7);
+    const hand = mgr.getRoom(code)!.state!.players[0]!.hand;
+    const result = mgr.submitTurn(code, 0, 999, [{ id: 'm1', cardIds: [hand[0]!.id] }]);
+    expect(result).toEqual({ ok: false, reasons: ['reason.staleRevision'] });
+  });
+
+  it('rejects an INVALID joker meld proposal with a meld reason', () => {
+    const { seed, joker, rest } = findSeedWithJokerAndPair();
+    const { mgr, code } = startRoom(seed);
+    // joker + two naturals that share neither rank nor suit: no legal run or group.
+    const [a, b] = rest;
+    const result = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: [joker.id, a!.id, b!.id] }]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reasons.some((r) => r !== 'reason.notYourTurn' && r !== 'reason.staleRevision')).toBe(true);
+    }
+    expect(mgr.getRoom(code)!.rev).toBe(1); // no mutation
+  });
+
+  it('accepts a VALID joker meld proposal; the authoritative table holds the joker\'s own card id, not the assigned value', () => {
+    const { seed, joker, pair } = findSeedWithJokerAndPair();
+    const { mgr, code } = startRoom(seed);
+    const result = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: [joker.id, pair[0].id, pair[1].id] }]);
+    expect(result).toEqual({ ok: true, gameOver: false });
+    const table = mgr.getRoom(code)!.state!.table;
+    const meld = table.find((m) => m.id === 'm1')!;
+    const onTable = meld.cards.find((c) => c.id === joker.id)!;
+    expect(onTable).toEqual(joker); // identity preserved: still a joker, still this joker's id
+    expect(onTable.isJoker).toBe(true);
+  });
+
+  it('rejects a double submit (resubmitting the same already-applied rev)', () => {
+    const { seed, hand } = findSeedWithSet();
+    const { mgr, code } = startRoom(seed);
+    const set = new Map<number, Card[]>();
+    for (const c of hand) set.set(c.rank!, [...(set.get(c.rank!) ?? []), c]);
+    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
+    const first = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
+    expect(first.ok).toBe(true);
+    // Same seat, same rev, resubmitted: turn already advanced past both, so
+    // whichever check fires first (seat or rev), it must be rejected and the
+    // state must not mutate again.
+    const second = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
+    expect(second.ok).toBe(false);
+    expect(mgr.getRoom(code)!.rev).toBe(2);
+  });
+});
+
+describe('draw / end turn', () => {
+  it('draws a card, advances the turn, and increments rev', () => {
+    const { mgr, code } = startRoom(7);
+    const before = mgr.getRoom(code)!.state!;
+    const result = mgr.drawEndTurn(code, 0, 1);
+    expect(result).toEqual({ ok: true, gameOver: false });
+    const after = mgr.getRoom(code)!;
+    expect(after.rev).toBe(2);
+    expect(after.state!.players[0]!.hand.length).toBe(before.players[0]!.hand.length + 1);
+    expect(after.state!.activePlayerIndex).toBe(1);
+  });
+
+  it('resolves an empty-pile stalemate (fewest cards wins)', () => {
+    const { mgr, code } = startRoom(7);
+    // Drain the draw pile via alternating draws, then run past the
+    // consecutive-empty-draw threshold to trigger the stalemate.
+    let room = mgr.getRoom(code)!;
+    let rev = room.rev;
+    while (room.state!.drawPile.length > 0) {
+      const active = room.state!.activePlayerIndex;
+      const result = mgr.drawEndTurn(code, active, rev);
+      expect(result.ok).toBe(true);
+      rev++;
+      room = mgr.getRoom(code)!;
+    }
+    let gameOver = false;
+    for (let i = 0; i < 5 && !gameOver; i++) {
+      const active = room.state!.activePlayerIndex;
+      const result = mgr.drawEndTurn(code, active, rev);
+      expect(result.ok).toBe(true);
+      if (result.ok) gameOver = result.gameOver;
+      rev++;
+      room = mgr.getRoom(code)!;
+    }
+    expect(gameOver).toBe(true);
+    expect(room.state!.phase).toBe('finished');
+    expect(room.state!.winnerId).not.toBeNull();
+  });
+
+  it('conservation holds across a submit + draw sequence', () => {
+    const { seed, hand } = findSeedWithSet();
+    const { mgr, code } = startRoom(seed);
+    const set = new Map<number, Card[]>();
+    for (const c of hand) set.set(c.rank!, [...(set.get(c.rank!) ?? []), c]);
+    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
+    const submitResult = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
+    expect(submitResult.ok).toBe(true);
+    const afterSubmit = mgr.getRoom(code)!.state!;
+    const drawResult = mgr.drawEndTurn(code, 1, 2);
+    expect(drawResult.ok).toBe(true);
+    const afterDraw = mgr.getRoom(code)!.state!;
+    for (const state of [afterSubmit, afterDraw]) {
+      const all = [...state.players.flatMap((p) => p.hand), ...state.table.flatMap((m) => m.cards), ...state.drawPile];
+      expect(all).toHaveLength(108);
+      expect(new Set(all.map((c) => c.id)).size).toBe(108);
+    }
+  });
+
+  it('rejects draw_end_turn from the wrong player or a stale rev', () => {
+    const { mgr, code } = startRoom(7);
+    expect(mgr.drawEndTurn(code, 1, 1)).toEqual({ ok: false, reasons: ['reason.notYourTurn'] });
+    expect(mgr.drawEndTurn(code, 0, 5)).toEqual({ ok: false, reasons: ['reason.staleRevision'] });
+  });
+});
+
+describe('disconnect / reconnect', () => {
+  it('marks a seat disconnected and lets it reconnect with the right token', () => {
+    const mgr = testManager();
+    const { code, token } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    mgr.disconnect(code, 0);
+    expect(mgr.getPlayers(code)).toContainEqual({ seat: 0, name: 'Alice', ready: false, connected: false });
+
+    const result = mgr.reconnect(token);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.seat).toBe(0);
+    expect(mgr.getPlayers(code)).toContainEqual({ seat: 0, name: 'Alice', ready: false, connected: true });
+  });
+
+  it('rejects reconnect with a bad token', () => {
+    const mgr = testManager();
+    mustCreate(mgr, 'Alice');
+    expect(mgr.reconnect('not-a-real-token')).toEqual({ ok: false, error: 'invalid_token' });
+  });
+});
+
+describe('lifecycle and liveness (docs/PHASE5_SERVER_REVIEW.md S1-S5)', () => {
+  it('S2: leaving mid-game ends the room for the survivor instead of leaving a dead board', () => {
+    const { mgr, code } = startRoom(7);
+    const result = mgr.leaveRoom(code, 1);
+    expect(result).toEqual({ roomClosed: true });
+    expect(mgr.getRoom(code)).toBeNull();
+  });
+
+  it('leaving a lobby (no game started) with a seat still occupied does not close the room', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    const result = mgr.leaveRoom(code, 1);
+    expect(result).toEqual({ roomClosed: false });
+    expect(mgr.getRoom(code)).not.toBeNull();
+  });
+
+  it('S1: sweep reports codes for rooms with every seat disconnected past the grace window (the caller must notify+detach those sockets)', () => {
+    let now = 1000;
+    const mgr = testManager(7, { now: () => now, disconnectGraceMs: 1000 });
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    mgr.disconnect(code, 0);
+    mgr.disconnect(code, 1);
+    now += 2000; // past the 1000ms grace
+    const removed = mgr.sweep();
+    expect(removed).toContain(code);
+    expect(mgr.getRoom(code)).toBeNull();
+  });
+
+  it('S3: a live lobby with both seats connected is never reaped by the idle timeout', () => {
+    let now = 1000;
+    const mgr = testManager(7, { now: () => now, idleTimeoutMs: 1000 });
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    now += 10 * 60_000; // way past idleTimeoutMs, but both seats stay connected
+    const removed = mgr.sweep();
+    expect(removed).not.toContain(code);
+    expect(mgr.getRoom(code)).not.toBeNull();
+  });
+
+  it('S3: idle timeout still applies as a backstop once nobody is connected', () => {
+    let now = 1000;
+    const mgr = testManager(7, { now: () => now, idleTimeoutMs: 1000, disconnectGraceMs: 60_000 });
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    mgr.disconnect(code, 0);
+    mgr.disconnect(code, 1);
+    now += 2000; // past idleTimeoutMs, but not past the (much longer) disconnect grace
+    const removed = mgr.sweep();
+    expect(removed).toContain(code);
+  });
+
+  it('S5: createRoom rejects with room_limit once at capacity', () => {
+    const mgr = testManager(1, { maxRooms: 2 });
+    expect(mustCreate(mgr, 'A').code).toBeTruthy();
+    expect(mustCreate(mgr, 'B').code).toBeTruthy();
+    const third = mgr.createRoom('C');
+    expect(third).toEqual({ ok: false, error: 'room_limit' });
+    expect(mgr.roomCount()).toBe(2);
+  });
+
+  it('S6: submitting an opponent-hand card id is rejected as unknownCard (not relying on the downstream foreignCard check)', () => {
+    const { mgr, code } = startRoom(7);
+    const opponentHand = mgr.getRoom(code)!.state!.players[1]!.hand;
+    const ownHand = mgr.getRoom(code)!.state!.players[0]!.hand;
+    const result = mgr.submitTurn(code, 0, 1, [
+      { id: 'm1', cardIds: [ownHand[0]!.id, opponentHand[0]!.id] },
+    ]);
+    expect(result).toEqual({ ok: false, reasons: ['reason.unknownCard'] });
+  });
+});
+
+describe('redaction', () => {
+  it('never includes seat 1 hand ids or draw-pile ids in seat 0 view', () => {
+    const { mgr, code } = startRoom(7);
+    const room = mgr.getRoom(code)!;
+    const hiddenIds = [
+      ...room.state!.players[1]!.hand.map((c) => c.id),
+      ...room.state!.drawPile.map((c) => c.id),
+    ];
+    const view = mgr.getView(code, 0)!;
+    const serialized = JSON.stringify(view);
+    for (const id of hiddenIds) {
+      expect(serialized.includes(`"${id}"`)).toBe(false);
+    }
+    expect(view.players.find((p) => p.seat === 1)!.hand).toBeUndefined();
+    expect(view.drawCount).toBe(room.state!.drawPile.length);
+  });
+});
+
+describe('parseClientMessage boundary validation', () => {
+  const good = (extra: Record<string, unknown>) => JSON.stringify({ v: PROTOCOL_VERSION, reqId: 'r1', ...extra });
+
+  it('never throws and rejects malformed input', () => {
+    const cases = [
+      'not json at all',
+      '{}',
+      '[]',
+      'null',
+      JSON.stringify({ v: 1, type: 'ping', reqId: 'r1' }), // wrong (stale) protocol version
+      JSON.stringify({ v: PROTOCOL_VERSION, type: 'nonsense_type', reqId: 'r1' }), // unknown type
+      JSON.stringify({ v: PROTOCOL_VERSION, type: 'ready', reqId: 'r1', ready: 'yes' }), // wrong field type
+      JSON.stringify({ v: PROTOCOL_VERSION, type: 'submit_turn', reqId: 'r1', rev: 'one', melds: [] }), // bad rev type
+      good({ type: 'submit_turn', rev: 1 }), // missing melds
+      good({ type: 'submit_turn', rev: 1, melds: Array.from({ length: 61 }, () => ({ id: 'm', cardIds: [] })) }), // oversized
+      good({
+        type: 'submit_turn',
+        rev: 1,
+        melds: [{ id: 'm', cardIds: Array.from({ length: 61 }, (_, i) => `c${i}`) }],
+      }), // oversized cardIds
+      good({ type: 'join_room', code: 123, name: 'Bob' }), // wrong type for code
+    ];
+    for (const raw of cases) {
+      expect(() => parseClientMessage(raw)).not.toThrow();
+      const result = parseClientMessage(raw);
+      expect('error' in result).toBe(true);
+    }
+  });
+
+  it('drops any extra client-supplied fields on a meld (ids only ever cross the wire)', () => {
+    const raw = JSON.stringify({
+      v: PROTOCOL_VERSION,
+      type: 'submit_turn',
+      reqId: 'r1',
+      rev: 1,
+      melds: [{ id: 'm1', cardIds: ['hearts-3-d0'], suit: 'spades', rank: 9 }],
+    });
+    const result = parseClientMessage(raw);
+    expect('error' in result).toBe(false);
+    if (!('error' in result) && result.type === 'submit_turn') {
+      expect(result.melds).toEqual([{ id: 'm1', cardIds: ['hearts-3-d0'] }]);
+    }
+  });
+
+  it('accepts a well-formed ping', () => {
+    const result = parseClientMessage(JSON.stringify({ v: PROTOCOL_VERSION, type: 'ping', reqId: 'r1' }));
+    expect(result).toEqual({ v: PROTOCOL_VERSION, type: 'ping', reqId: 'r1' });
+  });
+});

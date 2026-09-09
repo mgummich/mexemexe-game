@@ -42,12 +42,34 @@ Hard rule: `rules/` is 100% pure and deterministic — no Phaser, no DOM, no Dat
 
 ## Data model
 
+Rules: [`docs/RULES.md`](docs/RULES.md) (authoritative). Two 54-card decks
+(108 cards, 4 jokers). `suit`/`rank` are nullable — null iff `isJoker` — so
+the type checker forces every card-face read site to handle jokers.
+
 ```ts
 type Suit = 'hearts' | 'diamonds' | 'clubs' | 'spades';
-type Rank = 1..13;                       // 1 = Ace (LOW ONLY for MVP)
-interface Card { id: string; suit: Suit; rank: Rank }   // id = `${suit}-${rank}` (single 52 deck → unique)
+type Rank = 1..13;                       // 1 = Ace, low or high depending on meld
+interface Card {
+  id: string;        // `${suit}-${rank}-d${deckId}` | `joker-d${deckId}-${n}`
+  deckId: number;     // which of the two decks this card came from
+  suit: Suit | null;  // null iff isJoker
+  rank: Rank | null;  // null iff isJoker
+  isJoker: boolean;
+}
 interface Meld { id: string; cards: Card[] }
 interface PlayerState { id: string; name: string; isAi: boolean; aiType?: 'simple'|'rearranger'; hand: Card[] }
+
+/** House-rule hooks. DEFAULT_RULES is the only enabled variant. */
+interface RulesConfig {
+  deckCount: number;          // default 2
+  jokersPerDeck: number;      // default 2
+  maxGroupSize: number;       // default 4, jokers included
+  groupUniqueSuits: boolean;  // default false
+  firstMeldMinPoints: number; // default 0 = off
+  turnTimerSeconds: number;   // default 0 = off
+  handSize: number;           // default 7
+}
+
 interface GameState {
   seed: number;
   players: PlayerState[];
@@ -57,6 +79,7 @@ interface GameState {
   turn: number;
   winnerId: string | null;
   phase: 'playing' | 'finished';
+  config: RulesConfig;
 }
 ```
 
@@ -74,28 +97,50 @@ interface DraftState {
 ## Rules API (pure, `/src/rules`)
 
 ```ts
-createDeck(): Card[]
+createDeck(config?: RulesConfig): Card[]       // config-sized: default 2×54 = 108 cards, 4 jokers
 shuffleDeck(deck, rng): Card[]
 dealInitialHands(deck, playerCount, handSize=7): { hands: Card[][]; drawPile: Card[] }
-isValidRun(cards): boolean          // 3+ same suit, consecutive ranks, ace low, no wrap
-isValidSet(cards): boolean          // 3+ same rank, (suits may repeat? no — single deck ⇒ distinct)
-isValidMeld(cards): boolean
-validateTable(melds): boolean
-getInvalidMeldReasons(melds): MeldReason[]   // { meldId, reason: i18n key, detail }
+analyzeMeld(cards, config?): MeldAnalysis
+  // single source of truth for meld validity — tries run then group, returns
+  // { valid: true, kind: 'run'|'group', assignments: JokerAssignment[] } or
+  // { valid: false, reason: ReasonCode }. Every other validator is a thin
+  // wrapper around this: isValidRun/isValidGroup/isValidMeld/validateTable/
+  // getInvalidMeldReasons all call analyzeMeld under the hood.
+isValidRun(cards, config?): boolean            // 3+ same suit, consecutive ranks, ace low OR high (never both), no wrap, jokers fill gaps
+isValidGroup(cards, config?): boolean          // 3+ same rank, repeated suits allowed (two decks), capped at config.maxGroupSize
+isValidMeld(cards, config?): boolean
+validateTable(melds, config?): boolean
+getInvalidMeldReasons(melds, config?): MeldReason[]   // { meldId, reason: i18n key }
 canConfirmTurn(committed: GameState, draft: DraftState): ConfirmResult
-  // checks: all draft melds valid; ≥1 hand card added; card conservation
-  // (multiset of draft cards == committed table cards + played hand cards);
-  // no committed table card missing (no return to hand); no duplicate/foreign ids
+  // checks: all draft melds valid (analyzeMeld, using state.config); ≥1 hand
+  // card added; card conservation (multiset of draft cards == committed
+  // table cards + played hand cards); no committed table card missing (no
+  // return to hand); no duplicate/foreign ids
 applyConfirmedTurn(state, draft): GameState   // returns new state, advances turn, checks win
-drawAndEndTurn(state): GameState
+drawAndEndTurn(state): GameState              // draw pile empty ⇒ game ends immediately, no draw
 checkWinner(state): string | null
-serializeGameState(state): string
-deserializeGameState(json): GameState         // validates, throws on corrupt
+fewestCardsWinner(state): string              // used when the draw pile runs out
+serializeGameState(state): string             // GAME_STATE_VERSION = 2 envelope
+deserializeGameState(json): GameState         // validates, throws on corrupt; rejects v1 payloads
 ```
 
 `ConfirmResult = { ok: true } | { ok: false; reasons: ReasonCode[] }` — ReasonCodes are i18n keys so FEITO button shows exact translated reason.
 
-**Stalemate rule (MVP addition):** with an empty draw pile, a full round of pass turns (`consecutiveDraws >= playerCount`) ends the game; fewest cards in hand wins, ties go to the earliest seat. Needed because ace-low single-deck games can genuinely deadlock.
+**Joker assignments.** `MeldAnalysis` (valid case) carries `JokerAssignment[]`
+— `{ cardId, suit: Suit | null, rank }` — the concrete card each joker in a
+valid meld stands for. This is derived on demand from the run/group window
+search, never stored in place of the card: jokers keep their own identity on
+the table and in save/network data.
+
+**Draw-pile exhaustion ends the game immediately.** No stalemate-by-passing
+rule — `drawAndEndTurn` on an empty pile returns `phase: 'finished'` with
+`fewestCardsWinner`, ties broken by earliest seat, on the very draw that would
+have emptied it further. `consecutiveDraws` (the old MVP's full-round-of-passes
+counter) no longer exists.
+
+**Card conservation.** `deserializeGameState` and the server's
+`assertConservation` both derive the expected total from
+`config.deckCount * (52 + config.jokersPerDeck)` rather than a hardcoded 52.
 
 ## Turn lifecycle
 
@@ -120,7 +165,10 @@ Scope: Mexe Mode draft only (committed turns are final, like real table play). S
 ## Validator / FEITO gate
 
 FEITO enabled iff `canConfirmTurn().ok`. Otherwise disabled with first reason rendered:
-- `reason.meldTooSmall`, `reason.notARun`, `reason.notASet`, `reason.mixedMeld`
+- `reason.meldTooSmall`, `reason.notAMeld`
+- `reason.groupTooLarge` (group over `config.maxGroupSize`)
+- `reason.jokerUnassignable` (a meld's jokers have no legal card to stand for, or it's all jokers with no natural anchor)
+- `reason.runWrap` (ace used as both low and high in the same run, e.g. K-A-2)
 - `reason.noHandCard` (must add ≥1 from hand)
 - `reason.cardMissing` (table card can't leave table)
 - `reason.duplicateCard`, `reason.foreignCard`

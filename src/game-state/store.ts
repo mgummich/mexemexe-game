@@ -7,7 +7,8 @@ import {
   drawAndEndTurn,
   shuffleDeck,
 } from '../rules/rules';
-import type { DraftState, GameState, PlayerState } from '../rules/types';
+import { DEFAULT_RULES } from '../rules/types';
+import type { DraftState, GameState, PlayerState, RulesConfig } from '../rules/types';
 
 export interface PlayerConfig {
   name: string;
@@ -15,10 +16,14 @@ export interface PlayerConfig {
   aiType?: 'simple' | 'rearranger';
 }
 
-export function createNewGame(seed: number, playerConfigs: PlayerConfig[], handSize = 7): GameState {
+export function createNewGame(
+  seed: number,
+  playerConfigs: PlayerConfig[],
+  config: RulesConfig = DEFAULT_RULES,
+): GameState {
   const rng = createRng(seed);
-  const deck = shuffleDeck(createDeck(), rng);
-  const { hands, drawPile } = dealInitialHands(deck, playerConfigs.length, handSize);
+  const deck = shuffleDeck(createDeck(config), rng);
+  const { hands, drawPile } = dealInitialHands(deck, playerConfigs.length, config.handSize);
   const players: PlayerState[] = playerConfigs.map((cfg, i) => ({
     id: `p${i}`,
     name: cfg.name,
@@ -35,7 +40,7 @@ export function createNewGame(seed: number, playerConfigs: PlayerConfig[], handS
     turn: 1,
     winnerId: null,
     phase: 'playing',
-    consecutiveDraws: 0,
+    config,
   };
 }
 

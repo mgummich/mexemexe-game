@@ -52,7 +52,7 @@ export const settings = {
     return save.settings.muted ? 0 : save.settings.sfxVolume / 100;
   },
   musicVolume(): number {
-    return save.settings.muted ? 0 : save.settings.musicVolume / 100;
+    return save.settings.muted || !save.settings.musicEnabled ? 0 : save.settings.musicVolume / 100;
   },
   /** 1 normally, 0 when reduced motion is on — multiply cosmetic tween durations by this to make them instant. */
   motionScale(): number {

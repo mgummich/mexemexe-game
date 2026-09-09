@@ -13,7 +13,7 @@ export const SUIT_COLOR: Record<Suit, number> = {
   spades: 0x2b2b33,
 };
 
-const SUIT_CHAR: Record<Suit, string> = {
+export const SUIT_CHAR: Record<Suit, string> = {
   hearts: '♥',
   diamonds: '♦',
   clubs: '♣',
@@ -24,7 +24,8 @@ export const RANK_LABEL: Record<number, string> = {
   1: 'A', 11: 'J', 12: 'Q', 13: 'K',
 };
 
-export function rankLabel(rank: number): string {
+export function rankLabel(rank: number | null): string {
+  if (rank === null) return '';
   return RANK_LABEL[rank] ?? String(rank);
 }
 
@@ -41,6 +42,7 @@ function refresh(scene: Phaser.Scene, key: string): void {
 
 export function makeFallback(scene: Phaser.Scene, key: string, w: number, h: number): void {
   if (key.startsWith('card-back')) return makeCardBack(scene, key, w, h);
+  if (key === 'card-joker') return makeJokerFace(scene, key, w, h);
   if (key.startsWith('card-')) {
     const [, suit, rank] = key.split('-');
     return makeCardFace(scene, key, suit as Suit, Number(rank), w, h);
@@ -67,6 +69,23 @@ function makeCardFace(scene: Phaser.Scene, key: string, suit: Suit, rank: number
   ctx.fillText(SUIT_CHAR[suit], 2, 11);
   ctx.font = '12px monospace';
   ctx.fillText(SUIT_CHAR[suit], w - 12, h - 14);
+  refresh(scene, key);
+}
+
+function makeJokerFace(scene: Phaser.Scene, key: string, w: number, h: number): void {
+  // Purple body + gold star, not the cream rank-card look — reads as "wildcard" without text.
+  const ctx = canvasFor(scene, key, w, h);
+  ctx.fillStyle = '#3a1a5c';
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = '#f7d23e';
+  ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  ctx.fillStyle = '#f7d23e';
+  ctx.font = `bold ${Math.round(w * 0.4)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('★', w / 2, h * 0.4);
+  ctx.font = `bold ${Math.max(5, Math.round(w * 0.22))}px monospace`;
+  ctx.fillText('JOKER', w / 2, h * 0.82);
   refresh(scene, key);
 }
 

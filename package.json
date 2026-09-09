@@ -1,7 +1,7 @@
 {
   "name": "mexe-game",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,16 +9,22 @@
     "preview": "vite preview --port 4173 --strictPort",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint src tests e2e && tsc --noEmit",
+    "test:server": "vitest run tests/server",
+    "server": "tsx server/index.ts",
+    "lint": "eslint src tests e2e e2e-multiplayer server && tsc --noEmit",
     "screenshot": "npm run build && playwright test e2e/screenshot.spec.ts",
-    "verify": "npm run test && npm run lint && npm run screenshot && node scripts/check-verify.mjs"
+    "verify": "npm run test && npm run lint && npm run screenshot && node scripts/check-verify.mjs",
+    "verify:multiplayer": "npm run build && playwright test -c playwright.multiplayer.config.ts && node scripts/check-verify-multiplayer.mjs"
   },
   "dependencies": {
-    "phaser": "^3.87.0"
+    "phaser": "^3.87.0",
+    "tsx": "^4.23.13",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
     "eslint": "^9.16.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.18.0",

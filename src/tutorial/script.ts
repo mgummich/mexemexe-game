@@ -29,8 +29,15 @@ function meldHas(melds: readonly Meld[], ids: string[]): boolean {
   return melds.some((m) => ids.every((id) => m.cards.some((c) => c.id === id)));
 }
 
-const NINE_IDS = ['hearts-9', 'spades-9', 'clubs-9'];
-const RUN_IDS = ['diamonds-3', 'diamonds-4', 'diamonds-5'];
+const NINE_IDS = ['hearts-9-d0', 'spades-9-d0', 'clubs-9-d0'];
+/**
+ * Corrective move, allowed on every step that puts cards on the table. Without it a learner who
+ * drops the nines into three separate groups is stuck: they can neither drag them together nor
+ * pull them back to hand, because only hand-to-table moves were permitted. Progress is still
+ * driven by each step's `isComplete`, so allowing corrections cannot skip a lesson.
+ */
+const CORRECT: StepAction = { type: 'moveTableCard' };
+const RUN_IDS = ['diamonds-3-d0', 'diamonds-4-d0', 'diamonds-5-d0'];
 
 export const TUTORIAL_STEPS: TutorialStep[] = [
   {
@@ -42,23 +49,23 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'set',
     textKey: 'tutorial.step2',
-    allowed: NINE_IDS.map((cardId) => ({ type: 'playHandCard' as const, cardId })),
+    allowed: [...NINE_IDS.map((cardId) => ({ type: 'playHandCard' as const, cardId })), CORRECT],
     highlightCardIds: NINE_IDS,
     isComplete: ({ draft }) => !!draft && meldHas(draft.melds, NINE_IDS),
   },
   {
     id: 'run',
     textKey: 'tutorial.step3',
-    allowed: RUN_IDS.map((cardId) => ({ type: 'playHandCard' as const, cardId })),
+    allowed: [...RUN_IDS.map((cardId) => ({ type: 'playHandCard' as const, cardId })), CORRECT],
     highlightCardIds: RUN_IDS,
     isComplete: ({ draft }) => !!draft && meldHas(draft.melds, RUN_IDS),
   },
   {
     id: 'extend',
     textKey: 'tutorial.step4',
-    allowed: [{ type: 'playHandCard', cardId: 'diamonds-6' }],
-    highlightCardIds: ['diamonds-6'],
-    isComplete: ({ draft }) => !!draft && meldHas(draft.melds, [...RUN_IDS, 'diamonds-6']),
+    allowed: [{ type: 'playHandCard', cardId: 'diamonds-6-d0' }, CORRECT],
+    highlightCardIds: ['diamonds-6-d0'],
+    isComplete: ({ draft }) => !!draft && meldHas(draft.melds, [...RUN_IDS, 'diamonds-6-d0']),
   },
   {
     id: 'mexe-explain',
@@ -69,8 +76,8 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'rebuild',
     textKey: 'tutorial.step6',
-    allowed: [{ type: 'moveTableCard', cardId: 'clubs-9' }],
-    highlightCardIds: ['clubs-9'],
+    allowed: [CORRECT],
+    highlightCardIds: ['clubs-9-d0'],
     isComplete: ({ draft }) => !!draft && !meldHas(draft.melds, NINE_IDS),
   },
   {
@@ -82,7 +89,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'feito',
     textKey: 'tutorial.step8',
-    allowed: [{ type: 'moveTableCard', cardId: 'clubs-9' }, { type: 'feito' }],
+    allowed: [CORRECT, { type: 'feito' }],
     highlightButtons: ['feito'],
     isComplete: ({ state }) => state.turn >= 2,
   },
@@ -98,11 +105,12 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     id: 'win',
     textKey: 'tutorial.step10',
     allowed: [
-      { type: 'playHandCard', cardId: 'diamonds-9' },
-      { type: 'playHandCard', cardId: 'diamonds-7' },
+      { type: 'playHandCard', cardId: 'diamonds-9-d0' },
+      { type: 'playHandCard', cardId: 'diamonds-7-d0' },
+      CORRECT,
       { type: 'feito' },
     ],
-    highlightCardIds: ['diamonds-9', 'diamonds-7'],
+    highlightCardIds: ['diamonds-9-d0', 'diamonds-7-d0'],
     highlightButtons: ['feito'],
     isComplete: ({ state }) => state.winnerId !== null,
   },

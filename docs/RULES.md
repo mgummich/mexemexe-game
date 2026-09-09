@@ -1,0 +1,89 @@
+# Mexe-Mexe — Final Rules
+
+The authoritative ruleset implemented by MEXE!. Where code and this document disagree, this
+document wins and the code is a bug.
+
+## Setup
+
+- **Players:** 2 or more (this build seats 2–4).
+- **Deck:** two 54-card decks = **108 cards**. Each 54-card deck is the 52 standard cards plus
+  **2 jokers**, so a game contains **4 jokers**.
+- **Deal:** 7 cards to each player.
+- **Draw pile:** every undealt card, face down.
+- **No discard pile.** Nothing is ever thrown away.
+- Turn order is clockwise.
+
+Two decks means the same card exists twice (two ♥7s). They are distinct cards; the engine keeps
+them apart by deck id.
+
+## Goal
+
+Be the first player to empty your hand.
+
+If the draw pile runs out before anyone empties their hand, the game ends there and the player
+with the **fewest cards in hand** wins (a tie goes to the earliest seat).
+
+## Melds
+
+A meld is **3 or more cards**. Two kinds:
+
+### Runs (sequences)
+
+- 3+ cards of consecutive rank, **all the same suit**.
+- The ace may be **low** (A-2-3) or **high** (Q-K-A).
+- **No wrap:** K-A-2 is not a run. An ace is either low or high in a given meld, never both.
+
+### Groups (trincas)
+
+- 3+ cards of the **same rank**.
+- Suits may repeat, because there are two decks — ♠9 ♠9 ♥9 is a legal group as long as the two
+  ♠9s come from different decks.
+- Maximum group size is 4 cards by default (configurable house rule).
+
+### Jokers
+
+- A joker is a wildcard in a run or a group.
+- Every joker in a valid meld must have a concrete interpretation — the exact card it stands for.
+  A meld whose jokers cannot all be assigned a legal card is invalid, even if the count looks right.
+- A meld must contain at least one natural (non-joker) card; a pile of jokers has no suit or rank
+  to stand for.
+- Jokers keep their own identity on the table and in save/network data. The interpretation is
+  derived, never stored in place of the card.
+
+## Turns
+
+On your turn:
+
+1. You may rearrange the table freely — **all melds on the table are shared**. Split them, merge
+   them, move cards between them.
+2. To confirm your play you must add **at least one card from your hand** to the table.
+3. When you confirm, **every** meld on the table must be valid.
+4. Cards that were already on the table when your turn began may never move into your hand or the
+   draw pile. Cards *you* played this turn may be taken back until you confirm.
+5. If you do not confirm a play, you **draw one card** and your turn ends.
+
+**Draw only happens when you pass, cannot play, or will not play.** There is no draw at the start
+of a turn.
+
+If the optional turn timer is enabled and it expires with an unconfirmed or invalid table, the
+table reverts to how it looked at the start of your turn, you draw one card, and your turn ends.
+
+## House rules (all off by default)
+
+The engine carries hooks for these variants; none is enabled in a standard game:
+
+| Hook | Default | Variant |
+|---|---|---|
+| `deckCount` | 2 | one deck |
+| `jokersPerDeck` | 2 | 0 = a 52-card deck with no jokers |
+| `maxGroupSize` | 4 | larger groups |
+| `groupUniqueSuits` | false | groups must have all-different suits |
+| `firstMeldMinPoints` | 0 (off) | minimum points for a player's first meld |
+| `turnTimerSeconds` | 0 (off) | timed turns |
+| `handSize` | 7 | different deal size |
+
+## Rejected variants
+
+These appear in other Mexe-Mexe write-ups and are deliberately **not** used here: a 52-card-only
+deck, drawing at the start of every turn, groups requiring all-different suits, and a first-meld
+point minimum.

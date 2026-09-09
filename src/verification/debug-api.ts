@@ -1,5 +1,33 @@
 import type { DraftState, GameState } from '../rules/types';
 import { settings } from '../core/settings';
+import type { ConnStatus } from '../net/client';
+import type { RoomPlayerSummary, SubmitTurnMeld } from '../net/protocol';
+
+/** Online-alpha e2e surface — present from OnlineScene entry through the online match, null otherwise. */
+export interface MexeOnlineDebugApi {
+  status: () => ConnStatus;
+  code: () => string | null;
+  seat: () => number | null;
+  rev: () => number | null;
+  /** Verification-only: lobby player list (name/ready/connected) — empty mid-match. */
+  players: () => RoomPlayerSummary[];
+  /** Verification-only: current in-match connection notice text (opponent disconnected/reconnected,
+   * "reconnecting...", etc) — empty string outside a match or when no notice is showing. */
+  notice: () => string;
+  lastRejections: () => string[];
+  trace: () => { dir: 'out' | 'in'; type: string }[];
+  createRoom: (name?: string) => void;
+  joinRoom: (code: string, name?: string) => void;
+  setReady: (ready: boolean) => void;
+  /** In-match draw-and-end-turn; a thin alias over the same action COMPRAR triggers. */
+  comprar: () => void;
+  /** Verification-only: submit a proposal straight to the server, bypassing the editor's
+   * client-side gate — used by verify:multiplayer to exercise server-side rejection. */
+  submitRaw: (rev: number, melds: SubmitTurnMeld[]) => void;
+  /** Verification-only: force-close the socket as if the network died, to exercise the
+   * disconnect/reconnect path (see NetClient.forceDrop). */
+  forceDrop: () => void;
+}
 
 /** Exposed on window.__MEXE__ for Playwright verification. */
 export interface MexeDebugApi {
@@ -18,6 +46,8 @@ export interface MexeDebugApi {
   lastAiThought: string | null;
   /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
   a11y: { invalidBadges: number };
+  /** Background-music state for e2e: current track file, whether it is actually playing, and its volume. */
+  music: () => { track: string; playing: boolean; volume: number };
   /** Live Mexe Mode hooks for e2e (bound to the active DraftEditor on human turns). */
   mexe: {
     playHandCard: (cardId: string, meldId: string | null) => boolean;
@@ -28,6 +58,7 @@ export interface MexeDebugApi {
     /** Current Mexe Mode draft (melds may be temporarily invalid), for e2e. */
     getDraft: () => DraftState | null;
   } | null;
+  online: MexeOnlineDebugApi | null;
 }
 
 declare global {
@@ -49,7 +80,9 @@ export const debugApi: MexeDebugApi = {
   tutorialStep: null,
   lastAiThought: null,
   a11y: { invalidBadges: 0 },
+  music: () => ({ track: '', playing: false, volume: 0 }),
   mexe: null,
+  online: null,
 };
 
 export function installDebugApi(): void {

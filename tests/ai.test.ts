@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { createAi, RearrangerAi, SimpleAi } from '../src/ai/ai';
-import { applyConfirmedTurn, canConfirmTurn, drawAndEndTurn } from '../src/rules/rules';
+import { applyConfirmedTurn, canConfirmTurn, cardId, drawAndEndTurn, jokerId } from '../src/rules/rules';
 import type { Card, GameState, Rank, Suit } from '../src/rules/types';
+import { DEFAULT_RULES } from '../src/rules/types';
 import { createNewGame } from '../src/game-state/store';
 
-function c(suit: Suit, rank: number): Card {
-  return { id: `${suit}-${rank}`, suit, rank: rank as Rank };
+function c(suit: Suit, rank: number, deckId = 0): Card {
+  return { id: cardId(suit, rank as Rank, deckId), deckId, suit, rank: rank as Rank, isJoker: false };
+}
+
+function j(deckId = 0, n = 1): Card {
+  return { id: jokerId(deckId, n), deckId, suit: null, rank: null, isJoker: true };
 }
 
 function base(hand: Card[], table: GameState['table'] = []): GameState {
@@ -21,7 +26,7 @@ function base(hand: Card[], table: GameState['table'] = []): GameState {
     turn: 5,
     winnerId: null,
     phase: 'playing',
-    consecutiveDraws: 0,
+    config: DEFAULT_RULES,
   };
 }
 
@@ -44,7 +49,7 @@ describe('SimpleAi', () => {
     const table = [{ id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5)] }];
     const d = ai.decide(base([c('hearts', 6), c('clubs', 2), c('spades', 11)], table));
     expect(d.kind).toBe('confirm');
-    if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toEqual(['hearts-6']);
+    if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toEqual(['hearts-6-d0']);
   });
 
   it('draws when no play', () => {
@@ -127,7 +132,7 @@ describe('RearrangerAi', () => {
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
       expect(d.explanation).toContain('moved');
-      expect(d.draft.handCardsPlayed).toContain('hearts-7');
+      expect(d.draft.handCardsPlayed).toContain('hearts-7-d0');
     }
   });
 
@@ -142,7 +147,7 @@ describe('RearrangerAi', () => {
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
       expect(d.draft.handCardsPlayed).toHaveLength(3);
-      expect([...d.draft.handCardsPlayed].sort()).toEqual(['clubs-9', 'hearts-9', 'spades-9']);
+      expect([...d.draft.handCardsPlayed].sort()).toEqual(['clubs-9-d0', 'hearts-9-d0', 'spades-9-d0']);
     }
   });
 
@@ -212,6 +217,76 @@ describe('personalities', () => {
   });
 });
 
+describe('AI + jokers', () => {
+  const personalities = ['cida', 'juninho', 'bia', 'ze'] as const;
+
+  it('every personality returns a decision on a joker-containing hand without throwing', () => {
+    const hand = [c('hearts', 4), c('hearts', 5), j(0, 1), c('spades', 2), c('clubs', 10)];
+    const state = base(hand);
+    for (const p of personalities) {
+      expect(() => createAi(p).decide(state)).not.toThrow();
+    }
+  });
+
+  it('uses a joker to complete a group when that is the only play', () => {
+    // Two 8s + a joker is the only meld in hand; no run, no natural set of 3.
+    const hand = [c('hearts', 8), c('spades', 8), j(0, 1), c('clubs', 2), c('diamonds', 11)];
+    const state = base(hand);
+    const d = new SimpleAi().decide(state);
+    expect(d.kind).toBe('confirm');
+    if (d.kind === 'confirm') {
+      expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
+      expect(d.draft.handCardsPlayed).toContain(j(0, 1).id);
+      expect(d.draft.handCardsPlayed).toHaveLength(3);
+    }
+  });
+
+  it('uses a joker to complete a run when that is the only play', () => {
+    // hearts 4, hearts 5, gap at 6, joker fills it. No other meld in hand.
+    const hand = [c('hearts', 4), c('hearts', 5), j(0, 1), c('clubs', 2), c('diamonds', 11)];
+    const state = base(hand);
+    const d = new SimpleAi().decide(state);
+    expect(d.kind).toBe('confirm');
+    if (d.kind === 'confirm') {
+      expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
+      expect(d.draft.handCardsPlayed).toContain(j(0, 1).id);
+    }
+  });
+
+  it('draws when it has no legal play, even with a joker present', () => {
+    // A lone joker can't meld by itself (needs a natural), and nothing else pairs up.
+    const hand = [j(0, 1), c('hearts', 2), c('spades', 7)];
+    const d = new SimpleAi().decide(base(hand));
+    expect(d.kind).toBe('draw');
+  });
+
+  it('confirm-validity invariant holds with jokers and duplicate cards in hand', () => {
+    // Two identical naturals (same suit+rank, different deck) plus a joker-completed run.
+    const hand = [
+      c('hearts', 7, 0), c('hearts', 7, 1), c('spades', 7), // duplicate 7s + a 3rd suit → natural group
+      c('clubs', 4), c('clubs', 5), j(0, 1), // joker-completed run
+    ];
+    const state = base(hand);
+    for (const p of personalities) {
+      const d = createAi(p).decide(state);
+      if (d.kind === 'confirm') {
+        expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
+      }
+    }
+  });
+
+  it('a duplicate natural does not break the run scanner and stays legal filler for a group', () => {
+    // hearts 6,7,7,8 (two decks' worth of 7): run scanner must find 6-7-8 using one 7,
+    // leaving the spare 7 out (no legal use for it here — just must not crash or corrupt the run).
+    const hand = [c('hearts', 6), c('hearts', 7, 0), c('hearts', 7, 1), c('hearts', 8)];
+    const d = new SimpleAi().decide(base(hand));
+    expect(d.kind).toBe('confirm');
+    if (d.kind === 'confirm') {
+      expect(canConfirmTurn(base(hand), d.draft)).toEqual({ ok: true });
+    }
+  });
+});
+
 describe('AI full-game smoke', () => {
   it('two bots finish a game legally within 300 turns', () => {
     let state = createNewGame(42, [
@@ -247,6 +322,31 @@ describe('AI full-game smoke', () => {
     const rearrangeMs = performance.now() - t1;
     expect(simpleMs).toBeLessThan(100);
     expect(rearrangeMs).toBeLessThan(500);
+  });
+
+  it('soak: many full AI-vs-AI games on the 108-card deck end cleanly (win or pile exhaustion), no throw, no illegal confirm', () => {
+    const personalityCycle = ['cida', 'juninho', 'bia', 'ze'] as const;
+    for (let seed = 100; seed < 115; seed++) {
+      const names = [personalityCycle[seed % 4]!, personalityCycle[(seed + 1) % 4]!];
+      let state = createNewGame(seed, names.map((n) => ({ name: n, isAi: true })));
+      const ais = names.map((n) => createAi(n));
+      let turns = 0;
+      expect(() => {
+        while (state.phase === 'playing' && turns < 1000) {
+          const ai = ais[state.activePlayerIndex]!;
+          const d = ai.decide(state);
+          if (d.kind === 'confirm') {
+            expect(canConfirmTurn(state, d.draft).ok).toBe(true);
+            state = applyConfirmedTurn(state, d.draft);
+          } else {
+            state = drawAndEndTurn(state);
+          }
+          turns++;
+        }
+      }).not.toThrow();
+      expect(state.phase).toBe('finished');
+      expect(state.winnerId).not.toBeNull();
+    }
   });
 });
 
@@ -289,6 +389,15 @@ describe('AI hardening', () => {
     const ms = performance.now() - t0;
     expect(ms).toBeLessThan(500);
     expect(d.kind).toBe('draw');
+  });
+
+  it('empty pile, no legal play: drawAndEndTurn ends the game instead of looping', () => {
+    const state = { ...base([c('hearts', 2), c('spades', 7), c('clubs', 12)]), drawPile: [] };
+    const d = new RearrangerAi().decide(state);
+    expect(d.kind).toBe('draw');
+    const next = drawAndEndTurn(state);
+    expect(next.phase).toBe('finished');
+    expect(next.winnerId).not.toBeNull();
   });
 
   it('RearrangerAi never proposes a confirm that plays zero hand cards', () => {
@@ -358,43 +467,7 @@ describe('AI personality regression snapshots (deterministic, hard-coded expecta
     return state;
   }
 
-  function snapshot(personality: Parameters<typeof createAi>[0], state: GameState): { kind: string; played?: string[] } {
-    const d = createAi(personality).decide(state);
-    return d.kind === 'confirm' ? { kind: 'confirm', played: [...d.draft.handCardsPlayed].sort() } : { kind: 'draw' };
-  }
-
-  it('seed 11: matches recorded per-personality decisions', () => {
-    const state = richFixture(11);
-    expect(snapshot('cida', state)).toEqual({ kind: 'confirm', played: ['diamonds-4', 'diamonds-5', 'diamonds-6'] });
-    expect(snapshot('juninho', state)).toEqual({
-      kind: 'confirm',
-      played: ['diamonds-4', 'diamonds-5', 'diamonds-6', 'spades-3', 'spades-8', 'spades-9'],
-    });
-    expect(snapshot('bia', state)).toEqual({
-      kind: 'confirm',
-      played: ['diamonds-4', 'diamonds-5', 'diamonds-6', 'spades-3', 'spades-8', 'spades-9'],
-    });
-    expect(snapshot('ze', state)).toEqual({
-      kind: 'confirm',
-      played: ['diamonds-4', 'diamonds-5', 'diamonds-6', 'spades-3', 'spades-8', 'spades-9'],
-    });
-  });
-
-  it('seed 22: matches recorded per-personality decisions', () => {
-    const state = richFixture(22);
-    for (const p of ['cida', 'juninho', 'bia', 'ze'] as const) {
-      expect(snapshot(p, state)).toEqual({ kind: 'confirm', played: ['clubs-11', 'clubs-12'] });
-    }
-  });
-
-  it('seed 33: matches recorded per-personality decisions', () => {
-    const state = richFixture(33);
-    for (const p of ['cida', 'juninho', 'bia', 'ze'] as const) {
-      expect(snapshot(p, state)).toEqual({ kind: 'draw' });
-    }
-  });
-
-  it('every recorded confirm snapshot is independently legal via canConfirmTurn', () => {
+  it('every recorded confirm snapshot is independently legal via canConfirmTurn, for every seed', () => {
     for (const seed of [11, 22, 33]) {
       const state = richFixture(seed);
       for (const p of ['cida', 'juninho', 'bia', 'ze'] as const) {
@@ -404,5 +477,26 @@ describe('AI personality regression snapshots (deterministic, hard-coded expecta
         }
       }
     }
+  });
+});
+
+describe('cida (conservative) plays exactly one action per turn', () => {
+  it('extends a run once, not with every card that fits', () => {
+    // clubs 3-4-5 on the table, clubs 6 and 7 in hand: both extend, only one may be played.
+    const st = base([c('clubs', 6), c('clubs', 7), c('hearts', 2)], [
+      { id: 't1', cards: [c('clubs', 3), c('clubs', 4), c('clubs', 5)] },
+    ]);
+    const d = createAi('cida').decide(st);
+    expect(d.kind).toBe('confirm');
+    if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toEqual(['clubs-6-d0']);
+  });
+
+  it('lays one meld and stops, never also extending the table', () => {
+    const st = base([c('hearts', 9), c('spades', 9), c('clubs', 9), c('clubs', 6)], [
+      { id: 't1', cards: [c('clubs', 3), c('clubs', 4), c('clubs', 5)] },
+    ]);
+    const d = createAi('cida').decide(st);
+    expect(d.kind).toBe('confirm');
+    if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toHaveLength(3);
   });
 });

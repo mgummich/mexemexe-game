@@ -37,7 +37,7 @@ describe('parseSave', () => {
   it('round-trips a valid v1 save', () => {
     const save: Save = {
       version: 1,
-      settings: { muted: true, sfxVolume: 10, musicVolume: 20, reducedMotion: true, locale: 'en', largeText: true },
+      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, reducedMotion: true, locale: 'en', largeText: true },
       progress: { lastSeed: 1234, tutorialCompleted: true },
     };
     expect(parseSave(JSON.stringify(save))).toEqual(save);
@@ -66,7 +66,7 @@ describe('loadSave', () => {
     const oldSettings = { muted: true, sfxVolume: 33, musicVolume: 44, reducedMotion: true, locale: 'en' };
     const storage = memoryStorage({ [OLD_SETTINGS_KEY]: JSON.stringify(oldSettings) });
     const result = loadSave(storage);
-    expect(result).toEqual({ version: 1, settings: { ...oldSettings, largeText: false }, progress: DEFAULT_PROGRESS });
+    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: true, largeText: false }, progress: DEFAULT_PROGRESS });
     expect(storage.getItem(SAVE_KEY)).toBe(JSON.stringify(result));
     expect(storage.getItem(OLD_SETTINGS_KEY)).toBeNull();
   });

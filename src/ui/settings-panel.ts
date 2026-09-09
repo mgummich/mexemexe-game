@@ -18,7 +18,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     objs = [];
     const w = 200;
     // grows with the large-text setting itself so its own extra row/taller buttons still fit at 125%.
-    const h = Math.round(210 * settings.fontScale());
+    const h = Math.round(232 * settings.fontScale());
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
     const { cx, top } = base;
@@ -46,6 +46,20 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     y += 22;
     objs.push(label(scene, cx - 84, y, t('settings.music'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
     objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().musicVolume, (v) => settings.update({ musicVolume: v })));
+
+    y += 22;
+    const musicBtn = new PixelButton(
+      scene,
+      cx,
+      y,
+      `${t('settings.music')}: ${settings.get().musicEnabled ? t('settings.on') : t('settings.off')}`,
+      () => {
+        settings.update({ musicEnabled: !settings.get().musicEnabled });
+        musicBtn.setLabel(`${t('settings.music')}: ${settings.get().musicEnabled ? t('settings.on') : t('settings.off')}`);
+      },
+      { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 },
+    ).setDepth(510);
+    objs.push(musicBtn);
 
     y += 24;
     const motionBtn = new PixelButton(
