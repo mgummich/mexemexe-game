@@ -175,6 +175,16 @@ describe('tutorial corrections', () => {
   });
 });
 
+describe('tutorial hand returns', () => {
+  it('never allows dragging a played card back to hand — no step can replay it, which strands the script', () => {
+    const dir = new TutorialDirector();
+    for (let i = 0; i < TUTORIAL_STEPS.length; i++) {
+      expect(dir.isAllowed({ type: 'returnToHand' }), `step ${i} allows return to hand`).toBe(false);
+      dir.next();
+    }
+  });
+});
+
 describe('tutorial skip and replay', () => {
   it('allows skipping from any step, and replay restarts at step 0', () => {
     for (let i = 0; i < TUTORIAL_STEPS.length; i++) {

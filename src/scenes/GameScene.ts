@@ -840,7 +840,12 @@ export class GameScene extends Phaser.Scene {
     const cardId = this.selectedCardId;
     if (!cardId || !this.editor) return;
     const fromHand = this.editor.getRemainingHand().some((c) => c.id === cardId);
-    if (!this.tutorialAllows({ type: fromHand ? 'playHandCard' : 'moveTableCard', cardId })) {
+    const action: TutorialAction = fromHand
+      ? { type: 'playHandCard', cardId }
+      : kind === 'hand'
+        ? { type: 'returnToHand' }
+        : { type: 'moveTableCard', cardId };
+    if (!this.tutorialAllows(action)) {
       playSfx(this, 'sfx-invalid', 0.15);
       return;
     }
@@ -1472,7 +1477,16 @@ export class GameScene extends Phaser.Scene {
     const x = sprite.x;
     const y = sprite.y;
 
-    if (!this.tutorialAllows({ type: origin === 'hand' ? 'playHandCard' : 'moveTableCard', cardId })) {
+    const zone = this.meldZones.find((z) => z.rect.contains(x, y));
+    const inTableArea = y > TABLE_TOP - 6 && y < TABLE_BOTTOM + 10 && x < W - 84;
+    const inHandArea = y >= HAND_Y - 30;
+
+    const action: TutorialAction = origin === 'hand'
+      ? { type: 'playHandCard', cardId }
+      : inHandArea && !zone
+        ? { type: 'returnToHand' }
+        : { type: 'moveTableCard', cardId };
+    if (!this.tutorialAllows(action)) {
       playSfx(this, 'sfx-invalid', 0.15);
       this.tweens.add({
         targets: sprite,
@@ -1482,10 +1496,6 @@ export class GameScene extends Phaser.Scene {
       });
       return;
     }
-
-    const zone = this.meldZones.find((z) => z.rect.contains(x, y));
-    const inTableArea = y > TABLE_TOP - 6 && y < TABLE_BOTTOM + 10 && x < W - 84;
-    const inHandArea = y >= HAND_Y - 30;
 
     let acted = false;
     if (origin === 'hand') {

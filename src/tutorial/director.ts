@@ -4,6 +4,8 @@ import { TUTORIAL_STEPS, type StepAction, type TutorialStep } from './script';
 export type TutorialAction =
   | { type: 'playHandCard'; cardId: string }
   | { type: 'moveTableCard'; cardId: string }
+  /** Dragging a card played this turn back to hand — never scripted, so always blocked in tutorial. */
+  | { type: 'returnToHand' }
   | { type: 'feito' }
   | { type: 'comprar' };
 
