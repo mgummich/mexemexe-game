@@ -1,4 +1,4 @@
-# MEXE! — Art Direction
+# MEXEMEXE! — Art Direction
 
 ## Pillars
 

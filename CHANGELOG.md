@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to MEXE! by phase. See `docs/STATUS.json` for the full
+All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 
 ## 1.3.0 — Phase 9 (content-rich beta)

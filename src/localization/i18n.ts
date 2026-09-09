@@ -2,7 +2,7 @@ export type Locale = 'pt' | 'en';
 
 const dict: Record<Locale, Record<string, string>> = {
   pt: {
-    'menu.title': 'MEXE!',
+    'menu.title': 'MEXEMEXE!',
     'menu.tagline': 'Arruma. Desarruma. Bate.',
     'menu.play': 'JOGAR',
     'menu.tutorial': 'TUTORIAL',
@@ -193,7 +193,7 @@ const dict: Record<Locale, Record<string, string>> = {
     'game.onlineBadge': 'ONLINE',
   },
   en: {
-    'menu.title': 'MEXE!',
+    'menu.title': 'MEXEMEXE!',
     'menu.tagline': 'Build it. Break it. Win it.',
     'menu.play': 'PLAY',
     'menu.tutorial': 'TUTORIAL',
@@ -287,7 +287,7 @@ const dict: Record<Locale, Record<string, string>> = {
     'game.turnOf': "{name}'s turn",
     'game.deck': 'Deck: {n}',
     'game.thinking': '{name} is thinking...',
-    'win.title': 'MEXE!',
+    'win.title': 'MEXEMEXE!',
     'win.wins': '{name} wins!',
     'win.stalemate': 'Draw pile empty! {name} wins with the fewest cards.',
     'win.again': 'PLAY AGAIN',

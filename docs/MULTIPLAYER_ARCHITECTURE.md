@@ -1,4 +1,4 @@
-# MEXE! Online Alpha — Multiplayer Architecture
+# MEXEMEXE! Online Alpha — Multiplayer Architecture
 
 *Design: Opus (reasoning/prose). Implementation + final review: Sonnet.
 Scope: 2–4-player private rooms, alpha quality. No accounts, matchmaking,

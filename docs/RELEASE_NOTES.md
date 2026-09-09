@@ -1,4 +1,4 @@
-# MEXE! 1.3.0 — Release notes (content-rich beta)
+# MEXEMEXE! 1.3.0 — Release notes (content-rich beta)
 
 ## Phase 9 beta update
 
@@ -50,7 +50,7 @@ copyrighted sources), and `AUDIO_DIRECTION.md` for the music-context design.
 
 ---
 
-# MEXE! 1.2.0 — Release notes (playtest demo)
+# MEXEMEXE! 1.2.0 — Release notes (playtest demo)
 
 ## Phase 8 playtest update
 
@@ -138,7 +138,7 @@ plain `ws://` connection is blocked from an HTTPS page. See the README
 
 ---
 
-# MEXE! 1.0.0 — Release notes
+# MEXEMEXE! 1.0.0 — Release notes
 
 *Arruma. Desarruma. Bate.* A pixel-art digital card game based on Brazilian
 **Mexe-Mexe**, for 2–4 players (you + AI opponents).

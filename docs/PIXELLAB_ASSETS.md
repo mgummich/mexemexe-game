@@ -26,7 +26,7 @@ scramble rank glyphs).
 | Avatar Bia | curly hair, headphones | 48×48 | /public/assets/characters/avatar-bia.png | ✅ done |
 | Avatar Seu Zé | straw hat, mustache | 48×48 | /public/assets/characters/avatar-ze.png | ✅ done |
 | Avatar player | golden shirt, fanned cards | 48×48 | /public/assets/characters/avatar-player.png | ✅ done |
-| Logo "MEXE!" | chunky golden wordmark | 320×128 | /public/assets/ui/logo.png | ✅ done |
+| Logo "MEXEMEXE!" | chunky golden wordmark | 320×128 | /public/assets/ui/logo.png | ✅ done |
 | FEITO button | green wooden button blank | 128×44 | /public/assets/ui/feito-normal.png | ✅ done |
 | COMPRAR button | orange wooden button blank | 128×44 | /public/assets/ui/comprar-normal.png | ✅ done |
 | Small button | wooden square button | 36×36 | /public/assets/ui/btn-small-normal.png | ✅ done |

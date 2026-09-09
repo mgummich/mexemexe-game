@@ -1,6 +1,6 @@
 # Mexe-Mexe — Final Rules
 
-The authoritative ruleset implemented by MEXE!. Where code and this document disagree, this
+The authoritative ruleset implemented by MEXEMEXE!. Where code and this document disagree, this
 document wins and the code is a bug.
 
 ## Setup

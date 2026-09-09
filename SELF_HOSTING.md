@@ -1,6 +1,6 @@
-# Self-Hosting MEXE!
+# Self-Hosting MEXEMEXE!
 
-MEXE! is a static web game: the offline single-player game is all client-side,
+MEXEMEXE! is a static web game: the offline single-player game is all client-side,
 with saves in the player's browser (localStorage). Hosting it means serving the
 built files.
 

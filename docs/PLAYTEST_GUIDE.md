@@ -1,4 +1,4 @@
-# MEXE! — Playtest guide
+# MEXEMEXE! — Playtest guide
 
 This is the content-rich beta build (Phase 9). It is a **playtest**, not a release: we want to
 find out where people get stuck, which rules bite, and whether online play survives real humans

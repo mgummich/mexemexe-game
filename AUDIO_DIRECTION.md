@@ -1,4 +1,4 @@
-# MEXE! — Audio Direction
+# MEXEMEXE! — Audio Direction
 
 *Drafted by Fable; implementation-facing details reviewed by Sonnet in the
 release-docs wave.*
