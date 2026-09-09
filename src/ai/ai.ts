@@ -21,9 +21,9 @@ function sortCards(cards: readonly Card[]): Card[] {
  * Find all melds of exactly 3+ cards formable from hand: sets by rank, runs by suit,
  * plus joker-assisted completions (two naturals + one joker) when a pure-natural meld
  * isn't there. Naturals-only melds are pushed first so callers that lay down melds in
- * order try natural plays before spending a joker. Two identical naturals (same
- * suit+rank, different deckId) rank-bucket together fine for groups; the run scanner
- * below skips a same-rank duplicate rather than letting it break the consecutive scan.
+ * order try natural plays before spending a joker. Group candidates select one natural
+ * per suit; the run scanner below skips a same-rank duplicate rather than letting it
+ * break the consecutive scan.
  */
 function findHandMelds(hand: readonly Card[]): Card[][] {
   const naturals = hand.filter((c) => !c.isJoker);
@@ -38,7 +38,10 @@ function findHandMelds(hand: readonly Card[]): Card[][] {
   }
   const rankEntries = [...byRank.entries()].sort((a, b) => a[0] - b[0]);
   for (const [, cards] of rankEntries) {
-    if (cards.length >= 3) out.push(cards);
+    const onePerSuit = new Map<string, Card>();
+    for (const card of cards) if (!onePerSuit.has(card.suit!)) onePerSuit.set(card.suit!, card);
+    const group = [...onePerSuit.values()];
+    if (group.length >= 3) out.push(group);
   }
   // Runs: longest maximal run per suit segment (a same-rank duplicate is skipped, not
   // reset into a new segment, so it never breaks an in-progress run).
@@ -66,9 +69,15 @@ function findHandMelds(hand: readonly Card[]): Card[][] {
   // Joker-assisted group: exactly two naturals of a rank + one joker.
   if (jokers.length > 0) {
     for (const [, cards] of rankEntries) {
-      if (cards.length !== 2) continue;
-      const combo = [...cards, jokers[0]!];
-      if (isValidMeld(combo)) out.push(combo);
+      const onePerSuit = new Map<string, Card>();
+      for (const card of cards) if (!onePerSuit.has(card.suit!)) onePerSuit.set(card.suit!, card);
+      const uniqueSuits = [...onePerSuit.values()];
+      for (let first = 0; first < uniqueSuits.length - 1; first++) {
+        for (let second = first + 1; second < uniqueSuits.length; second++) {
+          const combo = [uniqueSuits[first]!, uniqueSuits[second]!, jokers[0]!];
+          if (isValidMeld(combo)) out.push(combo);
+        }
+      }
     }
   }
 

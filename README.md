@@ -31,11 +31,11 @@ Full ruleset (authoritative): [`docs/RULES.md`](docs/RULES.md). Summary:
   2 jokers per deck, so 4 jokers total). No discard pile — nothing is ever
   thrown away.
 - Melds: **runs** (3+ same suit, consecutive ranks, ace low *or* high, never
-  both in the same run — no K-A-2 wrap) and **groups** (3+ same rank; suits
-  may repeat since there are two decks, capped at 4 cards by default).
+  both in the same run — no K-A-2 wrap) and **groups** (exactly 3 or 4 cards
+  of one rank, with no repeated natural suits, even across decks).
 - **Jokers** are wildcards in a run or group. Every joker in a valid meld must
-  resolve to a concrete card; a meld needs at least one natural card to anchor
-  it.
+  resolve to a concrete card; a group joker fills a different missing suit of
+  its natural rank, and every group needs at least one natural card to anchor it.
 - **MEXE MODE**: on your turn, freely break, move, split, merge and rebuild the
   shared table melds — every meld on the table is shared. Temporary invalid
   states are fine while editing.

@@ -29,8 +29,12 @@ export interface PlayerState {
 export interface RulesConfig {
   deckCount: number; // default 2
   jokersPerDeck: number; // default 2
-  maxGroupSize: number; // default 4 — TOTAL cards in a group, jokers included
-  groupUniqueSuits: boolean; // default false
+  /** Compatibility-only legacy field. Group size is always 3-4. */
+  maxGroupSize: number;
+  groupUniqueSuits: boolean; // default true; retained for saved-config compatibility
+  groupMinSize: number; // default 3; groups always enforce this hard floor
+  groupMaxSize: number; // default 4; groups always enforce this hard ceiling
+  allowAllJokerGroups: boolean; // default false; retained for saved-config compatibility
   firstMeldMinPoints: number; // default 0 = off (hook only, not enforced by the validator)
   turnTimerSeconds: number; // default 0 = off
   handSize: number; // default 7
@@ -40,7 +44,10 @@ export const DEFAULT_RULES: RulesConfig = {
   deckCount: 2,
   jokersPerDeck: 2,
   maxGroupSize: 4,
-  groupUniqueSuits: false,
+  groupUniqueSuits: true,
+  groupMinSize: 3,
+  groupMaxSize: 4,
+  allowAllJokerGroups: false,
   firstMeldMinPoints: 0,
   turnTimerSeconds: 0,
   handSize: 7,
@@ -72,6 +79,8 @@ export type ReasonCode =
   | 'reason.duplicateCard'
   | 'reason.foreignCard'
   | 'reason.groupTooLarge'
+  | 'reason.groupDuplicateSuit'
+  | 'reason.groupAllJokers'
   | 'reason.jokerUnassignable'
   | 'reason.runWrap'
   // Network-only reasons (server validation path, see docs/MULTIPLAYER_ARCHITECTURE.md §5)
@@ -87,7 +96,7 @@ export interface MeldReason {
 
 export type ConfirmResult = { ok: true } | { ok: false; reasons: ReasonCode[] };
 
-/** Where a joker lands within a valid meld. `suit` is null for group jokers. */
+/** Where a joker lands within a valid meld. */
 export interface JokerAssignment {
   cardId: string;
   suit: Suit | null;
@@ -95,7 +104,18 @@ export interface JokerAssignment {
 }
 
 export type MeldAnalysis =
-  | { valid: true; kind: 'run' | 'group'; assignments: JokerAssignment[] }
+  | { valid: true; kind: 'run'; assignments: JokerAssignment[] }
+  | {
+      valid: true;
+      kind: 'group';
+      assignments: JokerAssignment[];
+      rank: Rank;
+      naturalSuits: Suit[];
+      jokerCount: number;
+      assignedJokers: JokerAssignment[];
+      isValid: true;
+      reasons: [];
+    }
   | { valid: false; reason: ReasonCode };
 
 export class RulesError extends Error {

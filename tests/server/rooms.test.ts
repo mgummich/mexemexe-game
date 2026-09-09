@@ -37,7 +37,7 @@ function dealFor(seed: number): { hands: Card[][] } {
 }
 
 /** Find a seed whose seat-0 hand contains a same-rank triple, for legal-turn tests. */
-function findSeedWithSet(): { seed: number; hand: Card[] } {
+function findSeedWithSet(): { seed: number; triple: Card[] } {
   for (let seed = 1; seed < 200; seed++) {
     const { hands } = dealFor(seed);
     const hand = hands[0]!.filter((c) => !c.isJoker);
@@ -48,7 +48,10 @@ function findSeedWithSet(): { seed: number; hand: Card[] } {
       byRank.set(c.rank!, arr);
     }
     for (const arr of byRank.values()) {
-      if (arr.length >= 3) return { seed, hand };
+      const onePerSuit = new Map<string, Card>();
+      for (const card of arr) if (!onePerSuit.has(card.suit!)) onePerSuit.set(card.suit!, card);
+      const triple = [...onePerSuit.values()].slice(0, 3);
+      if (triple.length === 3) return { seed, triple };
     }
   }
   throw new Error('no seed found with a set in seat 0 hand (test setup bug)');
@@ -70,14 +73,35 @@ function findSeedWithJokerAndPair(): { seed: number; joker: Card; pair: [Card, C
       byRank.set(c.rank!, arr);
     }
     for (const arr of byRank.values()) {
-      if (arr.length >= 2) {
-        const pair: [Card, Card] = [arr[0]!, arr[1]!];
+      const onePerSuit = new Map<string, Card>();
+      for (const card of arr) if (!onePerSuit.has(card.suit!)) onePerSuit.set(card.suit!, card);
+      const pair = [...onePerSuit.values()].slice(0, 2) as [Card, Card];
+      if (pair.length === 2) {
         const rest = hand.filter((c) => c.id !== jokers[0]!.id && c.id !== pair[0].id && c.id !== pair[1].id);
         return { seed, joker: jokers[0]!, pair, rest };
       }
     }
   }
   throw new Error('no seed found with a joker + same-rank pair in seat 0 hand (test setup bug)');
+}
+
+/** Find a real dealt hand containing a same-rank pair from one suit plus a third suit. */
+function findSeedWithRepeatedSuitGroup(): { seed: number; cards: [Card, Card, Card] } {
+  for (let seed = 1; seed < 2_000; seed++) {
+    const hand = dealFor(seed).hands[0]!.filter((card) => !card.isJoker);
+    const byRank = new Map<number, Card[]>();
+    for (const card of hand) byRank.set(card.rank!, [...(byRank.get(card.rank!) ?? []), card]);
+    for (const rankCards of byRank.values()) {
+      for (let first = 0; first < rankCards.length - 1; first++) {
+        for (let second = first + 1; second < rankCards.length; second++) {
+          if (rankCards[first]!.suit !== rankCards[second]!.suit) continue;
+          const third = rankCards.find((card) => card.suit !== rankCards[first]!.suit);
+          if (third) return { seed, cards: [rankCards[first]!, rankCards[second]!, third] };
+        }
+      }
+    }
+  }
+  throw new Error('no seed found with a repeated-suit group candidate (test setup bug)');
 }
 
 function startRoom(seed: number) {
@@ -159,15 +183,8 @@ describe('room lifecycle', () => {
 
 describe('submit_turn validation', () => {
   it('accepts a full legal turn and increments rev', () => {
-    const { seed, hand } = findSeedWithSet();
+    const { seed, triple } = findSeedWithSet();
     const { mgr, code } = startRoom(seed);
-    const set = new Map<number, Card[]>();
-    for (const c of hand) {
-      const arr = set.get(c.rank!) ?? [];
-      arr.push(c);
-      set.set(c.rank!, arr);
-    }
-    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
     const result = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     expect(result).toEqual({ ok: true, gameOver: false });
     const room = mgr.getRoom(code)!;
@@ -202,12 +219,17 @@ describe('submit_turn validation', () => {
     if (!result.ok) expect(result.reasons).toContain('reason.duplicateCard');
   });
 
-  it('rejects a proposal that returns a committed table card to hand', () => {
-    const { seed, hand } = findSeedWithSet();
+  it('rejects a repeated-suit group proposal even when cards come from different decks', () => {
+    const { seed, cards } = findSeedWithRepeatedSuitGroup();
     const { mgr, code } = startRoom(seed);
-    const set = new Map<number, Card[]>();
-    for (const c of hand) set.set(c.rank!, [...(set.get(c.rank!) ?? []), c]);
-    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
+    const result = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: cards.map((card) => card.id) }]);
+    expect(result).toEqual({ ok: false, reasons: ['reason.groupDuplicateSuit'] });
+    expect(mgr.getRoom(code)!.rev).toBe(1);
+  });
+
+  it('rejects a proposal that returns a committed table card to hand', () => {
+    const { seed, triple } = findSeedWithSet();
+    const { mgr, code } = startRoom(seed);
     mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     // Seat 1's turn: submit without including seat 0's committed meld.
     const seat1Hand = mgr.getRoom(code)!.state!.players[1]!.hand;
@@ -217,11 +239,8 @@ describe('submit_turn validation', () => {
   });
 
   it('rejects a turn with zero hand cards played', () => {
-    const { seed, hand } = findSeedWithSet();
+    const { seed, triple } = findSeedWithSet();
     const { mgr, code } = startRoom(seed);
-    const set = new Map<number, Card[]>();
-    for (const c of hand) set.set(c.rank!, [...(set.get(c.rank!) ?? []), c]);
-    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
     mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     // Seat 1 resubmits exactly the existing table, adding nothing from hand.
     const result = mgr.submitTurn(code, 1, 2, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
@@ -278,11 +297,8 @@ describe('submit_turn validation', () => {
   });
 
   it('rejects a double submit (resubmitting the same already-applied rev)', () => {
-    const { seed, hand } = findSeedWithSet();
+    const { seed, triple } = findSeedWithSet();
     const { mgr, code } = startRoom(seed);
-    const set = new Map<number, Card[]>();
-    for (const c of hand) set.set(c.rank!, [...(set.get(c.rank!) ?? []), c]);
-    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
     const first = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     expect(first.ok).toBe(true);
     // Same seat, same rev, resubmitted: turn already advanced past both, so
@@ -334,11 +350,8 @@ describe('draw / end turn', () => {
   });
 
   it('conservation holds across a submit + draw sequence', () => {
-    const { seed, hand } = findSeedWithSet();
+    const { seed, triple } = findSeedWithSet();
     const { mgr, code } = startRoom(seed);
-    const set = new Map<number, Card[]>();
-    for (const c of hand) set.set(c.rank!, [...(set.get(c.rank!) ?? []), c]);
-    const triple = [...set.values()].find((arr) => arr.length >= 3)!.slice(0, 3);
     const submitResult = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     expect(submitResult.ok).toBe(true);
     const afterSubmit = mgr.getRoom(code)!.state!;

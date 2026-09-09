@@ -170,34 +170,92 @@ describe('runs', () => {
 });
 
 describe('groups', () => {
-  it('9S 9H 9D valid', () => {
-    expect(isValidGroup([n('spades', 9), n('hearts', 9), n('diamonds', 9)])).toBe(true);
+  it('uses final fixed group defaults', () => {
+    expect(DEFAULT_RULES).toMatchObject({
+      groupUniqueSuits: true,
+      groupMinSize: 3,
+      groupMaxSize: 4,
+      allowAllJokerGroups: false,
+    });
   });
-  it('9S(d0) 9S(d1) 9H valid: repeated suit, different decks', () => {
-    expect(isValidGroup([n('spades', 9, 0), n('spades', 9, 1), n('hearts', 9)])).toBe(true);
+
+  it.each([
+    [n('hearts', 7), n('spades', 7), n('diamonds', 7)],
+    [n('hearts', 7), n('spades', 7), n('diamonds', 7), n('clubs', 7)],
+    [n('clubs', 13), n('diamonds', 13), j(0, 1)],
+    [n('spades', 3), n('hearts', 3), j(0, 1), j(1, 1)],
+    [n('hearts', 9), n('diamonds', 9), n('clubs', 9)],
+  ])('accepts legal 3- or 4-card group', (...cards) => {
+    expect(isValidGroup(cards)).toBe(true);
   });
-  it('9S 9H + joker valid, joker assigned rank 9 / suit null', () => {
+
+  it('assigns group jokers to unused suits of its natural rank', () => {
     const joker = j(0, 1);
     const result = analyzeMeld([n('spades', 9), n('hearts', 9), joker]);
     expect(result.valid).toBe(true);
-    if (result.valid) {
-      expect(result.assignments).toEqual([{ cardId: joker.id, suit: null, rank: 9 }]);
+    if (result.valid && result.kind === 'group') {
+      expect(result.assignments).toEqual([{ cardId: joker.id, suit: 'diamonds', rank: 9 }]);
+      expect(result.rank).toBe(9);
+      expect(result.naturalSuits).toEqual(['spades', 'hearts']);
+      expect(result.jokerCount).toBe(1);
+      expect(result.assignedJokers).toEqual(result.assignments);
+      expect(result.isValid).toBe(true);
+      expect(result.reasons).toEqual([]);
     }
   });
+
+  it('accepts one natural plus two jokers and gives each joker a different missing suit', () => {
+    const first = j(0, 1);
+    const second = j(1, 1);
+    const result = analyzeMeld([n('clubs', 6), first, second]);
+    expect(result.valid).toBe(true);
+    if (result.valid && result.kind === 'group') {
+      expect(result.assignments).toEqual([
+        { cardId: first.id, suit: 'hearts', rank: 6 },
+        { cardId: second.id, suit: 'diamonds', rank: 6 },
+      ]);
+    }
+  });
+
   it('five same-rank cards -> groupTooLarge (default maxGroupSize 4)', () => {
     const five = [n('spades', 9, 0), n('hearts', 9, 0), n('diamonds', 9, 0), n('clubs', 9, 0), n('spades', 9, 1)];
     const result = analyzeMeld(five);
     expect(result.valid).toBe(false);
     if (!result.valid) expect(result.reason).toBe('reason.groupTooLarge');
   });
-  it('maxGroupSize:6 house rule makes that same 5-card group valid', () => {
+  it('hard group maximum ignores legacy maxGroupSize override', () => {
     const five = [n('spades', 9, 0), n('hearts', 9, 0), n('diamonds', 9, 0), n('clubs', 9, 0), n('spades', 9, 1)];
     const config: RulesConfig = { ...DEFAULT_RULES, maxGroupSize: 6 };
-    expect(isValidGroup(five, config)).toBe(true);
+    expect(isValidGroup(five, config)).toBe(false);
   });
-  it('groupUniqueSuits:true rejects the repeated-suit group', () => {
-    const config: RulesConfig = { ...DEFAULT_RULES, groupUniqueSuits: true };
+
+  it('hard group bounds ignore groupMinSize and groupMaxSize overrides', () => {
+    const config: RulesConfig = { ...DEFAULT_RULES, groupMinSize: 2, groupMaxSize: 5 };
+    expect(isValidGroup([n('hearts', 4), n('diamonds', 4)], config)).toBe(false);
+    expect(isValidGroup([n('spades', 4), n('hearts', 4), n('diamonds', 4), n('clubs', 4), j(0, 1)], config)).toBe(false);
+  });
+
+  it.each([
+    ["repeated suit across decks", [n('hearts', 7, 0), n('hearts', 7, 1), n('clubs', 7)], 'reason.groupDuplicateSuit'],
+    ['different ranks', [n('hearts', 7), n('hearts', 8), n('clubs', 7)], 'reason.notAMeld'],
+    ['two cards', [n('hearts', 4), n('diamonds', 4)], 'reason.meldTooSmall'],
+    ['five cards', [n('spades', 10), n('hearts', 10), n('diamonds', 10), n('clubs', 10), j(0, 1)], 'reason.groupTooLarge'],
+    ['all jokers', [j(0, 1), j(0, 2), j(1, 1)], 'reason.groupAllJokers'],
+    ['too many jokers for missing suits', [n('clubs', 2), n('diamonds', 2), j(0, 1), j(0, 2), j(1, 1)], 'reason.groupTooLarge'],
+    ['duplicate unique id', [n('diamonds', 6), n('diamonds', 6), j(0, 1)], 'reason.duplicateCard'],
+    ['joker assignment collision', [n('diamonds', 6, 0), n('diamonds', 6, 1), j(0, 1)], 'reason.groupDuplicateSuit'],
+  ] as const)('rejects %s', (_label, cards, reason) => {
+    const result = analyzeMeld(cards);
+    expect(result).toEqual({ valid: false, reason });
+  });
+
+  it('hard unique-suit rule ignores legacy groupUniqueSuits override', () => {
+    const config: RulesConfig = { ...DEFAULT_RULES, groupUniqueSuits: false };
     expect(isValidGroup([n('spades', 9, 0), n('spades', 9, 1), n('hearts', 9)], config)).toBe(false);
+  });
+  it('hard natural-card requirement ignores legacy allowAllJokerGroups override', () => {
+    const config: RulesConfig = { ...DEFAULT_RULES, allowAllJokerGroups: true };
+    expect(isValidGroup([j(0, 1), j(0, 2), j(1, 1)], config)).toBe(false);
   });
   it('mixed ranks invalid', () => {
     expect(isValidGroup([n('hearts', 9), n('spades', 9), n('clubs', 8)])).toBe(false);
@@ -269,7 +327,7 @@ describe('canConfirmTurn', () => {
     if (!r.ok) expect(r.reasons).toContain('reason.duplicateCard');
   });
 
-  it('regression: two same-rank-same-suit cards with different deckIds do NOT trigger duplicateCard (this is a legal group)', () => {
+  it('rejects a group with the same natural suit from different decks', () => {
     const twoDeckState: GameState = {
       ...state,
       players: [
@@ -285,7 +343,8 @@ describe('canConfirmTurn', () => {
       handCardsPlayed: [],
     };
     const r = canConfirmTurn(twoDeckState, draft);
-    expect(r.ok).toBe(true); // two hearts-9s from different decks are distinct cards, not a duplicate
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reasons).toContain('reason.groupDuplicateSuit');
   });
 
   it('foreign card -> foreignCard', () => {
@@ -604,7 +663,15 @@ describe('isValidMeld / validateTable / reasons', () => {
     expect(reasons).toEqual([
       { meldId: 'm2', reason: 'reason.meldTooSmall' },
       { meldId: 'm3', reason: 'reason.notAMeld' },
+      { meldId: 'm3', reason: 'reason.duplicateCard' },
     ]);
+  });
+  it('rejects duplicate unique ids anywhere on the table', () => {
+    const shared = n('hearts', 1);
+    const first = { id: 'm1', cards: [shared, n('hearts', 2), n('hearts', 3)] };
+    const second = { id: 'm2', cards: [shared, n('spades', 1), n('clubs', 1)] };
+    expect(validateTable([first, second])).toBe(false);
+    expect(getInvalidMeldReasons([first, second])).toContainEqual({ meldId: 'm2', reason: 'reason.duplicateCard' });
   });
 });
 

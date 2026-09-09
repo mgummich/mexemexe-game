@@ -59,12 +59,15 @@ interface Card {
 interface Meld { id: string; cards: Card[] }
 interface PlayerState { id: string; name: string; isAi: boolean; aiType?: 'simple'|'rearranger'; hand: Card[] }
 
-/** House-rule hooks. DEFAULT_RULES is the only enabled variant. */
+/** Rules configuration. Group constraints below are final hard rules. */
 interface RulesConfig {
   deckCount: number;          // default 2
   jokersPerDeck: number;      // default 2
-  maxGroupSize: number;       // default 4, jokers included
-  groupUniqueSuits: boolean;  // default false
+  maxGroupSize: number;       // legacy compatibility field; groups stay 3-4 cards
+  groupUniqueSuits: boolean;  // default true; natural group suits stay unique
+  groupMinSize: number;       // default 3, hard group floor
+  groupMaxSize: number;       // default 4, hard group ceiling
+  allowAllJokerGroups: boolean; // default false, hard natural-card requirement
   firstMeldMinPoints: number; // default 0 = off
   turnTimerSeconds: number;   // default 0 = off
   handSize: number;           // default 7
@@ -107,7 +110,7 @@ analyzeMeld(cards, config?): MeldAnalysis
   // wrapper around this: isValidRun/isValidGroup/isValidMeld/validateTable/
   // getInvalidMeldReasons all call analyzeMeld under the hood.
 isValidRun(cards, config?): boolean            // 3+ same suit, consecutive ranks, ace low OR high (never both), no wrap, jokers fill gaps
-isValidGroup(cards, config?): boolean          // 3+ same rank, repeated suits allowed (two decks), capped at config.maxGroupSize
+isValidGroup(cards, config?): boolean          // exactly 3-4 same-rank cards; natural suits unique across decks; jokers take distinct missing suits; no all-joker group
 isValidMeld(cards, config?): boolean
 validateTable(melds, config?): boolean
 getInvalidMeldReasons(melds, config?): MeldReason[]   // { meldId, reason: i18n key }
@@ -166,8 +169,10 @@ Scope: Mexe Mode draft only (committed turns are final, like real table play). S
 
 FEITO enabled iff `canConfirmTurn().ok`. Otherwise disabled with first reason rendered:
 - `reason.meldTooSmall`, `reason.notAMeld`
-- `reason.groupTooLarge` (group over `config.maxGroupSize`)
-- `reason.jokerUnassignable` (a meld's jokers have no legal card to stand for, or it's all jokers with no natural anchor)
+- `reason.groupTooLarge` (group over 4 cards)
+- `reason.groupDuplicateSuit` (a group repeats a natural suit)
+- `reason.groupAllJokers` (a group has no natural rank/suit anchor)
+- `reason.jokerUnassignable` (a meld's jokers have no legal card to stand for)
 - `reason.runWrap` (ace used as both low and high in the same run, e.g. K-A-2)
 - `reason.noHandCard` (must add ≥1 from hand)
 - `reason.cardMissing` (table card can't leave table)

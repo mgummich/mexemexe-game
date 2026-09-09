@@ -35,10 +35,8 @@ A meld is **3 or more cards**. Two kinds:
 
 ### Groups (trincas)
 
-- 3+ cards of the **same rank**.
-- Suits may repeat, because there are two decks — ♠9 ♠9 ♥9 is a legal group as long as the two
-  ♠9s come from different decks.
-- Maximum group size is 4 cards by default (configurable house rule).
+- **Exactly 3 or 4 cards** of the **same rank**.
+- Natural cards must use different suits, even when they came from different decks.
 
 ### Jokers
 
@@ -47,6 +45,8 @@ A meld is **3 or more cards**. Two kinds:
   A meld whose jokers cannot all be assigned a legal card is invalid, even if the count looks right.
 - A meld must contain at least one natural (non-joker) card; a pile of jokers has no suit or rank
   to stand for.
+- In a group, each joker fills a different unused suit of the group's natural rank. It cannot
+  duplicate a natural suit or another joker's assigned suit.
 - Jokers keep their own identity on the table and in save/network data. The interpretation is
   derived, never stored in place of the card.
 
@@ -68,7 +68,7 @@ of a turn.
 If the optional turn timer is enabled and it expires with an unconfirmed or invalid table, the
 table reverts to how it looked at the start of your turn, you draw one card, and your turn ends.
 
-## House rules (all off by default)
+## Configuration defaults
 
 The engine carries hooks for these variants; none is enabled in a standard game:
 
@@ -76,8 +76,10 @@ The engine carries hooks for these variants; none is enabled in a standard game:
 |---|---|---|
 | `deckCount` | 2 | one deck |
 | `jokersPerDeck` | 2 | 0 = a 52-card deck with no jokers |
-| `maxGroupSize` | 4 | larger groups |
-| `groupUniqueSuits` | false | groups must have all-different suits |
+| `groupMinSize` | 3 | fixed group minimum |
+| `groupMaxSize` | 4 | fixed group maximum |
+| `groupUniqueSuits` | true | fixed: natural group suits are all different |
+| `allowAllJokerGroups` | false | fixed: every group needs a natural card |
 | `firstMeldMinPoints` | 0 (off) | minimum points for a player's first meld |
 | `turnTimerSeconds` | 0 (off) | timed turns |
 | `handSize` | 7 | different deal size |
@@ -85,5 +87,5 @@ The engine carries hooks for these variants; none is enabled in a standard game:
 ## Rejected variants
 
 These appear in other Mexe-Mexe write-ups and are deliberately **not** used here: a 52-card-only
-deck, drawing at the start of every turn, groups requiring all-different suits, and a first-meld
+deck, drawing at the start of every turn, groups with repeated natural suits, and a first-meld
 point minimum.

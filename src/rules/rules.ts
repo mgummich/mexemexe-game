@@ -86,7 +86,12 @@ const ACE_MODES: AceMode[] = [
  * high: A=14 — never both in the same run, so Q-K-A-2-3 always fails). Jokers fill whatever
  * window slots the naturals don't cover.
  */
+function hasDuplicateIds(cards: readonly Card[]): boolean {
+  return new Set(cards.map((c) => c.id)).size !== cards.length;
+}
+
 function analyzeRun(cards: readonly Card[], _config: RulesConfig): MeldAnalysis {
+  if (hasDuplicateIds(cards)) return { valid: false, reason: 'reason.duplicateCard' };
   if (cards.length < 3) return { valid: false, reason: 'reason.meldTooSmall' };
   const naturals = cards.filter((c) => !c.isJoker);
   const jokers = cards.filter((c) => c.isJoker);
@@ -141,21 +146,32 @@ function analyzeRun(cards: readonly Card[], _config: RulesConfig): MeldAnalysis 
   return { valid: false, reason: hasNaturalAce ? 'reason.runWrap' : 'reason.jokerUnassignable' };
 }
 
-/** Group analysis: 3+ cards (capped at config.maxGroupSize), same rank, jokers take that rank. */
-function analyzeGroup(cards: readonly Card[], config: RulesConfig): MeldAnalysis {
+/** Group analysis: exactly 3-4 cards, same rank, unique natural suits, jokers fill unused suits. */
+function analyzeGroup(cards: readonly Card[], _config: RulesConfig): MeldAnalysis {
+  if (hasDuplicateIds(cards)) return { valid: false, reason: 'reason.duplicateCard' };
   if (cards.length < 3) return { valid: false, reason: 'reason.meldTooSmall' };
+  if (cards.length > 4) return { valid: false, reason: 'reason.groupTooLarge' };
   const naturals = cards.filter((c) => !c.isJoker);
   const jokers = cards.filter((c) => c.isJoker);
-  if (naturals.length === 0) return { valid: false, reason: 'reason.jokerUnassignable' };
+  if (naturals.length === 0) return { valid: false, reason: 'reason.groupAllJokers' };
   const rank = naturals[0]!.rank!;
   if (!naturals.every((c) => c.rank === rank)) return { valid: false, reason: 'reason.notAMeld' };
-  if (cards.length > config.maxGroupSize) return { valid: false, reason: 'reason.groupTooLarge' };
-  if (config.groupUniqueSuits) {
-    const suits = naturals.map((c) => c.suit);
-    if (new Set(suits).size !== suits.length) return { valid: false, reason: 'reason.notAMeld' };
-  }
-  const assignments: JokerAssignment[] = jokers.map((j) => ({ cardId: j.id, suit: null, rank }));
-  return { valid: true, kind: 'group', assignments };
+  const naturalSuits = naturals.map((c) => c.suit!);
+  if (new Set(naturalSuits).size !== naturalSuits.length) return { valid: false, reason: 'reason.groupDuplicateSuit' };
+  const unusedSuits = SUITS.filter((suit) => !naturalSuits.includes(suit));
+  if (jokers.length > unusedSuits.length) return { valid: false, reason: 'reason.jokerUnassignable' };
+  const assignments: JokerAssignment[] = jokers.map((j, index) => ({ cardId: j.id, suit: unusedSuits[index]!, rank }));
+  return {
+    valid: true,
+    kind: 'group',
+    assignments,
+    rank,
+    naturalSuits,
+    jokerCount: jokers.length,
+    assignedJokers: assignments,
+    isValid: true,
+    reasons: [],
+  };
 }
 
 /** Single source of truth for meld validity: tries run, then group. */
@@ -166,7 +182,7 @@ export function analyzeMeld(cards: readonly Card[], config: RulesConfig = DEFAUL
   if (group.valid) return group;
   const naturals = cards.filter((c) => !c.isJoker);
   const allShareRank = naturals.length > 0 && naturals.every((c) => c.rank === naturals[0]!.rank);
-  return allShareRank ? group : run;
+  return allShareRank || naturals.length === 0 ? group : run;
 }
 
 export function isValidRun(cards: readonly Card[], config: RulesConfig = DEFAULT_RULES): boolean {
@@ -182,15 +198,21 @@ export function isValidMeld(cards: readonly Card[], config: RulesConfig = DEFAUL
 }
 
 export function validateTable(melds: readonly Meld[], config: RulesConfig = DEFAULT_RULES): boolean {
-  return melds.every((m) => analyzeMeld(m.cards, config).valid);
+  return getInvalidMeldReasons(melds, config).length === 0;
 }
 
 export function getInvalidMeldReasons(melds: readonly Meld[], config: RulesConfig = DEFAULT_RULES): MeldReason[] {
   const out: MeldReason[] = [];
+  const seenCardIds = new Set<string>();
   for (const m of melds) {
     const result = analyzeMeld(m.cards, config);
-    if (result.valid) continue;
-    out.push({ meldId: m.id, reason: result.reason });
+    if (!result.valid) out.push({ meldId: m.id, reason: result.reason });
+    if (m.cards.some((card) => seenCardIds.has(card.id))) {
+      if (!out.some((entry) => entry.meldId === m.id && entry.reason === 'reason.duplicateCard')) {
+        out.push({ meldId: m.id, reason: 'reason.duplicateCard' });
+      }
+    }
+    for (const card of m.cards) seenCardIds.add(card.id);
   }
   return out;
 }

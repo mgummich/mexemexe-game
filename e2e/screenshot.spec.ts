@@ -414,7 +414,7 @@ test('k-a-2-invalid: no-wrap rule rejects K-A-2 with the run-wrap reason', async
   });
 });
 
-test('repeated-suit-group: two same-suit cards from different decks form a legal group', async ({ page }) => {
+test('repeated-suit-group: two same-suit cards from different decks are rejected', async ({ page }) => {
   await capture(page, '/?seed=37&showcase=mexe', 'repeated-suit-group', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
     const cards = await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']).then(async (meldId) => {
@@ -422,8 +422,9 @@ test('repeated-suit-group: two same-suit cards from different decks form a legal
       return draft!.melds.find((m) => m.id === meldId)!.cards;
     });
     expect(cards.filter((c) => c.suit === 'diamonds')).toHaveLength(2);
-    const validation = await p.evaluate(() => window.__MEXE__.validation);
-    expect((validation as { ok: boolean }).ok).toBe(true);
+    const validation = await p.evaluate(() => window.__MEXE__.validation as { ok: boolean; reasons: string[] });
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.groupDuplicateSuit');
   });
 });
 
