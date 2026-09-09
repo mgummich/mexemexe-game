@@ -49,6 +49,7 @@ describe('gameRegions landscape desktop regression', () => {
       selectHint: { x: 190, y: 265 },
 
       tooltip: { maxW: 96, minX: 0, maxX: 388, maxY: 240 },
+      tutorialPanel: { x: 398, y: 2, w: 80, h: 176 },
     });
   });
 });

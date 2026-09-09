@@ -69,6 +69,10 @@ export interface GameRegions {
 
   /** Meld-reason tooltip clamp bounds (centre x is clamped into [minX, maxX]). */
   tooltip: { maxW: number; minX: number; maxX: number; maxY: number };
+
+  /** Tutorial speech panel. Landscape parks it in the unused right column, portrait has no such
+   * column, so it becomes a band across the top of the table area with its buttons side by side. */
+  tutorialPanel: Rect;
 }
 
 /** Landscape button boxes grow a little on a touch screen; the cluster has the slack for it. */
@@ -117,6 +121,8 @@ function landscape(p: ViewProfile): GameRegions {
     selectHint: { x: 190, y: 265 },
 
     tooltip: { maxW: 96, minX: 0, maxX: 480 - 92, maxY: 270 - 30 },
+
+    tutorialPanel: { x: 398, y: 2, w: 80, h: 176 },
   };
 }
 
@@ -169,6 +175,8 @@ function portrait(p: ViewProfile): GameRegions {
     selectHint: { x: 135, y: 366 },
 
     tooltip: { maxW: 150, minX: 0, maxX: 270 - 6, maxY: 480 - 170 },
+
+    tutorialPanel: { x: 8, y: 88, w: 254, h: 74 },
   };
 }
 

@@ -215,7 +215,7 @@ export class GameScene extends Phaser.Scene {
     this.tutorialDirector = config.tutorial ? new TutorialDirector() : null;
     debugApi.tutorialStep = this.tutorialDirector?.stepIndex ?? null;
 
-    this.r = gameRegions(view());
+    this.r = this.regionsForMode();
 
     const playerCount = this.store.get().players.length;
     // Local cosmetic choice — purely visual, never affects rules/protocol. Missing art (theme
@@ -586,6 +586,18 @@ export class GameScene extends Phaser.Scene {
     return computeSnapTargets(draft, card, this.store.get().config);
   }
 
+  /**
+   * Board regions for this scene. Portrait has no spare column for the tutorial panel, so in
+   * tutorial mode the table starts below the panel's band instead of underneath it — otherwise
+   * the panel (depth 300) would cover the very melds the step is talking about.
+   */
+  private regionsForMode(): GameRegions {
+    const r = gameRegions(view());
+    if (!this.tutorialDirector || !r.portrait) return r;
+    const shift = r.tutorialPanel.y + r.tutorialPanel.h + 4 - r.tableTop;
+    return { ...r, tableTop: r.tableTop + shift, tableAreaH: r.tableAreaH - shift };
+  }
+
   /** Tutorial-mode action gate — always true outside a tutorial. */
   private tutorialAllows(action: TutorialAction): boolean {
     if (!this.tutorialDirector) return true;
@@ -770,7 +782,7 @@ export class GameScene extends Phaser.Scene {
    * restarting it — this.store/this.editor/the online client all hold live match state. */
   private relayout(): void {
     if (!this.scene.isActive()) return;
-    this.r = gameRegions(view());
+    this.r = this.regionsForMode();
     const savedNotice = this.onlineNoticeText?.text ?? '';
     for (const o of this.staticUi) o.destroy();
     this.buildStaticUi();
@@ -1191,49 +1203,72 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Speech-bubble panel in the unused right column: step text, counter, highlights, SKIP/NEXT/REPLAY. */
+  /** Speech-bubble panel (right column in landscape, a band over the top of the table in portrait
+   * — see r.tutorialPanel): step text, counter, highlights, SKIP/NEXT/REPLAY. */
   private renderTutorialOverlay(): void {
     const dir = this.tutorialDirector;
     if (!dir) return;
-    const cx = 438;
-    const panelTop = 2;
-    const panelH = 176;
+    const p = this.r.tutorialPanel;
+    const cx = p.x + p.w / 2;
+    const panelTop = p.y;
+    const panelH = p.h;
+    // Portrait's panel is wide and short, so its buttons sit side by side on one row instead of
+    // stacked — a stacked pair would eat the whole band and leave no room for the step text.
+    const sideBySide = this.r.portrait;
+    const btnW = 74;
+    const nextX = sideBySide ? cx - 42 : cx;
+    const skipX = sideBySide ? cx + 42 : cx;
+    const nextY = sideBySide ? panelTop + panelH - 12 : panelTop + panelH - 34;
+    const skipY = sideBySide ? panelTop + panelH - 12 : panelTop + panelH - 16;
 
     const g = this.add.graphics().setDepth(300);
     g.fillStyle(0x1a1410, 0.88);
-    g.fillRoundedRect(cx - 40, panelTop, 80, panelH, 4);
+    g.fillRoundedRect(p.x, panelTop, p.w, panelH, 4);
     g.lineStyle(1, GOLD, 0.7);
-    g.strokeRoundedRect(cx - 40, panelTop, 80, panelH, 4);
+    g.strokeRoundedRect(p.x, panelTop, p.w, panelH, 4);
     this.hud.push(g);
 
-    this.hud.push(label(this, cx, panelTop + 10, t('tutorial.title'), 7, '#f7d23e'));
-    this.hud.push(label(this, cx, panelTop + 20, `${dir.stepIndex + 1}/${dir.total}`, 6, '#c0b8a8'));
+    // above the panel graphic (depth 300), or the 0.88-alpha fill washes the text out
+    this.hud.push(label(this, cx, panelTop + 10, t('tutorial.title'), 7, '#f7d23e').setDepth(301));
+    this.hud.push(
+      label(this, sideBySide ? cx + 60 : cx, sideBySide ? panelTop + 10 : panelTop + 20, `${dir.stepIndex + 1}/${dir.total}`, 6, '#c0b8a8').setDepth(301),
+    );
 
     const txt = this.add
-      .text(cx, panelTop + 34, t(dir.step.textKey), { ...fontStyle(7), align: 'center', wordWrap: { width: 70 } })
+      .text(cx, panelTop + (sideBySide ? 20 : 34), t(dir.step.textKey), {
+        ...fontStyle(7), align: 'center', wordWrap: { width: p.w - 10 },
+      })
       .setOrigin(0.5, 0)
       .setDepth(301);
     this.hud.push(txt);
 
+    // While the opponent is playing, every board control is disabled — say so, or a step that
+    // asks for DRAW/DONE reads as a broken button for as long as that turn lasts.
+    if (!dir.finished && !this.editor && this.store.get().phase === 'playing') {
+      const active = this.store.get().players[this.store.get().activePlayerIndex]!;
+      const waitY = Math.min(txt.y + txt.height + 6, nextY - 12);
+      this.hud.push(label(this, cx, waitY, t('game.turnOf', { name: active.name }), 6, '#f7d23e').setDepth(301));
+    }
+
     if (dir.finished) {
-      this.hud.push(label(this, cx, panelTop + panelH - 34, t('win.title'), 10, '#f7d23e'));
-      this.hud.push(new PixelButton(this, cx, panelTop + panelH - 20, t('tutorial.replay'), () => this.restartTutorial(), {
-        textureBase: 'btn-comprar', w: 74, h: 14, size: 6, color: 0x2e9e50,
-      }));
+      this.hud.push(label(this, cx, nextY - 14, t('win.title'), 10, '#f7d23e').setDepth(301));
+      this.hud.push(new PixelButton(this, cx, nextY, t('tutorial.replay'), () => this.restartTutorial(), {
+        textureBase: 'btn-comprar', w: btnW, h: 14, size: 6, color: 0x2e9e50,
+      }).setDepth(302));
     } else {
       if (dir.step.allowed.some((a) => a.type === 'next')) {
-        this.hud.push(new PixelButton(this, cx, panelTop + panelH - 34, t('tutorial.next'), () => {
+        this.hud.push(new PixelButton(this, nextX, nextY, t('tutorial.next'), () => {
           dir.next();
           debugApi.tutorialStep = dir.stepIndex;
           this.renderAll();
-        }, { textureBase: 'btn-comprar', w: 74, h: 14, size: 6, color: 0x2e9e50 }));
+        }, { textureBase: 'btn-comprar', w: btnW, h: 14, size: 6, color: 0x2e9e50 }).setDepth(302));
       }
-      this.hud.push(new PixelButton(this, cx, panelTop + panelH - 16, t('tutorial.skip'), () => {
+      this.hud.push(new PixelButton(this, skipX, skipY, t('tutorial.skip'), () => {
         playlog.record('tutorial:skip', { step: dir.stepIndex });
         gotoScene(this, 'menu');
       }, {
-        textureBase: 'btn-comprar', w: 74, h: 12, size: 6, color: 0x6b6b73,
-      }));
+        textureBase: 'btn-comprar', w: btnW, h: 12, size: 6, color: 0x6b6b73,
+      }).setDepth(302));
     }
 
     // highlight cards named by the current step

@@ -1168,6 +1168,29 @@ test('mobile-portrait-en: the portrait board reads in English', async ({ page })
   });
 });
 
+// The tutorial panel used to be authored at landscape coordinates (x=438) regardless of profile,
+// which put it — and its NEXT/SKIP buttons — outside the 270-wide portrait world entirely, so the
+// tutorial could not be advanced at all on a phone held upright.
+test.describe('portrait', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('tutorial: the step panel is on screen and NEXT advances in portrait', async ({ page }) => {
+    const s = 390 / 270;
+    const oy = (844 - 480 * s) / 2;
+    const tap = async (lx: number, ly: number): Promise<void> => { await page.touchscreen.tap(lx * s, ly * s + oy); };
+
+    await page.goto('/?seed=42&showcase=menu');
+    await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+    await tap(135, (207 / 270) * 480); // MenuScene TUTORIAL button, portrait-remapped
+    await page.waitForFunction(() => window.__MEXE__.scene === 'tutorial' && window.__MEXE__.tutorialStep === 0);
+
+    await tap(93, 150); // tutorial NEXT, portrait panel (r.tutorialPanel band over the table)
+    await page.waitForFunction(() => window.__MEXE__.tutorialStep === 1, undefined, { timeout: 10_000 });
+    await snap(page, 'tutorial-portrait');
+    expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  });
+});
+
 test.afterAll(() => {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   fs.writeFileSync(LOG_PATH, JSON.stringify({ generatedAt: new Date().toISOString(), shots: logs }, null, 2));
