@@ -275,6 +275,54 @@ describe('AI + jokers', () => {
     }
   });
 
+  it('never proposes a meld with 2 jokers, across seeded AI-vs-AI games', () => {
+    const cycle = ['cida', 'juninho', 'bia', 'ze'] as const;
+    for (let seed = 0; seed < 12; seed++) {
+      let state = createNewGame(seed, [
+        { name: 'A', isAi: true },
+        { name: 'B', isAi: true },
+      ]);
+      const ais = [createAi(cycle[seed % 4]!), createAi(cycle[(seed + 1) % 4]!)];
+      for (let turn = 0; turn < 200 && state.phase === 'playing'; turn++) {
+        const d = ais[state.activePlayerIndex]!.decide(state);
+        if (d.kind === 'confirm') {
+          for (const meld of d.draft.melds) {
+            expect(meld.cards.filter((card) => card.isJoker).length).toBeLessThanOrEqual(1);
+          }
+          state = applyConfirmedTurn(state, d.draft);
+        } else {
+          state = drawAndEndTurn(state);
+        }
+      }
+    }
+  });
+
+  it('holds the joker when an equivalent natural play exists, but spends it to go out', () => {
+    // natural run clubs 4-5-6 and a joker-completed group of 8s are both available.
+    // the dead diamonds-2 means the joker group would NOT empty the hand — so hold it.
+    const hand = [c('clubs', 4), c('clubs', 5), c('clubs', 6), c('hearts', 8), c('spades', 8), j(0, 1), c('diamonds', 2)];
+    const patient = createAi('bia').decide(base(hand));
+    expect(patient.kind).toBe('confirm');
+    if (patient.kind === 'confirm') {
+      expect(patient.draft.handCardsPlayed).not.toContain(j(0, 1).id);
+    }
+    // aggressive juninho spends jokers early
+    const aggressive = createAi('juninho').decide(base(hand));
+    expect(aggressive.kind).toBe('confirm');
+    if (aggressive.kind === 'confirm') {
+      expect(aggressive.draft.handCardsPlayed).toContain(j(0, 1).id);
+    }
+  });
+
+  it('a joker-holding personality still spends the joker when that play empties the hand', () => {
+    const hand = [c('hearts', 8), c('spades', 8), j(0, 1)];
+    const d = createAi('bia').decide(base(hand));
+    expect(d.kind).toBe('confirm');
+    if (d.kind === 'confirm') {
+      expect(d.draft.handCardsPlayed).toContain(j(0, 1).id);
+    }
+  });
+
   it('a duplicate natural does not break the run scanner and stays legal filler for a group', () => {
     // hearts 6,7,7,8 (two decks' worth of 7): run scanner must find 6-7-8 using one 7,
     // leaving the spare 7 out (no legal use for it here — just must not crash or corrupt the run).

@@ -82,6 +82,7 @@ export type ReasonCode =
   | 'reason.groupDuplicateSuit'
   | 'reason.groupAllJokers'
   | 'reason.jokerUnassignable'
+  | 'reason.tooManyJokers'
   | 'reason.runWrap'
   // Network-only reasons (server validation path, see docs/MULTIPLAYER_ARCHITECTURE.md §5)
   | 'reason.notYourTurn'

@@ -41,14 +41,24 @@ A meld is **3 or more cards**. Two kinds:
 ### Jokers
 
 - A joker is a wildcard in a run or a group.
+- **Each meld can use at most 1 joker.** A joker can substitute one missing card in a sequence
+  or a trinca. A meld with 2 or more jokers is invalid (`reason.tooManyJokers`).
 - Every joker in a valid meld must have a concrete interpretation — the exact card it stands for.
-  A meld whose jokers cannot all be assigned a legal card is invalid, even if the count looks right.
+  A meld whose joker cannot be assigned a legal card is invalid, even if the count looks right.
 - A meld must contain at least one natural (non-joker) card; a pile of jokers has no suit or rank
   to stand for.
-- In a group, each joker fills a different unused suit of the group's natural rank. It cannot
-  duplicate a natural suit or another joker's assigned suit.
+- In a group, the joker fills an unused suit of the group's natural rank. It cannot duplicate a
+  natural suit.
 - Jokers keep their own identity on the table and in save/network data. The interpretation is
   derived, never stored in place of the card.
+
+### Joker strategy (guidance, not a rule)
+
+The engine never blocks a legal joker play — these are hints the tutorial, help screen and the
+AI personalities follow:
+
+- Because the table is shared, playing a joker early can help other players.
+- It is often best to save the joker for your final move.
 
 ## Turns
 

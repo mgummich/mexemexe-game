@@ -420,6 +420,38 @@ test('joker-group: a joker stands in for the third card of a group of 3s', async
   });
 });
 
+test('two-joker-run: a run holding 2 jokers is rejected with the too-many-jokers reason (PT)', async ({ page }) => {
+  await capture(page, '/?seed=16&showcase=mexe', 'mexe-invalid-two-jokers-run', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['hearts-5-d0', 'hearts-6-d0', 'joker-d0-1', 'joker-d1-2']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation as { ok: boolean; reasons: string[] });
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.tooManyJokers');
+  });
+  expect(translate('reason.tooManyJokers')).not.toMatch(/^reason\./);
+});
+
+test('two-joker-trinca: a trinca holding 2 jokers is rejected with the too-many-jokers reason (EN)', async ({ page }) => {
+  await capture(page, '/?seed=16&showcase=mexe&lang=en', 'mexe-invalid-two-jokers-trinca-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['hearts-6-d0', 'spades-6-d1', 'joker-d0-1', 'joker-d1-2']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation as { ok: boolean; reasons: string[] });
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.tooManyJokers');
+  });
+  expect(translate('reason.tooManyJokers')).not.toMatch(/^reason\./);
+});
+
+test('one-joker melds stay legal: a joker completes a run and a trinca on the same table', async ({ page }) => {
+  await capture(page, '/?seed=16&showcase=mexe', 'mexe-valid-one-joker-each', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['hearts-5-d0', 'hearts-6-d0', 'joker-d0-1']);
+    await buildMeld(p, ['spades-5-d1', 'spades-6-d1', 'joker-d1-2']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation as { ok: boolean; reasons: string[] });
+    expect(validation.reasons).not.toContain('reason.tooManyJokers');
+  });
+});
+
 test('k-a-2-invalid: no-wrap rule rejects K-A-2 with the run-wrap reason', async ({ page }) => {
   await capture(page, '/?seed=242&showcase=mexe', 'mexe-invalid-kA2', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);

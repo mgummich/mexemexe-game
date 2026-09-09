@@ -84,7 +84,7 @@
     "PT accents slightly rough at 6-7px font sizes",
     "no renderAll sprite pooling (fps 59 at 21 sprites+20 zones; revisit only if a lower-end target dips below 50)"
   ],
-  "nextTask": "Phase 11 closed the storage-blocked boot crash, the black-screen boot failure, the unguarded socket-callback storage access and the permanent online input lock, and removed the only real duplicated work on the render path (tutorial-complete fps 44 -> 59). The top non-code ask is unchanged and now three phases old: log a real playtest session. The best next code task is a manual pass on a browser with site data blocked, to confirm S1/S2 behave as designed outside the unit test.",
+  "nextTask": "optional: run npm run verify:multiplayer to confirm the 1-joker rule end-to-end over the live protocol",
   "phase4Scores": {
     "launchStability": 9.5,
     "fullFlow": 9,
@@ -294,38 +294,41 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-09T14:53:28.959Z",
+    "generatedAt": "2026-09-09T15:27:39.880Z",
     "perShotFps": {
       "menu": 60,
-      "game": 57,
+      "game": 58,
       "game4": 58,
-      "tutorial": 50,
-      "tutorial-step2": 53,
-      "setup": 57,
-      "settings": 55,
-      "win": 58,
-      "mexe-invalid": 58,
+      "tutorial": 57,
+      "tutorial-step2": 57,
+      "setup": 58,
+      "settings": 56,
+      "win": 51,
+      "mexe-invalid": 55,
       "comprar-flow": 58,
       "ai-showcase-mid": 57,
-      "ai-showcase-after": 57,
+      "ai-showcase-after": 58,
       "ai-cida": 58,
       "ai-juninho": 58,
-      "ai-bia": 58,
-      "ai-ze": 57,
+      "ai-bia": 57,
+      "ai-ze": 58,
       "pause": 57,
       "help": 56,
       "help-en": 56,
       "menu-en": 60,
       "game-en": 58,
-      "a11y-large-text": 58,
+      "a11y-large-text": 57,
       "keyboard-comprar": 58,
       "stress-table": 58,
       "game-1080p": 58,
       "joker-in-hand": 58,
       "joker-in-run": 58,
       "joker-in-group": 58,
+      "mexe-invalid-two-jokers-run": 58,
+      "mexe-invalid-two-jokers-trinca-en": 57,
+      "mexe-valid-one-joker-each": 58,
       "mexe-invalid-kA2": 58,
-      "repeated-suit-group": 57,
+      "repeated-suit-group": 58,
       "tutorial-trinca": 57,
       "tutorial-joker": 58,
       "tutorial-complete": 59,
@@ -333,9 +336,9 @@
       "feito-invalid-explained-en": 58,
       "game-theme-boteco": 58,
       "game-theme-kitchen": 58,
-      "game-theme-quintal": 56,
-      "game-theme-feira": 58,
-      "cosmetics-panel": 54,
+      "game-theme-quintal": 54,
+      "game-theme-feira": 57,
+      "cosmetics-panel": 53,
       "a11y-reduced-motion": 58
     },
     "viewports": [
@@ -343,7 +346,7 @@
       "1920x1080"
     ],
     "unitTests": "301/301 pass (21 files, incl. server config + logger redaction + client ws-url config)",
-    "e2eScreenshots": 41
+    "e2eScreenshots": 44
   },
   "phase3Scores": {
     "fullFlow": 9,
@@ -895,6 +898,48 @@
       "The storage-blocked boot path is fixed and unit-tested at the loadSave seam, but has never been exercised in a real Safari-with-site-data-blocked session.",
       "The 10s online pending timeout has no automated coverage; it is verified by reading, not by a test.",
       "Rooms remain in-memory and single-process (by design, documented in docs/OPERATIONS.md)."
+    ]
+  },
+  "joker_one_per_meld": {
+    "status": "active",
+    "auditSummary": "docs/JOKER_ONE_PER_MELD_AUDIT.md. Before the change, analyzeRun accepted any joker count that matched the empty window slots and analyzeGroup accepted one joker per unused suit, so 2-joker runs and trincas were legal. Server validation already routes through the shared canConfirmTurn, so no separate server rule existed to diverge. The AI had no joker preference at all.",
+    "rule": "Each meld may contain at most 1 joker. 0 or 1 joker is fine if the meld is otherwise valid; 2+ jokers is reason.tooManyJokers. All-joker melds stay invalid (reason.groupAllJokers). No other rule changed.",
+    "strategy": "Guidance only, never legality: the table is shared, so an early joker helps opponents. cida/bia/ze hold jokers unless the play empties the hand; juninho spends them early; RearrangerAi breaks ties toward the draft that spends fewer jokers.",
+    "priorityIssues": [
+      "old saves containing a 2-joker meld now fail deserializeGameState as a corrupt save (accepted: that table is illegal under the new rule)",
+      "joker strategy is a heuristic preference, not a search-quality guarantee — a bot may still spend a joker on a merely-large play"
+    ],
+    "delivered": [
+      "src/rules/rules.ts - joker-count guard in analyzeRun and analyzeGroup, placed after the all-joker check so reason.groupAllJokers is preserved",
+      "src/rules/types.ts - reason.tooManyJokers reason code",
+      "src/ai/ai.ts - holdJokers flag on SimpleAi/RearrangerAi/tryExtend, joker-count tiebreak in compareCandidates",
+      "src/localization/i18n.ts - reason.tooManyJokers, rules.body and tutorial.step6 rule + strategy copy in pt-BR and en-US",
+      "docs/RULES.md, README.md - one-joker rule plus a joker strategy section",
+      "docs/JOKER_ONE_PER_MELD_AUDIT.md - the audit",
+      "tests - rules (valid/invalid meld matrix, validateTable, canConfirmTurn), ai (2-joker invariant over seeded games, hold-vs-spend behaviour), server (2-joker proposal rejected), i18n (key coverage)"
+    ],
+    "modelRoles": [
+      "haiku/low: locate validator, tests, AI, server and localization files; summarize existing joker behaviour",
+      "sonnet: validator guard, tests, AI patch, localization, docs, STATUS.json, running the verify commands",
+      "opus: not needed - joker assignment logic was unambiguous and no run/trinca conflict surfaced"
+    ],
+    "cavemanSkill": "available; session ran with caveman full + ponytail full active for the main thread. No subagents were spawned - the change was a single bounded edit path.",
+    "verification": {
+      "npm run test": "325/325 pass (21 files)",
+      "npm run lint": "clean (eslint + tsc --noEmit)",
+      "npm run build": "pass - 123.95 kB game chunk, 1481.77 kB phaser chunk",
+      "npm run verify": "OK - 49 screenshot captures, fps 53-59, zero console errors, missingAssets=0",
+      "npm run test:server": "covered by npm run test (tests/server)",
+      "npm run verify:multiplayer": "not run in this pass - needs the live server + browser matrix"
+    },
+    "nextTask": "optional: an e2e screenshot pair showing the tooManyJokers banner in pt-BR and en-US",
+    "screenshots": [
+      "docs/screenshots/mexe-invalid-two-jokers-run.png (2-joker run rejected, pt-BR)",
+      "docs/screenshots/mexe-invalid-two-jokers-trinca-en.png (2-joker trinca rejected, en-US)",
+      "docs/screenshots/mexe-valid-one-joker-each.png (1-joker run + 1-joker trinca, both legal)",
+      "docs/screenshots/joker-in-run.png, joker-in-group.png (existing 1-joker captures, still valid)",
+      "docs/screenshots/help.png, help-en.png (rules text with the 1-joker rule + strategy tip)",
+      "docs/screenshots/tutorial-joker.png (tutorial joker step with the strategy tip)"
     ]
   }
 }

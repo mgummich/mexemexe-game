@@ -102,13 +102,19 @@ function findHandMelds(hand: readonly Card[]): Card[][] {
   return out;
 }
 
-/** Try appending/prepending a single hand card to any existing draft meld. */
-function tryExtend(ed: DraftEditor): string[] {
+/**
+ * Try appending/prepending a single hand card to any existing draft meld.
+ * `holdJokers` keeps a joker back unless spending it empties the hand (the table is shared,
+ * so an early joker mostly helps the other players) — strategy only, never legality.
+ */
+function tryExtend(ed: DraftEditor, holdJokers = false): string[] {
   const played: string[] = [];
   let progress = true;
   while (progress) {
     progress = false;
-    for (const card of sortCards(ed.getRemainingHand())) {
+    const remaining = sortCards(ed.getRemainingHand());
+    for (const card of remaining) {
+      if (holdJokers && card.isJoker && remaining.length > 1) continue;
       for (const meld of ed.getDraft().melds) {
         const front = [card, ...meld.cards];
         const back = [...meld.cards, card];
@@ -134,9 +140,13 @@ function tryExtend(ed: DraftEditor): string[] {
 /**
  * SimpleAi: lay down all hand melds + extend table melds with single cards.
  * `minimal` personality plays only one meld/extension per turn (conservative).
+ * `holdJokers` saves jokers for the play that goes out (see tryExtend).
  */
 export class SimpleAi implements AiPlayer {
-  constructor(private readonly minimal = false) {}
+  constructor(
+    private readonly minimal = false,
+    private readonly holdJokers = false,
+  ) {}
 
   decide(state: GameState): AiDecision {
     const ed = new DraftEditor(state);
@@ -147,6 +157,8 @@ export class SimpleAi implements AiPlayer {
       const remaining = new Set(ed.getRemainingHand().map((c) => c.id));
       const cards = meld.filter((c) => remaining.has(c.id));
       if (cards.length < 3 || !isValidMeld(cards)) continue;
+      // hold the joker unless this meld empties the hand outright
+      if (this.holdJokers && cards.some((c) => c.isJoker) && cards.length < remaining.size) continue;
       const meldId = null;
       let target: string | null = meldId;
       for (const c of cards) {
@@ -167,7 +179,7 @@ export class SimpleAi implements AiPlayer {
       // when no meld was laid down above.
       if (notes.length === 0) return this.decideMinimalExtendOnly(state);
     } else {
-      const ext = tryExtend(ed);
+      const ext = tryExtend(ed, this.holdJokers);
       if (ext.length) notes.push(`extended table with ${ext.join(',')}`);
     }
 
@@ -180,7 +192,9 @@ export class SimpleAi implements AiPlayer {
 
   private decideMinimalExtendOnly(state: GameState): AiDecision {
     const ed = new DraftEditor(state);
-    for (const card of sortCards(state.players[state.activePlayerIndex]!.hand)) {
+    const hand = sortCards(state.players[state.activePlayerIndex]!.hand);
+    for (const card of hand) {
+      if (this.holdJokers && card.isJoker && hand.length > 1) continue;
       for (const meld of ed.getDraft().melds) {
         if (isValidMeld([...meld.cards, card])) {
           ed.playHandCard(card.id, meld.id);
@@ -200,6 +214,8 @@ interface Candidate {
   draft: DraftState;
   explanation: string;
   played: string[];
+  /** jokers left on the table by this draft — tiebreak only, fewer wins at equal card count. */
+  jokers: number;
 }
 
 const MAX_CANDIDATES = 20;
@@ -214,7 +230,8 @@ function sortedPlayed(draft: DraftState): string[] {
 }
 
 function addCandidate(candidates: Candidate[], draft: DraftState, explanation: string): void {
-  candidates.push({ draft, explanation, played: sortedPlayed(draft) });
+  const jokers = draft.melds.flatMap((m) => m.cards).filter((c) => c.isJoker).length;
+  candidates.push({ draft, explanation, played: sortedPlayed(draft), jokers });
 }
 
 /** Steal an edge card (first/last) from a 4+ meld and form a brand-new meld with 2 or 3 hand cards. */
@@ -355,6 +372,8 @@ function searchInterMeldMove(state: GameState, hand: Card[], candidates: Candida
 
 function compareCandidates(a: Candidate, b: Candidate): number {
   if (a.played.length !== b.played.length) return b.played.length - a.played.length;
+  // equal-size plays: prefer the one that spends fewer jokers (save them for the final move)
+  if (a.jokers !== b.jokers) return a.jokers - b.jokers;
   for (let i = 0; i < a.played.length; i++) {
     const x = a.played[i]!;
     const y = b.played[i]!;
@@ -372,7 +391,11 @@ function compareCandidates(a: Candidate, b: Candidate): number {
  * wall-clock deadline; returns the best candidate found so far if it runs out.
  */
 export class RearrangerAi implements AiPlayer {
-  private simple = new SimpleAi(false);
+  private simple: SimpleAi;
+
+  constructor(private readonly holdJokers = false) {
+    this.simple = new SimpleAi(false, holdJokers);
+  }
 
   decide(state: GameState): AiDecision {
     const deadline = performance.now() + 400;
@@ -454,11 +477,11 @@ export function createAi(personality: Personality): AiPlayer {
   const engine: AiPlayer = (() => {
     switch (personality) {
       case 'cida':
-        return new SimpleAi(true);
+        return new SimpleAi(true, true);
       case 'juninho':
-        return new SimpleAi(false);
+        return new SimpleAi(false); // aggressive: spends jokers early
       case 'bia':
-        return new RearrangerAi();
+        return new RearrangerAi(true);
       case 'ze':
         return new PatientAi();
     }
@@ -467,7 +490,7 @@ export function createAi(personality: Personality): AiPlayer {
 }
 
 class PatientAi implements AiPlayer {
-  private inner = new RearrangerAi();
+  private inner = new RearrangerAi(true);
   decide(state: GameState): AiDecision {
     const d = this.inner.decide(state);
     if (d.kind === 'confirm') {
