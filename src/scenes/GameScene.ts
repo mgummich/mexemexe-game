@@ -20,8 +20,19 @@ import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/pro
 import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
+import {
+  clampScroll,
+  editorZones,
+  hitTestMeldListRow,
+  meldListContentHeight,
+  meldListRows,
+  meldListRowY,
+  MELD_LIST_ROW_H,
+  type MeldListRow,
+} from '../table/editor-layout';
 import { computeMeldLayout, type MeldLayoutInput } from '../table/layout';
 import { computeSnapTargets, snapTargetFor, type SnapStatus, type SnapTarget } from '../table/snap';
+import { ZOOM_FLOORS, zoomStepIn, zoomStepOut } from '../table/zoom';
 import { buildTutorialState } from '../tutorial/fixture';
 import { TutorialDirector, type TutorialAction } from '../tutorial/director';
 import { openPauseMenu } from '../ui/pause-menu';
@@ -116,6 +127,9 @@ export class GameScene extends Phaser.Scene {
   private dragTableOutline: Phaser.GameObjects.Graphics | null = null;
   /** Snap targets for the card currently being dragged — computed once on dragstart (Phase 12). */
   private snapTargets: SnapTarget[] = [];
+  /** Snap targets for the currently *selected* (tap/keyboard) card — computed once on select/render,
+   * never per frame (Phase 14 Wave B). Empty unless helperFlags().legalDestinationsOnSelect is on. */
+  private selectionTargets: SnapTarget[] = [];
   /** Non-mutating ghost preview panel shown while hovering a drop zone. */
   private ghostPreview: Phaser.GameObjects.GameObject[] = [];
   /** Which zone the ghost preview currently reflects: undefined = none, '' = empty table area, else a meldId. Lets hover redraw only on actual change, never per pointer-move. */
@@ -166,6 +180,40 @@ export class GameScene extends Phaser.Scene {
   /** Focus ring is drawn only once the keyboard has been used, so mouse players never see it. */
   private focusVisible = false;
 
+  // focused Mexe editor (Phase 14 Wave C — portrait only)
+  /** Open/closed toggle. Never discards draft state — the draft lives in DraftEditor regardless. */
+  private mexeEditorOpen = false;
+  /** Which meld-list row is the workspace's subject: an existing meld id, null for the "new meld"
+   * row, or undefined when nothing has been focused yet this turn. */
+  private mexeEditorMeldId: string | null | undefined = undefined;
+  private mexeEditorScroll = 0;
+  /** Hand-strip horizontal scroll offset — separate axis/field from the meld list's. */
+  private mexeHandScroll = 0;
+  private mexeToggleBtn!: PixelButton;
+
+  // table zoom/pan (Phase 14 Wave D — crowded table legibility)
+  /** Index into ZOOM_FLOORS; 0 is "auto", today's shrink-to-fit computeMeldLayout call. */
+  private zoomLevel = 0;
+  /** Vertical scroll into the (possibly taller-than-the-table-area) zoomed layout, clamped every
+   * render to [0, content height - tableAreaH] — never lets zoomed content drift off-screen. */
+  private tablePan = 0;
+  /** Real content height of the last layoutMelds() pass, used to clamp tablePan. */
+  private tableContentH = 0;
+  private zoomInBtn!: PixelButton;
+  private zoomOutBtn!: PixelButton;
+  /** Meld focus view (Phase 14 Wave C landscape counterpart — see layoutMelds): id of the meld
+   * currently shown large in the read-only overlay, or null when closed. */
+  private focusedMeldId: string | null = null;
+  /** Geometry mask clipping zoomed/panned table content to the table area — recreated each
+   * layoutMelds() pass (only while zoomed; at the default zoom nothing is masked, so today's
+   * landscape rendering is untouched), destroyed at the top of the next renderAll(). */
+  private tableMaskGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Pan-drag anchor (world Y + tablePan at pointerdown). Every pan tick calls renderAll(), which
+   * destroys and recreates the pan surface (and would reset a same-pass local closure) — these
+   * must survive across that recreation for the whole gesture, hence instance fields, not locals. */
+  private panDragStartY = 0;
+  private panDragStartPan = 0;
+
   constructor() {
     super('game');
   }
@@ -187,6 +235,11 @@ export class GameScene extends Phaser.Scene {
     this.selectedCardId = null;
     this.focusIndex = 0;
     this.focusVisible = false;
+    this.mexeEditorOpen = false;
+    this.mexeEditorMeldId = undefined;
+    this.mexeEditorScroll = 0;
+    this.mexeHandScroll = 0;
+    this.resetZoomPan();
     debugApi.scene = config.tutorial ? 'tutorial' : 'game';
     debugApi.seed = config.seed;
     if (!config.tutorial && !config.online) settings.setLastSeed(config.seed);
@@ -257,6 +310,7 @@ export class GameScene extends Phaser.Scene {
       this.aiTimer?.remove();
       this.onlinePendingTimer?.remove();
       this.ambienceSound?.stop();
+      this.resetZoomPan();
     });
 
     this.input.keyboard?.on('keydown-ESC', () => {
@@ -471,6 +525,13 @@ export class GameScene extends Phaser.Scene {
     if (state.phase !== 'playing') return;
     const player = state.players[state.activePlayerIndex]!;
     const isMyTurn = !player.isAi && state.activePlayerIndex === this.localSeat;
+    // Fresh per-turn UI state: a new turn gets a fresh DraftEditor, so the editor's own view
+    // (which row is focused, scroll position, open/closed) starts fresh alongside it.
+    this.mexeEditorOpen = false;
+    this.mexeEditorMeldId = undefined;
+    this.mexeEditorScroll = 0;
+    this.mexeHandScroll = 0;
+    this.resetZoomPan();
 
     if (isMyTurn) {
       setMusicContext('mexe');
@@ -531,6 +592,41 @@ export class GameScene extends Phaser.Scene {
     this.refreshDraft();
   }
 
+  /** Back to 1x / offset 0 / no focus — called on turn start, an orientation flip, and scene
+   * shutdown so zoomed/panned/focused view state never survives past the board it described. */
+  private resetZoomPan(): void {
+    this.zoomLevel = 0;
+    this.tablePan = 0;
+    this.tableContentH = 0;
+    this.focusedMeldId = null;
+  }
+
+  private onZoomIn(): void {
+    const next = zoomStepIn(this.zoomLevel);
+    if (next === this.zoomLevel) return;
+    this.zoomLevel = next;
+    this.renderAll();
+  }
+
+  private onZoomOut(): void {
+    const next = zoomStepOut(this.zoomLevel);
+    if (next === this.zoomLevel) return;
+    this.zoomLevel = next;
+    this.renderAll();
+  }
+
+  /** Entry/exit for the focused Mexe editor. A no-op with no live editor (opponent's turn, or an
+   * online player mid-pending) — same interactive gate every other draft mutation honours. Never
+   * discards draft state: the draft lives in DraftEditor, untouched by this toggle either way. */
+  private toggleMexeEditor(): void {
+    if (!this.editor) return;
+    this.mexeEditorOpen = !this.mexeEditorOpen;
+    this.selectedCardId = null;
+    playSfx(this, 'sfx-snap', 0.3);
+    playlog.record(this.mexeEditorOpen ? 'mexe:editorOpen' : 'mexe:editorClose');
+    this.renderAll();
+  }
+
   /** e2e hooks: drive the live editor from Playwright and re-render. */
   private bindMexeHooks(): void {
     const wrap = <A extends unknown[]>(fn: (...args: A) => boolean) => (...args: A): boolean => {
@@ -572,6 +668,24 @@ export class GameScene extends Phaser.Scene {
       selection: () => this.selectedCardId,
       snapTargets: (cardId: string) =>
         this.computeSnapTargetsFor(cardId).map((tg) => ({ meldId: tg.meldId, status: tg.status, reason: tg.reason })),
+      // Phase 14 Wave B — verification-only reads for the helper-mode UI.
+      helperMode: () => settings.helperMode(),
+      selectionTargets: () =>
+        this.selectionTargets.map((tg) => ({ meldId: tg.meldId, status: tg.status, reason: tg.reason })),
+      // Phase 14 Wave C — focused Mexe editor (portrait).
+      editorOpen: () => this.mexeEditorOpen,
+      openEditor: () => {
+        if (this.editor && !this.mexeEditorOpen) this.toggleMexeEditor();
+      },
+      closeEditor: () => {
+        if (this.editor && this.mexeEditorOpen) this.toggleMexeEditor();
+      },
+      editorMeldId: () => this.mexeEditorMeldId ?? null,
+      editorScroll: () => this.mexeEditorScroll,
+      // Phase 14 Wave D — table zoom/pan/focus, verification-only reads.
+      zoomLevel: () => this.zoomLevel,
+      panOffset: () => this.tablePan,
+      focusedMeldId: () => this.focusedMeldId,
     };
   }
 
@@ -742,12 +856,28 @@ export class GameScene extends Phaser.Scene {
 
     this.staticUi.push(panel, this.feitoBtn, this.comprarBtn, undoBtn, redoBtn, resetBtn, sortBtn);
 
+    if (this.r.portrait) {
+      // Focused Mexe editor toggle (Phase 14 Wave C) — portrait only, landscape is untouched.
+      this.mexeToggleBtn = new PixelButton(this, this.r.mexeToggle.x, this.r.mexeToggle.y, t('mobile.editorToggle'), () => this.toggleMexeEditor(), {
+        textureBase: 'btn-small', w: this.r.mexeToggle.w, h: this.r.mexeToggle.h, size: this.r.mexeToggle.size, color: 0x5e5646, tooltip: t('tooltip.mexeEditor'),
+      });
+      this.staticUi.push(this.mexeToggleBtn);
+    }
+
     if (!this.config.tutorial) {
       // tutorial mode uses the whole right column for its step panel — no room for the gear there (Esc still opens pause)
       const gearBtn = new PixelButton(this, this.r.gear.x, this.r.gear.y, '⚙', () => this.togglePause(), {
         textureBase: 'btn-small', w: this.r.gear.w, h: this.r.gear.h, size: this.r.gear.size, color: 0x5e5646, tooltip: t('tooltip.settings'),
       });
-      this.staticUi.push(gearBtn);
+      // Table zoom (Phase 14 Wave D) — tutorial melds are always few, so tutorial mode keeps this
+      // free strip for its step panel instead (same gate as the gear button above).
+      this.zoomInBtn = new PixelButton(this, this.r.zoomIn.x, this.r.zoomIn.y, '+', () => this.onZoomIn(), {
+        textureBase: 'btn-small', w: this.r.zoomIn.w, h: this.r.zoomIn.h, size: this.r.zoomIn.size, color: 0x5e5646, tooltip: t('tooltip.zoomIn'),
+      });
+      this.zoomOutBtn = new PixelButton(this, this.r.zoomOut.x, this.r.zoomOut.y, '−', () => this.onZoomOut(), {
+        textureBase: 'btn-small', w: this.r.zoomOut.w, h: this.r.zoomOut.h, size: this.r.zoomOut.size, color: 0x5e5646, tooltip: t('tooltip.zoomOut'),
+      });
+      this.staticUi.push(gearBtn, this.zoomInBtn, this.zoomOutBtn);
     }
 
     this.reasonText = this.add
@@ -784,6 +914,7 @@ export class GameScene extends Phaser.Scene {
   private relayout(): void {
     if (!this.scene.isActive()) return;
     this.r = this.regionsForMode();
+    this.resetZoomPan();
     const savedNotice = this.onlineNoticeText?.text ?? '';
     for (const o of this.staticUi) o.destroy();
     this.buildStaticUi();
@@ -1128,12 +1259,27 @@ export class GameScene extends Phaser.Scene {
     // invalid-badge display and the FEITO gate below both need it, and each walks every meld.
     const melds = this.editor ? this.editor.getDraft().melds : state.table;
     const analysis = this.editor?.analyze() ?? null;
-    const invalidReasons = new Map((analysis?.invalidMelds ?? []).map((r) => [r.meldId, t(r.reason)]));
-    this.layoutMelds(melds, invalidReasons, interactive, state.config);
-
+    // A meld can carry more than one reason (e.g. the analysis reason plus reason.duplicateCard) —
+    // collect all of them, not just the last one a Map key would keep.
+    const invalidReasons = new Map<string, string[]>();
+    for (const r of analysis?.invalidMelds ?? []) {
+      const list = invalidReasons.get(r.meldId) ?? [];
+      list.push(t(r.reason));
+      invalidReasons.set(r.meldId, list);
+    }
     // local seat's hand
     const hand = this.editor ? this.editor.getRemainingHand() : state.players[this.localSeat]!.hand;
-    this.layoutHand(hand, interactive);
+
+    // Focused Mexe editor (Phase 14 Wave C): portrait only, and only while a live draft exists —
+    // rotating to landscape or losing the editor (turn change) drops back to the normal board.
+    if (this.mexeEditorOpen && !this.r.portrait) this.mexeEditorOpen = false;
+    const editorMode = this.mexeEditorOpen && this.r.portrait && this.editor !== null;
+    if (editorMode) {
+      this.renderMexeEditor(melds, hand, invalidReasons, interactive, state.config);
+    } else {
+      this.layoutMelds(melds, invalidReasons, interactive, state.config);
+      this.layoutHand(hand, interactive);
+    }
 
     // buttons + reason
     if (interactive && this.editor && analysis) {
@@ -1143,7 +1289,10 @@ export class GameScene extends Phaser.Scene {
       this.lastValidOk = check.ok;
       this.setFeitoEnabled(check.ok && this.tutorialAllows({ type: 'feito' }));
       this.comprarBtn.setEnabled(this.tutorialAllows({ type: 'comprar' }));
-      this.reasonText.setText(this.blockingReasonText());
+      // 'onAttempt' (expert): the live line stays empty — the reason only appears once the player
+      // actually presses the blocked FEITO (onFeitoBlocked). The gate itself never weakens: it's
+      // still canConfirmTurn via check.ok either way.
+      this.reasonText.setText(settings.helperFlags().feitoReason === 'live' ? this.blockingReasonText() : '');
       debugApi.validation = { ok: check.ok, reasons: check.ok ? [] : check.reasons };
     } else {
       this.setFeitoEnabled(false);
@@ -1153,9 +1302,38 @@ export class GameScene extends Phaser.Scene {
       this.validSince = null;
       this.lastValidOk = false;
     }
+    // Task 4 (Wave C carry-over): the portrait editor toggle looked live to an inactive online
+    // player and silently no-op'd on tap. Drive it from the same gate comprarBtn already uses.
+    if (this.r.portrait) this.mexeToggleBtn.setEnabled(interactive);
+    if (!this.config.tutorial) {
+      this.zoomInBtn.setEnabled(!editorMode && this.zoomLevel < ZOOM_FLOORS.length - 1);
+      this.zoomOutBtn.setEnabled(!editorMode && this.zoomLevel > 0);
+    }
 
-    this.renderSelectionLayer(interactive, invalidReasons.size > 0);
+    if (editorMode) {
+      // The editor drives its own tap-to-select-then-place targets (see renderMexeEditor) instead
+      // of the normal board's drag zones / keyboard focus ring.
+      this.focusTargets = [];
+      this.clearDropZoneHighlights();
+    } else {
+      this.renderSelectionLayer(interactive, invalidReasons.size > 0);
+    }
     debugApi.a11y = { invalidBadges: invalidReasons.size };
+    debugApi.invalidMeldReasons = () => [...invalidReasons].map(([meldId, reasons]) => ({ meldId, reasons }));
+
+    // Beginner: auto-open the first invalid meld's tooltip so the reason is visible without a
+    // tap/hover. Only one at a time (first meld in table order) so a crowded table doesn't get covered.
+    if (interactive && settings.helperFlags().autoShowInvalidReason) {
+      const firstInvalid = melds.find((m) => invalidReasons.has(m.id));
+      const zone = firstInvalid && this.meldZones.find((z) => z.meldId === firstInvalid.id);
+      if (firstInvalid && zone) this.showMeldReasonTooltip(zone.rect, invalidReasons.get(firstInvalid.id)!.join('\n'));
+    }
+
+    // Meld focus view (Task 2): landscape only — in portrait the Wave C editor's workspace
+    // already shows one meld large plus its reasons, so this would be a second, redundant way to
+    // do the same thing there. Landscape has no such view, hence adding it here.
+    if (!this.r.portrait && !editorMode) this.renderMeldFocus(melds, invalidReasons, state.config);
+
     if (this.tutorialDirector) this.renderTutorialOverlay();
   }
 
@@ -1337,15 +1515,58 @@ export class GameScene extends Phaser.Scene {
 
   private layoutMelds(
     melds: readonly Meld[],
-    invalidReasons: Map<string, string>,
+    invalidReasons: Map<string, string[]>,
     interactive: boolean,
     config: RulesConfig,
   ): void {
     this.meldGlowRects = [];
+    this.tableMaskGfx?.destroy();
+    this.tableMaskGfx = null;
     const handCardIds = new Set(this.editor?.getDraft().handCardsPlayed ?? []);
     const inputs: MeldLayoutInput[] = melds.map((m) => ({ id: m.id, cardCount: m.cards.length }));
-    const positions = computeMeldLayout(inputs, this.r.tableAreaW, this.r.tableAreaH);
+    const floor = ZOOM_FLOORS[this.zoomLevel];
+    const positions = computeMeldLayout(inputs, this.r.tableAreaW, this.r.tableAreaH, floor ? { minCardScale: floor } : undefined);
     const posByMeld = new Map(positions.map((p) => [p.meldId, p]));
+
+    // Zoomed content can be taller than the table area — clamp the pan window to it (reuses the
+    // editor's own clampScroll pattern) and clip the overflow so it never spills into the top bar,
+    // hand, or action panel. At the default zoom (floor undefined) neither runs: content already
+    // fits, so today's landscape rendering is untouched.
+    this.tableContentH = positions.length > 0 ? Math.max(...positions.map((p) => p.y + p.height)) : 0;
+    this.tablePan = floor ? clampScroll(this.tablePan, this.tableContentH, this.r.tableAreaH) : 0;
+    let tableMask: Phaser.Display.Masks.GeometryMask | undefined;
+    const applyMask = <T extends Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Mask>(o: T): T => {
+      if (tableMask) o.setMask(tableMask);
+      return o;
+    };
+    if (floor) {
+      const maskGfx = this.make.graphics(undefined, false);
+      maskGfx.fillStyle(0xffffff);
+      maskGfx.fillRect(this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop);
+      tableMask = maskGfx.createGeometryMask();
+      this.tableMaskGfx = maskGfx;
+
+      // Pan surface: the empty table background, added first (lowest depth) so a card sitting on
+      // top of it always wins the pointer hit-test — dragging a card can never start a pan, and
+      // panning can never move a card. See tests/pan-precedence in e2e for the guard.
+      const panBg = this.add
+        .rectangle(this.r.tableLeft + this.r.tableAreaW / 2, this.r.tableTop + (this.r.tableBottom - this.r.tableTop) / 2, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop, 0x000000, 0)
+        .setDepth(-5)
+        .setInteractive({ useHandCursor: false });
+      panBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+        this.panDragStartY = p.worldY;
+        this.panDragStartPan = this.tablePan;
+      });
+      panBg.on('pointermove', (p: Phaser.Input.Pointer) => {
+        if (!p.isDown) return;
+        const next = clampScroll(this.panDragStartPan - (p.worldY - this.panDragStartY), this.tableContentH, this.r.tableAreaH);
+        if (next !== this.tablePan) {
+          this.tablePan = next;
+          this.renderAll();
+        }
+      });
+      this.hud.push(panBg);
+    }
 
     melds.forEach((meld, meldIndex) => {
       const pos = posByMeld.get(meld.id);
@@ -1353,7 +1574,7 @@ export class GameScene extends Phaser.Scene {
       const scale = pos.cardScale;
       const pad = MELD_PAD * scale;
       const cx = this.r.tableLeft + pos.x;
-      const cy = this.r.tableTop + 6 + pos.y;
+      const cy = this.r.tableTop + 6 + pos.y - this.tablePan;
       const cards = this.sortedForDisplay(meld, config);
 
       const zoneRect = new Phaser.Geom.Rectangle(cx, cy - pad, pos.width, pos.height);
@@ -1361,9 +1582,9 @@ export class GameScene extends Phaser.Scene {
 
       // Mexe UX: alternating neutral shading (independent of validity color) keeps crowded adjacent melds visually distinct.
       if (meldIndex % 2 === 1) {
-        const shade = this.add
-          .rectangle(zoneRect.centerX, zoneRect.centerY, zoneRect.width, zoneRect.height, 0x000000, 0.12)
-          .setDepth(-1);
+        const shade = applyMask(
+          this.add.rectangle(zoneRect.centerX, zoneRect.centerY, zoneRect.width, zoneRect.height, 0x000000, 0.12).setDepth(-1),
+        );
         this.hud.push(shade);
       }
 
@@ -1382,11 +1603,13 @@ export class GameScene extends Phaser.Scene {
       }
       const color = isInvalid ? 0xd83a3a : 0x3ec06a;
       // colorblind-safe shape channel: solid stroke for valid, dashed for invalid — not hue alone.
-      const glow = this.add
-        .rectangle(zoneRect.centerX, zoneRect.centerY, zoneRect.width, zoneRect.height, color, this.editor ? 0.18 : 0.1)
-        .setDepth(2);
+      const glow = applyMask(
+        this.add
+          .rectangle(zoneRect.centerX, zoneRect.centerY, zoneRect.width, zoneRect.height, color, this.editor ? 0.18 : 0.1)
+          .setDepth(2),
+      );
       if (isInvalid) {
-        const dashed = this.add.graphics().setDepth(2);
+        const dashed = applyMask(this.add.graphics().setDepth(2));
         this.drawDashedRect(dashed, zoneRect.x, zoneRect.y, zoneRect.width, zoneRect.height, color, this.editor ? 0.9 : 0.4);
         this.hud.push(dashed);
       } else {
@@ -1397,19 +1620,27 @@ export class GameScene extends Phaser.Scene {
 
       // colorblind-safe icon channel: ✓/✗ badge, only while the human is actively editing (committed melds are always valid).
       if (interactive) {
-        const badge = label(this, zoneRect.x + 4, zoneRect.y + 2, isInvalid ? '✗' : '✓', 7, isInvalid ? '#ff6b5e' : '#7ee0a0')
-          .setOrigin(0, 0)
-          .setAlpha(isInvalid ? 0.95 : 0.35)
-          .setDepth(50);
+        // Bigger, easier to hit on touch/portrait — same dashed-outline shape channel either way,
+        // colour is never the only cue.
+        const strong = this.r.touch || this.r.portrait;
+        const badgeSize = isInvalid && strong ? 10 : 7;
+        const badge = applyMask(
+          label(this, zoneRect.x + 4, zoneRect.y + 2, isInvalid ? '✗' : '✓', badgeSize, isInvalid ? '#ff6b5e' : '#7ee0a0')
+            .setOrigin(0, 0)
+            .setAlpha(isInvalid ? 0.95 : 0.35)
+            .setDepth(50),
+        );
         this.hud.push(badge);
         // Full reason text only on hover, never rendered by default: at crowded tables rows sit
         // close together and any always-on label wide enough to read would spill onto a
         // neighboring meld. Hover is also the "nearest free space" — the tooltip is clamped
         // fully inside the table area so it can never render off the visible playfield.
-        const reason = invalidReasons.get(meld.id);
-        if (reason) {
-          // Enlarged hit rect: the glyph itself is a few px, far under a usable touch target.
-          const pad = 5;
+        const reasons = invalidReasons.get(meld.id);
+        if (reasons) {
+          const reasonText = reasons.join('\n');
+          // Enlarged hit rect: the glyph itself is a few px, far under a usable touch target;
+          // grown further on touch/portrait.
+          const pad = strong ? 9 : 5;
           badge.setInteractive(
             new Phaser.Geom.Rectangle(-pad, -pad, badge.width + pad * 2, badge.height + pad * 2),
             Phaser.Geom.Rectangle.Contains,
@@ -1419,16 +1650,36 @@ export class GameScene extends Phaser.Scene {
           // latches (`tapped`) and pointerout only hides while unlatched — otherwise the release
           // half of the very tap that opened the tooltip would close it again the same instant.
           let tapped = false;
-          badge.on('pointerover', () => this.showMeldReasonTooltip(zoneRect, reason));
+          badge.on('pointerover', () => this.showMeldReasonTooltip(zoneRect, reasonText));
           badge.on('pointerout', () => {
             if (!tapped) this.hideMeldReasonTooltip();
           });
           badge.on('pointerdown', () => {
             tapped = !tapped;
-            if (tapped) this.showMeldReasonTooltip(zoneRect, reason);
+            if (tapped) this.showMeldReasonTooltip(zoneRect, reasonText);
             else this.hideMeldReasonTooltip();
           });
         }
+      }
+
+      // Meld focus view (Task 2, landscape only — see renderMeldFocus): a small read-only
+      // magnifier per meld, top-right corner of the zone (the ✗/✓ badge already owns top-left).
+      // Never gated on `interactive` — it only reads melds/invalidReasons, works on any turn.
+      if (!this.r.portrait) {
+        const focusIcon = applyMask(
+          label(this, zoneRect.x + zoneRect.width - 3, zoneRect.y + 2, '🔍', 7, '#d8c890')
+            .setOrigin(1, 0)
+            .setAlpha(0.55)
+            .setDepth(50)
+            .setInteractive({ useHandCursor: true }),
+        );
+        focusIcon.on('pointerup', () => {
+          this.focusedMeldId = meld.id;
+          this.renderAll();
+        });
+        focusIcon.on('pointerover', () => this.showMeldReasonTooltip(zoneRect, t('tooltip.meldFocus')));
+        focusIcon.on('pointerout', () => this.hideMeldReasonTooltip());
+        this.hud.push(focusIcon);
       }
 
       cards.forEach((card, i) => {
@@ -1438,6 +1689,7 @@ export class GameScene extends Phaser.Scene {
         const y = cy + ch / 2;
         const sprite = this.makeCardSprite(x, y, card, interactive, 'table', handCardIds.has(card.id), scale);
         sprite.setDepth(3);
+        applyMask(sprite);
         this.cardSprites.push(sprite);
         const jokerLabel = jokerLabels.get(card.id);
         if (jokerLabel) {
@@ -1450,18 +1702,103 @@ export class GameScene extends Phaser.Scene {
         }
         if (this.lastMoveIds.has(card.id)) {
           // persistent "the opponent touched this" marker — stays until the local player acts
-          const mark = this.add
-            .rectangle(x, y, cw + 3, ch + 3)
-            .setStrokeStyle(1, 0xf0a030, 0.95)
-            .setDepth(4);
+          const mark = applyMask(
+            this.add.rectangle(x, y, cw + 3, ch + 3).setStrokeStyle(1, 0xf0a030, 0.95).setDepth(4),
+          );
           this.hud.push(mark);
         }
       });
     });
   }
 
-  private layoutHand(hand: readonly Card[], interactive: boolean): void {
-    const sorted = [...hand].sort((a, b) => {
+  /**
+   * Meld focus view (Task 2, landscape only): a big read-only look at one meld plus its invalid
+   * reason(s), opened via the 🔍 icon layoutMelds() draws on every meld zone. Dismissible by the ✕
+   * or a tap anywhere outside the panel. Reuses the ghost-preview panel's own look (dark rounded
+   * rect, small status-colored text, card row) so the board never grows a second panel style.
+   * Purely additive drawing over whatever renderAll() already built this pass — never touches the
+   * editor/draft, so it can never disagree with (or mutate) the real board.
+   */
+  private renderMeldFocus(melds: readonly Meld[], invalidReasons: Map<string, string[]>, config: RulesConfig): void {
+    if (this.focusedMeldId === null) return;
+    const meld = melds.find((m) => m.id === this.focusedMeldId);
+    if (!meld) {
+      // undone/reset/turn ended out from under it — never point the panel at nothing
+      this.focusedMeldId = null;
+      return;
+    }
+    const cards = this.sortedForDisplay(meld, config);
+    const isInvalid = invalidReasons.has(meld.id);
+    const jokerLabels = new Map<string, string>();
+    if (!isInvalid && meld.cards.some((c) => c.isJoker)) {
+      const analysis = analyzeMeld(meld.cards, config);
+      if (analysis.valid) {
+        for (const a of analysis.assignments) {
+          jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
+        }
+      }
+    }
+
+    const cw = CARD_W * 1.6;
+    const ch = CARD_H * 1.6;
+    const maxSpread = this.r.w - 60;
+    const gap = Math.min(cw + 6, cards.length > 1 ? maxSpread / (cards.length - 1) : cw);
+    const cardsW = cards.length > 0 ? (cards.length - 1) * gap + cw : cw;
+    const reasons = invalidReasons.get(meld.id);
+    const reasonText = reasons?.join('\n') ?? '';
+    const statusText = isInvalid ? reasonText : t('snap.legal');
+    const statusColor = isInvalid ? '#ff6b5e' : '#7ee0a0';
+
+    const panelW = Math.min(this.r.w - 20, Math.max(140, cardsW + 24));
+    const st = label(this, 0, 0, statusText, 8, statusColor);
+    st.setWordWrapWidth(panelW - 16, true);
+    const panelH = 14 + ch + 10 + st.height + 10;
+    const cx = this.r.w / 2;
+    const cy = this.r.h / 2;
+
+    const close = () => {
+      this.focusedMeldId = null;
+      this.renderAll();
+    };
+    const objs: Phaser.GameObjects.GameObject[] = [];
+
+    // Full-scene backdrop: dismiss on any tap outside the panel, and blocks input to whatever's
+    // behind it (cards, zoom pan, badges) while the panel is open — a focus view is modal.
+    const backdrop = this.add.rectangle(cx, cy, this.r.w, this.r.h, 0x000000, 0.45).setDepth(700).setInteractive({ useHandCursor: false });
+    backdrop.on('pointerup', close);
+    objs.push(backdrop);
+
+    const g = this.add.graphics().setDepth(701);
+    g.fillStyle(0x1a1410, 0.96);
+    g.fillRoundedRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH, 4);
+    g.lineStyle(1, GOLD, 0.6);
+    g.strokeRoundedRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH, 4);
+    objs.push(g);
+
+    const rowY = cy - panelH / 2 + 14 + ch / 2;
+    const startX = cx - cardsW / 2 + cw / 2;
+    cards.forEach((card, i) => {
+      const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
+      const x = startX + i * gap;
+      objs.push(this.add.image(x, rowY, key).setDisplaySize(cw, ch).setDepth(702));
+      const hint = jokerLabels.get(card.id);
+      if (hint) objs.push(label(this, x, rowY + ch / 2 + 7, hint, 7, '#f7d23e').setDepth(702));
+    });
+
+    st.setPosition(cx, cy + panelH / 2 - 10 - st.height / 2).setDepth(702);
+    objs.push(st);
+
+    objs.push(
+      new PixelButton(this, cx + panelW / 2 - 10, cy - panelH / 2 + 10, '✕', close, {
+        textureBase: 'btn-small', w: 14, h: 12, size: 8, color: 0x8e4632,
+      }).setDepth(703),
+    );
+
+    this.hud.push(...objs);
+  }
+
+  private sortedHand(hand: readonly Card[]): Card[] {
+    return [...hand].sort((a, b) => {
       if (a.isJoker || b.isJoker) {
         if (a.isJoker && b.isJoker) return a.id.localeCompare(b.id);
         return a.isJoker ? 1 : -1;
@@ -1470,6 +1807,10 @@ export class GameScene extends Phaser.Scene {
         ? a.suit!.localeCompare(b.suit!) || a.rank! - b.rank!
         : a.rank! - b.rank! || a.suit!.localeCompare(b.suit!);
     });
+  }
+
+  private layoutHand(hand: readonly Card[], interactive: boolean): void {
+    const sorted = this.sortedHand(hand);
     const maxSpan = this.r.handSpan;
     const gap = Math.min(CARD_W + 2, sorted.length > 1 ? maxSpan / (sorted.length - 1) : CARD_W);
     const total = (sorted.length - 1) * gap;
@@ -1481,6 +1822,216 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * Focused Mexe editor (Phase 14 Wave C): three stacked zones replacing the normal table+hand
+   * rendering — meld list (scrollable, tap a row to focus it), workspace (the focused meld, large),
+   * hand strip (scrollable, tap to select). Every mutation still runs through
+   * selectCard/placeSelected/onCardTapped, so tapping here can never disagree with the normal
+   * board about what's legal — this method only ever decides *what to draw and what a tap means*.
+   */
+  private renderMexeEditor(
+    melds: readonly Meld[],
+    hand: readonly Card[],
+    invalidReasons: Map<string, string[]>,
+    interactive: boolean,
+    config: RulesConfig,
+  ): void {
+    const zones = editorZones(this.r);
+    const meldIds = melds.map((m) => m.id);
+    const rows = meldListRows(meldIds);
+    const contentH = meldListContentHeight(rows.length);
+    this.mexeEditorScroll = clampScroll(this.mexeEditorScroll, contentH, zones.meldList.h);
+
+    // ---- meld list ----
+    const listBg = this.add
+      .rectangle(zones.meldList.x + zones.meldList.w / 2, zones.meldList.y + zones.meldList.h / 2, zones.meldList.w, zones.meldList.h, 0x000000, 0.22)
+      .setDepth(0);
+    if (interactive) {
+      listBg.setInteractive({ useHandCursor: false });
+      let dragStartY = 0;
+      let scrollStart = 0;
+      // pointer.x/y are raw canvas-pixel coordinates (pre camera-zoom); pointer.worldX/worldY are
+      // transformed through the (zoomed, centred) main camera into the same world-unit space every
+      // other GameScene coordinate (meldZones, sprite.x/y, GameRegions) already lives in.
+      listBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+        dragStartY = p.worldY;
+        scrollStart = this.mexeEditorScroll;
+      });
+      listBg.on('pointermove', (p: Phaser.Input.Pointer) => {
+        if (!p.isDown) return;
+        const next = clampScroll(scrollStart - (p.worldY - dragStartY), contentH, zones.meldList.h);
+        if (next !== this.mexeEditorScroll) {
+          this.mexeEditorScroll = next;
+          this.renderAll();
+        }
+      });
+      listBg.on('pointerup', (p: Phaser.Input.Pointer) => {
+        // A tap (negligible vertical movement) selects the row under it; a drag only scrolled.
+        if (Math.abs(p.worldY - dragStartY) > 4) return;
+        const row = hitTestMeldListRow(rows, zones.meldList, this.mexeEditorScroll, p.worldX, p.worldY);
+        if (row) this.onMeldListRowTapped(row);
+      });
+    }
+    this.hud.push(listBg);
+
+    const cw = CARD_W * 0.45;
+    const ch = CARD_H * 0.45;
+    for (const row of rows) {
+      const y = meldListRowY(row, zones.meldList, this.mexeEditorScroll);
+      if (y + MELD_LIST_ROW_H < zones.meldList.y || y > zones.meldList.y + zones.meldList.h) continue; // scrolled out of view
+      const focused = row.meldId === this.mexeEditorMeldId;
+      const rowRect = this.add
+        .rectangle(zones.meldList.x + zones.meldList.w / 2, y + MELD_LIST_ROW_H / 2, zones.meldList.w - 2, MELD_LIST_ROW_H - 2, focused ? 0xf7d23e : 0xffffff, focused ? 0.14 : 0.04)
+        .setDepth(1);
+      this.hud.push(rowRect);
+      if (row.meldId === null) {
+        this.hud.push(label(this, zones.meldList.x + 6, y + MELD_LIST_ROW_H / 2, t('mobile.editorNewMeld'), 7, '#d8c890').setOrigin(0, 0.5).setDepth(2));
+        continue;
+      }
+      const meld = melds.find((m) => m.id === row.meldId);
+      if (!meld) continue;
+      const cards = this.sortedForDisplay(meld, config);
+      cards.forEach((card, i) => {
+        const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
+        const img = this.add.image(zones.meldList.x + 8 + cw / 2 + i * (cw * 0.7), y + MELD_LIST_ROW_H / 2, key).setDisplaySize(cw, ch).setDepth(2);
+        this.hud.push(img);
+        this.cardSprites.push(img);
+      });
+      const isInvalid = invalidReasons.has(meld.id);
+      this.hud.push(
+        label(this, zones.meldList.x + zones.meldList.w - 12, y + MELD_LIST_ROW_H / 2, isInvalid ? '✗' : '✓', 8, isInvalid ? '#ff6b5e' : '#7ee0a0')
+          .setOrigin(0.5)
+          .setDepth(2),
+      );
+    }
+
+    // ---- workspace ----
+    const wsRect = new Phaser.Geom.Rectangle(zones.workspace.x, zones.workspace.y, zones.workspace.w, zones.workspace.h);
+    const wsBg = this.add
+      .rectangle(wsRect.centerX, wsRect.centerY, wsRect.width, wsRect.height, 0x000000, 0.3)
+      .setDepth(0)
+      .setStrokeStyle(1, GOLD, 0.5);
+    this.hud.push(wsBg);
+    this.meldZones = this.mexeEditorMeldId !== undefined ? [{ meldId: this.mexeEditorMeldId ?? '', rect: wsRect }] : [];
+
+    if (this.mexeEditorMeldId === undefined) {
+      this.hud.push(label(this, wsRect.centerX, wsRect.centerY, t('mobile.editorSelectMeld'), 8, '#b8b0a0'));
+    } else {
+      const wsMeld = melds.find((m) => m.id === this.mexeEditorMeldId);
+      const wsCards = wsMeld ? this.sortedForDisplay(wsMeld, config) : [];
+      const wcw = CARD_W * 1.3;
+      const wch = CARD_H * 1.3;
+      const gap = Math.min(wcw + 6, wsCards.length > 1 ? (wsRect.width - wcw - 16) / (wsCards.length - 1) : wcw);
+      const total = wsCards.length > 0 ? (wsCards.length - 1) * gap + wcw : 0;
+      const startX = wsRect.centerX - total / 2 + wcw / 2;
+      const cardY = wsRect.y + 16 + wch / 2;
+      const handCardIds = new Set(this.editor?.getDraft().handCardsPlayed ?? []);
+      wsCards.forEach((card, i) => {
+        const sprite = this.makeCardSprite(startX + i * gap, cardY, card, interactive, 'table', handCardIds.has(card.id), 1.3, false);
+        sprite.setDepth(3);
+        this.cardSprites.push(sprite);
+      });
+      if (wsCards.length === 0) {
+        this.hud.push(label(this, wsRect.centerX, cardY, t('mobile.editorEmpty'), 8, '#b8b0a0'));
+      }
+      const reasons = wsMeld && invalidReasons.get(wsMeld.id);
+      if (reasons) {
+        this.hud.push(
+          this.add
+            .text(wsRect.centerX, wsRect.y + wsRect.height - 20, reasons.join('\n'), { ...fontStyle(7, '#ff6b5e'), align: 'center', wordWrap: { width: wsRect.width - 12 } })
+            .setOrigin(0.5, 0),
+        );
+      }
+
+      if (interactive && this.selectedCardId !== null) {
+        wsBg.setInteractive({ useHandCursor: true });
+        wsBg.on('pointerup', () => this.placeSelected('meld', this.mexeEditorMeldId ?? null));
+        const flags = settings.helperFlags();
+        if (flags.legalDestinationsOnSelect || flags.ghostPreview !== 'off') {
+          const targets = this.computeSnapTargetsFor(this.selectedCardId);
+          this.selectionTargets = targets;
+          const snap = snapTargetFor(targets, this.mexeEditorMeldId ?? null);
+          if (snap) {
+            if (flags.legalDestinationsOnSelect) {
+              const color = snap.status === 'legal' ? 0x3ec06a : snap.status === 'incomplete' ? GOLD : 0xd83a3a;
+              wsBg.setStrokeStyle(2, color, 0.9);
+            }
+            if (flags.ghostPreview !== 'off') this.showGhostPreview(snap, wsRect);
+          }
+        }
+      }
+    }
+
+    // ---- hand strip ----
+    const hsZone = zones.handStrip;
+    const sortedHand = this.sortedHand(hand);
+    const step = Math.min(CARD_W + 4, 40);
+    const contentW = sortedHand.length > 0 ? (sortedHand.length - 1) * step + CARD_W : 0;
+    const hsScroll = clampScroll(this.mexeHandScroll, contentW, hsZone.w);
+    this.mexeHandScroll = hsScroll;
+    const hsBg = this.add
+      .rectangle(hsZone.x + hsZone.w / 2, hsZone.y + hsZone.h / 2, hsZone.w, hsZone.h, 0x000000, 0.18)
+      .setDepth(0);
+    if (interactive && sortedHand.length > 0) {
+      hsBg.setInteractive({ useHandCursor: false });
+      let dragStartX = 0;
+      let scrollStartX = 0;
+      hsBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+        dragStartX = p.worldX;
+        scrollStartX = this.mexeHandScroll;
+      });
+      hsBg.on('pointermove', (p: Phaser.Input.Pointer) => {
+        if (!p.isDown) return;
+        const next = clampScroll(scrollStartX - (p.worldX - dragStartX), contentW, hsZone.w);
+        if (next !== this.mexeHandScroll) {
+          this.mexeHandScroll = next;
+          this.renderAll();
+        }
+      });
+    }
+    this.hud.push(hsBg);
+    const startHX = hsZone.x + CARD_W / 2 + 4 - hsScroll;
+    sortedHand.forEach((card, i) => {
+      const x = startHX + i * step;
+      if (x < hsZone.x - CARD_W || x > hsZone.x + hsZone.w + CARD_W) return; // scrolled out of view
+      const sprite = this.makeCardSprite(x, hsZone.y + hsZone.h / 2, card, interactive, 'hand', false, 1, false);
+      sprite.setDepth(10 + i);
+      this.cardSprites.push(sprite);
+    });
+
+    // Selected-card ring — the normal board draws this in renderSelectionLayer, which the editor
+    // skips in favour of driving its own tap targets above.
+    if (this.selectedCardId !== null) {
+      const heldSprite = this.cardSprites.find((s) => s.getData('cardId') === this.selectedCardId);
+      if (heldSprite) {
+        this.hud.push(
+          this.add
+            .rectangle(heldSprite.x, heldSprite.y, heldSprite.displayWidth + 4, heldSprite.displayHeight + 4)
+            .setStrokeStyle(2, GOLD, 1)
+            .setDepth(260),
+        );
+      }
+    }
+
+    // ✕ closes the editor without discarding the draft — the draft lives in DraftEditor either way.
+    this.hud.push(
+      new PixelButton(this, zones.meldList.x + zones.meldList.w - 10, zones.meldList.y + 8, t('mobile.editorClose'), () => this.toggleMexeEditor(), {
+        textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x8e4632,
+      }).setDepth(5),
+    );
+  }
+
+  /** Meld-list row tap: with a card held, commit it there (same path a normal-board meld-zone tap
+   * uses); otherwise the row just becomes the workspace's subject. */
+  private onMeldListRowTapped(row: MeldListRow): void {
+    if (this.selectedCardId !== null) {
+      this.placeSelected('meld', row.meldId);
+      return;
+    }
+    this.mexeEditorMeldId = row.meldId;
+    this.renderAll();
+  }
+
   private makeCardSprite(
     x: number,
     y: number,
@@ -1489,6 +2040,7 @@ export class GameScene extends Phaser.Scene {
     origin: 'hand' | 'table',
     handAdded: boolean,
     scale = 1,
+    draggable = true,
   ): Phaser.GameObjects.Image {
     const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
     const w = CARD_W * scale;
@@ -1509,8 +2061,12 @@ export class GameScene extends Phaser.Scene {
         Phaser.Geom.Rectangle.Contains,
       );
       if (sprite.input) sprite.input.cursor = 'pointer';
-      this.input.setDraggable(sprite);
-      this.wireDrag(sprite);
+      // Focused editor (Phase 14 Wave C): tap-to-select-then-place only, never draggable — the
+      // workspace/hand-strip cards there still call this with draggable=false.
+      if (draggable) {
+        this.input.setDraggable(sprite);
+        this.wireDrag(sprite);
+      }
       sprite.on('pointerup', () => {
         if (sprite.getData('dragged')) return; // that was a drag, dragend already handled it
         this.onCardTapped(card.id);
@@ -1629,7 +2185,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const target = snapTargetFor(this.snapTargets, zone ? zone.meldId : null);
-    if (!target) {
+    if (!target || settings.helperFlags().ghostPreview === 'off') {
       this.clearGhostPreview();
       return;
     }
@@ -1809,12 +2365,19 @@ export class GameScene extends Phaser.Scene {
     this.focusTargets = [];
     if (!interactive || !this.editor) {
       this.selectedCardId = null;
+      this.selectionTargets = [];
+      this.snapTargets = [];
+      this.clearDropZoneHighlights();
       return;
     }
     const heldSprite = this.cardSprites.find((s) => s.getData('cardId') === this.selectedCardId);
     if (this.selectedCardId !== null && !heldSprite) this.selectedCardId = null; // undo/reset ate it
 
+    const flags = settings.helperFlags();
     if (this.selectedCardId === null) {
+      this.selectionTargets = [];
+      this.snapTargets = [];
+      this.clearDropZoneHighlights();
       for (const s of this.cardSprites) {
         this.focusTargets.push({ kind: 'card', id: s.getData('cardId') as string, rect: this.spriteRect(s) });
       }
@@ -1831,12 +2394,35 @@ export class GameScene extends Phaser.Scene {
         rect: new Phaser.Geom.Rectangle(this.r.handZone.x, this.r.handZone.y, this.r.handZone.w, this.r.handZone.h),
       });
 
+      // Selected-card legal destinations (beginner): the same pure snap model + zone painter the
+      // drag path uses — computed once here, not per frame. meldZones was just rebuilt by
+      // layoutMelds() above, so this must run after that (never before, or the rects are stale).
+      if (flags.legalDestinationsOnSelect) {
+        this.selectionTargets = this.computeSnapTargetsFor(this.selectedCardId);
+        this.snapTargets = this.selectionTargets;
+        this.showDropZoneHighlights();
+      } else {
+        this.selectionTargets = [];
+        this.snapTargets = [];
+        this.clearDropZoneHighlights();
+      }
+
       for (const target of this.focusTargets) {
         const zone = this.add
           .rectangle(target.rect.centerX, target.rect.centerY, target.rect.width, target.rect.height, GOLD, 0.07)
           .setDepth(1)
           .setInteractive({ useHandCursor: true });
         zone.on('pointerup', () => this.placeSelected(target.kind, target.id ?? null));
+        // Ghost preview (beginner): non-mutating, cleared on pointerout/deselect/place — same
+        // panel the drag path shows, never a second implementation.
+        if (flags.ghostPreview === 'selectAndHover' && (target.kind === 'meld' || target.kind === 'new')) {
+          const meldId = target.kind === 'meld' ? (target.id ?? null) : null;
+          zone.on('pointerover', () => {
+            const snap = snapTargetFor(this.selectionTargets, meldId);
+            if (snap) this.showGhostPreview(snap, target.rect);
+          });
+          zone.on('pointerout', () => this.clearGhostPreview());
+        }
         this.hud.push(zone);
       }
       if (heldSprite) {
@@ -1856,6 +2442,12 @@ export class GameScene extends Phaser.Scene {
       const gfx = this.add.graphics().setDepth(280);
       this.drawDashedRect(gfx, focused.rect.x - 2, focused.rect.y - 2, focused.rect.width + 4, focused.rect.height + 4, 0xffffff, 0.95);
       this.hud.push(gfx, label(this, this.r.selectHint.x, this.r.selectHint.y, t('game.selectHint'), 7, '#b8b0a0'));
+      // Keyboard-focused destination gets the same ghost preview a pointer hover would.
+      if (flags.ghostPreview === 'selectAndHover' && this.selectedCardId !== null && (focused.kind === 'meld' || focused.kind === 'new')) {
+        const meldId = focused.kind === 'meld' ? (focused.id ?? null) : null;
+        const snap = snapTargetFor(this.selectionTargets, meldId);
+        if (snap) this.showGhostPreview(snap, focused.rect);
+      }
     } else if (this.r.portrait && this.selectedCardId === null) {
       // touch-only one-line caption: guides an untouched board, or points at the ✗ badge once a
       // meld is invalid — replaced above by the keyboard-driven select hint once the focus ring shows.

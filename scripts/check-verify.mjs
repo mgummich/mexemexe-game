@@ -58,6 +58,18 @@ const EXPECTED_SHOTS = [
   'mobile-feito-blocked',
   'mobile-badge-reason',
   'mobile-portrait-en',
+  // Phase 14 Wave B: helper modes.
+  'helper-beginner-destinations',
+  'helper-standard-feedback',
+  'helper-expert-minimal',
+  'invalid-reason-badge',
+  // Phase 14 Wave C: focused Mexe editor.
+  'mobile-mexe-editor',
+  'editor-valid-final',
+  'editor-invalid-draft',
+  // Phase 14 Wave D: table zoom/pan + meld focus.
+  'table-zoomed',
+  'meld-focus',
 ];
 const shotNames = new Set(shots.map((s) => s.name));
 for (const name of EXPECTED_SHOTS) {

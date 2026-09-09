@@ -98,7 +98,7 @@ function analyzeRun(cards: readonly Card[], _config: RulesConfig): MeldAnalysis 
   if (naturals.length === 0) return { valid: false, reason: 'reason.jokerUnassignable' };
   if (jokers.length > 1) return { valid: false, reason: 'reason.tooManyJokers' };
   const suit = naturals[0]!.suit!;
-  if (!naturals.every((c) => c.suit === suit)) return { valid: false, reason: 'reason.notAMeld' };
+  if (!naturals.every((c) => c.suit === suit)) return { valid: false, reason: 'reason.runSuitMismatch' };
 
   const n = cards.length;
   // card order on the table is player-meaningful (e.g. 5H 6H + joker dropped after -> 7H,
@@ -141,10 +141,13 @@ function analyzeRun(cards: readonly Card[], _config: RulesConfig): MeldAnalysis 
     return { valid: true, kind: 'run', assignments };
   }
 
-  // ponytail: heuristic reason pick, not a full wrap-vs-gap classifier — good enough for the
-  // reason banner; revisit if a case surfaces where it picks the wrong one.
   const hasNaturalAce = naturals.some((c) => c.rank === 1);
-  return { valid: false, reason: hasNaturalAce ? 'reason.runWrap' : 'reason.jokerUnassignable' };
+  const reason: ReasonCode = hasNaturalAce
+    ? 'reason.runWrap'
+    : jokers.length === 0
+      ? 'reason.runGap'
+      : 'reason.jokerUnassignable';
+  return { valid: false, reason };
 }
 
 /** Group analysis: exactly 3-4 cards, same rank, unique natural suits, at most 1 joker filling an unused suit. */

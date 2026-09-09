@@ -18,6 +18,8 @@ describe('i18n key parity', () => {
 const REASON_CODES: ReasonCode[] = [
   'reason.meldTooSmall',
   'reason.notAMeld',
+  'reason.runSuitMismatch',
+  'reason.runGap',
   'reason.noHandCard',
   'reason.cardMissing',
   'reason.duplicateCard',

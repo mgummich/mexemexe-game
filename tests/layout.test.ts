@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeMeldLayout, type MeldLayoutInput, type MeldPosition } from '../src/table/layout';
 import { CARD_W } from '../src/assets/manifest';
+import { clampScroll } from '../src/table/editor-layout';
 
 // Matches GameScene's actual usable table area post p4-1 (TABLE_TOP raised 36->80 to clear props).
 const AREA_W = 370;
@@ -73,5 +74,43 @@ describe('computeMeldLayout', () => {
     const positions = computeMeldLayout(melds, AREA_W, AREA_H);
     const scales = new Set(positions.map((p) => p.cardScale));
     expect(scales.size).toBe(1);
+  });
+
+  it('with no options, behaves byte-for-byte like before (regression guarantee for the zoom feature)', () => {
+    const melds: MeldLayoutInput[] = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, cardCount: 3 }));
+    expect(computeMeldLayout(melds, AREA_W, AREA_H, undefined)).toEqual(computeMeldLayout(melds, AREA_W, AREA_H));
+    expect(computeMeldLayout(melds, AREA_W, AREA_H, {})).toEqual(computeMeldLayout(melds, AREA_W, AREA_H));
+  });
+
+  describe('minCardScale (table zoom, Phase 14 Wave D)', () => {
+    it('pins the requested scale instead of shrinking to fit areaH', () => {
+      const melds: MeldLayoutInput[] = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, cardCount: 3 }));
+      const positions = computeMeldLayout(melds, AREA_W, AREA_H, { minCardScale: 1 });
+      expect(positions).toHaveLength(20);
+      for (const p of positions) expect(p.cardScale).toBe(1);
+    });
+
+    it('lets content run taller than areaH rather than compressing', () => {
+      const melds: MeldLayoutInput[] = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, cardCount: 3 }));
+      const positions = computeMeldLayout(melds, AREA_W, AREA_H, { minCardScale: 1 });
+      const contentH = Math.max(...positions.map((p) => p.y + p.height));
+      expect(contentH).toBeGreaterThan(AREA_H);
+    });
+
+    it('never overlaps at a crowded stress table even pinned to full scale', () => {
+      const meldCount = Math.ceil(80 / 3);
+      const melds: MeldLayoutInput[] = Array.from({ length: meldCount }, (_, i) => ({ id: `m${i}`, cardCount: 3 }));
+      const positions = computeMeldLayout(melds, AREA_W, AREA_H, { minCardScale: 1 });
+      assertNoOverlaps(positions);
+    });
+
+    it('a pan offset clamps to both ends of the real content height (reuses clampScroll)', () => {
+      const melds: MeldLayoutInput[] = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, cardCount: 3 }));
+      const positions = computeMeldLayout(melds, AREA_W, AREA_H, { minCardScale: 1 });
+      const contentH = Math.max(...positions.map((p) => p.y + p.height));
+      expect(clampScroll(-500, contentH, AREA_H)).toBe(0);
+      expect(clampScroll(100000, contentH, AREA_H)).toBe(contentH - AREA_H);
+      expect(clampScroll(5, contentH, AREA_H)).toBe(5);
+    });
   });
 });

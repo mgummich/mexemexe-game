@@ -1,6 +1,9 @@
 import type { Locale } from '../localization/i18n';
 import { AVATARS, CARD_BACKS, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, resolveCosmeticId, TABLE_THEMES } from '../cosmetics';
 
+/** Display-only helper aggressiveness. See `src/ui/helpers.ts` — never gates rules. */
+export type HelperMode = 'beginner' | 'standard' | 'expert';
+
 export interface Settings {
   muted: boolean;
   sfxVolume: number; // 0-100
@@ -13,6 +16,7 @@ export interface Settings {
   locale: Locale;
   /** +25% UI text size, for readability. */
   largeText: boolean;
+  helperMode: HelperMode;
 }
 
 export interface Progress {
@@ -33,7 +37,8 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard' };
+const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
 export const DEFAULT_PROGRESS: Progress = { lastSeed: null, tutorialCompleted: false };
 export const DEFAULT_COSMETICS: Cosmetics = { tableTheme: DEFAULT_TABLE_THEME, cardBack: DEFAULT_CARD_BACK, avatar: DEFAULT_AVATAR };
 const DEFAULT_SAVE: Save = { version: 1, settings: { ...DEFAULT_SETTINGS }, progress: { ...DEFAULT_PROGRESS }, cosmetics: { ...DEFAULT_COSMETICS } };
@@ -48,6 +53,12 @@ function sanitizeCosmetics(partial: Partial<Cosmetics> | undefined): Cosmetics {
   };
 }
 
+/** Unknown/corrupt stored value falls back to 'standard' instead of surviving as garbage. */
+function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
+  const merged = { ...DEFAULT_SETTINGS, ...(partial ?? {}) };
+  return { ...merged, helperMode: HELPER_MODES.includes(merged.helperMode) ? merged.helperMode : 'standard' };
+}
+
 export const SAVE_KEY = 'mexe-save';
 export const OLD_SETTINGS_KEY = 'mexe-settings';
 
@@ -59,7 +70,7 @@ export function parseSave(raw: string | null): Save {
       if (parsed && typeof parsed === 'object' && parsed.version === 1) {
         return {
           version: 1,
-          settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
+          settings: sanitizeSettings(parsed.settings),
           progress: { ...DEFAULT_PROGRESS, ...(parsed.progress ?? {}) },
           cosmetics: sanitizeCosmetics(parsed.cosmetics),
         };

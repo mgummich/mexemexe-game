@@ -37,7 +37,7 @@ describe('parseSave', () => {
   it('round-trips a valid v1 save', () => {
     const save: Save = {
       version: 1,
-      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true },
+      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner' },
       progress: { lastSeed: 1234, tutorialCompleted: true },
       cosmetics: { tableTheme: 'quintal', cardBack: 'back-4', avatar: 'bia' },
     };
@@ -61,6 +61,12 @@ describe('parseSave', () => {
     const partial = { version: 1, cosmetics: { tableTheme: 'nonexistent', cardBack: 'back-99', avatar: 'not-a-real-avatar' } };
     const result = parseSave(JSON.stringify(partial));
     expect(result.cosmetics).toEqual(DEFAULT_COSMETICS);
+  });
+
+  it('falls back to standard for an invalid stored helperMode', () => {
+    const partial = { version: 1, settings: { helperMode: 'banana' } };
+    const result = parseSave(JSON.stringify(partial));
+    expect(result.settings.helperMode).toBe('standard');
   });
 
   it('keeps known cosmetic ids while defaulting only the unknown ones', () => {
@@ -96,7 +102,7 @@ describe('loadSave', () => {
     const oldSettings = { muted: true, sfxVolume: 33, musicVolume: 44, reducedMotion: true, locale: 'en' };
     const storage = memoryStorage({ [OLD_SETTINGS_KEY]: JSON.stringify(oldSettings) });
     const result = loadSave(storage);
-    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: true, musicContextAware: true, largeText: false }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
+    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: true, musicContextAware: true, largeText: false, helperMode: 'standard' }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
     expect(storage.getItem(SAVE_KEY)).toBe(JSON.stringify(result));
     expect(storage.getItem(OLD_SETTINGS_KEY)).toBeNull();
   });

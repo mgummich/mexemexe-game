@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeSnapTargets, snapTargetFor } from '../src/table/snap';
 import { DraftEditor } from '../src/mexe-mode/draft';
+import { sortMeldCards } from '../src/rules/rules';
 import type { DraftState, GameState } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
 import { n, j } from './helpers/cards';
@@ -111,6 +112,31 @@ describe('computeSnapTargets', () => {
     // meld now 4 cards (3,4,5,6 hearts) - still legal to extend, but preview differs
     expect(before.length).toBe(after.length);
     expect(snapTargetFor(after, 't1')!.preview).not.toEqual(snapTargetFor(before, 't1')!.preview);
+  });
+
+  it('the accepted move lands exactly where the preview showed it (ghost preview trustworthiness)', () => {
+    const state: GameState = {
+      seed: 1,
+      players: [
+        { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 6)] },
+        { id: 'p1', name: 'B', isAi: true, hand: [n('clubs', 4)] },
+      ],
+      activePlayerIndex: 0,
+      table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
+      drawPile: [],
+      turn: 1,
+      winnerId: null,
+      phase: 'playing',
+      config: DEFAULT_RULES,
+    };
+    const ed = new DraftEditor(state);
+    const card = n('hearts', 6);
+    const target = snapTargetFor(computeSnapTargets(ed.getDraft(), card), 't1')!;
+    expect(target.status).toBe('legal');
+
+    ed.playHandCard(card.id, 't1');
+    const landed = ed.getDraft().melds.find((m) => m.id === 't1')!;
+    expect(sortMeldCards(landed.cards, DEFAULT_RULES)).toEqual(target.preview);
   });
 
   it('purity: does not mutate the draft or share card objects', () => {

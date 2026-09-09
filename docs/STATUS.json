@@ -86,7 +86,7 @@
     "portrait is a second authored layout, not a continuous responsive one: window sizes far from 16:9 or 9:16 still letterbox",
     "hover tooltips on a disabled button remain reachable with a mouse (desktop behaviour deliberately unchanged)"
   ],
-  "nextTask": "Phase 12 closed. Commit the branch; no blockers open.",
+  "nextTask": "Phase 14 in progress: Wave C mobile Mexe editor, then zoom/focus, then tutorial/help + final verify.",
   "phase4Scores": {
     "launchStability": 9.5,
     "fullFlow": 9,
@@ -102,7 +102,7 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": 13,
+  "phase": 14,
   "phase6": {
     "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
     "blockers": [],
@@ -296,22 +296,22 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-09T19:30:58.114Z",
+    "generatedAt": "2026-09-09T21:50:31.142Z",
     "perShotFps": {
       "menu": 60,
-      "game": 57,
+      "game": 58,
       "game4": 58,
-      "tutorial": 57,
+      "tutorial": 56,
       "tutorial-step2": 57,
       "setup": 58,
-      "settings": 55,
+      "settings": 56,
       "win": 58,
-      "mexe-invalid": 57,
-      "comprar-flow": 57,
-      "ai-showcase-mid": 58,
+      "mexe-invalid": 58,
+      "comprar-flow": 58,
+      "ai-showcase-mid": 57,
       "ai-showcase-after": 58,
-      "ai-cida": 58,
-      "ai-juninho": 57,
+      "ai-cida": 57,
+      "ai-juninho": 58,
       "ai-bia": 57,
       "ai-ze": 57,
       "pause": 57,
@@ -320,24 +320,24 @@
       "menu-en": 60,
       "game-en": 58,
       "a11y-large-text": 58,
-      "keyboard-comprar": 58,
-      "stress-table": 58,
+      "keyboard-comprar": 57,
+      "stress-table": 57,
       "game-1080p": 58,
-      "joker-in-hand": 58,
+      "joker-in-hand": 57,
       "joker-in-run": 57,
-      "joker-in-group": 49,
-      "mexe-invalid-two-jokers-run": 54,
-      "mexe-invalid-two-jokers-trinca-en": 56,
-      "mexe-valid-one-joker-each": 55,
+      "joker-in-group": 58,
+      "mexe-invalid-two-jokers-run": 57,
+      "mexe-invalid-two-jokers-trinca-en": 57,
+      "mexe-valid-one-joker-each": 57,
       "mexe-invalid-kA2": 57,
-      "repeated-suit-group": 57,
+      "repeated-suit-group": 56,
       "snap-targets-legal": 57,
-      "snap-target-illegal": 58,
+      "snap-target-illegal": 57,
       "snap-preview-valid": 58,
       "snap-preview-invalid": 57,
       "snap-preview-joker": 57,
       "snap-reason-tapped": 57,
-      "snap-preview-en": 57,
+      "snap-preview-en": 58,
       "tutorial-trinca": 57,
       "tutorial-joker": 57,
       "tutorial-complete": 59,
@@ -347,18 +347,32 @@
       "game-theme-kitchen": 58,
       "game-theme-quintal": 58,
       "game-theme-feira": 58,
-      "cosmetics-panel": 55,
-      "a11y-reduced-motion": 57,
+      "cosmetics-panel": 56,
+      "a11y-reduced-motion": 58,
       "mobile-portrait-menu": 60,
       "mobile-portrait-game": 58,
       "mobile-landscape-game": 58,
-      "mobile-tap-select": 57,
-      "mobile-tap-move-valid": 57,
+      "mobile-tap-select": 58,
+      "mobile-tap-move-valid": 58,
       "mobile-tap-move-invalid": 57,
       "mobile-feito-blocked": 57,
       "mobile-badge-reason": 57,
-      "mobile-portrait-en": 57,
-      "tutorial-portrait": 55
+      "mobile-portrait-en": 58,
+      "helper-beginner-destinations": 57,
+      "helper-standard-feedback": 57,
+      "helper-expert-minimal": 57,
+      "invalid-reason-badge": 38,
+      "mobile-mexe-editor": 51,
+      "editor-move": 44,
+      "editor-invalid-draft": 52,
+      "editor-valid-final": 50,
+      "zoom-buttons": 51,
+      "table-zoomed": 41,
+      "zoom-card-drag-precedence": 47,
+      "zoom-buttons-reachable": 55,
+      "meld-focus": 53,
+      "meld-focus-dismissed": 47,
+      "tutorial-portrait": 54
     },
     "viewports": [
       "1280x720",
@@ -367,7 +381,7 @@
       "844x390"
     ],
     "unitTests": "330/330 pass (22 files, incl. tests/snap.test.ts — 10 snap-target-model tests)",
-    "e2eScreenshots": 61
+    "e2eScreenshots": 75
   },
   "phase3Scores": {
     "fullFlow": 9,
@@ -1082,5 +1096,71 @@
     ],
     "nextTask": "Phase 13 closed; no blockers open. Commit the branch.",
     "notes": "One pre-existing flake seen once under parallel load: the 12-step tutorial e2e failed in a single run and passed in isolation and in the final green run. Not touched by this phase; worth watching."
+  },
+  "phase14": {
+    "auditSummary": "docs/PHASE14_AUDIT.md. Entry state re-measured, not assumed: 353/353 unit green, verify OK. Phase 12 already shipped the machinery Phase 14 needs - computeSnapTargets (joker + trinca aware), per-zone legal/incomplete/illegal painting, a non-mutating ghost preview and a tappable invalid badge - but all of it fired on dragstart only, so the Phase 13 tap/keyboard select-then-place path got zero visual feedback. Two reason codes were also over-broad: a mixed-suit run and a jokerless broken run both reported as notAMeld/jokerUnassignable.",
+    "blockers": [],
+    "priorityIssues": [
+      "tap/keyboard select-then-place had no legality feedback (fixed, Wave B)",
+      "settings-panel row-pitch change shifted e2e cosmetic row clicks (regression from Wave A, fixed)",
+      "verify-log.json was overwritten by any post-failure worker, hiding real gate coverage (fixed)",
+      "focused mobile Mexe editor (Wave C, in progress)",
+      "crowded-table zoom/focus (Wave D, pending)",
+      "tutorial/help updates for helper modes and the editor (Wave E, pending)"
+    ],
+    "waves": {
+      "A": "helper modes: HelperMode beginner/standard/expert, sanitized persistence fallback, pure helperFlags(), settings row, pt/en strings, tests. 353 -> 362 unit.",
+      "B": "selected-card legal destinations, multi-reason tappable badges, mode-gated ghost preview and FEITO reason, reason.runSuitMismatch + reason.runGap split. 362 -> 365 unit.",
+      "fix": "settings row geometry extracted to Phaser-free src/ui/settings-layout.ts and consumed by the e2e spec; verify-log.json now merged per run with a globalSetup that clears it once. 365 -> 369 unit, 70/70 e2e, verify: OK.",
+      "C": "focused mobile Mexe editor (in progress)",
+      "D": "crowded-table zoom/focus (pending)",
+      "E": "tutorial/help, docs, screenshots, final verify (pending)"
+    },
+    "modelCavemanLog": [
+      {
+        "role": "audit inspection",
+        "model": "haiku",
+        "task": "Phase 13 state + helper/Mexe gaps, wrote docs/PHASE14_AUDIT.md",
+        "caveman": "available, invoked",
+        "run": "p14-audit"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "Wave A helper modes",
+        "caveman": "available, invoked",
+        "run": "p14-A"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "Wave B selection helpers, reason split, ghost/FEITO gating",
+        "caveman": "available, invoked",
+        "run": "p14-B"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "settings-row regression + verify-log merge fix",
+        "caveman": "available, invoked",
+        "run": "p14-fix"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "Wave C mobile Mexe editor",
+        "caveman": "available, invoked",
+        "run": "p14-C"
+      },
+      {
+        "role": "orchestration/UX strategy",
+        "model": "opus",
+        "task": "routing, editor + zoom design, regression root-cause",
+        "caveman": "session-level caveman active",
+        "run": "p14-lead"
+      }
+    ],
+    "extraAgentJustification": "One extra Sonnet agent beyond the default set, for the Wave A settings-panel row regression: 4 e2e cosmetic tests failed on the branch and passed on a stashed baseline, which also explained the phantom verify-gate 'missing screenshot' output. Input regression, so it was fixed in isolation before Wave C started.",
+    "nextTask": "Wave C (mobile Mexe editor) in progress; then Wave D zoom/focus, Wave E tutorial/help + docs + final verify."
   }
 }

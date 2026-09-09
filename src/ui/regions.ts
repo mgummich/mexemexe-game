@@ -63,6 +63,12 @@ export interface GameRegions {
   reset: ButtonSpec;
   sort: ButtonSpec;
   gear: ButtonSpec;
+  /** Portrait-only: toggles the focused Mexe editor (Phase 14 Wave C). Landscape carries a value
+   * here too (interface parity) but GameScene never builds the button from it there. */
+  mexeToggle: ButtonSpec;
+  /** Table zoom in/out (Phase 14 Wave D) — a crowded table trades visible area for card size. */
+  zoomIn: ButtonSpec;
+  zoomOut: ButtonSpec;
 
   reason: { x: number; y: number; wrap: number; originY: number; size: number };
   selectHint: { x: number; y: number };
@@ -116,6 +122,12 @@ function landscape(p: ViewProfile): GameRegions {
     reset: { x: 460, y: t ? 261 : 260, w: t ? 24 : 22, h: t ? 17 : 14, size: 8 },
     sort: { x: 30, y: 246, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
     gear: { x: 462, y: 10, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
+    // unused in landscape — GameScene only ever builds the toggle button in portrait
+    mexeToggle: { x: 462, y: 10, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
+    // Free strip: barH (30) to tableTop (80), right of the table (x>398) — empty except the gear
+    // button (which sits above it, y10) and the tutorial panel (tutorial mode hides these instead).
+    zoomIn: { x: 418, y: 55, w: t ? 22 : 20, h: t ? 19 : 17, size: 9 },
+    zoomOut: { x: 442, y: 55, w: t ? 22 : 20, h: t ? 19 : 17, size: 9 },
 
     reason: { x: 440, y: 191, wrap: 72, originY: 1, size: 9 },
     selectHint: { x: 190, y: 265 },
@@ -170,6 +182,12 @@ function portrait(p: ViewProfile): GameRegions {
     reset: { x: 135, y: 412, w: 32, h: 26, size: 9 },
     sort: { x: 175, y: 412, w: 32, h: 26, size: 9 },
     gear: { x: 215, y: 412, w: 32, h: 26, size: 9 },
+    // free slot left of undo (undo's left edge sits at 39) — the focused-editor toggle.
+    mexeToggle: { x: 23, y: 412, w: 30, h: 26, size: 9 },
+    // free slot right of gear (gear's right edge sits at 231, tableRightBound is 266) — stacked
+    // since it's narrower than the row is tall.
+    zoomIn: { x: 249, y: 405, w: 28, h: 13, size: 7 },
+    zoomOut: { x: 249, y: 419, w: 28, h: 13, size: 7 },
 
     reason: { x: 135, y: 374, wrap: 250, originY: 0, size: 9 },
     selectHint: { x: 135, y: 366 },

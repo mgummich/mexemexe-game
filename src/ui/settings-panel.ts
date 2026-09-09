@@ -1,20 +1,29 @@
 import Phaser from 'phaser';
 import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES, type CosmeticOption } from '../cosmetics';
+import type { HelperMode } from '../core/persistence';
 import { playlog } from '../core/playlog';
 import { settings } from '../core/settings';
 import { getLocale, setLocale, t } from '../localization/i18n';
 import { debugApi } from '../verification/debug-api';
 import { panelW } from './menu-layout';
 import { buildOverlay } from './overlay';
+import { cosmeticsPanelH, ROW_PITCH, SETTINGS_PANEL_H } from './settings-layout';
 import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
 
-/** Vertical pitch between settings rows — 12 rows must fit the 262-unit panel. */
-const ROW_PITCH = 20;
+// Row y-coordinates (settingsRowY, cosmeticsRowY, SettingsRow, ...) live in ./settings-layout,
+// a Phaser-free module — this file imports Phaser at the top, which crashes if pulled into a
+// non-browser context (Node unit tests, the e2e spec's Node-side setup). Import from there.
 
 /** Next id in a cosmetics catalog list, wrapping around — same tap-to-cycle pattern as SetupScene's AI avatar picker. */
 function cycleCosmeticId(list: readonly CosmeticOption[], currentId: string): string {
   const idx = list.findIndex((o) => o.id === currentId);
   return list[(idx + 1) % list.length]!.id;
+}
+
+/** beginner -> standard -> expert -> beginner, same wrap-around cycling as cycleCosmeticId. */
+const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
+function cycleHelperMode(current: HelperMode): HelperMode {
+  return HELPER_MODES[(HELPER_MODES.indexOf(current) + 1) % HELPER_MODES.length]!;
 }
 
 /** Copies the play-log export to the clipboard for a tester who won't open a console. Falls
@@ -50,9 +59,9 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     for (const o of objs) o.destroy();
     objs = [];
     const w = panelW(200);
-    // Fixed height: 12 rows at ROW_PITCH must fit inside the 270-unit world, so the panel frame
+    // Fixed height: 13 rows at ROW_PITCH must fit inside the 270-unit world, so the panel frame
     // and its title stay on screen. Large text scales the glyphs inside the rows, not the panel.
-    const h = 262;
+    const h = SETTINGS_PANEL_H; // 13 rows at ROW_PITCH — see src/ui/settings-layout.ts
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
     const { cx, top } = base;
@@ -138,6 +147,14 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     objs.push(largeTextBtn);
 
     y += ROW_PITCH;
+    const helperModeLabel = (): string => `${t('settings.helperMode')}: ${t(`settings.helperMode.${settings.helperMode()}`)}`;
+    const helperModeBtn = new PixelButton(scene, cx, y, helperModeLabel(), () => {
+      settings.update({ helperMode: cycleHelperMode(settings.helperMode()) });
+      helperModeBtn.setLabel(helperModeLabel());
+    }, { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 }).setDepth(510);
+    objs.push(helperModeBtn);
+
+    y += ROW_PITCH;
     const langBtn = new PixelButton(scene, cx, y, t('menu.language'), () => {
       const next = getLocale() === 'pt' ? 'en' : 'pt';
       setLocale(next);
@@ -219,7 +236,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     for (const o of objs) o.destroy();
     objs = [];
     const w = panelW(210);
-    const h = Math.round(150 * settings.fontScale());
+    const h = cosmeticsPanelH();
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
     const { cx, top } = base;

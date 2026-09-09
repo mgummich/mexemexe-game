@@ -29,8 +29,15 @@ const GAP_STEPS = [17, 14, 12, 10]; // CARD_GAP candidates at scale 1, most spac
 // Rows are always spaced by at least their (scaled) card height — never less — so melds can
 // never visually overlap; when even the smallest scale can't fit, rows are still spaced by
 // full row height and simply run past areaH rather than overlapping.
-const SCALE_STEPS = [1, 0.85, 0.7, 0.55, 0.45];
+export const SCALE_STEPS = [1, 0.85, 0.7, 0.55, 0.45];
 const ROW_GAP_STEPS = [8, 6, 4, 2, 0];
+
+export interface MeldLayoutOptions {
+  /** Table zoom (Phase 14 Wave D): stop shrinking at this card scale and let rows run past areaH
+   * instead of compressing further. The caller (GameScene) reads the real content height back off
+   * the returned positions (max of y + height) and pans a clamped window over it. */
+  minCardScale?: number;
+}
 
 function packRows(melds: MeldLayoutInput[], areaW: number, gap: number, cw: number, pad: number, meldGap: number): RowItem[][] {
   const rows: RowItem[][] = [];
@@ -67,8 +74,38 @@ interface Candidate {
  * vertical row gap — picking the first combination whose total height fits areaH. Row pitch is
  * always >= the (possibly scaled) row height, so rows are never pushed into each other.
  */
-export function computeMeldLayout(melds: MeldLayoutInput[], areaW: number, areaH: number): MeldPosition[] {
+export function computeMeldLayout(
+  melds: MeldLayoutInput[],
+  areaW: number,
+  areaH: number,
+  options?: MeldLayoutOptions,
+): MeldPosition[] {
   if (melds.length === 0) return [];
+
+  if (options?.minCardScale) {
+    // Zoomed: pin the scale, take the most spacious gap/row-gap (no height budget to compress
+    // against), and let rows run to whatever total height they need — the caller pans a clamped
+    // window over it instead of this function ever shrinking below the floor.
+    const scale = options.minCardScale;
+    const cw = CARD_W * scale;
+    const ch = CARD_H * scale;
+    const pad = MELD_PAD * scale;
+    const meldGap = MELD_GAP * scale;
+    const gap = GAP_STEPS[0]! * scale;
+    const rowGap = ROW_GAP_STEPS[0]!;
+    const rows = packRows(melds, areaW, gap, cw, pad, meldGap);
+    const rowH = ch + pad * 2;
+    const pitch = rowH + rowGap;
+    const positions: MeldPosition[] = [];
+    rows.forEach((row, rowIndex) => {
+      const y = rowIndex * pitch;
+      for (const item of row) {
+        const x = Math.min(item.x, Math.max(0, areaW - item.width));
+        positions.push({ meldId: item.meldId, x, y, width: item.width, height: rowH, cardGap: gap, cardScale: scale });
+      }
+    });
+    return positions;
+  }
 
   let best: Candidate | null = null;
   outer: for (const scale of SCALE_STEPS) {

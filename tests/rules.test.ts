@@ -97,6 +97,16 @@ describe('runs', () => {
   it('mixed suits invalid', () => {
     expect(isValidRun([n('hearts', 3), n('spades', 4), n('hearts', 5)])).toBe(false);
   });
+  it('mixed suits reports runSuitMismatch', () => {
+    const result = analyzeMeld([n('hearts', 3), n('spades', 4), n('hearts', 5)]);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.reason).toBe('reason.runSuitMismatch');
+  });
+  it('jokerless broken sequence reports runGap, not jokerUnassignable', () => {
+    const result = analyzeMeld([n('hearts', 5), n('hearts', 7), n('hearts', 9)]);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.reason).toBe('reason.runGap');
+  });
   it('2 cards -> meldTooSmall', () => {
     const result = analyzeMeld([n('hearts', 3), n('hearts', 4)]);
     expect(result.valid).toBe(false);
@@ -223,7 +233,7 @@ describe('groups', () => {
 
   it.each([
     ["repeated suit across decks", [n('hearts', 7, 0), n('hearts', 7, 1), n('clubs', 7)], 'reason.groupDuplicateSuit'],
-    ['different ranks', [n('hearts', 7), n('hearts', 8), n('clubs', 7)], 'reason.notAMeld'],
+    ['different ranks', [n('hearts', 7), n('hearts', 8), n('clubs', 7)], 'reason.runSuitMismatch'],
     ['two cards', [n('hearts', 4), n('diamonds', 4)], 'reason.meldTooSmall'],
     ['five cards', [n('spades', 10), n('hearts', 10), n('diamonds', 10), n('clubs', 10), j(0, 1)], 'reason.groupTooLarge'],
     ['all jokers', [j(0, 1), j(0, 2), j(1, 1)], 'reason.groupAllJokers'],
@@ -648,7 +658,7 @@ describe('isValidMeld / validateTable / reasons', () => {
     const reasons = getInvalidMeldReasons([good, small, junk]);
     expect(reasons).toEqual([
       { meldId: 'm2', reason: 'reason.meldTooSmall' },
-      { meldId: 'm3', reason: 'reason.notAMeld' },
+      { meldId: 'm3', reason: 'reason.runSuitMismatch' },
       { meldId: 'm3', reason: 'reason.duplicateCard' },
     ]);
   });

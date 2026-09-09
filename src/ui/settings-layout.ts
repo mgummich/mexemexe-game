@@ -1,0 +1,59 @@
+/**
+ * Row geometry for the settings panel (src/ui/settings-panel.ts), split into a Phaser-free module
+ * so tests and e2e specs can import exact row y-coordinates instead of hardcoding a layout
+ * snapshot that silently rots whenever a row is added or removed (settings-panel.ts itself
+ * imports Phaser at module scope, which crashes outside a browser/canvas context).
+ */
+import { settings } from '../core/settings';
+import { cy } from './menu-layout';
+
+/** Vertical pitch between settings rows — 13 rows must fit the 266-unit panel (landscape world is only 270 tall). */
+export const ROW_PITCH = 19;
+
+/** Main settings panel height — see settings-panel.ts's showMain `h`. */
+export const SETTINGS_PANEL_H = 266;
+
+/** Row order in the main settings panel — index into settingsRowY. Keep in sync with showMain. */
+export enum SettingsRow {
+  Mute = 0,
+  Sfx = 1,
+  Music = 2,
+  MusicEnabled = 3,
+  MusicContext = 4,
+  Motion = 5,
+  LargeText = 6,
+  HelperMode = 7,
+  Lang = 8,
+  Export = 9,
+  Cosmetics = 10,
+  ResetData = 11,
+  Close = 12,
+}
+
+/** Top edge of the main settings panel — same formula buildOverlay uses (`cy() - h / 2`). */
+export function settingsPanelTop(): number {
+  return cy() - SETTINGS_PANEL_H / 2;
+}
+
+/** y of a main-panel row (see SettingsRow), matching showMain's `y += ROW_PITCH` walk. */
+export function settingsRowY(row: SettingsRow): number {
+  return settingsPanelTop() + 22 + row * ROW_PITCH;
+}
+
+/** Vertical pitch between rows in the cosmetics sub-panel (table theme / card back / avatar). */
+export const COSMETICS_ROW_PITCH = 30;
+
+/** Cosmetics sub-panel height — see settings-panel.ts's showCosmetics `h`. */
+export function cosmeticsPanelH(): number {
+  return Math.round(150 * settings.fontScale());
+}
+
+/** Top edge of the cosmetics sub-panel. */
+export function cosmeticsPanelTop(): number {
+  return cy() - cosmeticsPanelH() / 2;
+}
+
+/** y of cosmetics sub-panel row `index` (0 = table theme, 1 = card back, 2 = avatar). */
+export function cosmeticsRowY(index: number): number {
+  return cosmeticsPanelTop() + 32 + index * COSMETICS_ROW_PITCH;
+}
