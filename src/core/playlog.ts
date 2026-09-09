@@ -12,6 +12,12 @@ export interface PlaylogEntry {
   data?: Record<string, PlaylogValue>;
 }
 
+export interface PlaylogPlayerStats {
+  cardsPlayed: number;
+  draws: number;
+  confirms: number;
+}
+
 export interface PlaylogSummary {
   totalTurns: number;
   invalidFeitoByReason: Record<string, number>;
@@ -26,6 +32,9 @@ export interface PlaylogSummary {
   reconnects: number;
   desyncs: number;
   proposalRejectsByReason: Record<string, number>;
+  /** Per-player cards played / draws / meld-confirm count, keyed by GameState player id — feeds
+   * the results-screen rematch summary (see core/results-summary.ts). */
+  perPlayer: Record<string, PlaylogPlayerStats>;
 }
 
 const base = typeof performance !== 'undefined' ? performance.now() : 0;
@@ -42,6 +51,23 @@ function sanitize(data?: Record<string, PlaylogValue>): Record<string, PlaylogVa
   if (!data) return undefined;
   const out: Record<string, PlaylogValue> = {};
   for (const [k, v] of Object.entries(data)) if (!BANNED_KEYS.has(k)) out[k] = v;
+  return out;
+}
+
+function perPlayerStats(entries: PlaylogEntry[]): Record<string, PlaylogPlayerStats> {
+  const out: Record<string, PlaylogPlayerStats> = {};
+  const bump = (id: string): PlaylogPlayerStats => (out[id] ??= { cardsPlayed: 0, draws: 0, confirms: 0 });
+  for (const e of entries) {
+    const playerId = e.data?.playerId;
+    if (typeof playerId !== 'string') continue;
+    if (e.type === 'turn:confirmed') {
+      const s = bump(playerId);
+      s.confirms++;
+      s.cardsPlayed += typeof e.data?.cardsPlayed === 'number' ? e.data.cardsPlayed : 0;
+    } else if (e.type === 'turn:drawn') {
+      bump(playerId).draws++;
+    }
+  }
   return out;
 }
 
@@ -95,8 +121,8 @@ export const playlog = {
       lastTurnStartT = now;
       playlog.record('turn:start', durationMs !== undefined ? { turn, durationMs } : { turn });
     });
-    bus.on('turn:confirmed', ({ cardsPlayed }) => playlog.record('turn:confirmed', { cardsPlayed }));
-    bus.on('turn:drawn', () => playlog.record('turn:drawn'));
+    bus.on('turn:confirmed', ({ playerId, cardsPlayed }) => playlog.record('turn:confirmed', { playerId, cardsPlayed }));
+    bus.on('turn:drawn', ({ playerId }) => playlog.record('turn:drawn', { playerId }));
     bus.on('game:won', () => playlog.record('game:won'));
   },
 
@@ -119,6 +145,7 @@ export const playlog = {
       reconnects: entries.filter((e) => e.type === 'net:reconnect').length,
       desyncs: entries.filter((e) => e.type === 'desync').length,
       proposalRejectsByReason: countBy(entries, 'net:reject', 'reason'),
+      perPlayer: perPlayerStats(entries),
     };
   },
 

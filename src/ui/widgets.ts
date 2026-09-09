@@ -41,6 +41,18 @@ export function label(
   return scene.add.text(x, y, text, fontStyle(size, color)).setOrigin(0.5);
 }
 
+/** Menu/lobby scene switch with a short fade instead of a hard cut — instant (no fade) when
+ * reduced motion is on, same motionScale() gate as every other cosmetic tween. */
+export function gotoScene(scene: Phaser.Scene, key: string, data?: object): void {
+  const dur = Math.round(140 * settings.motionScale());
+  if (dur <= 0) {
+    scene.scene.start(key, data);
+    return;
+  }
+  scene.cameras.main.fadeOut(dur, 15, 10, 8);
+  scene.cameras.main.once('camerafadeoutcomplete', () => scene.scene.start(key, data));
+}
+
 export interface PixelButtonOpts {
   textureBase?: string; // e.g. 'btn-feito' → uses -normal/-hover/-pressed/-disabled
   w?: number;

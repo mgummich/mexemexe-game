@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
+import { setMusicContext } from '../audio/music';
 import { getLocale, setLocale, t } from '../localization/i18n';
 import { settings } from '../core/settings';
 import { openRulesPanel } from '../ui/rules-panel';
 import { openSettingsPanel } from '../ui/settings-panel';
-import { label, PixelButton } from '../ui/widgets';
+import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 
 export class MenuScene extends Phaser.Scene {
@@ -12,8 +13,11 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    setMusicContext('menu');
     debugApi.scene = 'menu';
     debugApi.online = null; // local menu/game must work with the online server down or absent
+    debugApi.results = null;
+    debugApi.winButtonY = null;
     setLocale(settings.get().locale);
     this.rebuild();
     this.markReady();
@@ -23,9 +27,10 @@ export class MenuScene extends Phaser.Scene {
         winnerName: t('menu.you'),
         stalemate: false,
         config: { seed: urlSeed(), players: [{ name: t('menu.you'), isAi: false }, { name: 'Juninho', isAi: true, personality: 'juninho' as const }] },
+        winningMoveText: t('game.lastMove.played', { name: t('menu.you'), n: 2 }),
         results: [
           { name: t('menu.you'), cardsLeft: 0, isWinner: true, avatarKey: 'avatar-player' },
-          { name: 'Juninho', cardsLeft: 4, isWinner: false, avatarKey: 'avatar-juninho' },
+          { name: 'Juninho', cardsLeft: 4, isWinner: false, avatarKey: 'avatar-juninho', personality: 'juninho' as const },
         ],
       });
     } else if (showcase === 'setup') {
@@ -59,6 +64,11 @@ export class MenuScene extends Phaser.Scene {
     debugApi.ready = true;
   }
 
+  /** Multiplies cosmetic tween durations; 0 (instant) when reduced motion is on. */
+  private motion(ms: number): number {
+    return ms * settings.motionScale();
+  }
+
   private rebuild(): void {
     this.children.removeAll();
     this.add.image(240, 135, 'bg-menu').setDisplaySize(480, 270);
@@ -67,17 +77,26 @@ export class MenuScene extends Phaser.Scene {
     this.add.rectangle(240, 180, 150, 160, 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
     if (this.textures.exists('logo') && !debugApi.missingAssets.includes('logo')) {
       // logo.png ships at 3x (600x240) like every other sprite — pin it to its logical size
-      this.add.image(240, 62, 'logo').setDisplaySize(200, 80);
+      const logo = this.add.image(240, 62, 'logo').setDisplaySize(200, 80);
+      // idle bob so the title screen doesn't sit dead still — instant (no tween) under reduced motion
+      this.tweens.add({ targets: logo, y: '+=3', duration: Math.max(1, this.motion(1400)), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     } else {
-      label(this, 240, 52, t('menu.title'), 32, '#f7d23e');
+      const title = label(this, 240, 52, t('menu.title'), 32, '#f7d23e');
+      this.tweens.add({ targets: title, y: '+=3', duration: Math.max(1, this.motion(1400)), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
       label(this, 240, 84, t('menu.tagline'), 8, '#f7f2e7');
     }
 
-    new PixelButton(this, 240, 145, t('menu.play'), () => this.scene.start('setup'), {
+    // cheap character presence: a familiar face idling off to the side, away from every button
+    if (this.textures.exists('avatar-juninho')) {
+      const buddy = this.add.image(404, 150, 'avatar-juninho').setDisplaySize(26, 26).setAlpha(0.92);
+      this.tweens.add({ targets: buddy, y: '+=4', duration: Math.max(1, this.motion(1200)), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+    }
+
+    new PixelButton(this, 240, 145, t('menu.play'), () => gotoScene(this, 'setup'), {
       textureBase: 'btn-feito', w: 90, h: 24, size: 10,
     });
     // kept at its original logical coords (240, 207) — e2e clicks this position directly
-    new PixelButton(this, 240, 207, t('menu.tutorial'), () => this.scene.start('tutorial'), {
+    new PixelButton(this, 240, 207, t('menu.tutorial'), () => gotoScene(this, 'tutorial'), {
       textureBase: 'btn-comprar', w: 90, h: 20, size: 9,
     });
 
@@ -96,7 +115,7 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // visually subordinate to JOGAR: smaller, muted, tucked below the rules/language row
-    new PixelButton(this, 240, 258, t('menu.online'), () => this.scene.start('online'), {
+    new PixelButton(this, 240, 258, t('menu.online'), () => gotoScene(this, 'online'), {
       textureBase: 'btn-comprar', w: 100, h: 13, size: 6, color: 0x8a7f68,
     });
   }

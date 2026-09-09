@@ -36,6 +36,23 @@ export interface MexeOnlineDebugApi {
   requestResync: () => void;
 }
 
+/** Results-screen summary (see WinScene) — e2e can assert on it since the win/loss row text and
+ * winning-move readback are canvas text, unreadable to Playwright otherwise. Null outside WinScene. */
+export interface MexeResultsSummary {
+  winnerName: string;
+  stalemate: boolean;
+  /** Localized readback of the final confirmed play (e.g. "X played 2 card(s)"); empty on a stalemate. */
+  winningMoveText: string;
+  results: {
+    name: string;
+    cardsLeft: number;
+    isWinner: boolean;
+    turnsPlayed: number;
+    cardsPlayed: number;
+    draws: number;
+  }[];
+}
+
 /** Exposed on window.__MEXE__ for Playwright verification. */
 export interface MexeDebugApi {
   ready: boolean;
@@ -54,7 +71,7 @@ export interface MexeDebugApi {
   /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
   a11y: { invalidBadges: number };
   /** Background-music state for e2e: current track file, whether it is actually playing, and its volume. */
-  music: () => { track: string; playing: boolean; volume: number };
+  music: () => { track: string; playing: boolean; volume: number; context: string };
   /** Live Mexe Mode hooks for e2e (bound to the active DraftEditor on human turns). */
   mexe: {
     playHandCard: (cardId: string, meldId: string | null) => boolean;
@@ -66,6 +83,12 @@ export interface MexeDebugApi {
     getDraft: () => DraftState | null;
   } | null;
   online: MexeOnlineDebugApi | null;
+  /** Results-screen summary — see MexeResultsSummary. Null outside WinScene. */
+  results: MexeResultsSummary | null;
+  /** Verification-only: logical y of WinScene's first action button (layout shifts with the
+   * results-summary content above it) — null outside WinScene. Lets e2e click the real button
+   * position instead of a coordinate that drifts whenever the summary content changes. */
+  winButtonY: number | null;
   /** Dev-only playtest instrumentation: session-scoped, in-memory, never a network sink. */
   playlog: {
     entries: () => PlaylogEntry[];
@@ -95,9 +118,11 @@ export const debugApi: MexeDebugApi = {
   tutorialStep: null,
   lastAiThought: null,
   a11y: { invalidBadges: 0 },
-  music: () => ({ track: '', playing: false, volume: 0 }),
+  music: () => ({ track: '', playing: false, volume: 0, context: 'menu' }),
   mexe: null,
   online: null,
+  results: null,
+  winButtonY: null,
   playlog: {
     entries: () => playlog.entries(),
     summary: () => playlog.summary(),
@@ -121,6 +146,8 @@ export function installDebugApi(): void {
   if (lang === 'en' || lang === 'pt') settings.update({ locale: lang });
   // e2e hook mirroring ?lang= — ?textscale=125 flips the large-text setting on for a11y screenshot capture.
   if (params.get('textscale') === '125') settings.update({ largeText: true });
+  // e2e hook — ?motion=0 flips reduced motion on for a11y screenshot capture.
+  if (params.get('motion') === '0') settings.update({ reducedMotion: true });
 }
 
 export function urlSeed(): number {

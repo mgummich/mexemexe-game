@@ -1,4 +1,4 @@
-import { loadSave, SAVE_KEY, type Progress, type Save, type Settings } from './persistence';
+import { loadSave, SAVE_KEY, type Cosmetics, type Progress, type Save, type Settings } from './persistence';
 
 export type { Settings };
 
@@ -25,6 +25,14 @@ export const settings = {
   },
   progress(): Progress {
     return save.progress;
+  },
+  cosmetics(): Cosmetics {
+    return save.cosmetics;
+  },
+  updateCosmetics(patch: Partial<Cosmetics>): void {
+    save = { ...save, cosmetics: { ...save.cosmetics, ...patch } };
+    persist();
+    listeners.forEach((fn) => fn());
   },
   setLastSeed(seed: number): void {
     save = { ...save, progress: { ...save.progress, lastSeed: seed } };

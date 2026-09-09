@@ -30,8 +30,8 @@
     "e2e"
   ],
   "tests": {
-    "unit": "234/234 pass (12 files, incl. 39 server + play log + net error mapper)",
-    "e2e": "37/37 pass (npm run verify) + 7/7 multiplayer e2e (npm run verify:multiplayer)",
+    "unit": "281/281 pass (18 files, incl. 56 server + play log + net error mapper + cosmetics + music + AI personality)",
+    "e2e": "46/46 pass (npm run verify) + 7/7 multiplayer e2e (npm run verify:multiplayer)",
     "lint": "clean (eslint + tsc --noEmit)",
     "build": "pass (gated in verify)"
   },
@@ -99,7 +99,7 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": 8,
+  "phase": 9,
   "phase6": {
     "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
     "blockers": [],
@@ -293,50 +293,56 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-09T11:48:45.689Z",
+    "generatedAt": "2026-09-09T13:25:10.336Z",
     "perShotFps": {
       "menu": 60,
-      "game": 57,
+      "game": 58,
       "game4": 58,
-      "tutorial": 58,
+      "tutorial": 57,
       "tutorial-step2": 57,
       "setup": 58,
       "settings": 56,
       "win": 58,
       "mexe-invalid": 58,
       "comprar-flow": 58,
-      "ai-showcase-mid": 58,
-      "ai-showcase-after": 58,
+      "ai-showcase-mid": 57,
+      "ai-showcase-after": 57,
       "ai-cida": 57,
       "ai-juninho": 58,
       "ai-bia": 58,
       "ai-ze": 58,
       "pause": 57,
-      "help": 55,
+      "help": 56,
       "help-en": 56,
       "menu-en": 60,
-      "game-en": 58,
+      "game-en": 57,
       "a11y-large-text": 57,
       "keyboard-comprar": 57,
-      "stress-table": 43,
-      "game-1080p": 54,
-      "joker-in-hand": 56,
-      "joker-in-run": 57,
-      "joker-in-group": 57,
+      "stress-table": 58,
+      "game-1080p": 58,
+      "joker-in-hand": 58,
+      "joker-in-run": 58,
+      "joker-in-group": 58,
       "mexe-invalid-kA2": 57,
       "repeated-suit-group": 58,
       "tutorial-trinca": 57,
       "tutorial-joker": 58,
-      "tutorial-complete": 58,
-      "feito-invalid-explained": 54,
-      "feito-invalid-explained-en": 54
+      "tutorial-complete": 45,
+      "feito-invalid-explained": 57,
+      "feito-invalid-explained-en": 57,
+      "game-theme-boteco": 58,
+      "game-theme-kitchen": 58,
+      "game-theme-quintal": 58,
+      "game-theme-feira": 58,
+      "cosmetics-panel": 56,
+      "a11y-reduced-motion": 57
     },
     "viewports": [
       "1280x720",
       "1920x1080"
     ],
-    "unitTests": "234/234 pass (12 files, incl. 39 server + play log + net error mapper)",
-    "e2eScreenshots": 35
+    "unitTests": "280/280 pass (18 files, incl. 56 server + play log + net error mapper + cosmetics + music + AI personality)",
+    "e2eScreenshots": 41
   },
   "phase3Scores": {
     "fullFlow": 9,
@@ -595,6 +601,106 @@
       "Both fixes covered by a new test; 234/234 and both verify suites re-run green afterwards."
     ],
     "nextTask": "Run the playtest. docs/PLAYTEST_GUIDE.md is the tester-facing entry point. The open carried items are unchanged from Phase 7: per-IP rate limiting, online rematch (needs room-token semantics), a persistent rather than single-shot reconnect retry, an opponent-rearranging indicator during another seat's draft, and spectator/matchmaking."
+  },
+  "phase9": {
+    "auditSummary": "docs/PHASE9_AUDIT.md. Phase 8 closed the public-demo gate with no blockers; no playtest feedback exists yet (no sessions have been logged), so Phase 9 acted on friction predictable from the code instead: no theme/cosmetic system at all despite 4 card backs and 4 table backgrounds already sitting unused in assets, one flat shuffled playlist with no context awareness, AI personalities differing only in engine choice with no expressed pacing/emotes, and a win screen with no rematch summary.",
+    "blockers": [
+      "RESOLVED (2026-09-09, post-close wiring pass): PixelLab subscription renewed. The 4 planned avatars (rosa/tuca/nina/ivo) were generated, wired into the catalog, and shipped — AVATARS now has 9 entries. See modelCavemanLog's \"avatar wiring\" entry."
+    ],
+    "priorityIssues": [
+      "online games show no per-player stats and no winning-move text on WinScene — the client never observes server-driven turns locally, so results-summary has no play-log data to draw from online; fixing it needs a protocol change, out of scope this phase. WinScene hides the stats line entirely for online rather than showing fake zeros",
+      "no online rematch (carried from Phase 5/7/8)",
+      "flood guard is per connection, not per IP (carried)",
+      "turnTimerSeconds still a declared, unimplemented, off-by-default hook (carried)",
+      "no real playtest session has ever been logged — top ask for the next phase"
+    ],
+    "delivered": [
+      "src/cosmetics/index.ts — local-only catalog: 4 table themes (boteco/kitchen/quintal/feira), 5 card backs (back-0..back-4), 9 avatars (player/cida/juninho/bia/ze/rosa/tuca/nina/ivo); resolveCosmeticId/cosmeticTextureKey degrade an unknown id or a missing texture to the default rather than rendering broken",
+      "cosmetics selector: Menu -> settings gear -> COSMETICS sub-panel (src/ui/settings-panel.ts), live preview, persists immediately to localStorage mexe-save under a new cosmetics block (src/core/persistence.ts); an old save without the block migrates to defaults. Selection is strictly client-side — an e2e test asserts cosmetics never appear in src/net/protocol.ts",
+      "scripts/gen-cosmetics.mjs (npm run gen:cosmetics) — hand-rolled PNG encoder over node zlib, no dependencies, deterministic (re-running reproduces byte-identical files); produced public/assets/tables/quintal.png + feira.png (480x270), public/assets/cards/back-4.png (72x96, azulejo), public/assets/ui/emote-sleepy.png + emote-confident.png (36x36)",
+      "src/audio/music.ts — music contexts menu | game | mexe; boteco-table + cafe-pixelado for menu and mexe (calm during the concentration-heavy draft), full-song-1/2/3 for game; 900ms crossfade scaled by motionScale() (instant under reduced motion); new music-by-context settings toggle; deterministic round-robin rotation, no RNG",
+      "src/audio/sfx.ts — 80ms per-key SFX retrigger debounce so rapid repeats do not stack into a loud spike; SFX gains audited and already correct, gen-sfx.mjs re-run byte-identical, no audio assets regenerated",
+      "src/ai/ai.ts PERSONALITY_STYLE table — per-personality think pace and emotes (Cida 900ms happy/thinking, Juninho 250ms confident/excited/annoyed, Bia 600ms+60ms/table-meld capped +400 happy/excited/thinking, Ze 700ms confident/happy/sleepy); think delay is presentation-only (motionScale(), capped, lives in GameScene, does not extend the 400ms search deadline); move reasons tagged cida:minimal-meld / juninho:dump-all / bia:rearrange-extend / ze:hold-for-bigger; characterful ai.line.<personality>.<moment> lines for bigPlay/nearWin/forcedDraw, pt+en. Search engines unchanged — legality, determinism, timeout fallback still tested",
+      "src/core/objective.ts — always-visible objective prompt, states start/invalidEdit/readyToConfirm, falls back to the specific canConfirm() reason otherwise",
+      "src/core/results-summary.ts — WinScene rematch summary (per player: turns, cards played, draws, from the play log) + winning-move line + per-personality avatar emote reactions",
+      "menu idle motion, gotoScene() fade transitions, an ONLINE badge so local mode is never mistaken for online, expanded joker-in-run explanation in the rules panel; everything cosmetic respects reduced motion",
+      "debug-api: debugApi.results, debugApi.winButtonY, debugApi.music() reports context; new ?motion=0 query hook",
+      "6 new e2e tests + 6 new gated screenshots (game-theme-boteco/kitchen/quintal/feira, cosmetics-panel, a11y-reduced-motion), all added to EXPECTED_SHOTS in scripts/check-verify.mjs; 2 pre-existing e2e tests fixed where Phase 9 layout shifts had moved hardcoded click coordinates (rematch button now reads its real position from the debug API instead of guessing)"
+    ],
+    "verification": {
+      "npmTest": "PASS: 281/281 (18 files) — re-run after avatar wiring pass",
+      "npmLint": "PASS: eslint + tsc --noEmit clean",
+      "npmBuild": "PASS (gated inside npm run verify)",
+      "npmVerify": "PASS: 46/46 e2e; verify: OK; 0 console errors; 0 missing assets; game-scene fps >= 48 (gate >= 30)",
+      "npmVerifyMultiplayer": "PASS: 7/7 multiplayer e2e; verify:multiplayer: OK; 0 client/server errors",
+      "npmTestServer": "PASS: 56/56"
+    },
+    "modelCavemanLog": [
+      {
+        "role": "inspection pass",
+        "model": "haiku",
+        "task": "repo/state audit",
+        "caveman": "available"
+      },
+      {
+        "role": "asset generation",
+        "model": "sonnet",
+        "task": "PixelLab attempt, BLOCKED on zero credits",
+        "caveman": "available"
+      },
+      {
+        "role": "cosmetics system",
+        "model": "sonnet",
+        "task": "catalog/persistence/selector/wiring + tests",
+        "caveman": "available"
+      },
+      {
+        "role": "procedural art",
+        "model": "sonnet",
+        "task": "scripts/gen-cosmetics.mjs + 5 new PNGs + asset docs",
+        "caveman": "available",
+        "note": "extra agent; reason: PixelLab credit exhaustion forced a procedural fallback route"
+      },
+      {
+        "role": "audio variety",
+        "model": "sonnet",
+        "task": "music contexts + SFX limiter + tests",
+        "caveman": "available"
+      },
+      {
+        "role": "AI personality depth",
+        "model": "sonnet",
+        "task": "style table, tagged reasons, lines + tests",
+        "caveman": "available"
+      },
+      {
+        "role": "charm + clarity",
+        "model": "sonnet",
+        "task": "menu/results/objective/UX + tests",
+        "caveman": "available"
+      },
+      {
+        "role": "beta verification",
+        "model": "sonnet",
+        "task": "e2e + screenshots + all six gates",
+        "caveman": "available"
+      },
+      {
+        "role": "docs pass",
+        "model": "sonnet",
+        "task": "this task",
+        "caveman": "available"
+      },
+      {
+        "role": "avatar wiring",
+        "model": "sonnet",
+        "task": "wire 4 PixelLab avatars + re-verify",
+        "caveman": "available",
+        "note": "extra agent; reason: PixelLab subscription renewed after Phase 9 close"
+      }
+    ],
+    "routingNote": "Reasoning/routing done by the main Opus thread: audit synthesis, content prioritization, the decision to go procedural after the PixelLab block, and this dispatch plan. No extra Opus reasoning agent was needed — tests never failed twice, and no content direction conflicted.",
+    "nextTask": "Run a real playtest session and log it (docs/PLAYTEST_GUIDE.md) — no session has ever been recorded, and it is the top ask. Carried from earlier phases: online rematch, per-IP rate limiting, a persistent (not single-shot) reconnect retry, and an online results/stats path that does not need a protocol change."
   },
   "phase8Scores": {
     "demoStability": 9,

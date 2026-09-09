@@ -1,9 +1,17 @@
 import Phaser from 'phaser';
+import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES, type CosmeticOption } from '../cosmetics';
 import { playlog } from '../core/playlog';
 import { settings } from '../core/settings';
 import { getLocale, setLocale, t } from '../localization/i18n';
+import { debugApi } from '../verification/debug-api';
 import { buildOverlay } from './overlay';
 import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
+
+/** Next id in a cosmetics catalog list, wrapping around — same tap-to-cycle pattern as SetupScene's AI avatar picker. */
+function cycleCosmeticId(list: readonly CosmeticOption[], currentId: string): string {
+  const idx = list.findIndex((o) => o.id === currentId);
+  return list[(idx + 1) % list.length]!.id;
+}
 
 /** Copies the play-log export to the clipboard for a tester who won't open a console. Falls
  * back to `console.log` if the Clipboard API is unavailable or the write is rejected (denied
@@ -39,7 +47,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     objs = [];
     const w = 200;
     // grows with the large-text setting itself so its own extra row/taller buttons still fit at 125%.
-    const h = Math.round(254 * settings.fontScale());
+    const h = Math.round(298 * settings.fontScale());
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
     const { cx, top } = base;
@@ -81,6 +89,20 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 },
     ).setDepth(510);
     objs.push(musicBtn);
+
+    y += 22;
+    const contextBtn = new PixelButton(
+      scene,
+      cx,
+      y,
+      `${t('settings.musicContext')}: ${settings.get().musicContextAware ? t('settings.on') : t('settings.off')}`,
+      () => {
+        settings.update({ musicContextAware: !settings.get().musicContextAware });
+        contextBtn.setLabel(`${t('settings.musicContext')}: ${settings.get().musicContextAware ? t('settings.on') : t('settings.off')}`);
+      },
+      { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 },
+    ).setDepth(510);
+    objs.push(contextBtn);
 
     y += 24;
     const motionBtn = new PixelButton(
@@ -133,6 +155,13 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
 
     y += 22;
     objs.push(
+      new PixelButton(scene, cx, y, t('cosmetics.title'), showCosmetics, {
+        textureBase: 'btn-comprar', w: 150, h: 16, size: 7,
+      }).setDepth(510),
+    );
+
+    y += 22;
+    objs.push(
       new PixelButton(scene, cx, y, t('settings.resetData'), showResetConfirm, {
         textureBase: 'btn-comprar', w: 150, h: 16, size: 7, color: DANGER_TINT,
       }).setDepth(510),
@@ -172,6 +201,95 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     objs.push(
       new PixelButton(scene, cx + 40, top + h - 20, t('common.no'), showMain, {
         textureBase: 'btn-comprar', w: 68, h: 18, size: 7,
+      }).setDepth(510),
+    );
+  };
+
+  /**
+   * Table theme / card back / avatar picker — local-only cosmetics, persisted immediately on
+   * each tap. Each preview degrades to the default option's art if the chosen one's file hasn't
+   * shipped yet (see cosmeticTextureKey), so a missing asset never shows a broken image.
+   */
+  const showCosmetics = (): void => {
+    for (const o of objs) o.destroy();
+    objs = [];
+    const w = 210;
+    const h = Math.round(150 * settings.fontScale());
+    const base = buildOverlay(scene, w, h, close);
+    objs.push(...base.objs);
+    const { cx, top } = base;
+
+    objs.push(label(scene, cx, top + 12, t('cosmetics.title'), 9, '#f7d23e').setDepth(510));
+
+    const row = (
+      y: number,
+      categoryLabel: string,
+      list: CosmeticOption[],
+      defaultId: string,
+      previewSize: { w: number; h: number },
+      getId: () => string,
+      setId: (id: string) => void,
+    ): void => {
+      objs.push(label(scene, cx - 84, y, categoryLabel, 8, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
+      const previewKey = cosmeticTextureKey(list, getId(), defaultId, debugApi.missingAssets);
+      const preview = scene.add
+        .image(cx + 4, y, previewKey)
+        .setDisplaySize(previewSize.w, previewSize.h)
+        .setDepth(510);
+      objs.push(preview);
+      const current = list.find((o) => o.id === getId()) ?? list.find((o) => o.id === defaultId)!;
+      const btn = new PixelButton(
+        scene,
+        cx + 46,
+        y,
+        t(current.labelKey),
+        () => {
+          const nextId = cycleCosmeticId(list, getId());
+          setId(nextId);
+          showCosmetics(); // full rebuild — preview + label both need to change
+        },
+        { textureBase: 'btn-comprar', w: 80, h: 16, size: 6 },
+      ).setDepth(510);
+      objs.push(btn);
+    };
+
+    let y = top + 32;
+    row(
+      y,
+      t('cosmetics.table'),
+      TABLE_THEMES,
+      DEFAULT_TABLE_THEME,
+      { w: 40, h: 22 },
+      () => settings.cosmetics().tableTheme,
+      (id) => settings.updateCosmetics({ tableTheme: id }),
+    );
+
+    y += 30;
+    row(
+      y,
+      t('cosmetics.back'),
+      CARD_BACKS,
+      DEFAULT_CARD_BACK,
+      { w: 14, h: 19 },
+      () => settings.cosmetics().cardBack,
+      (id) => settings.updateCosmetics({ cardBack: id }),
+    );
+
+    y += 30;
+    row(
+      y,
+      t('cosmetics.avatar'),
+      AVATARS,
+      DEFAULT_AVATAR,
+      { w: 20, h: 20 },
+      () => settings.cosmetics().avatar,
+      (id) => settings.updateCosmetics({ avatar: id }),
+    );
+
+    y += 26;
+    objs.push(
+      new PixelButton(scene, cx, y, t('settings.close'), showMain, {
+        textureBase: 'btn-comprar', w: 90, h: 16, size: 7,
       }).setDepth(510),
     );
   };

@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
+import { setMusicContext } from '../audio/music';
 import { settings } from '../core/settings';
 import { t } from '../localization/i18n';
-import { label, PixelButton } from '../ui/widgets';
+import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 import type { GameSceneConfig } from './GameScene';
 
@@ -23,6 +24,7 @@ export class SetupScene extends Phaser.Scene {
   }
 
   create(): void {
+    setMusicContext('menu');
     debugApi.scene = 'setup';
     this.rebuild();
     debugApi.ready = true;
@@ -75,7 +77,7 @@ export class SetupScene extends Phaser.Scene {
       });
     }
 
-    new PixelButton(this, 170, 240, t('setup.back'), () => this.scene.start('menu'), {
+    new PixelButton(this, 170, 240, t('setup.back'), () => gotoScene(this, 'menu'), {
       textureBase: 'btn-comprar', w: 80, h: 20, size: 9,
     });
     new PixelButton(this, 300, 240, t('menu.play'), () => this.startGame(), {
@@ -92,6 +94,6 @@ export class SetupScene extends Phaser.Scene {
         ...ais.map((p) => ({ name: AI_LINEUP.find((a) => a.personality === p)!.name, isAi: true, personality: p })),
       ],
     };
-    this.scene.start('game', config);
+    gotoScene(this, 'game', config);
   }
 }

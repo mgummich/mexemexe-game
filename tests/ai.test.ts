@@ -500,3 +500,68 @@ describe('cida (conservative) plays exactly one action per turn', () => {
     if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toHaveLength(3);
   });
 });
+
+describe('personality expression (Phase 9)', () => {
+  const personalities = ['cida', 'juninho', 'bia', 'ze'] as const;
+
+  it('every personality tags its explanation with a personality:reason code', () => {
+    const hand = [
+      c('hearts', 9), c('spades', 9), c('clubs', 9),
+      c('hearts', 4), c('hearts', 5), c('hearts', 6),
+    ];
+    const state = base(hand);
+    for (const p of personalities) {
+      const d = createAi(p).decide(state);
+      expect(d.explanation.startsWith(`${p}:`)).toBe(true);
+    }
+  });
+
+  it('same seed, same deal: the four personalities are observably different (played/draw counts or reasons diverge)', () => {
+    const hand = [
+      c('hearts', 9), c('spades', 9), c('clubs', 9),
+      c('hearts', 4), c('hearts', 5), c('hearts', 6),
+      c('diamonds', 2),
+    ];
+    const state = { ...base(hand), turn: 1 };
+    const signatures = personalities.map((p) => {
+      const d = createAi(p).decide(state);
+      const playedN = d.kind === 'confirm' ? d.draft.handCardsPlayed.length : -1;
+      return `${p}:${d.kind}:${playedN}`;
+    });
+    // not every personality collapses to the same behaviour on the same deal
+    expect(new Set(signatures).size).toBeGreaterThan(1);
+  });
+
+  it('joker + trinca legality holds for every personality on a joker-containing deal', () => {
+    const hand = [c('hearts', 4), c('hearts', 5), j(0, 1), c('spades', 2), c('clubs', 10), c('diamonds', 7)];
+    const state = base(hand);
+    for (const p of personalities) {
+      const d = createAi(p).decide(state);
+      if (d.kind === 'confirm') {
+        expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
+      }
+    }
+  });
+
+  it('determinism: same seed run twice yields an identical move sequence, for every personality', () => {
+    function moveSeq(personality: (typeof personalities)[number]): string[] {
+      let state: GameState = createNewGame(77, [
+        { name: 'A', isAi: true },
+        { name: 'B', isAi: true },
+      ]);
+      const ai = createAi(personality);
+      const seq: string[] = [];
+      let turns = 0;
+      while (state.phase === 'playing' && turns < 200) {
+        const d = ai.decide(state);
+        seq.push(d.explanation);
+        state = d.kind === 'confirm' ? applyConfirmedTurn(state, d.draft) : drawAndEndTurn(state);
+        turns++;
+      }
+      return seq;
+    }
+    for (const p of personalities) {
+      expect(moveSeq(p)).toEqual(moveSeq(p));
+    }
+  });
+});

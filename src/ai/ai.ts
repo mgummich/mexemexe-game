@@ -404,6 +404,46 @@ export class RearrangerAi implements AiPlayer {
   }
 }
 
+export type EmoteKey = 'excited' | 'thinking' | 'annoyed' | 'happy' | 'sleepy' | 'confident';
+
+/** Per-personality presentation constants — pace, emotes, characterful line keys (see i18n `ai.line.*`).
+ * Data only; no behavioural branching lives here. `thinkMs` is a base for GameScene's turn delay
+ * (presentation-only, capped, skipped under reducedMotion/headless — see GameScene.aiThinkDelay). */
+export const PERSONALITY_STYLE: Record<
+  Personality,
+  { thinkMs: number; emoteBig: EmoteKey; emoteSmall: EmoteKey; emoteDraw: EmoteKey }
+> = {
+  cida: { thinkMs: 900, emoteBig: 'happy', emoteSmall: 'thinking', emoteDraw: 'thinking' },
+  juninho: { thinkMs: 250, emoteBig: 'confident', emoteSmall: 'excited', emoteDraw: 'annoyed' },
+  bia: { thinkMs: 600, emoteBig: 'happy', emoteSmall: 'excited', emoteDraw: 'thinking' },
+  ze: { thinkMs: 700, emoteBig: 'confident', emoteSmall: 'happy', emoteDraw: 'sleepy' },
+};
+
+/** Classify *why* a personality made this move, for debug/e2e (`ai:reason` tag prepended to
+ * `explanation`) — not used for any behavioural decision. */
+function classifyReason(personality: Personality, d: AiDecision): string {
+  if (d.kind === 'draw') {
+    if (personality === 'ze' && d.explanation.startsWith('patient:')) return 'ze:hold-for-bigger';
+    return `${personality}:draw`;
+  }
+  const played = d.draft.handCardsPlayed.length;
+  const rearranged = /rearranged|split|moved/.test(d.explanation);
+  switch (personality) {
+    case 'cida':
+      return d.explanation.startsWith('extended') ? 'cida:minimal-extend' : 'cida:minimal-meld';
+    case 'juninho':
+      return played >= 3 ? 'juninho:dump-all' : 'juninho:dump';
+    case 'bia':
+      return rearranged ? 'bia:rearrange-extend' : 'bia:simple-best';
+    case 'ze':
+      return rearranged ? 'ze:big-rearrange' : 'ze:big-play';
+  }
+}
+
+function tagReason(personality: Personality, d: AiDecision): AiDecision {
+  return { ...d, explanation: `${classifyReason(personality, d)}: ${d.explanation}` } as AiDecision;
+}
+
 /**
  * Personality wrapper.
  * cida (conservative): minimal SimpleAi. juninho (aggressive): full SimpleAi.
@@ -411,16 +451,19 @@ export class RearrangerAi implements AiPlayer {
  * while hand > 5 early game unless it can dump 3+ cards.
  */
 export function createAi(personality: Personality): AiPlayer {
-  switch (personality) {
-    case 'cida':
-      return new SimpleAi(true);
-    case 'juninho':
-      return new SimpleAi(false);
-    case 'bia':
-      return new RearrangerAi();
-    case 'ze':
-      return new PatientAi();
-  }
+  const engine: AiPlayer = (() => {
+    switch (personality) {
+      case 'cida':
+        return new SimpleAi(true);
+      case 'juninho':
+        return new SimpleAi(false);
+      case 'bia':
+        return new RearrangerAi();
+      case 'ze':
+        return new PatientAi();
+    }
+  })();
+  return { decide: (state) => tagReason(personality, engine.decide(state)) };
 }
 
 class PatientAi implements AiPlayer {

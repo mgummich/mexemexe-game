@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
-import { createAi, type Personality } from '../ai/ai';
+import { createAi, PERSONALITY_STYLE, type EmoteKey, type Personality } from '../ai/ai';
 import { playSfx } from '../audio/sfx';
+import { setMusicContext } from '../audio/music';
 import { CARD_H, CARD_W } from '../assets/manifest';
 import { rankLabel, SUIT_CHAR } from '../assets/fallbacks';
 import { settings } from '../core/settings';
@@ -8,6 +9,9 @@ import { bus } from '../core/events';
 import { playlog } from '../core/playlog';
 import { createNewGame, GameStore } from '../game-state/store';
 import { buildShowcaseState } from '../demo/showcase';
+import { objectiveKey, objectivePhase } from '../core/objective';
+import { playerStats, summarizeMoveKey } from '../core/results-summary';
+import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES } from '../cosmetics';
 import { t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
@@ -21,7 +25,7 @@ import { buildTutorialState } from '../tutorial/fixture';
 import { TutorialDirector, type TutorialAction } from '../tutorial/director';
 import { openPauseMenu } from '../ui/pause-menu';
 import { openRulesPanel } from '../ui/rules-panel';
-import { fontStyle, label, PixelButton } from '../ui/widgets';
+import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi } from '../verification/debug-api';
 
 type SortMode = 'suit' | 'rank';
@@ -136,6 +140,10 @@ export class GameScene extends Phaser.Scene {
   // opponent changes the puzzle's structure, so the new position needs to be readable, not guessed.
   private lastMoveIds = new Set<string>();
   private lastMoveText: Phaser.GameObjects.Text | null = null;
+  /** Readback of the most recently *confirmed* (meld) turn — read by onWin() to build the
+   * results-screen "winning move" line. Cleared on a draw, since a stalemate win has no meld play
+   * to describe. Set right before store.confirmTurn(), since game:won fires synchronously inside it. */
+  private lastConfirmedMoveText: string | null = null;
 
   // select-then-place — the drag-free way to play (keyboard and touch both route through it)
   private selectedCardId: string | null = null;
@@ -194,8 +202,10 @@ export class GameScene extends Phaser.Scene {
     debugApi.tutorialStep = this.tutorialDirector?.stepIndex ?? null;
 
     const playerCount = this.store.get().players.length;
-    // 2p at the boteco, 3-4p around the family kitchen table
-    this.add.image(W / 2, H / 2, playerCount > 2 ? 'bg-kitchen' : 'bg-boteco').setDisplaySize(W, H);
+    // Local cosmetic choice — purely visual, never affects rules/protocol. Missing art (theme
+    // not shipped yet) degrades to the default table rather than a broken/blank image.
+    const tableKey = cosmeticTextureKey(TABLE_THEMES, settings.cosmetics().tableTheme, DEFAULT_TABLE_THEME, debugApi.missingAssets);
+    this.add.image(W / 2, H / 2, tableKey).setDisplaySize(W, H);
     // calm the busy tablecloth/props so cards and HUD stay readable
     this.add.rectangle(W / 2, H / 2, W, H, 0x1a0f0a, playerCount > 2 ? 0.22 : 0.08);
     // near-opaque top bar: baked-in table props (mug/etc.) sit right behind this strip in some
@@ -233,6 +243,7 @@ export class GameScene extends Phaser.Scene {
     });
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => this.handleShortcut(e));
 
+    setMusicContext('game');
     playSfx(this, 'sfx-deal');
     this.onTurnStart();
     debugApi.ready = true;
@@ -336,15 +347,17 @@ export class GameScene extends Phaser.Scene {
     const state = this.store.get();
     const winner = state.players.find((p) => p.id === msg.winnerId) ?? null;
     playSfx(this, 'sfx-win');
+    const perPlayer = playlog.summary().perPlayer; // best-effort — an online store never emits turn:confirmed/turn:drawn locally
     const results = state.players.map((p, i) => ({
       name: p.name,
       cardsLeft: p.hand.length,
       isWinner: p.id === msg.winnerId,
       avatarKey: this.avatarKey(i),
+      ...playerStats(p.id, perPlayer),
     }));
     const client = this.online.client;
     this.time.delayedCall(400, () => {
-      this.scene.start('win', {
+      gotoScene(this, 'win', {
         winnerName: winner?.name ?? '',
         stalemate: msg.stalemate,
         config: this.config,
@@ -364,7 +377,7 @@ export class GameScene extends Phaser.Scene {
       if (!this.online) return; // scene already moved on
       this.online.client.disconnect();
       debugApi.online = null;
-      this.scene.start('menu');
+      gotoScene(this, 'menu');
     });
   }
 
@@ -391,7 +404,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.online) return; // scene already moved on
         this.online.client.disconnect();
         debugApi.online = null;
-        this.scene.start('menu');
+        gotoScene(this, 'menu');
       });
     }
   }
@@ -415,6 +428,7 @@ export class GameScene extends Phaser.Scene {
     const isMyTurn = !player.isAi && state.activePlayerIndex === this.localSeat;
 
     if (isMyTurn) {
+      setMusicContext('mexe');
       this.editor = new DraftEditor(state);
       this.bindMexeHooks();
       this.renderAll();
@@ -422,6 +436,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    setMusicContext('game');
     this.editor = null;
     debugApi.mexe = null;
     this.renderAll();
@@ -435,8 +450,17 @@ export class GameScene extends Phaser.Scene {
       });
     } else {
       const personality = this.personalities[state.activePlayerIndex]!;
-      this.aiTimer = this.time.delayedCall(650, () => this.runAiTurn(personality));
+      this.aiTimer = this.time.delayedCall(this.aiThinkDelay(personality, state), () => this.runAiTurn(personality));
     }
+  }
+
+  /** Presentation-only "thinking" pause before an AI's move lands — never affects the AI's own
+   * 400ms search deadline. Bia's pace grows with table complexity (more melds to weigh); every
+   * personality is capped and scaled by settings.motionScale() (0 under reducedMotion). */
+  private aiThinkDelay(personality: Personality, state: GameState): number {
+    const style = PERSONALITY_STYLE[personality];
+    const complexityBonus = personality === 'bia' ? Math.min(400, state.table.length * 60) : 0;
+    return Math.round(this.motion(style.thinkMs + complexityBonus));
   }
 
   /** Draft undo/redo/reset — shared by the toolbar buttons, keyboard shortcuts and the e2e hook,
@@ -539,14 +563,21 @@ export class GameScene extends Phaser.Scene {
       const decision = createAi(personality).decide(state);
       bus.emit('ai:thought', { playerId: player.id, text: decision.explanation });
       debugApi.lastAiThought = decision.explanation;
+      const style = PERSONALITY_STYLE[personality];
       if (decision.kind === 'confirm') {
-        const playedMany = decision.draft.handCardsPlayed.length >= 3;
-        this.showEmote(state.activePlayerIndex, playedMany ? 'happy' : 'excited');
+        const played = decision.draft.handCardsPlayed.length;
+        const remaining = player.hand.length - played;
+        const playedMany = played >= 3;
+        const lineMoment = remaining <= 2 ? 'nearWin' : playedMany ? 'bigPlay' : null;
+        this.showEmote(state.activePlayerIndex, playedMany ? style.emoteBig : style.emoteSmall, lineMoment, personality);
         playSfx(this, 'sfx-feito');
+        const { key, params } = summarizeMoveKey(state.table, decision.draft.melds, played);
+        this.lastConfirmedMoveText = t(key, { name: player.name, ...params });
         this.store.confirmTurn(decision.draft);
       } else {
-        this.showEmote(state.activePlayerIndex, 'thinking');
+        this.showEmote(state.activePlayerIndex, style.emoteDraw, 'forcedDraw', personality);
         playSfx(this, 'sfx-draw');
+        this.lastConfirmedMoveText = null; // a stalemate win has no meld play to describe
         this.store.drawEndTurn();
       }
     } catch (e) {
@@ -568,18 +599,23 @@ export class GameScene extends Phaser.Scene {
       this.renderAll();
       return;
     }
+    const perPlayer = playlog.summary().perPlayer;
+    const stalemate = winner.hand.length > 0;
     const results = state.players.map((p, i) => ({
       name: p.name,
       cardsLeft: p.hand.length,
       isWinner: p.id === state.winnerId,
       avatarKey: this.avatarKey(i),
+      personality: this.personalities[i] ?? undefined,
+      ...playerStats(p.id, perPlayer),
     }));
     this.time.delayedCall(400, () => {
-      this.scene.start('win', {
+      gotoScene(this, 'win', {
         winnerName: winner.name,
-        stalemate: winner.hand.length > 0,
+        stalemate,
         config: this.config,
         results,
+        winningMoveText: stalemate ? '' : (this.lastConfirmedMoveText ?? ''),
       });
     });
   }
@@ -636,6 +672,9 @@ export class GameScene extends Phaser.Scene {
     if (this.online) {
       // small corner connection indicator — never a modal, per docs/PHASE5_CLIENT_PLAN.md section A
       this.onlineStatusDot = this.add.circle(6, H - 6, 3, 0x3ec06a).setDepth(600);
+      // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
+      // presence — not just its color — is the "you are online" tell (task: never ambiguous).
+      label(this, 16, H - 6, t('game.onlineBadge'), 6, '#8a7f68').setOrigin(0, 0.5).setDepth(600);
       this.onlineNoticeText = this.add
         .text(240, 58, '', { ...fontStyle(8, '#f0c040'), align: 'center', wordWrap: { width: 300 } })
         .setOrigin(0.5)
@@ -671,7 +710,7 @@ export class GameScene extends Phaser.Scene {
       this.online = null;
       debugApi.online = null;
     }
-    this.scene.start('menu');
+    gotoScene(this, 'menu');
   }
 
   /**
@@ -839,6 +878,10 @@ export class GameScene extends Phaser.Scene {
     const sparkleTargets = this.cardSprites
       .filter((s) => handCardIds.has(s.getData('cardId') as string))
       .map((s) => ({ x: s.x, y: s.y }));
+    const beforeState = this.store.get();
+    const activePlayer = beforeState.players[beforeState.activePlayerIndex]!;
+    const { key, params } = summarizeMoveKey(beforeState.table, draft.melds, draft.handCardsPlayed.length);
+    this.lastConfirmedMoveText = t(key, { name: activePlayer.name, ...params });
     this.editor = null;
     this.store.confirmTurn(draft);
     this.playFeitoConfirmFx(sparkleTargets, () => {
@@ -877,6 +920,7 @@ export class GameScene extends Phaser.Scene {
     }
     playSfx(this, 'sfx-draw');
     this.clearLastMove();
+    this.lastConfirmedMoveText = null; // a stalemate win has no meld play to describe
     this.editor = null;
     this.store.drawEndTurn();
     if (this.store.get().phase === 'playing') this.renderAll();
@@ -950,7 +994,8 @@ export class GameScene extends Phaser.Scene {
     });
 
     // deck counter
-    const deckImg = this.add.image(22, 14, 'card-back-0').setDisplaySize(14, 19);
+    const cardBackKey = cosmeticTextureKey(CARD_BACKS, settings.cosmetics().cardBack, DEFAULT_CARD_BACK, debugApi.missingAssets);
+    const deckImg = this.add.image(22, 14, cardBackKey).setDisplaySize(14, 19);
     const deckTxt = this.add.text(34, 8, String(state.drawPile.length), fontStyle(9));
     this.hud.push(deckImg, deckTxt);
 
@@ -978,7 +1023,11 @@ export class GameScene extends Phaser.Scene {
       this.lastValidOk = check.ok;
       this.setFeitoEnabled(check.ok && this.tutorialAllows({ type: 'feito' }));
       this.comprarBtn.setEnabled(this.tutorialAllows({ type: 'comprar' }));
-      this.reasonText.setText(check.ok ? '' : t(check.reasons[0] ?? ''));
+      // "what does the game want right now": ready-to-confirm / fix-the-invalid-meld / play-or-draw
+      // cover almost every turn; the rare remainder (e.g. a returned table card) falls back to the
+      // specific canConfirm() reason, same text as before.
+      const phase = objectivePhase(check.ok, invalidReasons.size > 0, this.editor.getDraft().handCardsPlayed.length > 0);
+      this.reasonText.setText(phase ? t(objectiveKey(phase)) : check.ok ? '' : t(check.reasons[0] ?? ''));
       debugApi.validation = { ok: check.ok, reasons: check.ok ? [] : check.reasons };
     } else {
       this.setFeitoEnabled(false);
@@ -1054,7 +1103,7 @@ export class GameScene extends Phaser.Scene {
       }
       this.hud.push(new PixelButton(this, cx, panelTop + panelH - 16, t('tutorial.skip'), () => {
         playlog.record('tutorial:skip', { step: dir.stepIndex });
-        this.scene.start('menu');
+        gotoScene(this, 'menu');
       }, {
         textureBase: 'btn-comprar', w: 74, h: 12, size: 6, color: 0x6b6b73,
       }));
@@ -1081,7 +1130,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private restartTutorial(): void {
-    this.scene.start('game', buildTutorialLaunchConfig());
+    gotoScene(this, 'game', buildTutorialLaunchConfig());
   }
 
   /**
@@ -1112,7 +1161,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private avatarKey(playerIndex: number): string {
-    if (playerIndex === this.localSeat) return 'avatar-player';
+    if (playerIndex === this.localSeat) {
+      return cosmeticTextureKey(AVATARS, settings.cosmetics().avatar, DEFAULT_AVATAR, debugApi.missingAssets);
+    }
     const p = this.personalities[playerIndex];
     return p ? `avatar-${p}` : 'avatar-player';
   }
@@ -1498,15 +1549,28 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private showEmote(playerIndex: number, emote: 'excited' | 'thinking' | 'annoyed' | 'happy'): void {
+  /** `lineMoment` + `personality` together pick a short characterful line (`ai.line.<personality>.<moment>`,
+   * see i18n) shown alongside the emote for the handful of moments that call for one — big play,
+   * forced draw, near-win. Omit either to show the emote alone (e.g. the error fallback). */
+  private showEmote(playerIndex: number, emote: EmoteKey, lineMoment?: 'bigPlay' | 'nearWin' | 'forcedDraw' | null, personality?: Personality): void {
     if (playerIndex === 0) return;
     const x = 60 + (playerIndex - 1) * 105;
     const bubble = this.add.image(x + 16, -2, 'emote-bubble').setDisplaySize(18, 16).setDepth(400);
     const icon = this.add.image(x + 16, -3, `emote-${emote}`).setDisplaySize(12, 12).setDepth(401);
-    this.tweens.add({ targets: [bubble, icon], y: '+=28', duration: Math.max(1, this.motion(180)), ease: 'Back.out' });
+    const targets: Phaser.GameObjects.GameObject[] = [bubble, icon];
+    let line: Phaser.GameObjects.Text | null = null;
+    if (lineMoment && personality) {
+      line = this.add
+        .text(x + 16, 12, t(`ai.line.${personality}.${lineMoment}`), { ...fontStyle(7, '#f7d23e'), align: 'center', wordWrap: { width: 90 } })
+        .setOrigin(0.5, 0)
+        .setDepth(402);
+      targets.push(line);
+    }
+    this.tweens.add({ targets, y: '+=28', duration: Math.max(1, this.motion(180)), ease: 'Back.out' });
     this.time.delayedCall(900, () => {
       bubble.destroy();
       icon.destroy();
+      line?.destroy();
     });
   }
 

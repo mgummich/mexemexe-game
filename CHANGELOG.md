@@ -3,6 +3,50 @@
 All notable changes to MEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 
+## 1.3.0 — Phase 9 (content-rich beta)
+
+Playtest-ready demo → content-rich beta. No rules change, no protocol change.
+
+- **Cosmetics** (`src/cosmetics/index.ts`, local-only): 4 table themes (boteco,
+  kitchen, quintal, feira), 5 card backs, 9 avatars (player, cida, juninho,
+  bia, ze, rosa, tuca, nina, ivo). Menu → ⚙ settings →
+  **COSMETICS** sub-panel, live preview, persists immediately to `localStorage`
+  under a new `cosmetics` block in `mexe-save` (old saves migrate to
+  defaults; an unknown/removed id or a missing texture degrades to the
+  default rather than rendering broken). Strictly client-side — an e2e test
+  asserts cosmetics never appear in `src/net/protocol.ts`.
+- **Procedural art** (`scripts/gen-cosmetics.mjs`, `npm run gen:cosmetics`):
+  2 new table backgrounds, 1 new card back, 2 new emotes — a hand-rolled PNG
+  encoder over Node `zlib`, no dependencies, deterministic. The 4 new avatars
+  (rosa, tuca, nina, ivo) were produced with PixelLab once the subscription
+  was renewed, style-matched to the existing set — not attempted
+  procedurally, since that would read visibly worse than PixelLab art.
+- **Context-aware music** (`src/audio/music.ts`): `menu` / `game` / `mexe`
+  contexts, calm tracks during the concentration-heavy Mexe draft, fuller
+  songs during general play; 900ms crossfade (scaled by reduced motion); new
+  music-by-context settings toggle. `src/audio/sfx.ts` gained an 80ms per-key
+  retrigger debounce so rapid repeats can't stack into a loud spike.
+- **AI personality depth** (`src/ai/ai.ts`): per-personality think pace and
+  emotes, tagged move reasons (`cida:minimal-meld`, `juninho:dump-all`,
+  `bia:rearrange-extend`, `ze:hold-for-bigger`), characterful lines for
+  big plays / near-wins / forced draws, PT+EN. Presentation only — pacing is
+  capped, scaled by reduced motion, and never extends the 400ms search
+  deadline; search legality/determinism unchanged.
+- **Charm + clarity**: always-visible objective prompt (`src/core/objective.ts`);
+  win-screen rematch summary — turns, cards played, draws, winning-move line,
+  per-personality avatar reactions (`src/core/results-summary.ts`, local play
+  only, see Known issues); menu idle motion and scene fade transitions; an
+  ONLINE badge so local mode is never mistaken for online; expanded
+  joker-in-run explanation in the rules panel.
+- **Known limitation**: online games show no rematch stats or winning-move
+  text — the client never observes server-driven turns locally, and fixing it
+  needs a protocol change, out of scope this phase.
+- Verify: 6 new e2e tests + 6 new gated screenshots (theme × 4, cosmetics
+  panel, reduced motion), all added to `EXPECTED_SHOTS`; 2 pre-existing e2e
+  tests fixed where layout shifts had moved hardcoded click coordinates.
+  280/280 unit (18 files), 46/46 local e2e, 7/7 multiplayer e2e, lint clean,
+  build clean, zero console/server errors.
+
 ## Unreleased — Rules adaptation
 
 ### Phase 8 — playtest-ready public demo

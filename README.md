@@ -65,7 +65,13 @@ Full ruleset (authoritative): [`docs/RULES.md`](docs/RULES.md). Summary:
   meld/extension in hand) and `RearrangerAi` (adds bounded table
   rearranging — moving or splitting melds to unlock a play). Dona Cida,
   Juninho, Bia and Seu Zé each wrap one of the two levels with a distinct
-  play style (see Opponents below).
+  play style, own think pace and own emotes (see Opponents below).
+- **Cosmetics**: 4 table themes, 5 card backs, 9 avatars — menu → ⚙ settings →
+  **COSMETICS**, live preview, saved immediately. Strictly client-side: never
+  touches the network protocol, game state or rules.
+- **Context-aware music** (menu / mexe-draft / game) and a rematch summary on
+  the win screen (turns, cards played, draws, plus a winning-move line and a
+  per-personality avatar reaction) — local play only, see Known issues.
 
 ## Run
 
@@ -215,8 +221,21 @@ Audio (`public/assets/audio/*.wav`) is synthesized by `scripts/gen-sfx.mjs`
 (`node scripts/gen-sfx.mjs` to regenerate) since PixelLab doesn't produce
 audio; a missing SFX file is a silent no-op.
 
+Two new tables, one new card back and two new emotes (`docs/PIXELLAB_ASSETS.md`
+Phase 9 section) are generated procedurally by `scripts/gen-cosmetics.mjs`
+(`npm run gen:cosmetics` to regenerate) instead of PixelLab — the PixelLab
+account is currently out of credits, and procedural generation covers
+geometric assets well; it was deliberately not used for character art (see
+Known issues). Regeneration is deterministic: re-running produces
+byte-identical PNGs.
+
 ## Known issues
 
+- **Online games show no rematch stats or winning-move text** on the win
+  screen — the client never observes the server's per-turn state locally, so
+  there's no play-log data to summarize for an online match. Fixing this
+  needs a protocol change, out of scope for now. The stats line is hidden
+  entirely online rather than showing fake zeros.
 - Boteco felt smudge only partly covered by the dominoes prop (cosmetic, 2p
   games only).
 - Pointer-drag drop path is verified via editor hooks in e2e, not raw
@@ -227,23 +246,28 @@ audio; a missing SFX file is a silent no-op.
 ## Test / verify
 
 ```bash
-npm run test        # Vitest — rules engine, Mexe Mode editor, AI, play log, perf soak
+npm run test        # Vitest — rules engine, Mexe Mode editor, AI, play log, perf soak,
+                    # cosmetics, music contexts
 npm run lint        # eslint + tsc
 npm run screenshot  # npm run build, then Playwright: boots the game, drives
                     # Mexe Mode via the window.__MEXE__ debug API, captures
                     # docs/screenshots/*.png and writes verify-log.json
 npm run verify      # all of the above + gate on console errors/missing assets/low fps;
                     # also merges perf/test metrics into docs/STATUS.json
+npm run gen:cosmetics # regenerate the procedural table/card-back/emote PNGs (deterministic)
 ```
 
 ## Opponents
 
-| Character | AI level | Style |
-|---|---|---|
-| Dona Cida | Simple | conservative — plays the minimum |
-| Juninho | Simple | aggressive — dumps everything he can |
-| Bia | Rearranger | puzzle-minded — rearranges the table to unlock plays |
-| Seu Zé | Rearranger | patient — holds small plays early |
+| Character | AI level | Style | Think pace | Emotes |
+|---|---|---|---|---|
+| Dona Cida | Simple | conservative — plays the minimum | 900ms | happy / thinking |
+| Juninho | Simple | aggressive — dumps everything he can | 250ms | confident / excited / annoyed |
+| Bia | Rearranger | puzzle-minded — rearranges the table to unlock plays | 600ms + 60ms/meld, capped +400ms | happy / excited / thinking |
+| Seu Zé | Rearranger | patient — holds small plays early | 700ms | confident / happy / sleepy |
+
+Think pace is presentation only — scaled to zero under reduced motion, capped, and never
+extends the 400ms search deadline; search legality/determinism is unchanged.
 
 AI is deterministic, budgeted (<100ms simple, <500ms rearranging), can never
 confirm an illegal table, and logs an explanation for every decision

@@ -1,8 +1,12 @@
 # MEXE! — Playtest guide
 
-This is the public-demo build. It is a **playtest**, not a release: we want to find out where
-people get stuck, which rules bite, and whether online play survives real humans on real
-networks. Everything below takes about 30 minutes.
+This is the content-rich beta build (Phase 9). It is a **playtest**, not a release: we want to
+find out where people get stuck, which rules bite, and whether online play survives real humans
+on real networks. Everything below takes about 35 minutes.
+
+**No real playtest session has been logged yet.** Every friction fix so far came from reading the
+code, not from tester feedback — none exists. Getting a real session logged, with the play-log
+attached, is the single most useful thing you can do here.
 
 ## How to run
 
@@ -54,18 +58,31 @@ even if nothing broke.
 7. Rearrange the shared table (Mexe Mode) — split a meld, move cards between melds, then undo
    and reset back to the start of your turn.
 
+**Cosmetics and presentation (new this phase)**
+8. Open ⚙ settings → **COSMETICS**. Try every table theme, card back and avatar (9 avatars to
+   cycle through). Does the preview match what shows up in-game? Does your choice survive a page
+   reload?
+9. Play against each of the four AI personalities in turn. Can you tell who is playing without
+   looking at the name — pacing, emotes, anything? Which one feels off?
+10. Win a local game and read the results screen. Does the rematch summary (turns, cards played,
+    draws) and the winning-move line match what you remember happening?
+11. Sit through a few opponent turns during the Mexe-draft moments and during normal play — does
+    the music shift make sense, or is it distracting/repetitive?
+
 **Online play**
-8. Two browser windows: create a room in one, join with the code in the other, ready up, START.
-9. Try the impatient-human moves: double-click CREATE, double-click JOIN, type a room code that
-   does not exist, try to join a room that is already full, and press READY repeatedly.
-10. Mid-match, kill your network (or close the tab and reopen it). Does the match recover? Does
+12. Two browser windows: create a room in one, join with the code in the other, ready up, START.
+13. Try the impatient-human moves: double-click CREATE, double-click JOIN, type a room code that
+    does not exist, try to join a room that is already full, and press READY repeatedly.
+14. Mid-match, kill your network (or close the tab and reopen it). Does the match recover? Does
     the other player's game keep working while you are gone?
-11. Start the client with the server **not** running. Does the game explain that clearly, or does
+15. Start the client with the server **not** running. Does the game explain that clearly, or does
     it just sit there?
-12. Play an online game to a win.
+16. Play an online game to a win. Note: the win screen has no rematch stats or winning-move text
+    online (known limitation, not a bug — see below).
 
 **Both languages**
-13. Repeat a short local game with `?lang=en`. Any untranslated or overflowing text?
+17. Repeat a short local game with `?lang=en`. Any untranslated or overflowing text? Cosmetics
+    labels and AI personality lines included.
 
 ## Rule summary
 
@@ -98,6 +115,8 @@ Full rules: `docs/RULES.md`. The short version:
 
 These are known and in scope for a later phase. Reporting them again is not useful.
 
+- **Online win screen has no rematch stats or winning-move text** — the client never observes
+  the server's per-turn state locally, so there's nothing to summarize; needs a protocol change.
 - No accounts, matchmaking, chat, or spectating.
 - No online rematch — an online match ends at the menu.
 - Rooms are private and code-only, and vanish when everyone leaves.
