@@ -89,6 +89,8 @@ export interface MexeDebugApi {
     cardPos: (cardId: string) => { x: number; y: number } | null;
     /** Verification-only: logical canvas centre of a meld's drop zone, or null. */
     meldPos: (meldId: string) => { x: number; y: number } | null;
+    /** Verification-only: the card the tap/keyboard "select then place" path currently holds, or null. */
+    selection: () => string | null;
     /** Verification-only: snap-target readback for the given card — the same model the drag highlights use. */
     snapTargets: (cardId: string) => { meldId: string | null; status: string; reason: string | null }[];
   } | null;

@@ -536,6 +536,10 @@ async function toCanvasPoint(p: Page, wx: number, wy: number): Promise<[number, 
 async function tapWorld(p: Page, wx: number, wy: number): Promise<void> {
   const [x, y] = await toCanvasPoint(p, wx, wy);
   await p.mouse.click(x, y);
+  // Phaser drains its pointer queue once per frame and keeps a single Pointer, so two taps that
+  // land inside the same frame collapse into one — on a loaded CI runner that silently ate the
+  // select half of a select-then-place pair. Wait a rendered frame so each tap is its own event.
+  await p.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
 }
 
 /** Tap a rendered card by id — the touch path, no drag involved. */
@@ -1111,6 +1115,9 @@ test('mobile-tap-move-valid: tap a card then tap a legal meld moves it', async (
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
     const meldId = await meldIdOf(p, 'clubs-10-d0'); // AI-built run 10-11-joker(12)
     await tapCard(p, 'clubs-13-d0');
+    // the select half must land before the place half — otherwise the move below would silently
+    // no-op and the failure would read as a rules bug instead of a lost tap.
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.selection())).toBe('clubs-13-d0');
     await tapMeld(p, meldId);
     expect(await meldCardIds(p, meldId)).toContain('clubs-13-d0');
     const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean };
@@ -1124,6 +1131,7 @@ test('mobile-tap-move-invalid: an illegal tap move is shown as invalid, never si
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
     const meldId = await buildMeld(p, ['diamonds-2-d1', 'clubs-2-d1']); // 2-card partial group
     await tapCard(p, 'diamonds-2-d0'); // duplicate suit for that group
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.selection())).toBe('diamonds-2-d0');
     await tapMeld(p, meldId);
     const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean; reasons: string[] };
     expect(validation.ok).toBe(false);

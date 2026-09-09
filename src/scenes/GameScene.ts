@@ -569,6 +569,7 @@ export class GameScene extends Phaser.Scene {
         const z = this.meldZones.find((m) => m.meldId === meldId);
         return z ? { x: z.rect.centerX, y: z.rect.centerY } : null;
       },
+      selection: () => this.selectedCardId,
       snapTargets: (cardId: string) =>
         this.computeSnapTargetsFor(cardId).map((tg) => ({ meldId: tg.meldId, status: tg.status, reason: tg.reason })),
     };
