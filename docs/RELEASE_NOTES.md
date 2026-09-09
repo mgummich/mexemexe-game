@@ -1,4 +1,56 @@
-# MEXE! 1.2.0 — Release notes (playtest demo)
+# MEXEMEXE! 1.3.0 — Release notes (content-rich beta)
+
+## Phase 9 beta update
+
+This build turns the playtest demo into a **content-rich beta**. Rules and wire
+protocol are unchanged; what's new is choice and character.
+
+**Pick your table.** Settings → **COSMETICS** now lets you choose a table
+theme (4: boteco, kitchen, quintal, feira), a card back (5), and an avatar
+(9: player, cida, juninho, bia, ze, rosa, tuca, nina, ivo), with a live
+preview. The choice saves instantly and is entirely
+client-side — it never touches the network protocol, game state, or the
+rules, and an old save without a cosmetics choice just gets the defaults.
+
+**The table sounds different depending on what you're doing.** Music now
+follows context: calmer tracks while you're heads-down rearranging the shared
+table (Mexe Mode), fuller songs the rest of the time. Rapid-fire sound
+effects (fast drag-and-drop) no longer stack into a spike.
+
+**The AI opponents finally feel different from each other**, not just play
+differently. Dona Cida thinks slow and calm, Juninho snaps back fast and
+confident, Bia paces with how much she's rearranging, Seu Zé holds back
+looking sleepy until he plays. Watching a match, you can now tell who's who
+without checking the name.
+
+**The win screen tells you how you won** — a rematch summary (turns, cards
+played, draws per player) plus a winning-move line and an avatar reaction, in
+local games. Online games don't get this yet: the client only ever sees its
+own hand and the current table state, never the other seats' full turn
+history, so there is no data to summarize. Fixing that needs a protocol
+change and is out of scope for this beta — the win screen simply omits the
+stats line online instead of showing zeros.
+
+**4 new avatars shipped**: rosa, tuca, nina, and ivo join the avatar picker,
+style-matched to the existing PixelLab set (the PixelLab account ran out of
+credits mid-phase and was renewed shortly after; the new table/card
+back/emote art was generated procedurally in the meantime — deterministic, no
+dependencies, `npm run gen:cosmetics` — which works well for geometric
+patterns but was deliberately not attempted for character portraits).
+
+**We still have zero real playtest sessions logged.** Every friction fix in
+this build came from reading the code, not from tester feedback — because
+none exists yet. If you're reading this and about to play: please run
+`docs/PLAYTEST_GUIDE.md` end to end and send back the session log. That's the
+single most useful thing anyone can do for the next phase.
+
+See `docs/PLAYTEST_GUIDE.md` for how to run a session, `docs/PIXELLAB_ASSETS.md`
+for the full asset/license table (all art original, no third-party or
+copyrighted sources), and `AUDIO_DIRECTION.md` for the music-context design.
+
+---
+
+# MEXEMEXE! 1.2.0 — Release notes (playtest demo)
 
 ## Phase 8 playtest update
 
@@ -86,7 +138,7 @@ plain `ws://` connection is blocked from an HTTPS page. See the README
 
 ---
 
-# MEXE! 1.0.0 — Release notes
+# MEXEMEXE! 1.0.0 — Release notes
 
 *Arruma. Desarruma. Bate.* A pixel-art digital card game based on Brazilian
 **Mexe-Mexe**, for 2–4 players (you + AI opponents).

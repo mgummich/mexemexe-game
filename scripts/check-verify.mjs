@@ -33,6 +33,13 @@ const EXPECTED_SHOTS = [
   'tutorial-complete',
   'feito-invalid-explained',
   'feito-invalid-explained-en',
+  // Phase 9: cosmetics + a11y coverage.
+  'game-theme-boteco',
+  'game-theme-kitchen',
+  'game-theme-quintal',
+  'game-theme-feira',
+  'cosmetics-panel',
+  'a11y-reduced-motion',
 ];
 const shotNames = new Set(shots.map((s) => s.name));
 for (const name of EXPECTED_SHOTS) {

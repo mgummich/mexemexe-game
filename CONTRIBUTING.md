@@ -1,4 +1,4 @@
-# Contributing to MEXE!
+# Contributing to MEXEMEXE!
 
 Thanks for your interest in contributing! This project welcomes bug reports,
 feature ideas and pull requests.

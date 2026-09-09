@@ -27,11 +27,14 @@ export function buildManifest(): AssetDef[] {
   out.push(def('card-back-1', 'assets/cards/back-1.png', CARD_W, CARD_H));
   out.push(def('card-back-2', 'assets/cards/back-2.png', CARD_W, CARD_H));
   out.push(def('card-back-3', 'assets/cards/back-3.png', CARD_W, CARD_H));
+  out.push(def('card-back-4', 'assets/cards/back-4.png', CARD_W, CARD_H));
   out.push(def('bg-boteco', 'assets/tables/boteco.png', 480, 270));
   out.push(def('bg-kitchen', 'assets/tables/kitchen.png', 480, 270));
+  out.push(def('bg-quintal', 'assets/tables/quintal.png', 480, 270));
+  out.push(def('bg-feira', 'assets/tables/feira.png', 480, 270));
   out.push(def('bg-menu', 'assets/tables/menu.png', 480, 270));
   out.push(def('logo', 'assets/ui/logo.png', 200, 80));
-  for (const name of ['cida', 'juninho', 'bia', 'ze']) {
+  for (const name of ['cida', 'juninho', 'bia', 'ze', 'rosa', 'tuca', 'nina', 'ivo']) {
     out.push(def(`avatar-${name}`, `assets/characters/avatar-${name}.png`, 24, 24));
   }
   out.push(def('avatar-player', 'assets/characters/avatar-player.png', 24, 24));
@@ -42,7 +45,7 @@ export function buildManifest(): AssetDef[] {
   out.push(def('panel', 'assets/ui/panel.png', 48, 48));
   out.push(def('banner-victory', 'assets/ui/banner-victory.png', 160, 48));
   out.push(def('emote-bubble', 'assets/ui/emote-bubble.png', 20, 18));
-  for (const name of ['excited', 'thinking', 'annoyed', 'happy']) {
+  for (const name of ['excited', 'thinking', 'annoyed', 'happy', 'sleepy', 'confident']) {
     out.push(def(`emote-${name}`, `assets/ui/emote-${name}.png`, 12, 12));
   }
   out.push(def('prop-dominoes', 'assets/tables/prop-dominoes.png', 32, 24));

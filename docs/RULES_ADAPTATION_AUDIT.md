@@ -1,6 +1,6 @@
 # Rules Adaptation Audit
 
-Opus-authored audit of what the current MEXE! codebase assumes about the rules, and what the
+Opus-authored audit of what the current MEXEMEXE! codebase assumes about the rules, and what the
 final Mexe-Mexe ruleset (2×54-card deck, jokers, ace high/low, draw-on-pass) breaks.
 
 Scope note: this is the pre-implementation audit. Design decisions that resolve each gap are in

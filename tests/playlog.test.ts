@@ -80,6 +80,17 @@ describe('playlog', () => {
     expect(parsed.startedAt).toBeNull();
   });
 
+  it('summary().perPlayer groups cardsPlayed/draws/confirms by playerId from real bus events', () => {
+    const bus = new EventBus<GameEvents>();
+    playlog.attachToBus(bus);
+    bus.emit('turn:confirmed', { playerId: 'p0', cardsPlayed: 2 });
+    bus.emit('turn:drawn', { playerId: 'p1' });
+    bus.emit('turn:confirmed', { playerId: 'p0', cardsPlayed: 1 });
+    const { perPlayer } = playlog.summary();
+    expect(perPlayer.p0).toEqual({ cardsPlayed: 3, draws: 0, confirms: 2 });
+    expect(perPlayer.p1).toEqual({ cardsPlayed: 0, draws: 1, confirms: 0 });
+  });
+
   it('exportJson emits nothing once the log is disabled, matching entries()', () => {
     playlog.record('undo');
     playlog.setEnabled(false);

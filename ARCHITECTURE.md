@@ -1,6 +1,6 @@
-# MEXE! — Architecture
+# MEXEMEXE! — Architecture
 
-**Working title:** MEXE! — *Arruma. Desarruma. Bate.*
+**Working title:** MEXEMEXE! — *Arruma. Desarruma. Bate.*
 Digital card game based on Brazilian Mexe-Mexe. Vite + TypeScript + Phaser 3.
 
 ## Layering

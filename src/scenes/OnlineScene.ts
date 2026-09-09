@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
+import { setMusicContext } from '../audio/music';
 import { t } from '../localization/i18n';
 import { NetClient, type ConnStatus } from '../net/client';
 import { errorMessage } from '../net/errors';
 import type { GameView, RoomPlayerSummary } from '../net/protocol';
-import { fontStyle, label, PixelButton } from '../ui/widgets';
+import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi } from '../verification/debug-api';
 
 /** Room codes are always this long — see server/rooms.ts CODE_LENGTH. */
@@ -37,6 +38,7 @@ export class OnlineScene extends Phaser.Scene {
   }
 
   create(): void {
+    setMusicContext('menu');
     debugApi.scene = 'online';
     this.client = new NetClient();
     this.phase = 'idle';
@@ -143,7 +145,7 @@ export class OnlineScene extends Phaser.Scene {
   private backToMenu(): void {
     this.client.leaveRoom();
     debugApi.online = null;
-    this.scene.start('menu');
+    gotoScene(this, 'menu');
   }
 
   /** Keyboard-driven code entry: only characters the room alphabet can produce are accepted, so

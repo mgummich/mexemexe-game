@@ -141,6 +141,14 @@ test('win screen', async ({ page }) => {
   await capture(page, '/?seed=42&showcase=win', 'win', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'win');
   });
+  // results summary (Phase 9): debugApi.results is canvas text's only e2e-readable source.
+  const results = await page.evaluate(() => window.__MEXE__.results);
+  expect(results).not.toBeNull();
+  expect(results!.stalemate).toBe(false);
+  expect(results!.winnerName.length).toBeGreaterThan(0);
+  expect(results!.winningMoveText.length).toBeGreaterThan(0);
+  expect(results!.results).toHaveLength(2);
+  expect(results!.results.filter((r) => r.isWinner)).toHaveLength(1);
 });
 
 test('mexe mode: break a meld, see invalid glow and exact reason, undo restores', async ({ page }) => {
@@ -247,8 +255,11 @@ test('rematch: WinScene MESMA PARTIDA starts a new game with the same seed', asy
   await page.goto('/?seed=555&showcase=win');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   await page.waitForFunction(() => window.__MEXE__.scene === 'win');
-  // WinScene "MESMA PARTIDA" button, logical (240, 195) → screen coords
-  const [rx, ry] = toScreen(240, 195);
+  // WinScene "MESMA PARTIDA" button — y drifts with the results-summary content above it, so
+  // read the real position from debugApi.winButtonY instead of a hardcoded coordinate.
+  const buttonY = await page.evaluate(() => window.__MEXE__.winButtonY);
+  expect(buttonY).not.toBeNull();
+  const [rx, ry] = toScreen(240, buttonY!);
   await page.mouse.click(rx, ry);
   await page.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 10_000 });
   const seed = await page.evaluate(() => window.__MEXE__.seed);
@@ -264,13 +275,15 @@ test('reset-data: settings APAGAR DADOS + confirm clears the versioned save and 
   await page.goto('/?seed=1&showcase=settings');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   // dirty the save first (mute toggle, top button of the settings panel) so the wipe is provable.
-  // Row coords track src/ui/settings-panel.ts: panel top = 135 - h/2, first row at top + 28, 22px pitch.
-  const [mx, my] = toScreen(240, 36);
+  // Row coords track src/ui/settings-panel.ts: panel top = 135 - h/2 (h=298, top=-14), first row
+  // at top + 28 = 14, 22-24px pitch per row (mute, sfx, music, musicEnabled, musicContext, motion,
+  // largeText, lang, export, cosmetics, resetData, close).
+  const [mx, my] = toScreen(240, 14);
   await page.mouse.click(mx, my);
   const savedBefore = await page.evaluate(() => localStorage.getItem('mexe-save'));
   expect(savedBefore).not.toBeNull();
-  // "APAGAR DADOS" button, logical (240, 216) — 7th row
-  const [dx, dy] = toScreen(240, 216);
+  // "APAGAR DADOS" button, logical (240, 238) — 11th row (after cosmetics was added)
+  const [dx, dy] = toScreen(240, 238);
   await page.mouse.click(dx, dy);
   await page.waitForTimeout(150);
   // confirm dialog "Sim" button, logical (200, 160)
@@ -709,6 +722,137 @@ test('english pass: rule-reason and server-error copy are translated, not bare k
   // OnlineScene sets this one directly (t('online.err.unreachable')), not through errorMessage() —
   // 'unreachable' is a client-side marker, never a code the server itself sends.
   expect(translate('online.err.unreachable')).not.toMatch(/^online\.err\./);
+});
+
+// ---------- Phase 9: cosmetics, music context, reduced motion ----------
+
+const TABLE_THEME_ROW_Y = 92; // src/ui/settings-panel.ts showCosmetics: top(60) + 32
+const CYCLE_BTN = toScreen(286, TABLE_THEME_ROW_Y); // row's cycle button, cx(240)+46
+
+/** Opens Settings → Cosmetics from the menu and cycles the table-theme row `clicks` times. */
+async function setTableTheme(p: Page, clicks: number): Promise<void> {
+  await p.goto('/?seed=1&showcase=settings');
+  await p.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const [cx, cy] = toScreen(240, 216); // COSMETICS row, see reset-data test above
+  await p.mouse.click(cx, cy);
+  await p.waitForTimeout(150);
+  for (let i = 0; i < clicks; i++) {
+    await p.mouse.click(CYCLE_BTN[0], CYCLE_BTN[1]);
+    await p.waitForTimeout(100);
+  }
+}
+
+const THEMES = ['boteco', 'kitchen', 'quintal', 'feira'];
+/** Reads the mexe-save JSON, or the shipped defaults if nothing was ever written yet
+ * (fresh profile, no setting changed from default — see src/core/persistence.ts DEFAULT_SAVE). */
+async function readSave(p: Page): Promise<{
+  settings: { musicContextAware: boolean; reducedMotion: boolean };
+  cosmetics: { tableTheme: string; cardBack: string; avatar: string };
+}> {
+  const raw = await p.evaluate(() => localStorage.getItem('mexe-save'));
+  if (raw) return JSON.parse(raw);
+  return {
+    settings: { musicContextAware: true, reducedMotion: false },
+    cosmetics: { tableTheme: 'boteco', cardBack: 'back-0', avatar: 'player' },
+  };
+}
+
+THEMES.forEach((themeId, i) => {
+  test(`table theme: ${themeId} renders in-game`, async ({ page }) => {
+    await setTableTheme(page, i);
+    const saved = await readSave(page);
+    expect(saved.cosmetics.tableTheme).toBe(themeId);
+    await capture(page, '/?seed=1&showcase=game', `game-theme-${themeId}`, async (p) => {
+      await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+    });
+  });
+});
+
+test('cosmetics: avatar/card-back selection persists across a reload', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=1&showcase=settings');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const [cx, cy] = toScreen(240, 216); // COSMETICS row
+  await page.mouse.click(cx, cy);
+  await page.waitForTimeout(150);
+  await snap(page, 'cosmetics-panel');
+  // card back row cycle button (top+32+30) and avatar row (top+32+60), same x as the table row
+  const [backX, backY] = toScreen(286, TABLE_THEME_ROW_Y + 30);
+  await page.mouse.click(backX, backY); // back-0 -> back-1
+  const [avatarX, avatarY] = toScreen(286, TABLE_THEME_ROW_Y + 60);
+  await page.mouse.click(avatarX, avatarY); // player -> cida
+  await page.waitForTimeout(150);
+  const beforeReload = JSON.parse((await page.evaluate(() => localStorage.getItem('mexe-save')))!) as {
+    cosmetics: { cardBack: string; avatar: string };
+  };
+  expect(beforeReload.cosmetics.cardBack).toBe('back-1');
+  expect(beforeReload.cosmetics.avatar).toBe('cida');
+
+  await page.reload();
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const afterReload = JSON.parse((await page.evaluate(() => localStorage.getItem('mexe-save')))!) as {
+    cosmetics: { cardBack: string; avatar: string };
+  };
+  expect(afterReload.cosmetics.cardBack).toBe('back-1');
+  expect(afterReload.cosmetics.avatar).toBe('cida');
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
+test('cosmetics: never present in the online room protocol (local-only, must never sync)', () => {
+  // Static check, not a browser one: cosmetics live in settings.cosmetics(), which the wire
+  // protocol never carries. Reading the source is the direct proof — no server/network needed.
+  const protocolSrc = fs.readFileSync('src/net/protocol.ts', 'utf8');
+  expect(protocolSrc.toLowerCase()).not.toContain('cosmetic');
+});
+
+test('music: context switches menu -> game -> mexe and back, observable via debugApi.music()', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=42&showcase=menu');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  expect(await page.evaluate(() => window.__MEXE__.music().context)).toBe('menu');
+
+  await page.goto('/?seed=77&showcase=mexe');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  // human's turn on entry to a mexe showcase — DraftEditor is live, so context is 'mexe'.
+  expect(await page.evaluate(() => window.__MEXE__.music().context)).toBe('mexe');
+
+  const before = await page.evaluate(() => window.__MEXE__.state!()!.turn);
+  await page.evaluate(() => window.__MEXE__.mexe!.comprar());
+  await page.waitForFunction(
+    (t) => {
+      const s = window.__MEXE__.state?.();
+      return s !== null && s !== undefined && s.turn >= t + 2 && !s.players[s.activePlayerIndex]!.isAi;
+    },
+    before,
+    { timeout: 10_000 },
+  );
+  expect(await page.evaluate(() => window.__MEXE__.music().context)).toBe('mexe'); // back to our turn
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
+test('music: "music by context" toggle switches the track pool selection mode', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=1&showcase=settings');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const before = (await readSave(page)).settings.musicContextAware;
+  expect(before).toBe(true); // default on
+  // musicContext row: mute(14) + 24(sfx) + 22(music label) + 22(musicEnabled toggle) + 22(this row) = 104
+  const [bx, by] = toScreen(240, 104);
+  await page.mouse.click(bx, by);
+  const after = (await readSave(page)).settings.musicContextAware;
+  expect(after).toBe(false);
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
+test('a11y-reduced-motion: ?motion=0 disables cosmetic tweens/fades', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=game&motion=0', 'a11y-reduced-motion', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
+  const saved = JSON.parse((await page.evaluate(() => localStorage.getItem('mexe-save')))!) as {
+    settings: { reducedMotion: boolean };
+  };
+  expect(saved.settings.reducedMotion).toBe(true);
 });
 
 test.afterAll(() => {

@@ -1,4 +1,5 @@
 import type { Locale } from '../localization/i18n';
+import { AVATARS, CARD_BACKS, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, resolveCosmeticId, TABLE_THEMES } from '../cosmetics';
 
 export interface Settings {
   muted: boolean;
@@ -6,6 +7,8 @@ export interface Settings {
   musicVolume: number; // 0-100
   /** Ambient background music on/off, independent of the volume slider. */
   musicEnabled: boolean;
+  /** On: music tracks are picked by context (menu/game/mexe). Off: plain shuffle across all tracks. */
+  musicContextAware: boolean;
   reducedMotion: boolean;
   locale: Locale;
   /** +25% UI text size, for readability. */
@@ -17,15 +20,33 @@ export interface Progress {
   tutorialCompleted: boolean;
 }
 
+export interface Cosmetics {
+  tableTheme: string;
+  cardBack: string;
+  avatar: string;
+}
+
 export interface Save {
   version: 1;
   settings: Settings;
   progress: Progress;
+  cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, reducedMotion: false, locale: 'pt', largeText: false };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false };
 export const DEFAULT_PROGRESS: Progress = { lastSeed: null, tutorialCompleted: false };
-const DEFAULT_SAVE: Save = { version: 1, settings: { ...DEFAULT_SETTINGS }, progress: { ...DEFAULT_PROGRESS } };
+export const DEFAULT_COSMETICS: Cosmetics = { tableTheme: DEFAULT_TABLE_THEME, cardBack: DEFAULT_CARD_BACK, avatar: DEFAULT_AVATAR };
+const DEFAULT_SAVE: Save = { version: 1, settings: { ...DEFAULT_SETTINGS }, progress: { ...DEFAULT_PROGRESS }, cosmetics: { ...DEFAULT_COSMETICS } };
+
+/** Unknown/removed ids (stale save, deleted catalog entry) fall back to defaults instead of crashing. */
+function sanitizeCosmetics(partial: Partial<Cosmetics> | undefined): Cosmetics {
+  const merged = { ...DEFAULT_COSMETICS, ...(partial ?? {}) };
+  return {
+    tableTheme: resolveCosmeticId(TABLE_THEMES, merged.tableTheme, DEFAULT_TABLE_THEME),
+    cardBack: resolveCosmeticId(CARD_BACKS, merged.cardBack, DEFAULT_CARD_BACK),
+    avatar: resolveCosmeticId(AVATARS, merged.avatar, DEFAULT_AVATAR),
+  };
+}
 
 export const SAVE_KEY = 'mexe-save';
 export const OLD_SETTINGS_KEY = 'mexe-settings';
@@ -40,13 +61,14 @@ export function parseSave(raw: string | null): Save {
           version: 1,
           settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
           progress: { ...DEFAULT_PROGRESS, ...(parsed.progress ?? {}) },
+          cosmetics: sanitizeCosmetics(parsed.cosmetics),
         };
       }
     } catch {
       // corrupt JSON — fall through to defaults
     }
   }
-  return { version: 1, settings: { ...DEFAULT_SETTINGS }, progress: { ...DEFAULT_PROGRESS } };
+  return { version: 1, settings: { ...DEFAULT_SETTINGS }, progress: { ...DEFAULT_PROGRESS }, cosmetics: { ...DEFAULT_COSMETICS } };
 }
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -70,7 +92,7 @@ export function loadSave(storage: StorageLike = localStorage): Save {
   } catch {
     // corrupt old data — migrate to defaults anyway
   }
-  const migrated: Save = { version: 1, settings: { ...DEFAULT_SETTINGS, ...oldSettings }, progress: { ...DEFAULT_PROGRESS } };
+  const migrated: Save = { version: 1, settings: { ...DEFAULT_SETTINGS, ...oldSettings }, progress: { ...DEFAULT_PROGRESS }, cosmetics: { ...DEFAULT_COSMETICS } };
   try {
     storage.setItem(SAVE_KEY, JSON.stringify(migrated));
     storage.removeItem(OLD_SETTINGS_KEY);

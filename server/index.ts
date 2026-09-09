@@ -1,5 +1,5 @@
 /**
- * MEXE! online alpha WebSocket server. Plain Node + `ws`, run via `tsx`.
+ * MEXEMEXE! online alpha WebSocket server. Plain Node + `ws`, run via `tsx`.
  * See docs/MULTIPLAYER_ARCHITECTURE.md for protocol and validation order.
  */
 import { createServer } from 'node:http';
@@ -376,5 +376,5 @@ process.on('unhandledRejection', (err) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`MEXE! server listening on :${PORT} (protocol v${PROTOCOL_VERSION})`);
+  console.log(`MEXEMEXE! server listening on :${PORT} (protocol v${PROTOCOL_VERSION})`);
 });
