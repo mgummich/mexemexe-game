@@ -84,7 +84,7 @@
     "PT accents slightly rough at 6-7px font sizes",
     "no renderAll sprite pooling (fps 59 at 21 sprites+20 zones; revisit only if a lower-end target dips below 50)"
   ],
-  "nextTask": "Phase 10 shipped a deployable production build. Carried for a future pass: per-IP rate limiting, online rematch (needs room-token semantics), online results summary (needs a protocol change), a persistent reconnect retry, and turnTimerSeconds. The top non-code ask is unchanged: log a real playtest session.",
+  "nextTask": "Phase 11 closed the storage-blocked boot crash, the black-screen boot failure, the unguarded socket-callback storage access and the permanent online input lock, and removed the only real duplicated work on the render path (tutorial-complete fps 44 -> 59). The top non-code ask is unchanged and now three phases old: log a real playtest session. The best next code task is a manual pass on a browser with site data blocked, to confirm S1/S2 behave as designed outside the unit test.",
   "phase4Scores": {
     "launchStability": 9.5,
     "fullFlow": 9,
@@ -100,7 +100,7 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": 10,
+  "phase": 11,
   "phase6": {
     "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
     "blockers": [],
@@ -294,55 +294,55 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-09T14:31:51.046Z",
+    "generatedAt": "2026-09-09T14:53:28.959Z",
     "perShotFps": {
       "menu": 60,
       "game": 57,
       "game4": 58,
-      "tutorial": 57,
-      "tutorial-step2": 57,
-      "setup": 58,
+      "tutorial": 50,
+      "tutorial-step2": 53,
+      "setup": 57,
       "settings": 55,
       "win": 58,
-      "mexe-invalid": 57,
+      "mexe-invalid": 58,
       "comprar-flow": 58,
       "ai-showcase-mid": 57,
       "ai-showcase-after": 57,
       "ai-cida": 58,
-      "ai-juninho": 57,
-      "ai-bia": 57,
-      "ai-ze": 58,
+      "ai-juninho": 58,
+      "ai-bia": 58,
+      "ai-ze": 57,
       "pause": 57,
       "help": 56,
       "help-en": 56,
       "menu-en": 60,
       "game-en": 58,
-      "a11y-large-text": 57,
-      "keyboard-comprar": 53,
-      "stress-table": 53,
-      "game-1080p": 57,
-      "joker-in-hand": 57,
+      "a11y-large-text": 58,
+      "keyboard-comprar": 58,
+      "stress-table": 58,
+      "game-1080p": 58,
+      "joker-in-hand": 58,
       "joker-in-run": 58,
-      "joker-in-group": 57,
-      "mexe-invalid-kA2": 57,
+      "joker-in-group": 58,
+      "mexe-invalid-kA2": 58,
       "repeated-suit-group": 57,
       "tutorial-trinca": 57,
-      "tutorial-joker": 57,
+      "tutorial-joker": 58,
       "tutorial-complete": 59,
-      "feito-invalid-explained": 57,
-      "feito-invalid-explained-en": 57,
+      "feito-invalid-explained": 58,
+      "feito-invalid-explained-en": 58,
       "game-theme-boteco": 58,
       "game-theme-kitchen": 58,
-      "game-theme-quintal": 58,
+      "game-theme-quintal": 56,
       "game-theme-feira": 58,
-      "cosmetics-panel": 55,
+      "cosmetics-panel": 54,
       "a11y-reduced-motion": 58
     },
     "viewports": [
       "1280x720",
       "1920x1080"
     ],
-    "unitTests": "281/281 pass (18 files, incl. 56 server + play log + net error mapper + cosmetics + music + AI personality)",
+    "unitTests": "301/301 pass (21 files, incl. server config + logger redaction + client ws-url config)",
     "e2eScreenshots": 41
   },
   "phase3Scores": {
@@ -804,5 +804,97 @@
       ],
       "notFound": "no secret reachable from the client bundle, no hand/card data reachable from any log line or /health response, no illegal-sync path, no network or config code added to the offline play path"
     }
+  },
+  "phase11": {
+    "auditSummary": "docs/PHASE11_AUDIT.md. Phase 10 closed green and was re-measured at entry (301 unit tests, verify OK, 28 captures, zero console errors). The headline audit finding is that there was no client performance problem: no scene implements update(), nothing allocates per frame, rendering is event-driven (renderAll runs per interaction, not per frame), and the drag handler does a setPosition plus a linear scan over ~25 drop zones with no validation or re-render per pointer move. The crowded-table capture already held 58 fps. One real inefficiency existed - renderAll analyzed every meld twice per human-turn render, once via invalidMelds() and again via canConfirm(). The genuine findings were resilience, not performance: three separate ways the game fails on a browser with storage blocked or an asset step that throws, and one online path that could lock input forever. Slop was near zero - no TODOs, no commented-out code, no duplicated implementations, two dead exports.",
+    "blockers": [
+      "RESOLVED S1: loadSave() read localStorage unguarded and settings.ts calls it at module scope, so a browser that throws on storage access (Safari with site data blocked, webviews with storage disabled) failed to boot at all - blank canvas. Reads now go through safeGet(), and the localStorage default parameter is resolved lazily inside a try because reading the property itself throws before any guard in the body could run.",
+      "RESOLVED S2: src/net/client.ts touched sessionStorage unguarded inside ws.onopen, ws.onclose, ws.onmessage and leaveRoom. A throw inside a socket callback aborts it: the reconnect handshake would never send, and the retry-vs-terminal decision would be skipped, leaving the UI on a dead socket with no notice. All four sites now route through readToken/writeToken/clearToken.",
+      "RESOLVED S3: BootScene.finish() was async, called without await from both branches, with no error handling. A throw from loadPixelFont() or composeCardFaces() was an unhandled rejection and scene.start('menu') never ran - permanent black screen, despite the procedural fallbacks that make the game fully playable without composed card faces. The fallible part is now caught, the failure is recorded in debugApi.errors rather than swallowed, and the menu always starts.",
+      "RESOLVED S4: onlinePending locked all input from FEITO/COMPRAR submit and was cleared only by state_sync or proposal_rejected. A dropped or ignored proposal on a still-open socket produced neither and there was no timeout, so the player was left with a dead board and no explanation. Set/clear now goes through a single setOnlinePending() helper that owns a 10s ONLINE_PENDING_TIMEOUT_MS timer; on expiry the lock releases, the resyncing notice shows, a resync is requested, and the scene re-renders (without that re-render the board stays visibly dead, since the message that would normally trigger the next render is the one that never came)."
+    ],
+    "delivered": [
+      "src/core/persistence.ts - safeGet() around every storage read in loadSave(); lazy defaultStorage() so the localStorage default parameter cannot throw at module scope; NULL_STORAGE no-op fallback. parseSave stayed pure and untouched.",
+      "src/net/client.ts - module-local readToken/writeToken/clearToken wrap sessionStorage in try/catch; read returns null on throw, write and clear are no-ops. No protocol, status-transition or reconnect-timing change.",
+      "src/scenes/BootScene.ts - finish() catches font/card-composition failure, records it in debugApi.errors, still runs the makeFallback loop and still starts the menu. Both call sites void the promise so no rejection can escape.",
+      "src/scenes/GameScene.ts - setOnlinePending() as the single set/clear point for the input lock, with ONLINE_PENDING_TIMEOUT_MS (10s) timer on a scene clock (cleaned up on shutdown), onOnlinePendingTimeout() releasing the lock + notice + resync + re-render; renderAll() now takes one shared meld analysis instead of two.",
+      "src/mexe-mode/draft.ts - DraftEditor.analyze() returns invalidMelds and the confirm check from one meld-analysis pass.",
+      "src/rules/rules.ts - canConfirmTurn() takes an optional precomputed invalidMeldReasons and reuses it instead of recomputing. Rules semantics unchanged; the parameter is optional and every existing caller behaves exactly as before.",
+      "src/config.ts - deleted the unused clientConfig export (resolveWsUrl and LocationLike kept).",
+      "src/assets/fallbacks.ts - deleted the unused SUIT_COLOR export (SUIT_CHAR, RANK_LABEL, rankLabel kept).",
+      "tests - loadSave returns defaults without throwing when getItem throws; DraftEditor.analyze() agrees with separate invalidMelds()/canConfirm() calls on both a valid and an invalid draft. 301 -> 303 tests."
+    ],
+    "metricsBeforeAfter": {
+      "unitTests": "301/301 -> 303/303 (21 files)",
+      "lint": "clean -> clean (eslint + tsc --noEmit)",
+      "gameChunkKb": "121.43 -> 122.28 (gzip 38.16 -> 38.41); phaser chunk unchanged at 1481.77",
+      "fpsTutorialComplete": "44 -> 59 (the lowest capture before this phase; the collapsed double meld analysis is the cause)",
+      "fpsStressTable": "58 -> 58 (crowded table, unchanged - it was never the bottleneck)",
+      "fpsGame1080p": "58 -> 58",
+      "fpsRange": "44-60 -> 54-60 across all 28 captures",
+      "consoleErrors": "0 -> 0",
+      "missingAssets": "0 -> 0"
+    },
+    "verification": {
+      "test": "303/303 pass (21 files)",
+      "lint": "clean",
+      "build": "pass",
+      "verify": "OK - 28 captures, fps 54-60, zero console errors, zero missing assets",
+      "verify:multiplayer": "OK - 7/7 e2e, room J55XP, revisions [1,2], 14 screenshots, zero server stderr",
+      "verify:preview": "OK - built client serves, 5 assets resolve, 2 js files scanned, no secrets"
+    },
+    "modelCavemanLog": [
+      {
+        "role": "audit inspection - client performance hotspots",
+        "model": "haiku (Low)",
+        "caveman": "available (cavecrew-investigator, caveman-compressed output)",
+        "task": "per-frame work, drag handlers, re-render paths, listener/timer cleanup, log gating, memoization candidates"
+      },
+      {
+        "role": "audit inspection - AI slop and dead code",
+        "model": "haiku (Low)",
+        "caveman": "available (cavecrew-investigator)",
+        "task": "TODOs, unused exports, commented-out code, duplication, stub fallbacks, doc claims, shallow tests"
+      },
+      {
+        "role": "audit inspection - resilience and stuck states",
+        "model": "haiku (Low)",
+        "caveman": "available (cavecrew-investigator)",
+        "task": "storage guards, JSON.parse, uncaught async, scene transitions, reconnect timeouts, stuck flags"
+      },
+      {
+        "role": "implementation - resilience fixes and slop removal",
+        "model": "sonnet",
+        "caveman": "available (invoked caveman skill before work)",
+        "task": "S1, S2, S3, dead-export deletion, regression test"
+      },
+      {
+        "role": "implementation - GameScene stuck state and render perf",
+        "model": "sonnet",
+        "caveman": "available (invoked caveman skill before work)",
+        "task": "S4 pending timeout, collapsed double meld analysis, draft/rules test"
+      },
+      {
+        "role": "audit synthesis, diff review, gate runs, docs",
+        "model": "opus",
+        "caveman": "active (session-wide)",
+        "task": "wrote docs/PHASE11_AUDIT.md, reviewed both diffs, closed two gaps the implementers left (lazy default storage, missing re-render on pending timeout), ran all four gates"
+      }
+    ],
+    "extraAgentsRationale": "None. Three Low inspectors ran in parallel because the three inspection domains are disjoint, and two Sonnet implementers ran in parallel over disjoint file sets. No repeated verify failures, no unreproducible states, no refactor conflicts - no extra agents were needed.",
+    "reviewPass": "Opus reviewed both implementation diffs directly rather than delegating. Two gaps found and fixed in the parent: (1) loadSave kept a storage = localStorage default parameter, which throws on property access in exactly the browser configuration S1 is about, before the new safeGet guard could run; (2) the onlinePending timeout released the flag but never re-rendered, so the board would stay visually locked in precisely the scenario the timeout exists for. The rules.ts change was reviewed with extra care since it touches the rules engine: canConfirmTurn gained one optional parameter that is only a reuse of what it would otherwise recompute, every existing caller is unaffected, and the 303-test suite plus verify:multiplayer (which asserts no illegal proposal is ever accepted) both pass.",
+    "deferred": [
+      "Sprite pooling in renderAll() - no measured problem (58 fps on the crowded-table capture). Carried from Phase 9.",
+      "Splitting GameScene.ts (1579 lines) - sectioned and navigable; a split is a wide refactor with real regression surface and no measured benefit.",
+      "music.ts autoplay-unlock listeners are never removed - the handler is a paused check and a volume read, the cost is not measurable, and removing them after first unlock would break re-unlock after a browser auto-pause. Deliberate.",
+      "Per-zone drag hover scan - linear over ~25 zones per pointer move, not measurable.",
+      "No unit test for the sessionStorage token accessors or the onlinePending timeout - the vitest environment is node (no jsdom, no WebSocket/sessionStorage globals) and there is no Phaser scene harness. Building either harness was judged out of proportion to the risk; the storage guard pattern is covered by the persistence test.",
+      "Online results summary on WinScene (needs a protocol change), per-IP rate limiting, online rematch, turnTimerSeconds - all carried from earlier phases."
+    ],
+    "remainingRisks": [
+      "The storage-blocked boot path is fixed and unit-tested at the loadSave seam, but has never been exercised in a real Safari-with-site-data-blocked session.",
+      "The 10s online pending timeout has no automated coverage; it is verified by reading, not by a test.",
+      "Rooms remain in-memory and single-process (by design, documented in docs/OPERATIONS.md)."
+    ]
   }
 }

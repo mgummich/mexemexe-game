@@ -18,6 +18,32 @@ const RECONNECT_DELAY_MS = 800;
 
 type ServerListener = (msg: ServerMessage) => void;
 
+/** sessionStorage throws in Safari with site data blocked/webviews with storage disabled —
+ * these keep a throw from aborting the socket callback it's called inside of. */
+function readToken(): string | null {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeToken(token: string): void {
+  try {
+    sessionStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // storage blocked — reconnect just won't be possible, not fatal
+  }
+}
+
+function clearToken(): void {
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export class NetClient {
   private ws: WebSocket | null = null;
   private reqCounter = 0;
@@ -82,7 +108,7 @@ export class NetClient {
       this.reconnectAttempted = false;
       this.setStatus('open');
       this.startPing();
-      const token = sessionStorage.getItem(TOKEN_KEY);
+      const token = readToken();
       if (token) this.sendRaw({ v: PROTOCOL_VERSION, type: 'reconnect', reqId: this.nextReqId(), token });
     };
     ws.onclose = () => {
@@ -97,7 +123,7 @@ export class NetClient {
         this.setStatus('error', 'unreachable');
         return;
       }
-      const token = sessionStorage.getItem(TOKEN_KEY);
+      const token = readToken();
       if (!this.explicitClose && token && !this.reconnectAttempted) {
         this.reconnectAttempted = true;
         this.setStatus('reconnecting');
@@ -122,7 +148,7 @@ export class NetClient {
         return; // malformed frame from the server — ignore, never throw
       }
       this.pushTrace('in', msg.type);
-      if (msg.type === 'room_joined') sessionStorage.setItem(TOKEN_KEY, msg.token);
+      if (msg.type === 'room_joined') writeToken(msg.token);
       if (msg.type === 'proposal_rejected') playlog.record('net:reject', { reason: msg.reasons[0] ?? '' });
       const set = this.listeners.get(msg.type);
       if (set) for (const cb of set) cb(msg);
@@ -132,7 +158,7 @@ export class NetClient {
   /** Explicit exit from the online flow: tells the server, drops the reconnect token, closes the socket. */
   leaveRoom(): void {
     this.sendRaw({ v: PROTOCOL_VERSION, type: 'leave_room', reqId: this.nextReqId() });
-    sessionStorage.removeItem(TOKEN_KEY);
+    clearToken();
     this.disconnect();
   }
 

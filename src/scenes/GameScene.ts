@@ -67,6 +67,10 @@ const TABLE_AREA_H = TABLE_BOTTOM - TABLE_TOP - 6;
 const GOLD = 0xf7d23e;
 const BAR_H = 30; // top status bar height
 const CONFIRM_GUARD_MS = 250;
+/** Bound on how long onlinePending may lock input: a healthy FEITO/COMPRAR round trip is well
+ * under this. If neither state_sync nor proposal_rejected arrives in time (dropped/ignored
+ * proposal, no socket close), the lock releases itself and a resync is requested. */
+const ONLINE_PENDING_TIMEOUT_MS = 10000;
 /** Prefix shown on the FEITO label whenever it's disabled — a text cue beyond the tint, for colorblind/low-contrast users. */
 const FEITO_DISABLED_PREFIX = '✕ ';
 
@@ -126,8 +130,12 @@ export class GameScene extends Phaser.Scene {
   // online mode — 0 for every local/AI/tutorial game, the server-assigned seat when online
   private localSeat = 0;
   private online: { client: NetClient; seat: number; code: string; lastRev: number } | null = null;
-  /** True from FEITO/COMPRAR submit until state_sync or proposal_rejected — locks all input. */
+  /** True from FEITO/COMPRAR submit until state_sync or proposal_rejected — locks all input.
+   * Set/cleared only via setOnlinePending() so the timeout timer never drifts from the flag. */
   private onlinePending = false;
+  /** Fires ONLINE_PENDING_TIMEOUT_MS after onlinePending goes true; released whenever it goes
+   * false first (the normal case). */
+  private onlinePendingTimer: Phaser.Time.TimerEvent | null = null;
   /** Count of detected state-hash mismatches this match — surfaced to verify:multiplayer. */
   private onlineDesyncs = 0;
   /** Set while a requested resync is outstanding: input stays locked and the overlay shows. */
@@ -167,7 +175,7 @@ export class GameScene extends Phaser.Scene {
       ? { client: config.online.client, seat: config.online.seat, code: config.online.code, lastRev: config.online.view.rev }
       : null;
     this.localSeat = config.online ? config.online.seat : 0;
-    this.onlinePending = false;
+    this.setOnlinePending(false);
     this.lastRejections = [];
     this.lastMoveIds = new Set();
     this.selectedCardId = null;
@@ -231,6 +239,7 @@ export class GameScene extends Phaser.Scene {
       this.unsubs.forEach((u) => u());
       this.unsubs = [];
       this.aiTimer?.remove();
+      this.onlinePendingTimer?.remove();
       this.ambienceSound?.stop();
     });
 
@@ -287,11 +296,31 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- online reconciliation (docs/MULTIPLAYER_ARCHITECTURE.md §6) ----------
 
+  /** Single set/clear point for onlinePending — keeps the timeout timer in lockstep with the
+   * flag instead of letting scattered raw assignments each need their own timer bookkeeping. */
+  private setOnlinePending(on: boolean): void {
+    this.onlinePending = on;
+    this.onlinePendingTimer?.remove();
+    this.onlinePendingTimer = on ? this.time.delayedCall(ONLINE_PENDING_TIMEOUT_MS, () => this.onOnlinePendingTimeout()) : null;
+  }
+
+  /** No state_sync or proposal_rejected arrived in time — the proposal was dropped or ignored
+   * with no socket close, so nothing else would ever release the lock. Release it, tell the
+   * player, and ask for a fresh authoritative snapshot rather than leaving a dead board. */
+  private onOnlinePendingTimeout(): void {
+    this.setOnlinePending(false);
+    this.onlineNoticeText?.setText(t('online.resyncing'));
+    this.online?.client.requestResync();
+    // The lock is read at render time, and the message that would normally trigger the next
+    // render is the one that never came — so re-render here or the board stays visibly dead.
+    this.renderAll();
+  }
+
   private onOnlineStateSync(view: GameView): void {
     if (!this.online) return;
     if (view.rev < this.online.lastRev) return; // stale/out-of-order delivery — ignore
     this.online.lastRev = view.rev;
-    this.onlinePending = false;
+    this.setOnlinePending(false);
     this.onlineNoticeText?.setText('');
     const before = this.store.get();
     const actingSeat = before.activePlayerIndex;
@@ -318,7 +347,7 @@ export class GameScene extends Phaser.Scene {
     playlog.record('desync', { rev: view.rev });
     if (this.onlineResyncing) return true; // already asked once for this snapshot — take it and move on
     this.onlineResyncing = true;
-    this.onlinePending = true;
+    this.setOnlinePending(true);
     this.onlineNoticeText?.setText(t('online.resyncing'));
     this.online.client.requestResync();
     return false;
@@ -326,7 +355,7 @@ export class GameScene extends Phaser.Scene {
 
   private onOnlineRejected(reasons: ReasonCode[]): void {
     if (!this.online) return;
-    this.onlinePending = false;
+    this.setOnlinePending(false);
     this.lastRejections = reasons;
     playSfx(this, 'sfx-invalid');
     // A stale revision means this client acted on a state the server has already moved past —
@@ -939,7 +968,7 @@ export class GameScene extends Phaser.Scene {
     playSfx(this, 'sfx-feito');
     const draft = this.editor.getDraft();
     const melds: SubmitTurnMeld[] = draft.melds.map((m) => ({ id: m.id, cardIds: m.cards.map((c) => c.id) }));
-    this.onlinePending = true;
+    this.setOnlinePending(true);
     this.online.client.submitTurn(this.online.lastRev, melds);
     this.renderAll();
   }
@@ -948,7 +977,7 @@ export class GameScene extends Phaser.Scene {
   private onComprarOnline(): void {
     if (!this.editor || !this.online || this.onlinePending) return;
     playSfx(this, 'sfx-draw');
-    this.onlinePending = true;
+    this.setOnlinePending(true);
     this.online.client.drawEndTurn(this.online.lastRev);
     this.renderAll();
   }
@@ -1006,9 +1035,11 @@ export class GameScene extends Phaser.Scene {
     );
     this.bannerBg.setSize(this.banner.width + 14, this.banner.height + 6);
 
-    // table melds (draft when human editing, committed otherwise)
+    // table melds (draft when human editing, committed otherwise). One shared analysis pass —
+    // invalid-badge display and the FEITO gate below both need it, and each walks every meld.
     const melds = this.editor ? this.editor.getDraft().melds : state.table;
-    const invalidReasons = new Map((this.editor?.invalidMelds() ?? []).map((r) => [r.meldId, t(r.reason)]));
+    const analysis = this.editor?.analyze() ?? null;
+    const invalidReasons = new Map((analysis?.invalidMelds ?? []).map((r) => [r.meldId, t(r.reason)]));
     this.layoutMelds(melds, invalidReasons, interactive, state.config);
 
     // local seat's hand
@@ -1016,8 +1047,8 @@ export class GameScene extends Phaser.Scene {
     this.layoutHand(hand, interactive);
 
     // buttons + reason
-    if (interactive && this.editor) {
-      const check = this.editor.canConfirm();
+    if (interactive && this.editor && analysis) {
+      const check = analysis.check;
       if (check.ok && !this.lastValidOk) this.validSince = this.time.now;
       if (!check.ok) this.validSince = null;
       this.lastValidOk = check.ok;

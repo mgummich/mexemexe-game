@@ -53,6 +53,25 @@ describe('DraftEditor', () => {
     expect(ed.canConfirm()).toEqual({ ok: true });
   });
 
+  it('analyze() agrees with separate invalidMelds()/canConfirm() calls, valid and invalid drafts', () => {
+    const ed = new DraftEditor(state());
+    // invalid: untouched draft can't confirm (no hand card played), but no meld is itself invalid
+    expect(ed.analyze()).toEqual({ invalidMelds: ed.invalidMelds(), check: ed.canConfirm() });
+
+    // invalid meld shape: break the run
+    ed.moveTableCard('hearts-5-d0', null);
+    expect(ed.analyze()).toEqual({ invalidMelds: ed.invalidMelds(), check: ed.canConfirm() });
+
+    // valid: rebuild into a confirmable draft
+    ed.moveTableCard('hearts-5-d0', 't1');
+    ed.playHandCard('hearts-2-d0', 't1', 0);
+    ed.playHandCard('hearts-6-d0', 't1');
+    const a = ed.analyze();
+    expect(a).toEqual({ invalidMelds: ed.invalidMelds(), check: ed.canConfirm() });
+    expect(a.invalidMelds).toHaveLength(0);
+    expect(a.check).toEqual({ ok: true });
+  });
+
   it('split and merge melds', () => {
     const ed = new DraftEditor(state());
     const id = ed.getDraft().melds[0]!.id;

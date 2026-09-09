@@ -4,11 +4,6 @@
  * this whole module ends up readable in the shipped JS.
  */
 
-export const clientConfig = {
-  mode: import.meta.env.MODE,
-  isProduction: import.meta.env.PROD,
-};
-
 /** Location fields resolveWsUrl needs — lets tests pass a fake instead of jsdom. */
 export type LocationLike = Pick<Location, 'protocol' | 'hostname' | 'host' | 'search'>;
 

@@ -73,17 +73,43 @@ export function parseSave(raw: string | null): Save {
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
+/** `getItem` throws in Safari with site data blocked, and in webviews with storage disabled — treat that like a `null` return. */
+function safeGet(storage: StorageLike, key: string): string | null {
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/** A storage that drops everything, for when the real one is unreachable. */
+const NULL_STORAGE: StorageLike = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+
+/**
+ * Reading the `localStorage` property itself throws (not just its methods) in
+ * Safari with site data blocked, so this has to be resolved lazily inside a
+ * try — a `storage = localStorage` default parameter would throw before any
+ * guard in the body could run, and `loadSave` is called at module scope.
+ */
+function defaultStorage(): StorageLike {
+  try {
+    return localStorage;
+  } catch {
+    return NULL_STORAGE;
+  }
+}
+
 /**
  * Reads the versioned save, migrating the old unversioned `mexe-settings`
  * key (settings-only, no envelope) into a v1 save on first read and
  * removing the old key. `storage` is injectable for tests; defaults to
- * `localStorage`.
+ * `localStorage`, or to a no-op storage when that is unreachable.
  */
-export function loadSave(storage: StorageLike = localStorage): Save {
-  const raw = storage.getItem(SAVE_KEY);
+export function loadSave(storage: StorageLike = defaultStorage()): Save {
+  const raw = safeGet(storage, SAVE_KEY);
   if (raw !== null) return parseSave(raw);
 
-  const old = storage.getItem(OLD_SETTINGS_KEY);
+  const old = safeGet(storage, OLD_SETTINGS_KEY);
   if (old === null) return { ...DEFAULT_SAVE };
 
   let oldSettings: Partial<Settings> = {};

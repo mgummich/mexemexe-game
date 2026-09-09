@@ -169,6 +169,14 @@ export class DraftEditor {
     return getInvalidMeldReasons(this.melds, this.committed.config);
   }
 
+  /** invalidMelds() + canConfirm() in one meld-analysis pass — each analyzes every meld
+   * separately, so a caller needing both (e.g. a render that shows invalid badges AND gates
+   * FEITO) should call this instead of both, to avoid analyzing every meld twice. */
+  analyze(): { invalidMelds: MeldReason[]; check: ConfirmResult } {
+    const invalidMelds = this.invalidMelds();
+    return { invalidMelds, check: canConfirmTurn(this.committed, this.getDraft(), invalidMelds) };
+  }
+
   /** Snapshot count — test hook to assert an op didn't push undo history. */
   historyLength(): number {
     return this.history.length;
