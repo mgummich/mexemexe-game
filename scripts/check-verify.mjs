@@ -48,6 +48,16 @@ const EXPECTED_SHOTS = [
   'snap-preview-joker',
   'snap-reason-tapped',
   'snap-preview-en',
+  // Phase 13: mobile layout + tap-first controls.
+  'mobile-portrait-menu',
+  'mobile-portrait-game',
+  'mobile-landscape-game',
+  'mobile-tap-select',
+  'mobile-tap-move-valid',
+  'mobile-tap-move-invalid',
+  'mobile-feito-blocked',
+  'mobile-badge-reason',
+  'mobile-portrait-en',
 ];
 const shotNames = new Set(shots.map((s) => s.name));
 for (const name of EXPECTED_SHOTS) {

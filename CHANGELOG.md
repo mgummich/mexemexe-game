@@ -3,6 +3,40 @@
 All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 
+## Unreleased — Phase 13 (mobile layout, tap-first controls)
+
+The board was authored into one fixed 480x270 world and letterboxed to fit, so a
+portrait phone got a 390x219 board and a permanent "turn your phone sideways"
+banner. Touch input was already fine — Phase 12 shipped select-then-place, a
+tappable invalid badge and padded card hit areas — so this phase gave the board a
+second shape rather than a second input model. See `docs/PHASE13_AUDIT.md`.
+
+Desktop is unchanged by construction: the landscape half of the region table is
+the old constants, and `tests/regions.test.ts` fails if any of them moves.
+
+- **A real portrait board** (`src/ui/viewport.ts`, `src/ui/regions.ts`). A window
+  taller than it is wide gets a 270x480 world: full-width table on top, hand
+  carousel below it, and a pinned action bar with FEITO and COMPRAR side by side.
+- **Orientation flips re-lay-out live** (`viewport:changed` on the event bus).
+  GameScene rebuilds its static UI in place rather than restarting — it owns the
+  match state and the online socket — and OnlineScene rebuilds around its live
+  connection.
+- **Bigger touch targets without bigger art** (`src/ui/widgets.ts`). On a coarse
+  pointer a button's hit box grows to at least 32x26 world units, and tooltips —
+  previously hover-only — also open on tap.
+- **A disabled FEITO explains itself when tapped**, using the same reason string
+  the objective line renders, so the two can never disagree.
+- **Notch-safe canvas**: `viewport-fit=cover` plus `env(safe-area-inset-*)`
+  padding, so cutouts cost canvas area instead of covering the board.
+- **The centred screens follow the world** (`src/ui/menu-layout.ts`): menu, setup,
+  lobby, results, settings, pause and rules panels remap generically instead of
+  being hand-authored a second time.
+- **Localized touch copy** (pt-BR/en-US) and a rotate hint that now auto-hides.
+- **Mobile is verified, not assumed**: ten captures at 390x844 and 844x390 in
+  `npm run verify` (tap-select, tap move valid/invalid, blocked-FEITO reason,
+  badge reason, both locales) and three portrait online captures in
+  `npm run verify:multiplayer`, all required by the gate scripts.
+
 ## 1.5.0 — Phase 11 (resilience, render cost, cleanup)
 
 Deployable production build → one that survives a hostile browser. No rules

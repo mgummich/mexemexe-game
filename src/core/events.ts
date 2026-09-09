@@ -9,6 +9,8 @@ export interface GameEvents extends EventMap {
   'turn:drawn': { playerId: string };
   'game:won': { winnerId: string };
   'ai:thought': { playerId: string; text: string };
+  /** Orientation/pointer profile flipped (see src/ui/viewport.ts) — scenes re-lay-out. */
+  'viewport:changed': { portrait: boolean };
 }
 
 type Handler<T> = (payload: T) => void;

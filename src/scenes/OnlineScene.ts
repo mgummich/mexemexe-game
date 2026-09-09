@@ -1,9 +1,12 @@
 import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
+import { bus } from '../core/events';
 import { t } from '../localization/i18n';
 import { NetClient, type ConnStatus } from '../net/client';
 import { errorMessage } from '../net/errors';
 import type { GameView, RoomPlayerSummary } from '../net/protocol';
+import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
+import { view } from '../ui/viewport';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi } from '../verification/debug-api';
 
@@ -52,6 +55,9 @@ export class OnlineScene extends Phaser.Scene {
     this.wireCodeEntry();
     this.wireClient();
     this.installDebugHooks();
+    // A restart would tear down `this.client`'s live socket — re-lay-out in place instead, same
+    // as every server push already does via rebuild().
+    this.unsubs.push(bus.on('viewport:changed', () => this.rebuild()));
     this.client.connect();
     this.rebuild();
     debugApi.ready = true;
@@ -204,20 +210,20 @@ export class OnlineScene extends Phaser.Scene {
 
   private rebuild(): void {
     this.children.removeAll();
-    this.add.image(240, 135, 'bg-menu').setDisplaySize(480, 270);
-    this.add.rectangle(240, 135, 480, 270, 0x1a0f0a, 0.45);
+    coverBackground(this, 'bg-menu');
+    this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.45);
     // backdrop panel so lobby text reads against the busy boteco scene, same treatment MenuScene
     // uses for its controls (L1) — legible by construction, not by luck of what's behind it.
-    this.add.rectangle(240, 138, 280, 236, 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
-    label(this, 240, 26, t('online.title'), 15, '#f7d23e');
+    this.add.rectangle(cx(), vy(138), panelW(280), vy(236), 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
+    label(this, cx(), vy(26), t('online.title'), 15, '#f7d23e');
 
     const statusColor =
       this.status === 'open' ? '#3ec06a' : this.status === 'connecting' || this.status === 'reconnecting' ? '#f7d23e' : '#d83a3a';
-    label(this, 240, 44, t(`online.status.${this.status}`), 8, statusColor);
+    label(this, cx(), vy(44), t(`online.status.${this.status}`), 8, statusColor);
 
     if (this.phase === 'error') {
       this.add
-        .text(240, 120, this.errorMsg ?? '', { ...fontStyle(9, '#ff6b5e'), align: 'center', wordWrap: { width: 320 } })
+        .text(cx(), vy(120), this.errorMsg ?? '', { ...fontStyle(9, '#ff6b5e'), align: 'center', wordWrap: { width: panelW(320) } })
         .setOrigin(0.5);
     } else if (this.phase === 'join') {
       this.renderJoin();
@@ -225,58 +231,62 @@ export class OnlineScene extends Phaser.Scene {
       this.renderLobby();
     } else {
       const createBtn = new PixelButton(
-        this, 240, 110, t('online.create'),
+        this, cx(), vy(110), t('online.create'),
         () => this.fireOnce('create', 3000, () => this.client.createRoom(t('menu.you'))),
         { textureBase: 'btn-feito', w: 140, h: 24, size: 9 },
       );
       createBtn.setEnabled(!this.inFlight.has('create'));
-      new PixelButton(this, 240, 145, t('online.join'), () => {
+      new PixelButton(this, cx(), vy(145), t('online.join'), () => {
         this.phase = 'join';
         this.codeInput = '';
         this.rebuild();
       }, { textureBase: 'btn-comprar', w: 140, h: 22, size: 8 });
     }
 
-    new PixelButton(this, 240, 245, t('online.back'), () => {
+    // Portrait stacks START (and its reason line) under READY, so VOLTAR moves down to clear them.
+    new PixelButton(this, cx(), view().portrait ? vy(256) : vy(245), t('online.back'), () => {
       // No cooldown/rebuild needed: backToMenu() leaves this scene immediately, so the guard
       // only needs to stop a second click before that happens.
       if (this.inFlight.has('leave')) return;
       this.inFlight.add('leave');
       this.backToMenu();
-    }, { textureBase: 'btn-comprar', w: 110, h: 18, size: 7 });
+    }, { textureBase: 'btn-comprar', w: 110, h: view().portrait ? 24 : 18, size: 7 });
   }
 
   private renderJoin(): void {
-    label(this, 240, 86, t('online.enterCodePrompt'), 9, '#f7f2e7');
+    label(this, cx(), vy(86), t('online.enterCodePrompt'), 9, '#f7f2e7');
     const shown = this.codeInput.padEnd(CODE_LENGTH, '_');
-    label(this, 240, 118, shown, 20, this.codeInput ? '#f7d23e' : '#8a7f6e');
-    label(this, 240, 148, t('online.codeHint'), 7, '#c0b8a8');
-    const confirm = new PixelButton(this, 240, 180, t('online.join'), () => this.fireOnce('join', 3000, () => this.submitJoin()), {
+    label(this, cx(), vy(118), shown, 20, this.codeInput ? '#f7d23e' : '#8a7f6e');
+    label(this, cx(), vy(148), t('online.codeHint'), 7, '#c0b8a8');
+    const confirm = new PixelButton(this, cx(), vy(180), t('online.join'), () => this.fireOnce('join', 3000, () => this.submitJoin()), {
       textureBase: 'btn-feito', w: 120, h: 22, size: 8,
     });
     confirm.setEnabled(this.codeInput.length > 0 && !this.inFlight.has('join'));
   }
 
   private renderLobby(): void {
-    label(this, 240, 76, this.code ?? '', 20, '#f7f2e7');
-    new PixelButton(this, 240, 100, t('online.copy'), () => this.copyCode(), {
-      textureBase: 'btn-comprar', w: 90, h: 16, size: 7,
+    label(this, cx(), vy(76), this.code ?? '', 20, '#f7f2e7');
+    // room-code text and the copy button must stay comfortably tappable in portrait
+    const copyH = view().portrait ? 24 : 16;
+    new PixelButton(this, cx(), vy(100), t('online.copy'), () => this.copyCode(), {
+      textureBase: 'btn-comprar', w: 90, h: copyH, size: 7,
     });
 
-    let y = 128;
+    let y = vy(128);
     for (const p of this.players) {
       const mark = p.ready ? t('online.playerReady') : t('online.playerWaiting');
       const offline = p.connected ? '' : ` (${t('online.status.closed')})`;
-      label(this, 240, y, `${p.name} — ${mark}${offline}`, 9, p.ready ? '#3ec06a' : '#c0b8a8');
-      y += 16;
+      label(this, cx(), y, `${p.name} — ${mark}${offline}`, 9, p.ready ? '#3ec06a' : '#c0b8a8');
+      y += vy(16);
     }
     if (this.players.length < 2) {
-      label(this, 240, y + 4, t('online.waiting'), 8, '#c0b8a8');
+      label(this, cx(), y + vy(4), t('online.waiting'), 8, '#c0b8a8');
     }
 
     // READY stays a real toggle: every click still sends exactly one `ready` message. The
     // short cooldown only blocks a second click before the first one's frame goes out.
-    const readyBtn = new PixelButton(this, 240, 215, this.ready ? t('online.readyOn') : t('online.ready'), () => {
+    const stacked = view().portrait;
+    const readyBtn = new PixelButton(this, cx(), stacked ? vy(202) : vy(215), this.ready ? t('online.readyOn') : t('online.ready'), () => {
       this.fireOnce('ready', 300, () => {
         this.ready = !this.ready;
         this.client.setReady(this.ready);
@@ -287,14 +297,17 @@ export class OnlineScene extends Phaser.Scene {
     if (this.seat === 0) {
       const enoughPlayers = this.players.length >= 2;
       const allReady = enoughPlayers && this.players.every((p) => p.ready);
-      const start = new PixelButton(this, 350, 215, t('online.start'), () => this.fireOnce('start', 3000, () => this.client.startGame()), {
-        textureBase: 'btn-feito', w: 82, h: 20, size: 7,
+      // Landscape seats START beside READY; a 270-wide portrait world has no room beside anything,
+      // so it stacks underneath instead of running off the right edge.
+      const startX = stacked ? cx() : cx() + (350 - 240);
+      const start = new PixelButton(this, startX, stacked ? vy(230) : vy(215), t('online.start'), () => this.fireOnce('start', 3000, () => this.client.startGame()), {
+        textureBase: 'btn-feito', w: stacked ? 110 : 82, h: stacked ? 24 : 20, size: 7,
       });
       start.setEnabled(allReady && !this.inFlight.has('start'));
       // A greyed-out button with no stated reason is the single most common lobby complaint —
       // always say which condition is missing.
       if (!allReady) {
-        label(this, 350, 233, t(enoughPlayers ? 'online.startNeedReady' : 'online.startNeedPlayers'), 6, '#c0b8a8');
+        label(this, startX, stacked ? vy(244) : vy(233), t(enoughPlayers ? 'online.startNeedReady' : 'online.startNeedPlayers'), 6, '#c0b8a8');
       }
     }
   }

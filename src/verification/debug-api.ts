@@ -3,6 +3,7 @@ import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { ConnStatus } from '../net/client';
 import type { RoomPlayerSummary, SubmitTurnMeld } from '../net/protocol';
+import { view, type ViewProfile } from '../ui/viewport';
 
 /** Online-alpha e2e surface — present from OnlineScene entry through the online match, null otherwise. */
 export interface MexeOnlineDebugApi {
@@ -70,6 +71,9 @@ export interface MexeDebugApi {
   lastAiThought: string | null;
   /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
   a11y: { invalidBadges: number };
+  /** Active layout world + input mode (see src/ui/viewport.ts). Lets e2e map world coordinates
+   * onto the canvas without assuming an orientation or a scale factor. */
+  viewport: () => ViewProfile;
   /** Background-music state for e2e: current track file, whether it is actually playing, and its volume. */
   music: () => { track: string; playing: boolean; volume: number; context: string };
   /** Live Mexe Mode hooks for e2e (bound to the active DraftEditor on human turns). */
@@ -124,6 +128,7 @@ export const debugApi: MexeDebugApi = {
   tutorialStep: null,
   lastAiThought: null,
   a11y: { invalidBadges: 0 },
+  viewport: () => view(),
   music: () => ({ track: '', playing: false, volume: 0, context: 'menu' }),
   mexe: null,
   online: null,

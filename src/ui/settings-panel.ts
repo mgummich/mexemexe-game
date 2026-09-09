@@ -4,6 +4,7 @@ import { playlog } from '../core/playlog';
 import { settings } from '../core/settings';
 import { getLocale, setLocale, t } from '../localization/i18n';
 import { debugApi } from '../verification/debug-api';
+import { panelW } from './menu-layout';
 import { buildOverlay } from './overlay';
 import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
 
@@ -48,7 +49,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
   const showMain = (): void => {
     for (const o of objs) o.destroy();
     objs = [];
-    const w = 200;
+    const w = panelW(200);
     // Fixed height: 12 rows at ROW_PITCH must fit inside the 270-unit world, so the panel frame
     // and its title stay on screen. Large text scales the glyphs inside the rows, not the panel.
     const h = 262;
@@ -183,7 +184,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
   const showResetConfirm = (): void => {
     for (const o of objs) o.destroy();
     objs = [];
-    const w = 170;
+    const w = panelW(170);
     const h = 90;
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
@@ -217,7 +218,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
   const showCosmetics = (): void => {
     for (const o of objs) o.destroy();
     objs = [];
-    const w = 210;
+    const w = panelW(210);
     const h = Math.round(150 * settings.fontScale());
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
@@ -317,7 +318,10 @@ function makeSlider(
     .setStrokeStyle(1, 0x8a7f68)
     .setOrigin(0, 0.5)
     .setDepth(502)
-    .setInteractive({ useHandCursor: true });
+    // Visual track is only 6 units tall — the handle is the smallest control in the game, so its
+    // hit area (24 tall, full track width) is grown well past the art for a finger to grab it.
+    .setInteractive(new Phaser.Geom.Rectangle(0, -12, w, 24), Phaser.Geom.Rectangle.Contains);
+  if (track.input) track.input.cursor = 'pointer';
   const fill = scene.add
     .rectangle(x, y, Math.max(2, (value / 100) * w), h, 0xf7d23e)
     .setOrigin(0, 0.5)

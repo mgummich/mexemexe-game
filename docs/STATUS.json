@@ -80,10 +80,11 @@
     "verification": 9
   },
   "openIssues": [
-    "pointer-drag still verified via editor hooks, not synthetic pointer drags",
     "ambience procedural only (by design, optional/muteable)",
     "PT accents slightly rough at 6-7px font sizes",
-    "no renderAll sprite pooling (fps 59 at 21 sprites+20 zones; revisit only if a lower-end target dips below 50)"
+    "no renderAll sprite pooling (fps 59 at 21 sprites+20 zones; revisit only if a lower-end target dips below 50)",
+    "portrait is a second authored layout, not a continuous responsive one: window sizes far from 16:9 or 9:16 still letterbox",
+    "hover tooltips on a disabled button remain reachable with a mouse (desktop behaviour deliberately unchanged)"
   ],
   "nextTask": "Phase 12 closed. Commit the branch; no blockers open.",
   "phase4Scores": {
@@ -101,7 +102,7 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": 12,
+  "phase": 13,
   "phase6": {
     "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
     "blockers": [],
@@ -295,16 +296,16 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-09T17:15:59.920Z",
+    "generatedAt": "2026-09-09T17:59:08.642Z",
     "perShotFps": {
       "menu": 60,
       "game": 58,
-      "game4": 57,
-      "tutorial": 57,
-      "tutorial-step2": 57,
+      "game4": 58,
+      "tutorial": 58,
+      "tutorial-step2": 58,
       "setup": 58,
-      "settings": 56,
-      "win": 58,
+      "settings": 58,
+      "win": 60,
       "mexe-invalid": 58,
       "comprar-flow": 58,
       "ai-showcase-mid": 58,
@@ -313,15 +314,15 @@
       "ai-juninho": 58,
       "ai-bia": 58,
       "ai-ze": 58,
-      "pause": 57,
-      "help": 56,
-      "help-en": 57,
+      "pause": 58,
+      "help": 57,
+      "help-en": 58,
       "menu-en": 60,
-      "game-en": 57,
-      "a11y-large-text": 57,
+      "game-en": 58,
+      "a11y-large-text": 60,
       "keyboard-comprar": 58,
       "stress-table": 58,
-      "game-1080p": 58,
+      "game-1080p": 60,
       "joker-in-hand": 58,
       "joker-in-run": 58,
       "joker-in-group": 58,
@@ -330,31 +331,42 @@
       "mexe-valid-one-joker-each": 58,
       "mexe-invalid-kA2": 58,
       "repeated-suit-group": 58,
-      "snap-targets-legal": 57,
-      "snap-target-illegal": 56,
-      "snap-preview-valid": 57,
-      "snap-preview-invalid": 57,
+      "snap-targets-legal": 58,
+      "snap-target-illegal": 58,
+      "snap-preview-valid": 58,
+      "snap-preview-invalid": 58,
       "snap-preview-joker": 58,
       "snap-reason-tapped": 58,
-      "snap-preview-en": 57,
-      "tutorial-trinca": 58,
-      "tutorial-joker": 57,
-      "tutorial-complete": 59,
+      "snap-preview-en": 58,
+      "tutorial-trinca": 55,
+      "tutorial-joker": 55,
+      "tutorial-complete": 57,
       "feito-invalid-explained": 58,
       "feito-invalid-explained-en": 58,
-      "game-theme-boteco": 58,
-      "game-theme-kitchen": 58,
-      "game-theme-quintal": 58,
+      "game-theme-boteco": 60,
+      "game-theme-kitchen": 60,
+      "game-theme-quintal": 60,
       "game-theme-feira": 58,
-      "cosmetics-panel": 57,
-      "a11y-reduced-motion": 58
+      "cosmetics-panel": 58,
+      "a11y-reduced-motion": 60,
+      "mobile-portrait-menu": 60,
+      "mobile-portrait-game": 58,
+      "mobile-landscape-game": 60,
+      "mobile-tap-select": 58,
+      "mobile-tap-move-valid": 58,
+      "mobile-tap-move-invalid": 58,
+      "mobile-feito-blocked": 58,
+      "mobile-badge-reason": 58,
+      "mobile-portrait-en": 60
     },
     "viewports": [
       "1280x720",
-      "1920x1080"
+      "1920x1080",
+      "390x844",
+      "844x390"
     ],
     "unitTests": "330/330 pass (22 files, incl. tests/snap.test.ts — 10 snap-target-model tests)",
-    "e2eScreenshots": 51
+    "e2eScreenshots": 60
   },
   "phase3Scores": {
     "fullFlow": 9,
@@ -987,5 +999,87 @@
     },
     "cavemanUsage": "Both Sonnet implementation agents and the Sonnet reviewer were instructed to invoke the caveman:caveman skill before working. The Haiku inspection agent ran as caveman:cavecrew-investigator, which is caveman-native. The Opus reasoning/prose role ran under session-level caveman mode from a SessionStart hook rather than a per-task Skill invocation — stated plainly, not claimed as equivalent.",
     "extraAgents": "None. One inspection agent, two implementation agents (split only because the second depends on the first API), one reviewer — the default fleet. No repeated verify failure, rule/preview conflict, local-online divergence or input regression required an extra agent."
+  },
+  "phase13": {
+    "auditSummary": "docs/PHASE13_AUDIT.md. Entry state re-measured: 330/330 unit green, verify OK. The game was authored into one fixed 480x270 world fitted with Phaser.Scale.FIT, so a portrait phone got a letterboxed 390x219 board with ~19x26 CSS px cards and a permanent 'rotate your phone' banner instead of a layout. Touch input itself was already sound (Phase 12 select-then-place, tappable invalid badge, padded card hit areas, touch-action none) - the gap was that the board had one shape and phones have two.",
+    "blockers": [],
+    "priorityIssues": [
+      "no portrait layout (letterboxed 16:9 board on a phone)",
+      "touch targets under 44 CSS px for every control except the two main button widths",
+      "a disabled FEITO said nothing when pressed",
+      "PixelButton tooltips and the joker hint were hover-only",
+      "no mobile viewport captured anywhere in verify"
+    ],
+    "approach": "Two authored worlds, not a continuous responsive layout: 480x270 landscape (byte-identical to before) and 270x480 portrait, picked from window orientation by src/ui/viewport.ts. GameScene lays out from a GameRegions table (src/ui/regions.ts) whose landscape values are the old constants - tests/regions.test.ts asserts that, and it is the no-desktop-regression gate. The centred screens (menu/setup/lobby/win/panels) are remapped generically by src/ui/menu-layout.ts (cx/cy/vy/vx/panelW/coverBackground) rather than hand-authored five more times. Touch capability is detected separately and only ever grows hit areas and a few button boxes, so a desktop window never takes a portrait or touch path.",
+    "delivered": [
+      "portrait world 270x480: full-width table on top, hand carousel below it, pinned action bar with FEITO (140x40) and COMPRAR (104x36) side by side, a 5-button icon row and the objective line",
+      "orientation flip re-lays-out live: bus 'viewport:changed'; GameScene rebuilds its static UI in place (never restarts - it owns the match state and the online socket), OnlineScene rebuilds (live NetClient), the stateless scenes restart",
+      "safe-area support: viewport-fit=cover plus env(safe-area-inset-*) padding on the canvas container",
+      "PixelButton hit areas grow to at least 32x26 world units on a coarse pointer without changing the artwork; tooltips also open on tap there",
+      "tapping the disabled FEITO shows the exact blocking reason, from the same blockingReasonText() the objective line renders, so the two cannot diverge",
+      "portrait touch captions: mobile.tapHint, switching to mobile.warnHint while a meld is invalid; the rotate hint now auto-hides after 6s instead of sitting on the board forever",
+      "slider hit area raised to 24 units tall; pause/rules close controls at least 24 units on touch",
+      "10 mobile captures in verify (390x844 and 844x390) plus 3 portrait online captures in verify:multiplayer, all required by the gates"
+    ],
+    "tests": {
+      "unit": "353/353 pass (25 files; new: tests/viewport.test.ts, tests/regions.test.ts, tests/menu-layout.test.ts)",
+      "e2e": "60 screenshot captures via npm run verify (exit 0), 9 of them on phone viewports; zero console/page errors; viewports 390x844, 844x390, 1280x720, 1920x1080",
+      "multiplayer": "9/9 e2e with 18 captures (npm run verify:multiplayer OK), including a portrait lobby, a portrait locked non-active seat, and a portrait unreachable-server state",
+      "lint": "clean (eslint + tsc --noEmit)",
+      "build": "clean",
+      "server": "72/72 pass (npm run test:server, 4 files)",
+      "preview": "npm run verify:preview OK (built client serves, 5 assets resolve, no secrets)"
+    },
+    "perf": {
+      "mobileFps": "55-60 across the nine phone captures; 55 fps is the lowest of all 60 shots this run",
+      "note": "no new per-frame work: layout is still event-driven, and the regions table is computed once per create/relayout"
+    },
+    "modelCavemanLog": [
+      {
+        "role": "Low inspection",
+        "model": "haiku",
+        "task": "scene/panel coordinate + hover-only + touch-target audit",
+        "caveman": "available",
+        "runLabel": "phase13-audit"
+      },
+      {
+        "role": "Sonnet implementation",
+        "model": "sonnet",
+        "task": "viewport wiring in main.ts/index.html + viewport/regions tests",
+        "caveman": "available",
+        "runLabel": "phase13-wave1"
+      },
+      {
+        "role": "Sonnet implementation",
+        "model": "sonnet",
+        "task": "GameScene regions reflow, relayout, blocked-FEITO reason, PixelButton touch hit areas",
+        "caveman": "available",
+        "runLabel": "phase13-wave2"
+      },
+      {
+        "role": "Sonnet implementation",
+        "model": "sonnet",
+        "task": "menus/panels portrait remap + menu-layout module and tests",
+        "caveman": "available",
+        "runLabel": "phase13-wave3"
+      },
+      {
+        "role": "Opus reasoning/prose/review",
+        "model": "opus",
+        "task": "world split decision, portrait region authoring, audit doc, screenshot review, gate runs",
+        "caveman": "session-level hook",
+        "runLabel": "phase13-lead"
+      }
+    ],
+    "reviewFindingsFixed": [
+      "portrait lobby: COMEcAR and its reason line ran off the right edge - now stacked under PRONTO with VOLTAR moved down",
+      "landscape-touch action column: FEITO/COMPRAR/icon-row boxes overlapped by 2 units - heights retuned to 28/24/17 and the test made strict",
+      "blocked-FEITO capture showed a contradictory 'Confirm your move' tooltip - suppressed on tap for a disabled button, and the capture now moves the synthetic mouse off the button",
+      "GameScene kept two unmigrated 480x270 felt decorations (a dim patch at 444,226 and the dominoes prop at 60,60) that drew off-world or under an avatar in portrait - now landscape-only",
+      "the table art was stretched to the world instead of cover-fitted, smearing baked-in props in portrait - now uses coverBackground (identity in landscape)",
+      "audit doc overstated that a desktop window can never take the portrait path; orientation alone picks the world, only the touch branch is pointer-gated"
+    ],
+    "nextTask": "Phase 13 closed; no blockers open. Commit the branch.",
+    "notes": "One pre-existing flake seen once under parallel load: the 12-step tutorial e2e failed in a single run and passed in isolation and in the final green run. Not touched by this phase; worth watching."
   }
 }

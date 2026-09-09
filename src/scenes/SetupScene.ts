@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
 import { settings } from '../core/settings';
+import { bus } from '../core/events';
 import { t } from '../localization/i18n';
+import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
+import { view } from '../ui/viewport';
 import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 import type { GameSceneConfig } from './GameScene';
@@ -26,20 +29,24 @@ export class SetupScene extends Phaser.Scene {
   create(): void {
     setMusicContext('menu');
     debugApi.scene = 'setup';
+    // No live connection here (unlike OnlineScene) — a full restart on orientation flip is
+    // simplest and correct.
+    const unsub = bus.on('viewport:changed', () => this.scene.restart());
+    this.events.once('shutdown', unsub);
     this.rebuild();
     debugApi.ready = true;
   }
 
   private rebuild(): void {
     this.children.removeAll();
-    this.add.image(240, 135, 'bg-menu').setDisplaySize(480, 270);
-    this.add.rectangle(240, 135, 480, 270, 0x1a0f0a, 0.4);
-    this.add.rectangle(240, 145, 260, 210, 0x1a0f0a, 0.68).setStrokeStyle(1, 0xc0a878, 0.6);
+    coverBackground(this, 'bg-menu');
+    this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.4);
+    this.add.rectangle(cx(), vy(145), panelW(260), vy(210), 0x1a0f0a, 0.68).setStrokeStyle(1, 0xc0a878, 0.6);
 
-    label(this, 240, 54, t('setup.title'), 12, '#f7d23e');
+    label(this, cx(), vy(54), t('setup.title'), 12, '#f7d23e');
 
     [2, 3, 4].forEach((n, i) => {
-      const btn = new PixelButton(this, 190 + i * 50, 74, String(n), () => {
+      const btn = new PixelButton(this, cx() + (190 + i * 50 - 240), vy(74), String(n), () => {
         this.seatCount = n;
         this.rebuild();
       }, { textureBase: 'btn-small', w: 30, h: 20, size: 9 });
@@ -49,17 +56,19 @@ export class SetupScene extends Phaser.Scene {
     const rowY0 = 98;
     const rowGap = 30;
     for (let seat = 0; seat < this.seatCount; seat++) {
-      const y = rowY0 + seat * rowGap;
+      const y = vy(rowY0 + seat * rowGap);
+      const avatarX = cx() + (150 - 240);
+      const nameX = cx() + (190 - 240);
       if (seat === 0) {
-        this.add.image(150, y, 'avatar-player').setDisplaySize(20, 20);
-        label(this, 190, y, t('menu.you'), 8, '#f7d23e').setOrigin(0, 0.5);
+        this.add.image(avatarX, y, 'avatar-player').setDisplaySize(20, 20);
+        label(this, nameX, y, t('menu.you'), 8, '#f7d23e').setOrigin(0, 0.5);
       } else {
         const p = this.aiPersonalities[seat - 1]!;
         const entry = AI_LINEUP.find((a) => a.personality === p)!;
         const avatarKey = `avatar-${p}`;
-        const av = this.add.image(150, y, avatarKey).setDisplaySize(20, 20).setInteractive({ useHandCursor: true });
-        const nameLabel = label(this, 190, y, entry.name, 8, '#f7f2e7').setOrigin(0, 0.5);
-        label(this, 190, y + 10, t('setup.tapToChange'), 8, '#a89e8c').setOrigin(0, 0.5);
+        const av = this.add.image(avatarX, y, avatarKey).setDisplaySize(20, 20).setInteractive({ useHandCursor: true });
+        const nameLabel = label(this, nameX, y, entry.name, 8, '#f7f2e7').setOrigin(0, 0.5);
+        label(this, nameX, y + 10, t('setup.tapToChange'), 8, '#a89e8c').setOrigin(0, 0.5);
         const cycle = (): void => {
           const idx = CYCLE.indexOf(this.aiPersonalities[seat - 1]!);
           this.aiPersonalities[seat - 1] = CYCLE[(idx + 1) % CYCLE.length]!;
@@ -72,15 +81,15 @@ export class SetupScene extends Phaser.Scene {
 
     const lastSeed = settings.progress().lastSeed;
     if (lastSeed !== null) {
-      new PixelButton(this, 240, 222, t('setup.lastSeed', { seed: lastSeed }), () => this.startGame(lastSeed), {
+      new PixelButton(this, cx(), vy(222), t('setup.lastSeed', { seed: lastSeed }), () => this.startGame(lastSeed), {
         textureBase: 'btn-comprar', w: 220, h: 14, size: 6,
       });
     }
 
-    new PixelButton(this, 170, 240, t('setup.back'), () => gotoScene(this, 'menu'), {
+    new PixelButton(this, cx() + (170 - 240), vy(240), t('setup.back'), () => gotoScene(this, 'menu'), {
       textureBase: 'btn-comprar', w: 80, h: 20, size: 9,
     });
-    new PixelButton(this, 300, 240, t('menu.play'), () => this.startGame(), {
+    new PixelButton(this, cx() + (300 - 240), vy(240), t('menu.play'), () => this.startGame(), {
       textureBase: 'btn-feito', w: 100, h: 24, size: 9,
     });
   }

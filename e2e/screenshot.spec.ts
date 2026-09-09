@@ -4,6 +4,8 @@ import path from 'node:path';
 import { getLocale, setLocale, t as translate } from '../src/localization/i18n';
 import { errorMessage, SERVER_ERROR_CODES } from '../src/net/errors';
 import { computeMeldLayout } from '../src/table/layout';
+import { gameRegions, type GameRegions } from '../src/ui/regions';
+import { pickProfile } from '../src/ui/viewport';
 
 const OUT_DIR = 'docs/screenshots';
 const LOG_PATH = path.join(OUT_DIR, 'verify-log.json');
@@ -507,23 +509,68 @@ async function dragCardOnto(p: Page, cardId: string, toLogical: { x: number; y: 
   await p.mouse.move(tx, ty, { steps: 8 });
 }
 
+// ---------- mobile viewports ----------
+// The board has two authored worlds (src/ui/viewport.ts): 480x270 landscape and 270x480 portrait.
+// These are the same tables the scene lays out from, so a capture can address a real button.
+const DESKTOP_REGIONS = gameRegions(pickProfile(1280, 720, false));
+const PORTRAIT_REGIONS = gameRegions(pickProfile(390, 844, false));
+const PHONE_PORTRAIT = { width: 390, height: 844 };
+const PHONE_LANDSCAPE = { width: 844, height: 390 };
+
+/**
+ * World -> screen for whichever world is live, read from the canvas rect and `viewport()` rather
+ * than a baked-in scale factor — the fixed `toScreen` above only holds at 1280x720.
+ */
+async function toCanvasPoint(p: Page, wx: number, wy: number): Promise<[number, number]> {
+  const pt = await p.evaluate(
+    ({ x, y }) => {
+      const c = document.querySelector('canvas')!.getBoundingClientRect();
+      const v = window.__MEXE__.viewport();
+      return { x: c.left + (x / v.w) * c.width, y: c.top + (y / v.h) * c.height };
+    },
+    { x: wx, y: wy },
+  );
+  return [pt.x, pt.y];
+}
+
+async function tapWorld(p: Page, wx: number, wy: number): Promise<void> {
+  const [x, y] = await toCanvasPoint(p, wx, wy);
+  await p.mouse.click(x, y);
+}
+
+/** Tap a rendered card by id — the touch path, no drag involved. */
+async function tapCard(p: Page, cardId: string): Promise<void> {
+  const pos = await p.evaluate((id) => window.__MEXE__.mexe!.cardPos(id), cardId);
+  if (!pos) throw new Error(`card ${cardId} not on screen`);
+  await tapWorld(p, pos.x, pos.y);
+}
+
+async function tapMeld(p: Page, meldId: string): Promise<void> {
+  const pos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+  if (!pos) throw new Error(`meld ${meldId} not on screen`);
+  await tapWorld(p, pos.x, pos.y);
+}
+
+async function meldCardIds(p: Page, meldId: string): Promise<string[]> {
+  return p.evaluate(
+    (id) => window.__MEXE__.mexe!.getDraft()!.melds.find((m) => m.id === id)?.cards.map((c) => c.id) ?? [],
+    meldId,
+  );
+}
+
 /**
  * Logical position of an invalid meld's ✗ badge — same layout math as `GameScene.layoutMelds`
  * (`TABLE_LEFT`/`TABLE_TOP`/`MELD_PAD` + the badge's `+4,+2` offset), built on the same pure
  * `computeMeldLayout` the scene itself uses, so this can never drift from the real position.
  */
-async function badgeLogicalPos(p: Page, meldId: string): Promise<{ x: number; y: number }> {
+async function badgeLogicalPos(p: Page, meldId: string, r: GameRegions = DESKTOP_REGIONS): Promise<{ x: number; y: number }> {
   const melds = await p.evaluate(() =>
     window.__MEXE__.mexe!.getDraft()!.melds.map((m) => ({ id: m.id, cardCount: m.cards.length })),
   );
-  const TABLE_LEFT = 14;
-  const TABLE_TOP = 80;
-  const TABLE_AREA_W = 480 - 96 - TABLE_LEFT;
-  const TABLE_AREA_H = 188 - TABLE_TOP - 6;
   const MELD_PAD = 4;
-  const pos = computeMeldLayout(melds, TABLE_AREA_W, TABLE_AREA_H).find((m) => m.meldId === meldId)!;
+  const pos = computeMeldLayout(melds, r.tableAreaW, r.tableAreaH).find((m) => m.meldId === meldId)!;
   const pad = MELD_PAD * pos.cardScale;
-  return { x: TABLE_LEFT + pos.x + 4, y: TABLE_TOP + 6 + pos.y - pad + 2 };
+  return { x: r.tableLeft + pos.x + 4, y: r.tableTop + 6 + pos.y - pad + 2 };
 }
 
 test('snap-targets-legal: dragging a card that legally extends a run highlights it green, not gold', async ({ page }) => {
@@ -1013,6 +1060,112 @@ test('a11y-reduced-motion: ?motion=0 disables cosmetic tweens/fades', async ({ p
     settings: { reducedMotion: boolean };
   };
   expect(saved.settings.reducedMotion).toBe(true);
+});
+
+// ---------- Phase 13: mobile layout + tap-first controls ----------
+
+test('mobile-portrait-menu: the menu reflows into the 270x480 portrait world', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=menu', 'mobile-portrait-menu');
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  expect(v).toMatchObject({ w: 270, h: 480, portrait: true });
+});
+
+test('mobile-portrait-game: full-width table, hand carousel and a pinned action bar', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=game', 'mobile-portrait-game', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  expect(v.portrait).toBe(true);
+  // the portrait board hands the meld packer a much larger box than the landscape one
+  expect(PORTRAIT_REGIONS.tableAreaW * PORTRAIT_REGIONS.tableAreaH).toBeGreaterThan(
+    DESKTOP_REGIONS.tableAreaW * DESKTOP_REGIONS.tableAreaH,
+  );
+});
+
+test('mobile-landscape-game: a phone in landscape keeps the desktop board', async ({ page }) => {
+  await page.setViewportSize(PHONE_LANDSCAPE);
+  await capture(page, '/?seed=42&showcase=game', 'mobile-landscape-game', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  expect(v).toMatchObject({ w: 480, h: 270, portrait: false });
+});
+
+test('mobile-tap-select: tapping a hand card selects it, tapping it again clears it', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-tap-select', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await tapCard(p, 'clubs-13-d0');
+  });
+  // deselect must not move anything: the card is still in hand, the table is untouched
+  const meldsBefore = await page.evaluate(() => window.__MEXE__.mexe!.getDraft()!.melds.length);
+  await tapCard(page, 'clubs-13-d0');
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.getDraft()!.melds.length)).toBe(meldsBefore);
+});
+
+test('mobile-tap-move-valid: tap a card then tap a legal meld moves it', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-tap-move-valid', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await meldIdOf(p, 'clubs-10-d0'); // AI-built run 10-11-joker(12)
+    await tapCard(p, 'clubs-13-d0');
+    await tapMeld(p, meldId);
+    expect(await meldCardIds(p, meldId)).toContain('clubs-13-d0');
+    const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean };
+    expect(validation.ok).toBe(true);
+  });
+});
+
+test('mobile-tap-move-invalid: an illegal tap move is shown as invalid, never silently confirmed', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-tap-move-invalid', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'clubs-2-d1']); // 2-card partial group
+    await tapCard(p, 'diamonds-2-d0'); // duplicate suit for that group
+    await tapMeld(p, meldId);
+    const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean; reasons: string[] };
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.groupDuplicateSuit');
+  });
+});
+
+test('mobile-feito-blocked: tapping the disabled FEITO explains why, and confirms nothing', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-feito-blocked', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']); // invalid: duplicate suit
+    const turnBefore = await p.evaluate(() => window.__MEXE__.state!()!.turn);
+    await tapWorld(p, PORTRAIT_REGIONS.feito.x, PORTRAIT_REGIONS.feito.y);
+    // Playwright taps with a real mouse, so it also leaves a hover tooltip on the button; a finger
+    // does not. Move the pointer to empty table (still inside the canvas, or Phaser never sees the
+    // move and the hover never ends) so the capture shows what a phone player sees.
+    const [ax, ay] = await toCanvasPoint(p, 30, 300);
+    await p.mouse.move(ax, ay);
+    const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean; reasons: string[] };
+    expect(validation.ok).toBe(false);
+    // the blocked tap must not have confirmed the turn
+    expect(await p.evaluate(() => window.__MEXE__.state!()!.turn)).toBe(turnBefore);
+  });
+});
+
+test('mobile-badge-reason: the ✗ badge reason is reachable by tap in portrait', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-badge-reason', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']);
+    expect(await p.evaluate(() => window.__MEXE__.a11y.invalidBadges)).toBeGreaterThan(0);
+    const badge = await badgeLogicalPos(p, meldId, PORTRAIT_REGIONS);
+    await tapWorld(p, badge.x, badge.y);
+  });
+});
+
+test('mobile-portrait-en: the portrait board reads in English', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=game&lang=en', 'mobile-portrait-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
 });
 
 test.afterAll(() => {

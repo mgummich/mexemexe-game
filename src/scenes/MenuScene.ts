@@ -2,8 +2,11 @@ import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
 import { getLocale, setLocale, t } from '../localization/i18n';
 import { settings } from '../core/settings';
+import { bus } from '../core/events';
 import { openRulesPanel } from '../ui/rules-panel';
 import { openSettingsPanel } from '../ui/settings-panel';
+import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
+import { view } from '../ui/viewport';
 import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 
@@ -19,6 +22,10 @@ export class MenuScene extends Phaser.Scene {
     debugApi.results = null;
     debugApi.winButtonY = null;
     setLocale(settings.get().locale);
+    // No live connection here (unlike OnlineScene) — a full restart on orientation flip is
+    // simplest and correct.
+    const unsub = bus.on('viewport:changed', () => this.scene.restart());
+    this.events.once('shutdown', unsub);
     this.rebuild();
     this.markReady();
     const showcase = debugApi.showcase;
@@ -71,46 +78,47 @@ export class MenuScene extends Phaser.Scene {
 
   private rebuild(): void {
     this.children.removeAll();
-    this.add.image(240, 135, 'bg-menu').setDisplaySize(480, 270);
-    this.add.rectangle(240, 135, 480, 270, 0x1a0f0a, 0.35);
+    coverBackground(this, 'bg-menu');
+    this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.35);
     // backdrop so controls read against the busy boteco scene
     // wide enough to actually contain the rules/language row (x 146..334) and the online button
-    this.add.rectangle(240, 184, 204, 168, 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
+    this.add.rectangle(cx(), vy(184), panelW(204), vy(168), 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
     if (this.textures.exists('logo') && !debugApi.missingAssets.includes('logo')) {
       // logo.png ships at 3x (600x240) like every other sprite — pin it to its logical size
-      const logo = this.add.image(240, 62, 'logo').setDisplaySize(200, 80);
+      const logo = this.add.image(cx(), vy(62), 'logo').setDisplaySize(200, 80);
       // idle bob so the title screen doesn't sit dead still — instant (no tween) under reduced motion
       this.tweens.add({ targets: logo, y: '+=3', duration: Math.max(1, this.motion(1400)), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     } else {
-      const title = label(this, 240, 52, t('menu.title'), 32, '#f7d23e');
+      const title = label(this, cx(), vy(52), t('menu.title'), 32, '#f7d23e');
       this.tweens.add({ targets: title, y: '+=3', duration: Math.max(1, this.motion(1400)), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
-      label(this, 240, 84, t('menu.tagline'), 8, '#f7f2e7');
+      label(this, cx(), vy(84), t('menu.tagline'), 8, '#f7f2e7');
     }
 
-    new PixelButton(this, 240, 145, t('menu.play'), () => gotoScene(this, 'setup'), {
+    new PixelButton(this, cx(), vy(145), t('menu.play'), () => gotoScene(this, 'setup'), {
       textureBase: 'btn-feito', w: 90, h: 24, size: 10,
     });
-    // kept at its original logical coords (240, 207) — e2e clicks this position directly
-    new PixelButton(this, 240, 207, t('menu.tutorial'), () => gotoScene(this, 'tutorial'), {
+    // kept at its original logical coords (240, 207) in landscape — e2e clicks this position directly
+    new PixelButton(this, cx(), vy(207), t('menu.tutorial'), () => gotoScene(this, 'tutorial'), {
       textureBase: 'btn-comprar', w: 90, h: 20, size: 9,
     });
 
-    new PixelButton(this, 182, 237, t('menu.rules'), () => openRulesPanel(this, () => { /* noop */ }), {
+    new PixelButton(this, cx() + (182 - 240), vy(237), t('menu.rules'), () => openRulesPanel(this, () => { /* noop */ }), {
       textureBase: 'btn-comprar', w: 72, h: 18, size: 6,
     });
-    new PixelButton(this, 298, 237, t('menu.language'), () => {
+    new PixelButton(this, cx() + (298 - 240), vy(237), t('menu.language'), () => {
       const next = getLocale() === 'pt' ? 'en' : 'pt';
       setLocale(next);
       settings.update({ locale: next });
       this.rebuild();
     }, { textureBase: 'btn-comprar', w: 72, h: 18, size: 6 });
 
-    new PixelButton(this, 462, 10, '⚙', () => openSettingsPanel(this, () => { /* noop */ }), {
+    // anchored to the top-right corner, not the 480-wide landscape grid
+    new PixelButton(this, view().w - 18, 10, '⚙', () => openSettingsPanel(this, () => { /* noop */ }), {
       textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.settings'),
     });
 
     // visually subordinate to JOGAR: smaller, muted, tucked below the rules/language row
-    new PixelButton(this, 240, 258, t('menu.online'), () => gotoScene(this, 'online'), {
+    new PixelButton(this, cx(), vy(258), t('menu.online'), () => gotoScene(this, 'online'), {
       textureBase: 'btn-comprar', w: 100, h: 13, size: 6, color: 0x8a7f68,
     });
   }
