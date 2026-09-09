@@ -13,6 +13,7 @@ export class MenuScene extends Phaser.Scene {
 
   create(): void {
     debugApi.scene = 'menu';
+    debugApi.online = null; // local menu/game must work with the online server down or absent
     setLocale(settings.get().locale);
     this.rebuild();
     this.markReady();
@@ -65,7 +66,8 @@ export class MenuScene extends Phaser.Scene {
     // backdrop so controls read against the busy boteco scene
     this.add.rectangle(240, 180, 150, 160, 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
     if (this.textures.exists('logo') && !debugApi.missingAssets.includes('logo')) {
-      this.add.image(240, 62, 'logo');
+      // logo.png ships at 3x (600x240) like every other sprite — pin it to its logical size
+      this.add.image(240, 62, 'logo').setDisplaySize(200, 80);
     } else {
       label(this, 240, 52, t('menu.title'), 32, '#f7d23e');
       label(this, 240, 84, t('menu.tagline'), 8, '#f7f2e7');
@@ -91,6 +93,11 @@ export class MenuScene extends Phaser.Scene {
 
     new PixelButton(this, 462, 10, '⚙', () => openSettingsPanel(this, () => { /* noop */ }), {
       textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.settings'),
+    });
+
+    // visually subordinate to JOGAR: smaller, muted, tucked below the rules/language row
+    new PixelButton(this, 240, 258, t('menu.online'), () => this.scene.start('online'), {
+      textureBase: 'btn-comprar', w: 100, h: 13, size: 6, color: 0x8a7f68,
     });
   }
 }

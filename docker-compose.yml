@@ -1,6 +1,25 @@
 services:
   mexe:
-    build: .
+    build:
+      context: .
+      target: web
+      args:
+        # Leave empty for localhost; set to wss://your.host/... behind HTTPS.
+        VITE_WS_URL: ${VITE_WS_URL:-}
     ports:
       - "8080:80"
     restart: unless-stopped
+
+  # Online alpha only. Local play never contacts this service.
+  mexe-server:
+    build:
+      context: .
+      target: server
+    ports:
+      - "8787:8787"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

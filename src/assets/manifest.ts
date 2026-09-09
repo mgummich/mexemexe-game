@@ -21,6 +21,7 @@ export function buildManifest(): AssetDef[] {
       out.push(def(`card-${suit}-${rank}`, `assets/cards/${suit}-${rank}.png`, CARD_W, CARD_H));
     }
   }
+  out.push(def('card-joker', 'assets/cards/joker.png', CARD_W, CARD_H));
   out.push(def('card-blank', 'assets/cards/blank.png', CARD_W, CARD_H));
   out.push(def('card-back-0', 'assets/cards/back-0.png', CARD_W, CARD_H));
   out.push(def('card-back-1', 'assets/cards/back-1.png', CARD_W, CARD_H));

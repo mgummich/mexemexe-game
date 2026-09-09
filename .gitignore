@@ -5,3 +5,5 @@ playwright-report/
 verify-log.json
 *.log
 .DS_Store
+.playwright-mcp/
+test/

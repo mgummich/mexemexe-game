@@ -113,10 +113,10 @@ test('tutorial step 2: lay a set of three nines', async ({ page }) => {
     // step 2: drag the three 9s onto the table via the live Mexe Mode hooks
     const stepAfter = await p.evaluate(() => {
       const mexe = window.__MEXE__.mexe!;
-      mexe.playHandCard('hearts-9', null);
+      mexe.playHandCard('hearts-9-d0', null);
       const meldId = mexe.getDraft()!.melds[0]!.id;
-      mexe.playHandCard('spades-9', meldId);
-      mexe.playHandCard('clubs-9', meldId);
+      mexe.playHandCard('spades-9-d0', meldId);
+      mexe.playHandCard('clubs-9-d0', meldId);
       return window.__MEXE__.tutorialStep;
     });
     expect(stepAfter).toBe(2);
@@ -262,12 +262,12 @@ test('reset-data: settings APAGAR DADOS + confirm clears the versioned save and 
   await page.goto('/?seed=1&showcase=settings');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   // dirty the save first (mute toggle, top button of the settings panel) so the wipe is provable
-  const [mx, my] = toScreen(240, 58);
+  const [mx, my] = toScreen(240, 47);
   await page.mouse.click(mx, my);
   const savedBefore = await page.evaluate(() => localStorage.getItem('mexe-save'));
   expect(savedBefore).not.toBeNull();
-  // "APAGAR DADOS" button, logical (240, 194)
-  const [dx, dy] = toScreen(240, 194);
+  // "APAGAR DADOS" button, logical (240, 205)
+  const [dx, dy] = toScreen(240, 205);
   await page.mouse.click(dx, dy);
   await page.waitForTimeout(150);
   // confirm dialog "Sim" button, logical (200, 160)
@@ -294,6 +294,17 @@ test('help: rules panel opened from the pause menu', async ({ page }) => {
     await p.keyboard.press('Escape');
     await p.waitForTimeout(150);
     // pause menu: Continue/Settings/Help/Quit stacked at logical (240, 95/119/143/167) — Help is the 3rd row
+    const [hx, hy] = toScreen(240, 143);
+    await p.mouse.click(hx, hy);
+    await p.waitForTimeout(150);
+  });
+});
+
+test('help-en: rules panel (English) opened from the pause menu', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=game&lang=en', 'help-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(150);
     const [hx, hy] = toScreen(240, 143);
     await p.mouse.click(hx, hy);
     await p.waitForTimeout(150);
@@ -352,6 +363,67 @@ test('game-1080p: readable at a 1920x1080 viewport', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await capture(page, '/?seed=42&showcase=game', 'game-1080p', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
+});
+
+/** Build a new meld from hand cards via the live Mexe Mode hooks and return its meld id. */
+async function buildMeld(p: Page, cardIds: string[]): Promise<string> {
+  return p.evaluate((ids) => {
+    const mexe = window.__MEXE__.mexe!;
+    const before = new Set(mexe.getDraft()!.melds.map((m) => m.id));
+    mexe.playHandCard(ids[0]!, null);
+    const meldId = mexe.getDraft()!.melds.find((m) => !before.has(m.id))!.id;
+    for (const id of ids.slice(1)) mexe.playHandCard(id, meldId);
+    return meldId;
+  }, cardIds);
+}
+
+test('joker-in-hand: a joker sits in the human hand before any play', async ({ page }) => {
+  await capture(page, '/?seed=25&showcase=mexe', 'joker-in-hand', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const hand = await p.evaluate(() => window.__MEXE__.state!()!.players[0]!.hand.map((c) => c.id));
+    expect(hand.some((id) => id.startsWith('joker-'))).toBe(true);
+  });
+});
+
+test('joker-run: a joker fills the gap in a valid run (hearts 10, joker, 12)', async ({ page }) => {
+  await capture(page, '/?seed=1&showcase=mexe', 'joker-in-run', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['hearts-10-d1', 'joker-d1-1', 'hearts-12-d0']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation);
+    expect((validation as { ok: boolean }).ok).toBe(true);
+  });
+});
+
+test('joker-group: a joker stands in for the third card of a group of 3s', async ({ page }) => {
+  await capture(page, '/?seed=6&showcase=mexe', 'joker-in-group', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['diamonds-3-d1', 'clubs-3-d0', 'joker-d0-1']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation);
+    expect((validation as { ok: boolean }).ok).toBe(true);
+  });
+});
+
+test('k-a-2-invalid: no-wrap rule rejects K-A-2 with the run-wrap reason', async ({ page }) => {
+  await capture(page, '/?seed=242&showcase=mexe', 'mexe-invalid-kA2', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['diamonds-13-d1', 'diamonds-1-d1', 'diamonds-2-d0']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation as { ok: boolean; reasons: string[] });
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.runWrap');
+  });
+});
+
+test('repeated-suit-group: two same-suit cards from different decks form a legal group', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'repeated-suit-group', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const cards = await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']).then(async (meldId) => {
+      const draft = await p.evaluate(() => window.__MEXE__.mexe!.getDraft());
+      return draft!.melds.find((m) => m.id === meldId)!.cards;
+    });
+    expect(cards.filter((c) => c.suit === 'diamonds')).toHaveLength(2);
+    const validation = await p.evaluate(() => window.__MEXE__.validation);
+    expect((validation as { ok: boolean }).ok).toBe(true);
   });
 });
 

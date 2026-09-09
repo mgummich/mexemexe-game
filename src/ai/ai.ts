@@ -17,31 +17,43 @@ function sortCards(cards: readonly Card[]): Card[] {
   return [...cards].sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
-/** Find all melds of exactly 3+ cards formable from hand: sets by rank, runs by suit. */
+/**
+ * Find all melds of exactly 3+ cards formable from hand: sets by rank, runs by suit,
+ * plus joker-assisted completions (two naturals + one joker) when a pure-natural meld
+ * isn't there. Naturals-only melds are pushed first so callers that lay down melds in
+ * order try natural plays before spending a joker. Two identical naturals (same
+ * suit+rank, different deckId) rank-bucket together fine for groups; the run scanner
+ * below skips a same-rank duplicate rather than letting it break the consecutive scan.
+ */
 function findHandMelds(hand: readonly Card[]): Card[][] {
+  const naturals = hand.filter((c) => !c.isJoker);
+  const jokers = sortCards(hand.filter((c) => c.isJoker));
   const out: Card[][] = [];
   // Sets
   const byRank = new Map<number, Card[]>();
-  for (const c of sortCards(hand)) {
-    const arr = byRank.get(c.rank) ?? [];
+  for (const c of sortCards(naturals)) {
+    const arr = byRank.get(c.rank!) ?? [];
     arr.push(c);
-    byRank.set(c.rank, arr);
+    byRank.set(c.rank!, arr);
   }
-  for (const [, cards] of [...byRank.entries()].sort((a, b) => a[0] - b[0])) {
+  const rankEntries = [...byRank.entries()].sort((a, b) => a[0] - b[0]);
+  for (const [, cards] of rankEntries) {
     if (cards.length >= 3) out.push(cards);
   }
-  // Runs: longest maximal run per suit segment
+  // Runs: longest maximal run per suit segment (a same-rank duplicate is skipped, not
+  // reset into a new segment, so it never breaks an in-progress run).
   const bySuit = new Map<string, Card[]>();
-  for (const c of sortCards(hand)) {
-    const arr = bySuit.get(c.suit) ?? [];
+  for (const c of sortCards(naturals)) {
+    const arr = bySuit.get(c.suit!) ?? [];
     arr.push(c);
-    bySuit.set(c.suit, arr);
+    bySuit.set(c.suit!, arr);
   }
-  for (const [, cards] of [...bySuit.entries()].sort()) {
-    const sorted = [...cards].sort((a, b) => a.rank - b.rank);
+  const suitEntries = [...bySuit.entries()].sort();
+  for (const [, cards] of suitEntries) {
+    const sorted = [...cards].sort((a, b) => a.rank! - b.rank!);
     let seg: Card[] = [];
     for (const c of sorted) {
-      if (seg.length === 0 || c.rank === seg[seg.length - 1]!.rank + 1) {
+      if (seg.length === 0 || c.rank === seg[seg.length - 1]!.rank! + 1) {
         seg.push(c);
       } else if (c.rank !== seg[seg.length - 1]!.rank) {
         if (seg.length >= 3) out.push(seg);
@@ -50,6 +62,34 @@ function findHandMelds(hand: readonly Card[]): Card[][] {
     }
     if (seg.length >= 3) out.push(seg);
   }
+
+  // Joker-assisted group: exactly two naturals of a rank + one joker.
+  if (jokers.length > 0) {
+    for (const [, cards] of rankEntries) {
+      if (cards.length !== 2) continue;
+      const combo = [...cards, jokers[0]!];
+      if (isValidMeld(combo)) out.push(combo);
+    }
+  }
+
+  // Joker-assisted run: two same-suit naturals at most 2 ranks apart (interior gap or
+  // adjacent-for-an-end-fill) + one joker. Candidate generation only — analyzeMeld
+  // (via isValidMeld) is what actually decides validity, including ace high/low bounds.
+  if (jokers.length > 0) {
+    for (const [, cards] of suitEntries) {
+      const byRankUnique = new Map<number, Card>();
+      for (const c of cards) if (!byRankUnique.has(c.rank!)) byRankUnique.set(c.rank!, c);
+      const sorted = [...byRankUnique.entries()].sort((a, b) => a[0] - b[0]);
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const [r1, c1] = sorted[i]!;
+        const [r2, c2] = sorted[i + 1]!;
+        if (r2 - r1 > 2) continue;
+        const combo = [c1, c2, jokers[0]!];
+        if (isValidMeld(combo)) out.push(combo);
+      }
+    }
+  }
+
   return out;
 }
 
@@ -112,13 +152,14 @@ export class SimpleAi implements AiPlayer {
       if (this.minimal) break;
     }
 
-    if (!this.minimal || notes.length === 0) {
+    if (this.minimal) {
+      // conservative: exactly one action per turn. `tryExtend` plays *every* available
+      // extension, so the minimal path never calls it — a single extension only, and only
+      // when no meld was laid down above.
+      if (notes.length === 0) return this.decideMinimalExtendOnly(state);
+    } else {
       const ext = tryExtend(ed);
       if (ext.length) notes.push(`extended table with ${ext.join(',')}`);
-      if (this.minimal && notes.length > 1) {
-        // conservative: keep only first action — rebuild with single extension
-        return this.decideMinimalExtendOnly(state);
-      }
     }
 
     const check = ed.canConfirm();
@@ -138,6 +179,7 @@ export class SimpleAi implements AiPlayer {
           if (check.ok) {
             return { kind: 'confirm', draft: ed.getDraft(), explanation: `extended with ${card.id}` };
           }
+          ed.undo(); // that extension doesn't stand on its own — don't carry it into the next try
         }
       }
     }

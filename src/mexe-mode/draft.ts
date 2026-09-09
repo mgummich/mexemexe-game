@@ -23,8 +23,13 @@ export class DraftEditor {
   private historyIndex = 0;
   private meldCounter = 0;
 
+  /** The turn's starting position, kept outside `history` — that ring buffer drops its oldest
+   * entries past HISTORY_CAP, so history[0] stops being the start after enough edits. */
+  private readonly initial: Snapshot;
+
   constructor(private readonly committed: GameState) {
     this.melds = cloneMelds(committed.table);
+    this.initial = this.snapshot();
     this.history = [this.snapshot()];
   }
 
@@ -152,7 +157,7 @@ export class DraftEditor {
   }
 
   reset(): void {
-    this.restore(this.history[0]!);
+    this.restore(this.initial);
     this.push();
   }
 
@@ -161,7 +166,7 @@ export class DraftEditor {
   }
 
   invalidMelds(): MeldReason[] {
-    return getInvalidMeldReasons(this.melds);
+    return getInvalidMeldReasons(this.melds, this.committed.config);
   }
 
   /** Snapshot count — test hook to assert an op didn't push undo history. */

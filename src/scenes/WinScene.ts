@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { t } from '../localization/i18n';
+import type { NetClient } from '../net/client';
 import { label, PixelButton } from '../ui/widgets';
 import { debugApi } from '../verification/debug-api';
 import type { GameSceneConfig } from './GameScene';
@@ -16,6 +17,8 @@ interface WinData {
   stalemate: boolean;
   config: GameSceneConfig;
   results?: PlayerResult[];
+  /** Present only after an online match — rematch is out of MVP scope, so this replaces it with a menu path. */
+  online?: { client: NetClient };
 }
 
 export class WinScene extends Phaser.Scene {
@@ -27,8 +30,15 @@ export class WinScene extends Phaser.Scene {
     debugApi.scene = 'win';
     this.add.image(240, 135, 'bg-boteco').setDisplaySize(480, 270);
     this.add.rectangle(240, 135, 480, 270, 0x1a0f0a, 0.55);
-    const banner = this.add.image(240, 90, 'banner-victory');
-    this.tweens.add({ targets: banner, scale: { from: 0.6, to: 1 }, duration: 300, ease: 'Back.out' });
+    // banner ships at 3x (480x144); logical size is 160x48, so scale 1/3 is "full size"
+    const bannerScale = 1 / 3;
+    const banner = this.add.image(240, 90, 'banner-victory').setScale(bannerScale);
+    this.tweens.add({
+      targets: banner,
+      scale: { from: bannerScale * 0.6, to: bannerScale },
+      duration: 300,
+      ease: 'Back.out',
+    });
     label(this, 240, 88, t('win.title'), 24, '#f7d23e');
     label(
       this,
@@ -53,6 +63,18 @@ export class WinScene extends Phaser.Scene {
     }
 
     this.renderResults(data.results ?? []);
+
+    if (data.online) {
+      // online rematch is out of MVP scope (docs/PHASE5_CLIENT_PLAN.md §A) — never strand the
+      // player on a dead room, just leave it and go back to the local menu.
+      const client = data.online.client;
+      new PixelButton(this, 240, 220, t('win.menu'), () => {
+        client.leaveRoom();
+        debugApi.online = null;
+        this.scene.start('menu');
+      }, { textureBase: 'btn-feito', w: 130, h: 20, size: 8 });
+      return;
+    }
 
     new PixelButton(this, 240, 195, t('win.replaySame'), () => this.scene.start('game', data.config), {
       textureBase: 'btn-feito', w: 130, h: 20, size: 8,

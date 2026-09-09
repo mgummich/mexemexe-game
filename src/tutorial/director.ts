@@ -16,6 +16,14 @@ export type TutorialAction =
 export class TutorialDirector {
   private index = 0;
   private finishedFlag = false;
+  /**
+   * Steps advanced by reaching their goal (not by NEXT), with the turn they completed on.
+   * Undo/reset can take a draft back below an earlier step's goal; without rewinding, the
+   * script would keep asking for something the player has already been sent past. The turn is
+   * recorded because a goal met on an earlier turn (e.g. "confirm the turn") stays met even
+   * though the fresh draft no longer satisfies the draft-based steps before it.
+   */
+  private autoAdvanced: { index: number; turn: number }[] = [];
 
   get step(): TutorialStep {
     return TUTORIAL_STEPS[this.index]!;
@@ -49,12 +57,18 @@ export class TutorialDirector {
   /** Manual advance for pure-explanation steps (NEXT button). */
   next(): void {
     if (this.index < TUTORIAL_STEPS.length - 1) this.index++;
+    // An explicit NEXT locks in everything before it: some later steps deliberately ask the
+    // player to undo an earlier step's goal (put the 9♣ back), which must not rewind the script.
+    this.autoAdvanced = [];
   }
 
-  /** Call after any state/draft mutation; advances the step if its goal is met. */
+  /** Call after any state/draft mutation; rewinds past goals the player has undone, then
+   * advances the step if the current goal is met. */
   checkComplete(state: GameState, draft: DraftState | null): boolean {
+    this.rewindUndoneGoals(state, draft);
     if (!this.step.isComplete({ state, draft })) return false;
     if (this.index < TUTORIAL_STEPS.length - 1) {
+      this.autoAdvanced.push({ index: this.index, turn: state.turn });
       this.index++;
       return true;
     }
@@ -62,8 +76,20 @@ export class TutorialDirector {
     return false;
   }
 
+  private rewindUndoneGoals(state: GameState, draft: DraftState | null): void {
+    for (let last = this.autoAdvanced.at(-1); last; last = this.autoAdvanced.at(-1)) {
+      // Only same-turn goals can be undone — an earlier turn's goal is permanent history.
+      if (last.turn !== state.turn) return;
+      if (TUTORIAL_STEPS[last.index]!.isComplete({ state, draft })) return;
+      this.autoAdvanced.pop();
+      this.index = last.index;
+      this.finishedFlag = false;
+    }
+  }
+
   restart(): void {
     this.index = 0;
     this.finishedFlag = false;
+    this.autoAdvanced = [];
   }
 }

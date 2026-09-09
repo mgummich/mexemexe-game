@@ -30,8 +30,8 @@
     "e2e"
   ],
   "tests": {
-    "unit": "112/112 pass",
-    "e2e": "25/25 pass",
+    "unit": "190/190 pass",
+    "e2e": "31/31 pass (npm run verify) + 1/1 multiplayer e2e (npm run verify:multiplayer)",
     "lint": "clean",
     "build": "pass (gated in verify)"
   },
@@ -83,7 +83,7 @@
     "PT accents slightly rough at 6-7px font sizes",
     "no renderAll sprite pooling (fps 59 at 21 sprites+20 zones; revisit only if a lower-end target dips below 50)"
   ],
-  "nextTask": "shipped 1.0.0 (launch build)",
+  "nextTask": "Phase 5 online alpha shipped as 1.1.0. Carried polish items for a future pass: lobby backdrop opacity, replace window.prompt join-code entry with a styled in-canvas input, fix stalemate banner/subtitle overlap, add a socket liveness probe (ping/pong timeout) instead of relying solely on the disconnect grace timer.",
   "phase4Scores": {
     "launchStability": 9.5,
     "fullFlow": 9,
@@ -99,7 +99,7 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": 4,
+  "phase": "rules-adaptation",
   "phase4AuditSummary": "RC solid (all suites green, 57-60fps, 0 console errors). Launch gaps are polish: micro-text illegible at 720p (top bar, tooltips, labels), 4p prop occlusion (mug over avatar, cookie plate under FEITO tooltip), flat-rect secondary buttons read as programmer art, missing RELEASE_NOTES/per-personality showcases, version mismatch 0.1.0 vs 0.3.0. See docs/PHASE4_AUDIT.md.",
   "phase4Blockers": [],
   "phase4PriorityIssues": [
@@ -112,11 +112,16 @@
     "release docs: RELEASE_NOTES.md, CHANGELOG 1.0.0, package version bump"
   ],
   "modelRoles": {
-    "audit": "fable",
-    "critique": "fable",
-    "pixellab-prompts": "fable",
-    "implementation": "sonnet",
-    "tests-and-verify-runs": "sonnet"
+    "phase5AuditArchitectureUxReconnectReasoning": "opus",
+    "phase5ServerAndClientReview": "opus",
+    "phase5ScreenshotLogCritiqueAndScoring": "opus",
+    "phase5ProseDocs": "opus (docs/PHASE5_AUDIT.md, docs/MULTIPLAYER_ARCHITECTURE.md draft, docs/PHASE5_CLIENT_PLAN.md, docs/PHASE5_SERVER_REVIEW.md, docs/PHASE5_CRITIC.md)",
+    "phase5CodeTestsScriptsConfigsPackageFiles": "sonnet",
+    "phase5ImplementationSpecificDocFinalization": "sonnet",
+    "rulesAdaptationRuleReconciliationEdgeCaseAnalysisTestPlanning": "opus",
+    "rulesAdaptationAuditCritiqueScoring": "opus",
+    "rulesAdaptationProseDocs": "opus (docs/RULES.md, docs/RULES_ADAPTATION_AUDIT.md)",
+    "rulesAdaptationCodeTestsConfigsGeneratedFiles": "sonnet"
   },
   "auditSummary": "Phase 3 audit: core solid; gaps = pause/quit/error-recovery flow, unversioned persistence, color-only validity, no keyboard, no perf soak evidence, build not gated, release docs missing.",
   "topIssues": [
@@ -204,6 +209,41 @@
       "wave": "p4-3 button unification sweep + rematch/reset e2e + personality showcases + release packaging",
       "model": "sonnet",
       "result": "done: found pause-menu.ts and rules-panel.ts were still calling PixelButton without textureBase (flat-rect fallback, missed by p4-2's sweep) — added textureBase:'btn-comprar' to all 6 pause-menu buttons (green Continuar, neutral Ajustes/Regras, red DANGER_TINT Sair pra menu + quit-confirm Sim/Não) and the rules-panel Fechar button; also converted the 3 tutorial replay/next/skip PixelButtons in GameScene.ts (same missed-textureBase bug). Every PixelButton call in src now passes textureBase (verified: instance count == textureBase count across all files) — no flat-rect buttons remain. Error toast (src/main.ts) is a plain DOM notification with no action button, nothing to convert there. Rules/help panel already listed all required shortcuts (Esc/Z/Shift+Z/Y/R/C/F/S/H) in both PT and EN localization strings from p3-3 — no change needed (job 3 was already satisfied). E2e: added MenuScene.startGame ?ai=<personality> URL override (2-player showcase games always defaulted to Dona Cida; now `?showcase=mexe&ai=juninho` etc. forces the single opponent) plus 6 new e2e tests in e2e/screenshot.spec.ts — 4 per-personality AI showcase captures (ai-cida/juninho/bia/ze, seed 77, asserts opponent name + non-null ai:thought, screenshot each), rematch (WinScene MESMA PARTIDA at seed 555 -> asserts new game scene, same seed, turn===1 fresh state, 0 errors), and reset-data (settings APAGAR DADOS + Sim -> asserts localStorage mexe-save cleared and page reboots with ready===true, 0 errors). Release packaging: package.json version 0.1.0->1.0.0, CHANGELOG.md 1.0.0 Phase 4 entry added, docs/RELEASE_NOTES.md DRAFT line removed (reviewed against code, no factual corrections needed), README.md 'Features (Phase 2)' -> 'Features', added ?ai= URL param doc, test count 110->112. Verify: 112/112 unit, 25/25 e2e (was 19), lint clean, tsc clean, build pass, 0 console errors, 0 missing assets, 58-60fps; visually confirmed pause.png/help.png show wooden buttons + shortcuts line, and all 4 ai-<personality>.png captures show correct avatar/name with the ai:thought bubble. 6 new screenshots copied into docs/screenshots/final/."
+    },
+    {
+      "wave": "p5-1 audit + architecture",
+      "model": "opus",
+      "result": "done: docs/PHASE5_AUDIT.md (risk-ranked readiness audit) and docs/MULTIPLAYER_ARCHITECTURE.md (protocol/lifecycle/reconnect design draft) written; both reasoning/prose only, no code touched"
+    },
+    {
+      "wave": "p5-2 shared core + server MVP",
+      "model": "sonnet",
+      "result": "done: src/net/protocol.ts (versioned envelope, redacted GameView via buildView, id-only proposal types, boundary validator parseClientMessage), server/rooms.ts (RoomManager: create/join/ready/submitTurn/drawEndTurn via shared canConfirmTurn+applyConfirmedTurn, server-chosen seed, 52-card conservation assert), server/index.ts + server/connections.ts (ws server, health check, dispatch); 39 server unit tests incl. malformed-message battery"
+    },
+    {
+      "wave": "p5-3 client online flow",
+      "model": "sonnet",
+      "result": "done: src/net/client.ts (NetClient), src/net/viewToState.ts, src/scenes/OnlineScene.ts (lobby), GameScene online branch (localSeat, read-only opponent turn via unwired interaction, submit-and-wait FEITO/COMPRAR, rejection handling, stale-rev-drop), WinScene online path (MENU only, no rematch); docs/PHASE5_CLIENT_PLAN.md written by opus ahead of this wave"
+    },
+    {
+      "wave": "p5-4 server lifecycle fixes S1-S6, S8",
+      "model": "sonnet",
+      "result": "done: docs/PHASE5_SERVER_REVIEW.md (opus) found S1 reaped rooms stuck clients, S2 abandoned game never ends, S3 idle timeout could reap a live lobby, S4 reconnect zombie socket, S5 no resource ceilings, S6 rehydration map too wide, S7 no liveness probe (accepted for alpha), S8 unreachable processing guard (documented); sonnet fixed S1 (closeRoom notifies+detaches on sweep), S2 (leaveRoom mid-game closes the room for the survivor), S3 (reap only on all-seats-disconnected-past-grace or idle-with-nobody-connected), S4 (evictSeat on reconnect), S5 (MAX_ROOMS cap + per-connection flood guard), S6 (rehydration map scoped to active hand + table, unknownCard reason)"
+    },
+    {
+      "wave": "p5-5 reconnect + multiplayer verification",
+      "model": "sonnet",
+      "result": "done: C1 fix (single bounded client-side reconnect retry in NetClient, previously server-only/dead code per opus finding), playwright.multiplayer.config.ts, e2e-multiplayer/multiplayer.spec.ts (two-context flow: create/join/ready/game_started, legal turn observed on both clients, illegal proposal rejected with reason.unknownCard and no rev movement, forced socket drop via NetClient.forceDrop verification hook, reconnect to same revision, draw/end, win/stalemate), scripts/check-verify-multiplayer.mjs gate, docs/screenshots/verify-multiplayer-log.json + mp-*.png captures"
+    },
+    {
+      "wave": "p5-6 critic pass (V1/V2/L1-L5)",
+      "model": "opus",
+      "result": "docs/PHASE5_CRITIC.md: verified the verify-multiplayer-log.json and screenshots are real and match the design; found V1 (reconnect unevidenced at the time) and V2 (both-ready lobby screenshot was actually an in-match shot) as blockers, L1 (lobby lacks a backdrop panel), L2 (player-list row unreadable), L3 (name hidden behind active-avatar ring), L4 (stalemate copy reads as a win, cosmetic), L5 (window.prompt carried as known issue); gated reconnect/recovery and docs at 7.0, below the 8.5 bar"
+    },
+    {
+      "wave": "p5-7 docs finalization",
+      "model": "sonnet",
+      "result": "done: README Online Alpha section (run/play/WS URL resolution/HTTPS caveat/limitations/scripts), CHANGELOG + RELEASE_NOTES 1.1.0 online-alpha entries, package.json 1.0.0->1.1.0, docs/MULTIPLAYER_ARCHITECTURE.md reconciled against shipped code (game_started vs nonexistent start_game, reconnect token accepted for room lifetime not gated by grace window, reason.unknownCard added, room_closed error documented, new section 12 as-built file list), docs/STATUS.json phase5 fields"
     }
   ],
   "phase2Scores": {
@@ -220,39 +260,45 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-08T18:49:50.683Z",
+    "generatedAt": "2026-09-09T07:47:22.913Z",
     "perShotFps": {
       "menu": 60,
-      "game": 57,
-      "game4": 58,
-      "tutorial": 57,
-      "tutorial-step2": 57,
-      "setup": 58,
-      "settings": 54,
-      "win": 57,
-      "mexe-invalid": 57,
-      "comprar-flow": 57,
-      "ai-showcase-mid": 57,
-      "ai-showcase-after": 57,
+      "game": 60,
+      "game4": 60,
+      "tutorial": 58,
+      "tutorial-step2": 58,
+      "setup": 60,
+      "settings": 58,
+      "win": 60,
+      "mexe-invalid": 58,
+      "comprar-flow": 58,
+      "ai-showcase-mid": 58,
+      "ai-showcase-after": 58,
       "ai-cida": 58,
-      "ai-juninho": 57,
+      "ai-juninho": 58,
       "ai-bia": 58,
-      "ai-ze": 57,
-      "pause": 56,
-      "help": 55,
+      "ai-ze": 58,
+      "pause": 59,
+      "help": 56,
+      "help-en": 54,
       "menu-en": 60,
-      "game-en": 57,
-      "a11y-large-text": 57,
+      "game-en": 58,
+      "a11y-large-text": 58,
       "keyboard-comprar": 58,
-      "stress-table": 57,
-      "game-1080p": 58
+      "stress-table": 59,
+      "game-1080p": 60,
+      "joker-in-hand": 60,
+      "joker-in-run": 58,
+      "joker-in-group": 58,
+      "mexe-invalid-kA2": 60,
+      "repeated-suit-group": 58
     },
     "viewports": [
       "1280x720",
       "1920x1080"
     ],
-    "unitTests": "112/112 pass",
-    "e2eTests": "24/24 pass"
+    "unitTests": "187/187 pass",
+    "e2eTests": "30/30 pass"
   },
   "phase3Scores": {
     "fullFlow": 9,
@@ -265,5 +311,52 @@
     "performance": 9.5,
     "localization": 9,
     "releaseReadiness": 9
-  }
+  },
+  "phase5AuditSummary": "Phase 5 audit (docs/PHASE5_AUDIT.md): 1.0.0 baseline had zero network layer. Rules engine (src/rules, src/mexe-mode, src/core/rng, src/game-state/store) was already environment-free and reusable server-side. Top risks ranked: full-state broadcast leaking hidden hands, client-supplied card objects enabling forgery, seat-0 rendering assumption, missing revision numbers, client-generated meld ids, AI timers in GameScene, unguarded socket input, stuck lobbies with no reaper, client-choosable deal seeds, and risk of local regression from editing shared files. All ten were addressed in the shared-core/server/client build.",
+  "phase5Blockers": [],
+  "phase5PriorityIssues": [
+    "lobby backdrop still fairly transparent over bright artwork",
+    "window.prompt used for join-code entry",
+    "stalemate copy reads as a win and its subtitle overlaps the results row",
+    "no socket liveness probe (half-open connection holds a seat until the grace timer)"
+  ],
+  "phase5Scores": {
+    "localStability": 9.5,
+    "serverStability": 9,
+    "protocolCorrectness": 9,
+    "authoritativeValidation": 9.5,
+    "syncReliability": 9,
+    "mexeNetworkUX": 8.5,
+    "reconnectRecovery": 9,
+    "tests": 9,
+    "docs": 9,
+    "alphaReadiness": 8.5
+  },
+  "phase5PassGate": "PASS: 155 unit tests (incl. 39 server) + 25 local e2e + 1 multiplayer e2e, lint, build, npm run verify, and npm run verify:multiplayer all green; 0 client console errors on either client in the multiplayer run; empty server stderr; an illegal proposal rejected with reason.unknownCard and no revision movement (accepted: false); a forced socket drop on one client reconnected and resynced to the same revision the other client was on (revisionBefore === revisionAfter), captured in docs/screenshots/verify-multiplayer-log.json with disconnected/reconnecting/reconnected screenshots; all ten phase5Scores dimensions >= 8.5.",
+  "cavemanUsage": "Every Sonnet code subagent for Phase 5 (5 code waves: shared core + server MVP, client online flow, server lifecycle fixes S1-S6/S8, reconnect + multiplayer verification, and this docs-finalization wave) was instructed to invoke the caveman:caveman skill via the Skill tool before starting work, and did so. The Opus reasoning role (audit, architecture, client plan, server/client review, critic pass) ran under session-level caveman mode activated by a SessionStart hook rather than by a per-task Skill invocation — this is a real distinction, not equivalent to the Sonnet waves' explicit per-task invocation, and is stated here plainly rather than claimed as the same thing. Rules-adaptation phase: every subagent (Opus reconciliation/audit/critique and every Sonnet code wave) invoked the caveman:caveman skill before starting its assigned work.",
+  "rules_adaptation": "done",
+  "rulesAdaptationScores": {
+    "deckCorrectness": 9.5,
+    "jokerCorrectness": 9,
+    "aceCorrectness": 9.5,
+    "turnDrawCorrectness": 9.5,
+    "tableManipulationCorrectness": 9,
+    "uiClarity": 9,
+    "aiCompatibility": 9,
+    "multiplayerCompatibility": 9,
+    "tests": 9.5,
+    "docs": 9
+  },
+  "rulesAdaptationPassGate": "PASS: all rulesAdaptationScores >= 8.5, with the final gate run showing 190/190 unit tests, lint clean, build pass, and 1/1 multiplayer e2e green (npm run verify:multiplayer OK, 0 client console errors).",
+  "rulesAdaptationAuditSummary": "Opus audit (docs/RULES_ADAPTATION_AUDIT.md) found the MVP engine assumed a single 52-card deck with no jokers, ace-low-only runs, sets requiring distinct suits, and a stalemate-by-full-round-of-passes end condition — all four wrong for the final ruleset (two 54-card decks, ace low or high, repeated-suit groups, immediate end on empty pile). It scoped the fix to a nullable-suit/rank Card model with deckId and isJoker, a RulesConfig house-rule surface, and analyzeMeld as the single validity source of truth returning joker assignments, and ranked joker run-assignment correctness and ace-wrap rejection as the top implementation risks.",
+  "rulesAdaptationPriorityIssues": [
+    "validator correctness (analyzeMeld: joker assignment, ace-wrap rejection)",
+    "tests",
+    "local gameplay",
+    "multiplayer authority",
+    "UI clarity",
+    "AI",
+    "docs",
+    "screenshots"
+  ]
 }

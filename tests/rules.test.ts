@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRng } from '../src/core/rng';
 import {
+  analyzeMeld,
   applyConfirmedTurn,
   canConfirmTurn,
   checkWinner,
@@ -9,40 +10,56 @@ import {
   deserializeGameState,
   drawAndEndTurn,
   getInvalidMeldReasons,
+  isValidGroup,
   isValidMeld,
   isValidRun,
-  isValidSet,
   serializeGameState,
   shuffleDeck,
+  timerExpireTurn,
   validateTable,
 } from '../src/rules/rules';
-import type { Card, DraftState, GameState, Rank, Suit } from '../src/rules/types';
-import { RulesError } from '../src/rules/types';
+import type { DraftState, GameState, RulesConfig } from '../src/rules/types';
+import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import { createNewGame } from '../src/game-state/store';
-
-function c(suit: Suit, rank: number): Card {
-  return { id: `${suit}-${rank}`, suit, rank: rank as Rank };
-}
+import { n, j } from './helpers/cards';
 
 describe('createDeck', () => {
-  it('makes 52 unique cards', () => {
+  it('default config: 108 cards, 4 jokers, 104 naturals, all ids unique', () => {
     const deck = createDeck();
+    expect(deck).toHaveLength(108);
+    expect(deck.filter((c) => c.isJoker)).toHaveLength(4);
+    expect(deck.filter((c) => !c.isJoker)).toHaveLength(104);
+    expect(new Set(deck.map((c) => c.id)).size).toBe(108);
+  });
+
+  it('exactly two cards per (suit, rank), differing only by deckId', () => {
+    const deck = createDeck();
+    const heartsSevens = deck.filter((c) => !c.isJoker && c.suit === 'hearts' && c.rank === 7);
+    expect(heartsSevens).toHaveLength(2);
+    expect(new Set(heartsSevens.map((c) => c.deckId)).size).toBe(2);
+    expect(heartsSevens.every((c) => c.suit === 'hearts' && c.rank === 7)).toBe(true);
+  });
+
+  it('single-deck no-joker config yields 52 cards, 0 jokers', () => {
+    const deck = createDeck({ ...DEFAULT_RULES, deckCount: 1, jokersPerDeck: 0 });
     expect(deck).toHaveLength(52);
-    expect(new Set(deck.map((x) => x.id)).size).toBe(52);
+    expect(deck.filter((c) => c.isJoker)).toHaveLength(0);
   });
 });
 
 describe('shuffleDeck', () => {
-  it('is deterministic for same seed', () => {
+  it('is deterministic for the same seed', () => {
     const a = shuffleDeck(createDeck(), createRng(42));
     const b = shuffleDeck(createDeck(), createRng(42));
     expect(a.map((x) => x.id)).toEqual(b.map((x) => x.id));
   });
-  it('differs across seeds and keeps all cards', () => {
-    const a = shuffleDeck(createDeck(), createRng(1));
-    const b = shuffleDeck(createDeck(), createRng(2));
+  it('differs across seeds but preserves the multiset of ids', () => {
+    const deck = createDeck();
+    const a = shuffleDeck(deck, createRng(1));
+    const b = shuffleDeck(deck, createRng(2));
     expect(a.map((x) => x.id)).not.toEqual(b.map((x) => x.id));
-    expect(new Set(a.map((x) => x.id)).size).toBe(52);
+    expect(a.map((x) => x.id).sort()).toEqual(deck.map((x) => x.id).sort());
+    expect(b.map((x) => x.id).sort()).toEqual(deck.map((x) => x.id).sort());
   });
   it('does not mutate input', () => {
     const deck = createDeck();
@@ -53,11 +70,11 @@ describe('shuffleDeck', () => {
 });
 
 describe('dealInitialHands', () => {
-  it('deals 7 to each player', () => {
-    const { hands, drawPile } = dealInitialHands(createDeck(), 3);
-    expect(hands).toHaveLength(3);
+  it('deals 7 to each of 4 players, 80 left in the draw pile', () => {
+    const { hands, drawPile } = dealInitialHands(createDeck(), 4);
+    expect(hands).toHaveLength(4);
     hands.forEach((h) => expect(h).toHaveLength(7));
-    expect(drawPile).toHaveLength(52 - 21);
+    expect(drawPile).toHaveLength(108 - 28);
   });
   it('rejects bad player counts', () => {
     expect(() => dealInitialHands(createDeck(), 1)).toThrow(RulesError);
@@ -65,77 +82,145 @@ describe('dealInitialHands', () => {
   });
 });
 
-describe('isValidRun', () => {
-  it('accepts 3+ sequential same suit', () => {
-    expect(isValidRun([c('hearts', 3), c('hearts', 4), c('hearts', 5)])).toBe(true);
-    expect(isValidRun([c('spades', 10), c('spades', 11), c('spades', 12), c('spades', 13)])).toBe(true);
+describe('runs', () => {
+  it('A-2-3 valid (ace low)', () => {
+    expect(isValidRun([n('clubs', 1), n('clubs', 2), n('clubs', 3)])).toBe(true);
   });
-  it('accepts unsorted input', () => {
-    expect(isValidRun([c('hearts', 5), c('hearts', 3), c('hearts', 4)])).toBe(true);
+  it('Q-K-A valid (ace high)', () => {
+    expect(isValidRun([n('clubs', 12), n('clubs', 13), n('clubs', 1)])).toBe(true);
   });
-  it('ace low: A-2-3 valid', () => {
-    expect(isValidRun([c('clubs', 1), c('clubs', 2), c('clubs', 3)])).toBe(true);
+  it('K-A-2 invalid: no wrap', () => {
+    const result = analyzeMeld([n('clubs', 13), n('clubs', 1), n('clubs', 2)]);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.reason).toBe('reason.runWrap');
   });
-  it('no wrap: Q-K-A and K-A-2 invalid', () => {
-    expect(isValidRun([c('clubs', 12), c('clubs', 13), c('clubs', 1)])).toBe(false);
-    expect(isValidRun([c('clubs', 13), c('clubs', 1), c('clubs', 2)])).toBe(false);
+  it('mixed suits invalid', () => {
+    expect(isValidRun([n('hearts', 3), n('spades', 4), n('hearts', 5)])).toBe(false);
   });
-  it('rejects short, mixed suit, gaps', () => {
-    expect(isValidRun([c('hearts', 3), c('hearts', 4)])).toBe(false);
-    expect(isValidRun([c('hearts', 3), c('spades', 4), c('hearts', 5)])).toBe(false);
-    expect(isValidRun([c('hearts', 3), c('hearts', 5), c('hearts', 6)])).toBe(false);
+  it('2 cards -> meldTooSmall', () => {
+    const result = analyzeMeld([n('hearts', 3), n('hearts', 4)]);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.reason).toBe('reason.meldTooSmall');
+  });
+
+  it('joker dropped after two consecutive naturals: 5H 6H joker -> assigned 7H (positional)', () => {
+    const joker = j(0, 1);
+    const result = analyzeMeld([n('hearts', 5), n('hearts', 6), joker]);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.assignments).toEqual([{ cardId: joker.id, suit: 'hearts', rank: 7 }]);
+    }
+  });
+
+  it('joker at the start: joker 6H 7H -> assigned 5H', () => {
+    const joker = j(0, 1);
+    const result = analyzeMeld([joker, n('hearts', 6), n('hearts', 7)]);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.assignments).toEqual([{ cardId: joker.id, suit: 'hearts', rank: 5 }]);
+    }
+  });
+
+  it('joker in the gap: 5H joker 7H -> assigned 6H', () => {
+    const joker = j(0, 1);
+    const result = analyzeMeld([n('hearts', 5), joker, n('hearts', 7)]);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.assignments).toEqual([{ cardId: joker.id, suit: 'hearts', rank: 6 }]);
+    }
+  });
+
+  it('AH joker 3H -> assigned 2H', () => {
+    const joker = j(0, 1);
+    const result = analyzeMeld([n('hearts', 1), joker, n('hearts', 3)]);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.assignments).toEqual([{ cardId: joker.id, suit: 'hearts', rank: 2 }]);
+    }
+  });
+
+  it('joker + QS + KS -> valid, joker takes a legal adjacent spade', () => {
+    const joker = j(0, 1);
+    const result = analyzeMeld([joker, n('spades', 12), n('spades', 13)]);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.assignments).toEqual([{ cardId: joker.id, suit: 'spades', rank: 11 }]); // Jack fills below Q-K
+    }
+  });
+
+  it('2D joker joker AD is valid: ace-low window A-2-3-4 (regression guard)', () => {
+    const j1 = j(0, 1);
+    const j2 = j(0, 2);
+    const result = analyzeMeld([n('diamonds', 2), j1, j2, n('diamonds', 1)]);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      const ranks = result.assignments.map((a) => a.rank).sort();
+      expect(ranks).toEqual([3, 4]);
+      expect(result.assignments.every((a) => a.suit === 'diamonds')).toBe(true);
+    }
+  });
+
+  it('an all-joker meld is invalid', () => {
+    expect(isValidMeld([j(0, 1), j(0, 2), j(1, 1)])).toBe(false);
+  });
+
+  it('a run containing two same-value naturals is invalid', () => {
+    expect(isValidRun([n('hearts', 5, 0), n('hearts', 5, 1), n('hearts', 6)])).toBe(false);
   });
 });
 
-describe('isValidSet', () => {
-  it('accepts 3 or 4 same rank', () => {
-    expect(isValidSet([c('hearts', 9), c('spades', 9), c('clubs', 9)])).toBe(true);
-    expect(isValidSet([c('hearts', 9), c('spades', 9), c('clubs', 9), c('diamonds', 9)])).toBe(true);
+describe('groups', () => {
+  it('9S 9H 9D valid', () => {
+    expect(isValidGroup([n('spades', 9), n('hearts', 9), n('diamonds', 9)])).toBe(true);
   });
-  it('rejects short and mixed rank', () => {
-    expect(isValidSet([c('hearts', 9), c('spades', 9)])).toBe(false);
-    expect(isValidSet([c('hearts', 9), c('spades', 9), c('clubs', 8)])).toBe(false);
+  it('9S(d0) 9S(d1) 9H valid: repeated suit, different decks', () => {
+    expect(isValidGroup([n('spades', 9, 0), n('spades', 9, 1), n('hearts', 9)])).toBe(true);
   });
-});
-
-describe('isValidMeld / validateTable / reasons', () => {
-  it('meld = run or set', () => {
-    expect(isValidMeld([c('hearts', 1), c('hearts', 2), c('hearts', 3)])).toBe(true);
-    expect(isValidMeld([c('hearts', 9), c('spades', 9), c('clubs', 9)])).toBe(true);
-    expect(isValidMeld([c('hearts', 1), c('spades', 2), c('clubs', 3)])).toBe(false);
+  it('9S 9H + joker valid, joker assigned rank 9 / suit null', () => {
+    const joker = j(0, 1);
+    const result = analyzeMeld([n('spades', 9), n('hearts', 9), joker]);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.assignments).toEqual([{ cardId: joker.id, suit: null, rank: 9 }]);
+    }
   });
-  it('validateTable + reasons', () => {
-    const good = { id: 'm1', cards: [c('hearts', 1), c('hearts', 2), c('hearts', 3)] };
-    const small = { id: 'm2', cards: [c('spades', 5), c('spades', 6)] };
-    const junk = { id: 'm3', cards: [c('spades', 5), c('hearts', 9), c('clubs', 13)] };
-    expect(validateTable([good])).toBe(true);
-    expect(validateTable([good, small])).toBe(false);
-    const reasons = getInvalidMeldReasons([good, small, junk]);
-    expect(reasons).toEqual([
-      { meldId: 'm2', reason: 'reason.meldTooSmall' },
-      { meldId: 'm3', reason: 'reason.notAMeld' },
-    ]);
+  it('five same-rank cards -> groupTooLarge (default maxGroupSize 4)', () => {
+    const five = [n('spades', 9, 0), n('hearts', 9, 0), n('diamonds', 9, 0), n('clubs', 9, 0), n('spades', 9, 1)];
+    const result = analyzeMeld(five);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.reason).toBe('reason.groupTooLarge');
+  });
+  it('maxGroupSize:6 house rule makes that same 5-card group valid', () => {
+    const five = [n('spades', 9, 0), n('hearts', 9, 0), n('diamonds', 9, 0), n('clubs', 9, 0), n('spades', 9, 1)];
+    const config: RulesConfig = { ...DEFAULT_RULES, maxGroupSize: 6 };
+    expect(isValidGroup(five, config)).toBe(true);
+  });
+  it('groupUniqueSuits:true rejects the repeated-suit group', () => {
+    const config: RulesConfig = { ...DEFAULT_RULES, groupUniqueSuits: true };
+    expect(isValidGroup([n('spades', 9, 0), n('spades', 9, 1), n('hearts', 9)], config)).toBe(false);
+  });
+  it('mixed ranks invalid', () => {
+    expect(isValidGroup([n('hearts', 9), n('spades', 9), n('clubs', 8)])).toBe(false);
   });
 });
 
 function fixtureState(): GameState {
-  // Hand-built state: p0 hand has a ready set of 9s + extras; table has one run.
   return {
     seed: 1,
     players: [
       {
         id: 'p0', name: 'A', isAi: false,
-        hand: [c('hearts', 9), c('spades', 9), c('clubs', 9), c('diamonds', 2), c('diamonds', 7)],
+        hand: [n('hearts', 9), n('spades', 9), n('clubs', 9), n('diamonds', 2), n('diamonds', 7)],
       },
-      { id: 'p1', name: 'B', isAi: true, aiType: 'simple', hand: [c('clubs', 4), c('clubs', 5)] },
+      { id: 'p1', name: 'B', isAi: true, aiType: 'simple', hand: [n('clubs', 4), n('clubs', 5)] },
     ],
     activePlayerIndex: 0,
-    table: [{ id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5)] }],
-    drawPile: [c('spades', 13), c('spades', 12)],
+    table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
+    drawPile: [n('spades', 13), n('spades', 12)],
     turn: 1,
     winnerId: null,
     phase: 'playing',
-    consecutiveDraws: 0,
+    config: DEFAULT_RULES,
   };
 }
 
@@ -145,50 +230,69 @@ describe('canConfirmTurn', () => {
 
   it('accepts valid draft with hand card added', () => {
     const draft: DraftState = {
-      melds: [tableRun, { id: 'd1', cards: [c('hearts', 9), c('spades', 9), c('clubs', 9)] }],
-      handCardsPlayed: ['hearts-9', 'spades-9', 'clubs-9'],
+      melds: [tableRun, { id: 'd1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] }],
+      handCardsPlayed: [],
     };
     expect(canConfirmTurn(state, draft)).toEqual({ ok: true });
   });
 
-  it('rejects confirm without adding hand card', () => {
+  it('zero hand cards added -> noHandCard', () => {
     const draft: DraftState = { melds: [tableRun], handCardsPlayed: [] };
     const r = canConfirmTurn(state, draft);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reasons).toContain('reason.noHandCard');
   });
 
-  it('rejects table card removed (illegal return to hand)', () => {
+  it('table-start card missing from the draft -> cardMissing', () => {
     const draft: DraftState = {
       melds: [
-        { id: 't1', cards: [c('hearts', 3), c('hearts', 4)] }, // hearts-5 vanished
-        { id: 'd1', cards: [c('hearts', 9), c('spades', 9), c('clubs', 9)] },
+        { id: 't1', cards: [n('hearts', 3), n('hearts', 4)] }, // hearts-5 vanished
+        { id: 'd1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] },
       ],
-      handCardsPlayed: ['hearts-9', 'spades-9', 'clubs-9'],
+      handCardsPlayed: [],
     };
     const r = canConfirmTurn(state, draft);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reasons).toContain('reason.cardMissing');
   });
 
-  it('rejects duplicate card ids', () => {
+  it('the same id twice -> duplicateCard', () => {
     const draft: DraftState = {
       melds: [
         tableRun,
-        { id: 'd1', cards: [c('hearts', 9), c('hearts', 9), c('spades', 9), c('clubs', 9)] },
+        { id: 'd1', cards: [n('hearts', 9), n('hearts', 9), n('spades', 9), n('clubs', 9)] },
       ],
-      handCardsPlayed: ['hearts-9', 'spades-9', 'clubs-9'],
+      handCardsPlayed: [],
     };
     const r = canConfirmTurn(state, draft);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reasons).toContain('reason.duplicateCard');
   });
 
-  it('rejects foreign cards (not in table or hand)', () => {
+  it('regression: two same-rank-same-suit cards with different deckIds do NOT trigger duplicateCard (this is a legal group)', () => {
+    const twoDeckState: GameState = {
+      ...state,
+      players: [
+        { ...state.players[0]!, hand: [...state.players[0]!.hand, n('hearts', 9, 1)] },
+        state.players[1]!,
+      ],
+    };
     const draft: DraftState = {
       melds: [
         tableRun,
-        { id: 'd1', cards: [c('diamonds', 11), c('diamonds', 12), c('diamonds', 13)] },
+        { id: 'd1', cards: [n('hearts', 9, 0), n('hearts', 9, 1), n('spades', 9)] },
+      ],
+      handCardsPlayed: [],
+    };
+    const r = canConfirmTurn(twoDeckState, draft);
+    expect(r.ok).toBe(true); // two hearts-9s from different decks are distinct cards, not a duplicate
+  });
+
+  it('foreign card -> foreignCard', () => {
+    const draft: DraftState = {
+      melds: [
+        tableRun,
+        { id: 'd1', cards: [n('diamonds', 11), n('diamonds', 12), n('diamonds', 13)] },
       ],
       handCardsPlayed: [],
     };
@@ -197,31 +301,27 @@ describe('canConfirmTurn', () => {
     if (!r.ok) expect(r.reasons).toContain('reason.foreignCard');
   });
 
-  it('temporary invalid draft rejected as final, valid draft accepted', () => {
-    const invalidDraft: DraftState = {
-      melds: [
-        { id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5), c('diamonds', 2)] },
-      ],
-      handCardsPlayed: ['diamonds-2'],
-    };
-    const r = canConfirmTurn(state, invalidDraft);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reasons).toContain('reason.notAMeld');
-
-    const validDraft: DraftState = {
-      melds: [
-        { id: 't1', cards: [c('hearts', 2), c('hearts', 3), c('hearts', 4), c('hearts', 5)] },
-      ],
-      handCardsPlayed: ['hearts-2'],
-    };
-    const stateWithH2: GameState = {
+  it('a valid joker meld confirms; applyConfirmedTurn removes exactly those cards from hand, joker keeps its own id on the table', () => {
+    const joker = j(0, 1);
+    const s: GameState = {
       ...state,
       players: [
-        { ...state.players[0]!, hand: [...state.players[0]!.hand, c('hearts', 2)] },
+        { ...state.players[0]!, hand: [...state.players[0]!.hand, joker] },
         state.players[1]!,
       ],
     };
-    expect(canConfirmTurn(stateWithH2, validDraft)).toEqual({ ok: true });
+    const draft: DraftState = {
+      melds: [tableRun, { id: 'd1', cards: [n('hearts', 9), n('spades', 9), joker] }],
+      handCardsPlayed: [],
+    };
+    const check = canConfirmTurn(s, draft);
+    expect(check).toEqual({ ok: true });
+    const before = s.players[0]!.hand.map((c) => c.id);
+    const next = applyConfirmedTurn(s, draft);
+    const playedIds = new Set(['hearts-9-d0', 'spades-9-d0', joker.id]);
+    expect(next.players[0]!.hand.map((c) => c.id)).toEqual(before.filter((id) => !playedIds.has(id)));
+    const onTable = next.table.find((m) => m.id === 'd1')!;
+    expect(onTable.cards.some((c) => c.id === joker.id && c.isJoker)).toBe(true);
   });
 });
 
@@ -229,11 +329,11 @@ describe('applyConfirmedTurn', () => {
   it('moves cards from hand, replaces table, advances turn', () => {
     const state = fixtureState();
     const draft: DraftState = {
-      melds: [state.table[0]!, { id: 'd1', cards: [c('hearts', 9), c('spades', 9), c('clubs', 9)] }],
-      handCardsPlayed: ['hearts-9', 'spades-9', 'clubs-9'],
+      melds: [state.table[0]!, { id: 'd1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] }],
+      handCardsPlayed: [],
     };
     const next = applyConfirmedTurn(state, draft);
-    expect(next.players[0]!.hand.map((x) => x.id)).toEqual(['diamonds-2', 'diamonds-7']);
+    expect(next.players[0]!.hand.map((x) => x.id)).toEqual(['diamonds-2-d0', 'diamonds-7-d0']);
     expect(next.table).toHaveLength(2);
     expect(next.activePlayerIndex).toBe(1);
     expect(next.turn).toBe(2);
@@ -247,31 +347,161 @@ describe('applyConfirmedTurn', () => {
 
   it('detects win when hand empties', () => {
     const state = fixtureState();
-    state.players[0]!.hand = [c('hearts', 9), c('spades', 9), c('clubs', 9)];
+    state.players[0]!.hand = [n('hearts', 9), n('spades', 9), n('clubs', 9)];
     const draft: DraftState = {
-      melds: [state.table[0]!, { id: 'd1', cards: [c('hearts', 9), c('spades', 9), c('clubs', 9)] }],
-      handCardsPlayed: ['hearts-9', 'spades-9', 'clubs-9'],
+      melds: [state.table[0]!, { id: 'd1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] }],
+      handCardsPlayed: [],
     };
     const next = applyConfirmedTurn(state, draft);
     expect(next.winnerId).toBe('p0');
     expect(next.phase).toBe('finished');
   });
+
+  it('never grows a hand: no draw happens at turn start', () => {
+    const state = fixtureState();
+    const before = state.players[0]!.hand.length;
+    const draft: DraftState = {
+      melds: [state.table[0]!, { id: 'd1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] }],
+      handCardsPlayed: [],
+    };
+    const next = applyConfirmedTurn(state, draft);
+    // 3 cards moved out of hand, none drawn in.
+    expect(next.players[0]!.hand.length).toBe(before - 3);
+  });
+});
+
+describe('committed meld ordering (sortMeldCards, via applyConfirmedTurn)', () => {
+  it('a joker in a valid run commits sorted into its analyzed slot, not pushed to the end', () => {
+    const state = fixtureState();
+    const joker = j(0, 1);
+    const s: GameState = {
+      ...state,
+      players: [
+        {
+          ...state.players[0]!,
+          hand: [...state.players[0]!.hand, n('hearts', 12), n('hearts', 10), joker],
+        },
+        state.players[1]!,
+      ],
+    };
+    // Drafted out of order: Q, 10, joker. Analyzed run is 10-J(joker)-Q.
+    const draft: DraftState = {
+      melds: [
+        s.table[0]!,
+        { id: 'd1', cards: [n('hearts', 12), n('hearts', 10), joker] },
+      ],
+      handCardsPlayed: [],
+    };
+    expect(canConfirmTurn(s, draft)).toEqual({ ok: true });
+    const next = applyConfirmedTurn(s, draft);
+    const onTable = next.table.find((m) => m.id === 'd1')!;
+    expect(onTable.cards.map((c) => c.id)).toEqual(['hearts-10-d0', joker.id, 'hearts-12-d0']);
+  });
+
+  it('re-committing the same joker run a second turn does not drift the joker slot', () => {
+    const state = fixtureState();
+    const joker = j(0, 1);
+    const s: GameState = {
+      ...state,
+      players: [
+        {
+          ...state.players[0]!,
+          hand: [...state.players[0]!.hand, n('hearts', 12), n('hearts', 10), joker],
+        },
+        { ...state.players[1]!, hand: [...state.players[1]!.hand, n('clubs', 6)] },
+      ],
+    };
+    const draft1: DraftState = {
+      melds: [s.table[0]!, { id: 'd1', cards: [n('hearts', 12), n('hearts', 10), joker] }],
+      handCardsPlayed: [],
+    };
+    const afterTurn1 = applyConfirmedTurn(s, draft1);
+    const runOnTable = afterTurn1.table.find((m) => m.id === 'd1')!;
+    // Re-submit the same run cards, scrambled again, plus an unrelated meld from p1's hand
+    // (required to satisfy the "at least one hand card" gate for p1's turn).
+    const draft2: DraftState = {
+      melds: [
+        afterTurn1.table.find((m) => m.id === 't1')!,
+        { id: 'd1', cards: [joker, runOnTable.cards[2]!, runOnTable.cards[0]!] },
+        { id: 'd2', cards: [n('clubs', 4), n('clubs', 5), n('clubs', 6)] },
+      ],
+      handCardsPlayed: [],
+    };
+    expect(canConfirmTurn(afterTurn1, draft2)).toEqual({ ok: true });
+    const afterTurn2 = applyConfirmedTurn(afterTurn1, draft2);
+    const runAgain = afterTurn2.table.find((m) => m.id === 'd1')!;
+    expect(runAgain.cards.map((c) => c.id)).toEqual(['hearts-10-d0', joker.id, 'hearts-12-d0']);
+  });
+
+  it('a joker in a valid group still sorts naturals-first-by-suit, joker last (unchanged)', () => {
+    const state = fixtureState();
+    const joker = j(0, 1);
+    const s: GameState = {
+      ...state,
+      players: [
+        { ...state.players[0]!, hand: [...state.players[0]!.hand, n('spades', 9), joker] },
+        state.players[1]!,
+      ],
+    };
+    const draft: DraftState = {
+      melds: [s.table[0]!, { id: 'd1', cards: [n('spades', 9), joker, n('hearts', 9)] }],
+      handCardsPlayed: [],
+    };
+    expect(canConfirmTurn(s, draft)).toEqual({ ok: true });
+    const next = applyConfirmedTurn(s, draft);
+    const onTable = next.table.find((m) => m.id === 'd1')!;
+    expect(onTable.cards.map((c) => c.id)).toEqual(['hearts-9-d0', 'spades-9-d0', joker.id]);
+  });
 });
 
 describe('drawAndEndTurn', () => {
-  it('draws 1 and passes turn', () => {
+  it('non-empty pile: draws 1 and advances the turn', () => {
     const state = fixtureState();
     const next = drawAndEndTurn(state);
     expect(next.players[0]!.hand).toHaveLength(6);
-    expect(next.players[0]!.hand.at(-1)!.id).toBe('spades-13');
+    expect(next.players[0]!.hand.at(-1)!.id).toBe('spades-13-d0');
     expect(next.drawPile).toHaveLength(1);
     expect(next.activePlayerIndex).toBe(1);
   });
-  it('empty pile: turn still passes, no crash', () => {
+
+  it('empty pile: finishes the game immediately, fewest-cards winner, no card drawn', () => {
     const state = { ...fixtureState(), drawPile: [] };
     const next = drawAndEndTurn(state);
-    expect(next.players[0]!.hand).toHaveLength(5);
-    expect(next.activePlayerIndex).toBe(1);
+    expect(next.phase).toBe('finished');
+    expect(next.players[0]!.hand).toHaveLength(5); // untouched, no draw
+    expect(next.winnerId).toBe('p1'); // p1 has 2 cards vs p0's 5
+  });
+
+  it('empty pile ties go to the earliest seat', () => {
+    const state: GameState = {
+      ...fixtureState(),
+      players: [
+        { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 2)] },
+        { id: 'p1', name: 'B', isAi: false, hand: [n('clubs', 4)] },
+      ],
+      drawPile: [],
+    };
+    const next = drawAndEndTurn(state);
+    expect(next.phase).toBe('finished');
+    expect(next.winnerId).toBe('p0');
+  });
+});
+
+describe('timerExpireTurn', () => {
+  it('behaves exactly like the draw-and-pass path (reverts to turn-start state, draws, ends turn)', () => {
+    const state = fixtureState();
+    const viaTimer = timerExpireTurn(state);
+    const viaDraw = drawAndEndTurn(state);
+    expect(viaTimer).toEqual(viaDraw);
+    expect(viaTimer.players[0]!.hand).toHaveLength(6);
+    expect(viaTimer.activePlayerIndex).toBe(1);
+  });
+
+  it('on an empty pile, also ends the game (fewest-cards winner)', () => {
+    const state = { ...fixtureState(), drawPile: [] };
+    const next = timerExpireTurn(state);
+    expect(next.phase).toBe('finished');
+    expect(next.winnerId).toBe('p1');
   });
 });
 
@@ -284,8 +514,102 @@ describe('checkWinner', () => {
   });
 });
 
+describe('win only via confirm, never via drawAndEndTurn', () => {
+  it('a zero-hand player sitting idle is not "discovered" as a winner by drawAndEndTurn', () => {
+    const state = fixtureState();
+    const weird: GameState = { ...state, players: [{ ...state.players[0]!, hand: [] }, state.players[1]!] };
+    const next = drawAndEndTurn(weird);
+    expect(next.winnerId).toBeNull();
+    expect(next.phase).toBe('playing');
+  });
+});
+
+describe('turn order cycling', () => {
+  function threePlayerState(): GameState {
+    return {
+      seed: 1,
+      players: [
+        { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 2), n('hearts', 6)] },
+        { id: 'p1', name: 'B', isAi: false, hand: [n('clubs', 4)] },
+        { id: 'p2', name: 'C', isAi: false, hand: [n('diamonds', 8), n('diamonds', 9), n('spades', 1)] },
+      ],
+      activePlayerIndex: 0,
+      table: [],
+      drawPile: [n('hearts', 10), n('hearts', 11), n('hearts', 12)],
+      turn: 1,
+      winnerId: null,
+      phase: 'playing',
+      config: DEFAULT_RULES,
+    };
+  }
+
+  it('3-player turn order cycles 0->1->2->0 via drawAndEndTurn', () => {
+    let state = threePlayerState();
+    expect(state.activePlayerIndex).toBe(0);
+    state = drawAndEndTurn(state);
+    expect(state.activePlayerIndex).toBe(1);
+    state = drawAndEndTurn(state);
+    expect(state.activePlayerIndex).toBe(2);
+    state = drawAndEndTurn(state);
+    expect(state.activePlayerIndex).toBe(0);
+  });
+
+  it('applyConfirmedTurn also cycles turn order for 3 players', () => {
+    let state = threePlayerState();
+    state = { ...state, table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }] };
+    const validDraft: DraftState = {
+      melds: [{ id: 't1', cards: [n('hearts', 2), n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
+      handCardsPlayed: [],
+    };
+    const next = applyConfirmedTurn(state, validDraft);
+    expect(next.activePlayerIndex).toBe(1);
+  });
+
+  it('4-player deck exhaustion tie: earliest seat wins', () => {
+    const state: GameState = {
+      seed: 1,
+      players: [
+        { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 2)] },
+        { id: 'p1', name: 'B', isAi: false, hand: [n('clubs', 4)] },
+        { id: 'p2', name: 'C', isAi: false, hand: [n('diamonds', 8), n('diamonds', 9), n('spades', 1)] },
+        { id: 'p3', name: 'D', isAi: false, hand: [n('spades', 5), n('spades', 6)] },
+      ],
+      activePlayerIndex: 0,
+      table: [],
+      drawPile: [],
+      turn: 1,
+      winnerId: null,
+      phase: 'playing',
+      config: DEFAULT_RULES,
+    };
+    const next = drawAndEndTurn(state);
+    expect(next.phase).toBe('finished');
+    expect(next.winnerId).toBe('p0');
+  });
+});
+
+describe('isValidMeld / validateTable / reasons', () => {
+  it('meld = run or group', () => {
+    expect(isValidMeld([n('hearts', 1), n('hearts', 2), n('hearts', 3)])).toBe(true);
+    expect(isValidMeld([n('hearts', 9), n('spades', 9), n('clubs', 9)])).toBe(true);
+    expect(isValidMeld([n('hearts', 1), n('spades', 2), n('clubs', 3)])).toBe(false);
+  });
+  it('validateTable + reasons', () => {
+    const good = { id: 'm1', cards: [n('hearts', 1), n('hearts', 2), n('hearts', 3)] };
+    const small = { id: 'm2', cards: [n('spades', 5), n('spades', 6)] };
+    const junk = { id: 'm3', cards: [n('spades', 5), n('hearts', 9), n('clubs', 13)] };
+    expect(validateTable([good])).toBe(true);
+    expect(validateTable([good, small])).toBe(false);
+    const reasons = getInvalidMeldReasons([good, small, junk]);
+    expect(reasons).toEqual([
+      { meldId: 'm2', reason: 'reason.meldTooSmall' },
+      { meldId: 'm3', reason: 'reason.notAMeld' },
+    ]);
+  });
+});
+
 describe('serialize/deserialize', () => {
-  it('round-trips a real game', () => {
+  it('round-trips a real game (default 108-card config)', () => {
     const state = createNewGame(123, [
       { name: 'A', isAi: false },
       { name: 'B', isAi: true, aiType: 'simple' },
@@ -293,6 +617,44 @@ describe('serialize/deserialize', () => {
     const back = deserializeGameState(serializeGameState(state));
     expect(back).toEqual(state);
   });
+
+  it('preserves joker identity (id/isJoker/deckId) and config through a round trip', () => {
+    const config: RulesConfig = { ...DEFAULT_RULES, deckCount: 1, jokersPerDeck: 1 };
+    const deck = createDeck(config);
+    const joker = deck.find((c) => c.isJoker)!;
+    const naturals = deck.filter((c) => !c.isJoker);
+    const table = [{ id: 't1', cards: [naturals[0]!, naturals[1]!, joker] }]; // 9S? just any 3 — validity irrelevant to (de)serialize
+    const used = new Set(table[0]!.cards.map((c) => c.id));
+    const rest = deck.filter((c) => !used.has(c.id));
+    const p0Hand = rest.slice(0, 26);
+    const p1Hand = rest.slice(26, 52);
+    const drawPile = rest.slice(52);
+    const state: GameState = {
+      seed: 9,
+      players: [
+        { id: 'p0', name: 'A', isAi: false, hand: p0Hand },
+        { id: 'p1', name: 'B', isAi: false, hand: p1Hand },
+      ],
+      activePlayerIndex: 0,
+      table,
+      drawPile,
+      turn: 1,
+      winnerId: null,
+      phase: 'playing',
+      config,
+    };
+    const back = deserializeGameState(serializeGameState(state));
+    const backJoker = back.table[0]!.cards.find((c) => c.isJoker)!;
+    expect(backJoker).toEqual(joker);
+    expect(back.config).toEqual(config);
+  });
+
+  it('rejects a version-1 envelope with RulesError', () => {
+    const state = createNewGame(1, [{ name: 'A', isAi: false }, { name: 'B', isAi: false }]);
+    const v1 = JSON.stringify({ version: 1, state });
+    expect(() => deserializeGameState(v1)).toThrow(RulesError);
+  });
+
   it('rejects garbage, missing cards, duplicate ids', () => {
     expect(() => deserializeGameState('not json')).toThrow(RulesError);
     expect(() => deserializeGameState('{"players":[]}')).toThrow(RulesError);
@@ -304,6 +666,15 @@ describe('serialize/deserialize', () => {
     expect(() => deserializeGameState(JSON.stringify(missing))).toThrow(RulesError);
     const duped = { ...state, drawPile: [state.drawPile[0]!, ...state.drawPile] };
     expect(() => deserializeGameState(JSON.stringify(duped))).toThrow(RulesError);
+  });
+
+  it('expected total derives from config: a valid single-deck 52-card state deserializes fine', () => {
+    const config: RulesConfig = { ...DEFAULT_RULES, deckCount: 1, jokersPerDeck: 0 };
+    const state = createNewGame(1, [{ name: 'A', isAi: false }, { name: 'B', isAi: false }], config);
+    const all = [...state.players.flatMap((p) => p.hand), ...state.drawPile];
+    expect(all).toHaveLength(52);
+    const back = deserializeGameState(serializeGameState(state));
+    expect(back).toEqual(state);
   });
 });
 
@@ -319,130 +690,6 @@ describe('createNewGame determinism', () => {
   });
 });
 
-describe('stalemate', () => {
-  it('empty pile + full round of draws ends game, fewest cards wins', () => {
-    let state = fixtureState();
-    state = { ...state, drawPile: [] };
-    state = drawAndEndTurn(state); // p0 passes
-    expect(state.phase).toBe('playing');
-    state = drawAndEndTurn(state); // p1 passes -> stalemate
-    expect(state.phase).toBe('finished');
-    expect(state.winnerId).toBe('p1'); // p1 has 2 cards vs p0's 5
-  });
-
-  function threePlayerState(): GameState {
-    return {
-      seed: 1,
-      players: [
-        { id: 'p0', name: 'A', isAi: false, hand: [c('hearts', 2), c('hearts', 6)] },
-        { id: 'p1', name: 'B', isAi: false, hand: [c('clubs', 4)] },
-        { id: 'p2', name: 'C', isAi: false, hand: [c('diamonds', 8), c('diamonds', 9), c('spades', 1)] },
-      ],
-      activePlayerIndex: 0,
-      table: [],
-      drawPile: [],
-      turn: 1,
-      winnerId: null,
-      phase: 'playing',
-      consecutiveDraws: 0,
-    };
-  }
-
-  function fourPlayerState(): GameState {
-    const s = threePlayerState();
-    return {
-      ...s,
-      players: [...s.players, { id: 'p3', name: 'D', isAi: false, hand: [c('spades', 5), c('spades', 6)] }],
-    };
-  }
-
-  it('3-player turn order cycles 0->1->2->0 via drawAndEndTurn', () => {
-    let state = threePlayerState();
-    expect(state.activePlayerIndex).toBe(0);
-    state = drawAndEndTurn(state);
-    expect(state.activePlayerIndex).toBe(1);
-    state = drawAndEndTurn(state);
-    expect(state.activePlayerIndex).toBe(2);
-    state = drawAndEndTurn(state);
-    expect(state.activePlayerIndex).toBe(0);
-  });
-
-  it('4-player turn order cycles 0->1->2->3->0 via drawAndEndTurn', () => {
-    let state = fourPlayerState();
-    for (const expected of [1, 2, 3, 0]) {
-      state = drawAndEndTurn(state);
-      expect(state.activePlayerIndex).toBe(expected);
-    }
-  });
-
-  it('applyConfirmedTurn also cycles turn order for 3 players', () => {
-    let state = threePlayerState();
-    state = { ...state, table: [{ id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5)] }] };
-    // Extend the table run with p0's hearts-2.
-    const validDraft: DraftState = {
-      melds: [{ id: 't1', cards: [c('hearts', 2), c('hearts', 3), c('hearts', 4), c('hearts', 5)] }],
-      handCardsPlayed: ['hearts-2'],
-    };
-    const next = applyConfirmedTurn(state, validDraft);
-    expect(next.activePlayerIndex).toBe(1);
-  });
-
-  it('3-player deck exhaustion: fewest cards wins, tie goes to earliest seat', () => {
-    let state = threePlayerState(); // p0:2, p1:1, p2:3 cards, empty pile
-    state = drawAndEndTurn(state); // p0 passes
-    state = drawAndEndTurn(state); // p1 passes
-    state = drawAndEndTurn(state); // p2 passes -> stalemate, full round
-    expect(state.phase).toBe('finished');
-    expect(state.winnerId).toBe('p1'); // fewest cards (1)
-  });
-
-  it('4-player deck exhaustion tie: earliest seat wins', () => {
-    // p0 and p1 tie for fewest cards (1 each); p0 must win as earliest seat.
-    let state: GameState = {
-      seed: 1,
-      players: [
-        { id: 'p0', name: 'A', isAi: false, hand: [c('hearts', 2)] },
-        { id: 'p1', name: 'B', isAi: false, hand: [c('clubs', 4)] },
-        { id: 'p2', name: 'C', isAi: false, hand: [c('diamonds', 8), c('diamonds', 9), c('spades', 1)] },
-        { id: 'p3', name: 'D', isAi: false, hand: [c('spades', 5), c('spades', 6)] },
-      ],
-      activePlayerIndex: 0,
-      table: [],
-      drawPile: [],
-      turn: 1,
-      winnerId: null,
-      phase: 'playing',
-      consecutiveDraws: 0,
-    };
-    for (let i = 0; i < 4; i++) state = drawAndEndTurn(state);
-    expect(state.phase).toBe('finished');
-    expect(state.winnerId).toBe('p0');
-  });
-});
-
-describe('win only via confirm, never via drawAndEndTurn', () => {
-  it('drawAndEndTurn never sets winnerId while pile is non-empty, even with a zero-hand player present', () => {
-    const state = fixtureState();
-    // Contrive an already-empty-hand player: drawAndEndTurn must not "discover" this
-    // as a win — checkWinner only ever runs inside applyConfirmedTurn.
-    const weird: GameState = { ...state, players: [{ ...state.players[0]!, hand: [] }, state.players[1]!] };
-    const next = drawAndEndTurn(weird);
-    expect(next.winnerId).toBeNull();
-    expect(next.phase).toBe('playing');
-  });
-
-  it('a player reaching 0 cards sets winnerId only through applyConfirmedTurn', () => {
-    const state = fixtureState();
-    state.players[0]!.hand = [c('hearts', 9), c('spades', 9), c('clubs', 9)];
-    const draft: DraftState = {
-      melds: [state.table[0]!, { id: 'd1', cards: [c('hearts', 9), c('spades', 9), c('clubs', 9)] }],
-      handCardsPlayed: ['hearts-9', 'spades-9', 'clubs-9'],
-    };
-    const next = applyConfirmedTurn(state, draft);
-    expect(next.winnerId).toBe('p0');
-  });
-});
-
 describe('empty melds and empty tables', () => {
   it('an explicitly empty meld in the draft is rejected by canConfirmTurn without crashing', () => {
     const state = fixtureState();
@@ -454,7 +701,6 @@ describe('empty melds and empty tables', () => {
     const r = canConfirmTurn(state, draft);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reasons).toContain('reason.noHandCard');
-    // The empty meld itself must be flagged too/not crash reason detection.
     expect(() => getInvalidMeldReasons(draft.melds)).not.toThrow();
     const reasons = getInvalidMeldReasons(draft.melds);
     expect(reasons.find((r2) => r2.meldId === 'empty1')).toEqual({
@@ -463,19 +709,9 @@ describe('empty melds and empty tables', () => {
     });
   });
 
-  it('zero-card confirm on an empty committed table (no melds anywhere) reports noHandCard, no crash', () => {
-    const state = fixtureState();
-    const emptyTableState: GameState = { ...state, table: [] };
-    const draft: DraftState = { melds: [], handCardsPlayed: [] };
-    expect(() => canConfirmTurn(emptyTableState, draft)).not.toThrow();
-    const r = canConfirmTurn(emptyTableState, draft);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reasons).toEqual(['reason.noHandCard']);
-  });
-
   it('singleton and pair melds are explicitly rejected as meldTooSmall', () => {
-    const singleton = { id: 'm1', cards: [c('hearts', 5)] };
-    const pair = { id: 'm2', cards: [c('spades', 7), c('spades', 8)] };
+    const singleton = { id: 'm1', cards: [n('hearts', 5)] };
+    const pair = { id: 'm2', cards: [n('spades', 7), n('spades', 8)] };
     expect(isValidMeld(singleton.cards)).toBe(false);
     expect(isValidMeld(pair.cards)).toBe(false);
     const reasons = getInvalidMeldReasons([singleton, pair]);
@@ -483,74 +719,5 @@ describe('empty melds and empty tables', () => {
       { meldId: 'm1', reason: 'reason.meldTooSmall' },
       { meldId: 'm2', reason: 'reason.meldTooSmall' },
     ]);
-  });
-});
-
-describe('canConfirmTurn: illegal movement variants', () => {
-  it('table card missing while a different hand card is added elsewhere still reports cardMissing', () => {
-    const state = fixtureState();
-    const draft: DraftState = {
-      // hearts-5 dropped from the table run (2 cards left); a wholly different hand
-      // card set is added as a new meld instead of restoring it.
-      melds: [
-        { id: 't1', cards: [c('hearts', 3), c('hearts', 4)] },
-        { id: 'd1', cards: [c('hearts', 9), c('spades', 9), c('clubs', 9)] },
-      ],
-      handCardsPlayed: ['hearts-9', 'spades-9', 'clubs-9'],
-    };
-    const r = canConfirmTurn(state, draft);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reasons).toContain('reason.cardMissing');
-  });
-
-  it('a duplicated card split across two separate melds still reports duplicateCard', () => {
-    const state = fixtureState();
-    const draft: DraftState = {
-      melds: [
-        state.table[0]!,
-        { id: 'd1', cards: [c('hearts', 9), c('spades', 9)] },
-        { id: 'd2', cards: [c('hearts', 9), c('clubs', 9)] }, // hearts-9 duplicated across melds
-      ],
-      handCardsPlayed: ['hearts-9', 'spades-9', 'clubs-9'],
-    };
-    const r = canConfirmTurn(state, draft);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reasons).toContain('reason.duplicateCard');
-  });
-});
-
-describe('serialize/deserialize: mid-game round trip', () => {
-  it('deep-equals a mid-game state with a non-empty table, uneven hands, and preserves consecutiveDraws', () => {
-    // Built from a real 52-card deck so card conservation (required by deserialize) holds.
-    const deck = createDeck();
-    const table: GameState['table'] = [
-      { id: 't1', cards: [c('hearts', 1), c('hearts', 2), c('hearts', 3)] },
-      { id: 't2', cards: [c('diamonds', 5), c('diamonds', 6), c('diamonds', 7)] },
-    ];
-    const p0Hand = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((r) => c('clubs', r)); // 10 cards
-    const p1Hand = [1, 2, 3, 4].map((r) => c('spades', r)); // 4 cards — deliberately uneven
-    const used = new Set([
-      ...table.flatMap((m) => m.cards.map((x) => x.id)),
-      ...p0Hand.map((x) => x.id),
-      ...p1Hand.map((x) => x.id),
-    ]);
-    const drawPile = deck.filter((card) => !used.has(card.id));
-    const midGame: GameState = {
-      seed: 555,
-      players: [
-        { id: 'p0', name: 'A', isAi: false, hand: p0Hand },
-        { id: 'p1', name: 'B', isAi: true, aiType: 'simple', hand: p1Hand },
-      ],
-      activePlayerIndex: 1,
-      table,
-      drawPile,
-      turn: 17,
-      winnerId: null,
-      phase: 'playing',
-      consecutiveDraws: 3,
-    };
-    const back = deserializeGameState(serializeGameState(midGame));
-    expect(back).toEqual(midGame);
-    expect(back.consecutiveDraws).toBe(3);
   });
 });

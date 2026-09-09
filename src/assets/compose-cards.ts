@@ -59,6 +59,51 @@ export function composeCardFaces(scene: Phaser.Scene, fontFamily: string): void 
       tex.refresh();
     }
   }
+  composeJokerFace(scene, fontFamily);
+}
+
+/** Single shared joker face — deliberately NOT the cream rank-card look: a solid purple body
+ * plus a gold star reads as "wildcard" at a glance, at hand scale, without needing the text.
+ * One texture covers every joker regardless of deck. */
+function composeJokerFace(scene: Phaser.Scene, fontFamily: string): void {
+  const key = 'card-joker';
+  if (scene.textures.exists(key)) scene.textures.remove(key);
+  const tex = scene.textures.createCanvas(key, 48 * TEX_SCALE, 64 * TEX_SCALE)!;
+  const ctx = tex.getContext();
+  ctx.imageSmoothingEnabled = false;
+  ctx.scale(TEX_SCALE, TEX_SCALE);
+  ctx.fillStyle = '#3a1a5c';
+  ctx.beginPath();
+  ctx.roundRect(1, 1, 46, 62, 4);
+  ctx.fill();
+  ctx.strokeStyle = '#f7d23e';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(1.5, 1.5, 45, 61, 4);
+  ctx.stroke();
+  drawStar(ctx, 24, 26, 12);
+  ctx.fillStyle = '#f7d23e';
+  ctx.font = `bold 8px "${fontFamily}", monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('JOKER', 24, 50);
+  tex.refresh();
+}
+
+/** Filled 5-point star, used as the joker's glanceable "wildcard" glyph. */
+function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  ctx.fillStyle = '#f7d23e';
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const radius = i % 2 === 0 ? r : r * 0.42;
+    const angle = (Math.PI / 5) * i - Math.PI / 2;
+    const px = cx + radius * Math.cos(angle);
+    const py = cy + radius * Math.sin(angle);
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
 }
 
 /** Loads the PixelLab TTF if present; resolves with the family name to use. */

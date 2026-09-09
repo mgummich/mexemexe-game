@@ -2,14 +2,18 @@ import Phaser from 'phaser';
 import { createAi, type Personality } from '../ai/ai';
 import { playSfx } from '../audio/sfx';
 import { CARD_H, CARD_W } from '../assets/manifest';
-import { rankLabel } from '../assets/fallbacks';
+import { rankLabel, SUIT_CHAR } from '../assets/fallbacks';
 import { settings } from '../core/settings';
 import { bus } from '../core/events';
 import { createNewGame, GameStore } from '../game-state/store';
 import { buildShowcaseState } from '../demo/showcase';
 import { t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
-import type { Card, Meld } from '../rules/types';
+import type { ConnStatus, NetClient } from '../net/client';
+import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
+import { viewToState } from '../net/viewToState';
+import { analyzeMeld, sortMeldCards } from '../rules/rules';
+import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 import { computeMeldLayout, type MeldLayoutInput } from '../table/layout';
 import { buildTutorialState } from '../tutorial/fixture';
 import { TutorialDirector, type TutorialAction } from '../tutorial/director';
@@ -20,11 +24,14 @@ import { debugApi } from '../verification/debug-api';
 
 type SortMode = 'suit' | 'rank';
 
+
 export interface GameSceneConfig {
   seed: number;
   players: { name: string; isAi: boolean; personality?: Personality }[];
   /** Interactive teach-by-doing tutorial: hand-crafted fixture + step overlay instead of a real deal. */
   tutorial?: boolean;
+  /** Present only for an online match — server drives state, this scene never computes it locally. */
+  online?: { client: NetClient; view: GameView; seat: number; code: string };
 }
 
 /** Config used to (re)launch GameScene in tutorial mode — shared by TutorialScene and the in-scene REPLAY button. */
@@ -59,6 +66,18 @@ const FEITO_DISABLED_PREFIX = '✕ ';
 
 interface MeldZone {
   meldId: string;
+  rect: Phaser.Geom.Rectangle;
+}
+
+/**
+ * One stop in the select-then-place ring. With nothing selected the ring holds every playable
+ * card; with a card selected it holds every destination. Drives both the keyboard path (arrows +
+ * Enter) and the touch path (the same rects become tappable drop zones), so neither needs a
+ * separate model of "where can this card go".
+ */
+interface FocusTarget {
+  kind: 'card' | 'meld' | 'new' | 'hand';
+  id?: string;
   rect: Phaser.Geom.Rectangle;
 }
 
@@ -98,6 +117,27 @@ export class GameScene extends Phaser.Scene {
   private pauseOpen = false;
   private tutorialCompletedRecorded = false;
 
+  // online mode — 0 for every local/AI/tutorial game, the server-assigned seat when online
+  private localSeat = 0;
+  private online: { client: NetClient; seat: number; code: string; lastRev: number } | null = null;
+  /** True from FEITO/COMPRAR submit until state_sync or proposal_rejected — locks all input. */
+  private onlinePending = false;
+  private lastRejections: string[] = [];
+  private onlineStatusDot: Phaser.GameObjects.Arc | null = null;
+  private onlineNoticeText: Phaser.GameObjects.Text | null = null;
+
+  // last opponent action: which table cards it touched, plus a one-line summary. A rearranging
+  // opponent changes the puzzle's structure, so the new position needs to be readable, not guessed.
+  private lastMoveIds = new Set<string>();
+  private lastMoveText: Phaser.GameObjects.Text | null = null;
+
+  // select-then-place — the drag-free way to play (keyboard and touch both route through it)
+  private selectedCardId: string | null = null;
+  private focusIndex = 0;
+  private focusTargets: FocusTarget[] = [];
+  /** Focus ring is drawn only once the keyboard has been used, so mouse players never see it. */
+  private focusVisible = false;
+
   constructor() {
     super('game');
   }
@@ -109,35 +149,54 @@ export class GameScene extends Phaser.Scene {
 
   create(config: GameSceneConfig): void {
     this.config = config;
+    this.online = config.online
+      ? { client: config.online.client, seat: config.online.seat, code: config.online.code, lastRev: config.online.view.rev }
+      : null;
+    this.localSeat = config.online ? config.online.seat : 0;
+    this.onlinePending = false;
+    this.lastRejections = [];
+    this.lastMoveIds = new Set();
+    this.selectedCardId = null;
+    this.focusIndex = 0;
+    this.focusVisible = false;
     debugApi.scene = config.tutorial ? 'tutorial' : 'game';
     debugApi.seed = config.seed;
-    if (!config.tutorial) settings.setLastSeed(config.seed);
+    if (!config.tutorial && !config.online) settings.setLastSeed(config.seed);
     this.tutorialCompletedRecorded = false;
-    this.personalities = config.players.map((p) => (p.isAi ? (p.personality ?? 'juninho') : null));
-    const playerCfgs = config.players.map((p) => ({
-      name: p.name,
-      isAi: p.isAi,
-      aiType: (p.personality === 'bia' || p.personality === 'ze' ? 'rearranger' : 'simple') as 'simple' | 'rearranger',
-    }));
-    const state = config.tutorial
-      ? buildTutorialState()
-      : debugApi.showcase === 'mexe'
-        ? buildShowcaseState(config.seed, playerCfgs)
-        : createNewGame(config.seed, playerCfgs);
-    this.store = new GameStore(state);
+
+    if (config.online) {
+      // Online: never construct AI seats. State comes from the server's redacted view only —
+      // see src/net/viewToState.ts for why opponent hand/draw-pile are placeholders here.
+      this.personalities = [];
+      this.store = new GameStore(viewToState(config.online.view));
+    } else {
+      this.personalities = config.players.map((p) => (p.isAi ? (p.personality ?? 'juninho') : null));
+      const playerCfgs = config.players.map((p) => ({
+        name: p.name,
+        isAi: p.isAi,
+        aiType: (p.personality === 'bia' || p.personality === 'ze' ? 'rearranger' : 'simple') as 'simple' | 'rearranger',
+      }));
+      const state = config.tutorial
+        ? buildTutorialState()
+        : debugApi.showcase === 'mexe'
+          ? buildShowcaseState(config.seed, playerCfgs)
+          : createNewGame(config.seed, playerCfgs);
+      this.store = new GameStore(state);
+    }
     debugApi.state = () => this.store.get();
     this.tutorialDirector = config.tutorial ? new TutorialDirector() : null;
     debugApi.tutorialStep = this.tutorialDirector?.stepIndex ?? null;
 
+    const playerCount = this.store.get().players.length;
     // 2p at the boteco, 3-4p around the family kitchen table
-    this.add.image(W / 2, H / 2, config.players.length > 2 ? 'bg-kitchen' : 'bg-boteco').setDisplaySize(W, H);
+    this.add.image(W / 2, H / 2, playerCount > 2 ? 'bg-kitchen' : 'bg-boteco').setDisplaySize(W, H);
     // calm the busy tablecloth/props so cards and HUD stay readable
-    this.add.rectangle(W / 2, H / 2, W, H, 0x1a0f0a, config.players.length > 2 ? 0.22 : 0.08);
+    this.add.rectangle(W / 2, H / 2, W, H, 0x1a0f0a, playerCount > 2 ? 0.22 : 0.08);
     // near-opaque top bar: baked-in table props (mug/etc.) sit right behind this strip in some
     // backgrounds — keep it solid enough that avatars/names never fight prop art for legibility.
     this.add.rectangle(W / 2, BAR_H / 2, W, BAR_H, 0x1a0f0a, 0.88);
     this.add.rectangle(444, 226, 72, 96, 0x1a0f0a, 0.55);
-    if (config.players.length <= 2) {
+    if (playerCount <= 2) {
       // covers a paint smudge on the boteco felt
       this.add.image(60, 60, 'prop-dominoes').setDisplaySize(32, 24).setDepth(1);
     }
@@ -151,6 +210,7 @@ export class GameScene extends Phaser.Scene {
         if (this.ambienceSound) this.ambienceSound.volume = settings.musicVolume();
       }),
     );
+    if (config.online) this.wireOnline(config.online.client);
     this.events.once('shutdown', () => {
       this.unsubs.forEach((u) => u());
       this.unsubs = [];
@@ -158,12 +218,148 @@ export class GameScene extends Phaser.Scene {
       this.ambienceSound?.stop();
     });
 
-    this.input.keyboard?.on('keydown-ESC', () => this.togglePause());
+    this.input.keyboard?.on('keydown-ESC', () => {
+      if (this.selectedCardId !== null) {
+        this.clearSelection();
+        return;
+      }
+      this.togglePause();
+    });
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => this.handleShortcut(e));
 
     playSfx(this, 'sfx-deal');
     this.onTurnStart();
     debugApi.ready = true;
+  }
+
+  /** Socket wiring + debug-api surface for an online match. Never runs offline. */
+  private wireOnline(client: NetClient): void {
+    this.unsubs.push(
+      client.on('state_sync', (msg) => this.onOnlineStateSync(msg.view)),
+      client.on('proposal_rejected', (msg) => this.onOnlineRejected(msg.reasons)),
+      client.on('game_over', (msg) => this.onOnlineGameOver(msg)),
+      client.on('player_disconnected', (msg) => this.onOnlineOpponentEvent(msg.seat, true)),
+      client.on('player_reconnected', (msg) => this.onOnlineOpponentEvent(msg.seat, false)),
+      client.on('error', (msg) => this.onOnlineTerminalError(msg)),
+      client.onStatus((s) => this.onOnlineStatusChange(s)),
+    );
+    debugApi.online = {
+      status: () => client.getStatus(),
+      code: () => this.online?.code ?? null,
+      seat: () => this.online?.seat ?? null,
+      rev: () => this.online?.lastRev ?? null,
+      players: () => [],
+      notice: () => this.onlineNoticeText?.text ?? '',
+      lastRejections: () => this.lastRejections,
+      trace: () => client.trace,
+      createRoom: () => { /* not applicable mid-match */ },
+      joinRoom: () => { /* not applicable mid-match */ },
+      setReady: () => { /* not applicable mid-match */ },
+      comprar: () => this.onComprar(),
+      /** Verification-only: submit a raw (possibly illegal) proposal straight to the server,
+       * bypassing the editor's client-side gate — the UI itself never constructs an illegal
+       * draft, so this is the only way for `verify:multiplayer` to exercise server-side rejection. */
+      submitRaw: (rev, melds) => client.submitTurn(rev, melds),
+      forceDrop: () => client.forceDrop(),
+    };
+    this.onOnlineStatusChange(client.getStatus());
+  }
+
+  // ---------- online reconciliation (docs/MULTIPLAYER_ARCHITECTURE.md §6) ----------
+
+  private onOnlineStateSync(view: GameView): void {
+    if (!this.online) return;
+    if (view.rev < this.online.lastRev) return; // stale/out-of-order delivery — ignore
+    this.online.lastRev = view.rev;
+    this.onlinePending = false;
+    this.onlineNoticeText?.setText('');
+    const before = this.store.get();
+    const actingSeat = before.activePlayerIndex;
+    this.store = new GameStore(viewToState(view));
+    if (actingSeat === this.localSeat) this.clearLastMove();
+    else this.noteOpponentMove(before, this.store.get(), actingSeat);
+    debugApi.state = () => this.store.get();
+    this.editor = null;
+    if (this.store.get().phase === 'playing') this.onTurnStart();
+  }
+
+  private onOnlineRejected(reasons: ReasonCode[]): void {
+    if (!this.online) return;
+    this.onlinePending = false;
+    this.lastRejections = reasons;
+    playSfx(this, 'sfx-invalid');
+    // Discard the draft entirely and rebuild from the last synced (committed) state — never a
+    // half-applied draft survives a rejection.
+    const state = this.store.get();
+    this.editor = state.activePlayerIndex === this.localSeat ? new DraftEditor(state) : null;
+    this.renderAll();
+    this.reasonText.setText(reasons[0] ? t(reasons[0]) : '');
+  }
+
+  private onOnlineGameOver(msg: GameOverMsg): void {
+    if (!this.online) return;
+    this.store = new GameStore(viewToState(msg.view));
+    const state = this.store.get();
+    const winner = state.players.find((p) => p.id === msg.winnerId) ?? null;
+    playSfx(this, 'sfx-win');
+    const results = state.players.map((p, i) => ({
+      name: p.name,
+      cardsLeft: p.hand.length,
+      isWinner: p.id === msg.winnerId,
+      avatarKey: this.avatarKey(i),
+    }));
+    const client = this.online.client;
+    this.time.delayedCall(400, () => {
+      this.scene.start('win', {
+        winnerName: winner?.name ?? '',
+        stalemate: msg.stalemate,
+        config: this.config,
+        online: { client },
+        results,
+      });
+    });
+  }
+
+  /** Terminal server error mid-match: room reaped/opponent gone for good (S1/S2), or the C1
+   * reconnect attempt was refused (`invalid_token` — the grace window expired server-side).
+   * Either way: a clear localized notice, then back to the menu — never a silent scene switch. */
+  private onOnlineTerminalError(msg: ErrorMsg): void {
+    if (!this.online || (msg.code !== 'room_closed' && msg.code !== 'invalid_token')) return;
+    this.onlineNoticeText?.setText(msg.code === 'room_closed' ? t('online.roomClosed') : t('online.connectionLost'));
+    this.time.delayedCall(2000, () => {
+      if (!this.online) return; // scene already moved on
+      this.online.client.disconnect();
+      debugApi.online = null;
+      this.scene.start('menu');
+    });
+  }
+
+  private onOnlineOpponentEvent(seat: number, disconnected: boolean): void {
+    if (!this.online || seat === this.localSeat || !this.onlineNoticeText) return;
+    this.onlineNoticeText.setText(disconnected ? t('online.opponentDisconnected') : t('online.opponentReconnected'));
+    if (!disconnected) this.time.delayedCall(3000, () => this.onlineNoticeText?.setText(''));
+  }
+
+  /** Corner connection dot +, on an unexpected close, one C1 reconnect attempt ("reconnecting..."),
+   * then — only if that attempt also fails — the non-modal notice and a return to the menu. */
+  private onOnlineStatusChange(status: ConnStatus): void {
+    if (!this.onlineStatusDot) return;
+    const color =
+      status === 'open' ? 0x3ec06a : status === 'connecting' || status === 'reconnecting' ? 0xf7d23e : 0xd83a3a;
+    this.onlineStatusDot.setFillStyle(color);
+    if (status === 'reconnecting') {
+      this.onlineNoticeText?.setText(t('online.reconnecting'));
+      return;
+    }
+    if (status === 'closed' || status === 'error') {
+      this.onlineNoticeText?.setText(t('online.connectionLost'));
+      this.time.delayedCall(2500, () => {
+        if (!this.online) return; // scene already moved on
+        this.online.client.disconnect();
+        debugApi.online = null;
+        this.scene.start('menu');
+      });
+    }
   }
 
   private startAmbience(): void {
@@ -182,25 +378,30 @@ export class GameScene extends Phaser.Scene {
     const state = this.store.get();
     if (state.phase !== 'playing') return;
     const player = state.players[state.activePlayerIndex]!;
-    if (player.isAi) {
-      this.editor = null;
-      debugApi.mexe = null;
-      this.renderAll();
-      if (this.tutorialDirector) {
-        // tutorial opponent: no thinking, always draws so the human's next scripted turn arrives fast
-        this.aiTimer = this.time.delayedCall(500, () => {
-          this.store.drawEndTurn();
-          if (this.store.get().phase === 'playing') this.renderAll();
-        });
-      } else {
-        const personality = this.personalities[state.activePlayerIndex]!;
-        this.aiTimer = this.time.delayedCall(650, () => this.runAiTurn(personality));
-      }
-    } else {
+    const isMyTurn = !player.isAi && state.activePlayerIndex === this.localSeat;
+
+    if (isMyTurn) {
       this.editor = new DraftEditor(state);
       this.bindMexeHooks();
       this.renderAll();
       this.tweens.add({ targets: this.banner, scale: { from: 1, to: 1.22 }, yoyo: true, duration: Math.max(1, this.motion(160)) });
+      return;
+    }
+
+    this.editor = null;
+    debugApi.mexe = null;
+    this.renderAll();
+    if (this.online) return; // opponent's turn online: read-only, never an AI timer
+
+    if (this.tutorialDirector) {
+      // tutorial opponent: no thinking, always draws so the human's next scripted turn arrives fast
+      this.aiTimer = this.time.delayedCall(500, () => {
+        this.store.drawEndTurn();
+        if (this.store.get().phase === 'playing') this.renderAll();
+      });
+    } else {
+      const personality = this.personalities[state.activePlayerIndex]!;
+      this.aiTimer = this.time.delayedCall(650, () => this.runAiTurn(personality));
     }
   }
 
@@ -238,9 +439,41 @@ export class GameScene extends Phaser.Scene {
     return this.tutorialDirector.isAllowed(action);
   }
 
+  /** cardId -> meld it currently sits in, for diffing one table position against the next. */
+  private static meldOf(state: GameState): Map<string, string> {
+    const m = new Map<string, string>();
+    for (const meld of state.table) for (const c of meld.cards) m.set(c.id, meld.id);
+    return m;
+  }
+
+  /**
+   * Record what the opponent just did: every table card that is new or changed meld, plus a
+   * one-line summary. Both stay on screen for the whole of the local player's turn (the moment
+   * they edit or end it, the note is stale and gets cleared), so a rearranged table can be read
+   * rather than re-derived.
+   */
+  private noteOpponentMove(before: GameState, after: GameState, seat: number): void {
+    const prev = GameScene.meldOf(before);
+    const changed = new Set<string>();
+    for (const [id, meldId] of GameScene.meldOf(after)) if (prev.get(id) !== meldId) changed.add(id);
+    this.lastMoveIds = changed;
+    const name = after.players[seat]?.name ?? '';
+    const played = (before.players[seat]?.hand.length ?? 0) - (after.players[seat]?.hand.length ?? 0);
+    const moved = Math.max(0, changed.size - Math.max(0, played));
+    const key = played <= 0 ? 'game.lastMove.drew' : moved > 0 ? 'game.lastMove.mexeu' : 'game.lastMove.played';
+    this.lastMoveText?.setText(t(key, { name, n: Math.max(0, played), m: moved }));
+  }
+
+  private clearLastMove(): void {
+    if (this.lastMoveIds.size === 0 && !this.lastMoveText?.text) return;
+    this.lastMoveIds = new Set();
+    this.lastMoveText?.setText('');
+  }
+
   private runAiTurn(personality: Personality): void {
     const state = this.store.get();
     const player = state.players[state.activePlayerIndex]!;
+    const actingSeat = state.activePlayerIndex;
     try {
       const decision = createAi(personality).decide(state);
       bus.emit('ai:thought', { playerId: player.id, text: decision.explanation });
@@ -261,6 +494,7 @@ export class GameScene extends Phaser.Scene {
       this.showEmote(state.activePlayerIndex, 'annoyed');
       this.store.drawEndTurn();
     }
+    this.noteOpponentMove(state, this.store.get(), actingSeat);
     if (this.store.get().phase === 'playing') this.renderAll();
   }
 
@@ -337,6 +571,20 @@ export class GameScene extends Phaser.Scene {
     // AI's name always reads clearly regardless of what's behind it.
     this.bannerBg = this.add.rectangle(240, 41, 10, 10, 0x1a1410, 0.78).setDepth(49);
     this.banner = label(this, 240, 41, '', 11, '#f7d23e').setDepth(50);
+    // one-line readback of the opponent's last action, just above the table
+    this.lastMoveText = this.add
+      .text(240, 70, '', { ...fontStyle(8, '#d8c890'), align: 'center', wordWrap: { width: 300 } })
+      .setOrigin(0.5)
+      .setDepth(50);
+
+    if (this.online) {
+      // small corner connection indicator — never a modal, per docs/PHASE5_CLIENT_PLAN.md section A
+      this.onlineStatusDot = this.add.circle(6, H - 6, 3, 0x3ec06a).setDepth(600);
+      this.onlineNoticeText = this.add
+        .text(240, 58, '', { ...fontStyle(8, '#f0c040'), align: 'center', wordWrap: { width: 300 } })
+        .setOrigin(0.5)
+        .setDepth(600);
+    }
   }
 
   private refreshDraft(): void {
@@ -350,10 +598,24 @@ export class GameScene extends Phaser.Scene {
     this.pauseOpen = true;
     const wasPaused = this.aiTimer?.paused ?? false;
     if (this.aiTimer) this.aiTimer.paused = true;
-    openPauseMenu(this, { onQuit: () => this.scene.start('menu') }, () => {
+    openPauseMenu(this, { onQuit: () => this.quitToMenu() }, () => {
       this.pauseOpen = false;
       if (this.aiTimer) this.aiTimer.paused = wasPaused;
     });
+  }
+
+  /**
+   * Abandoning the match. An online seat must tell the server on the way out: otherwise its
+   * socket and reconnect token stay live and the opponent waits on a player who is never coming
+   * back. Nulling `this.online` also stops the connection-lost watchdog from racing this exit.
+   */
+  private quitToMenu(): void {
+    if (this.online) {
+      this.online.client.leaveRoom();
+      this.online = null;
+      debugApi.online = null;
+    }
+    this.scene.start('menu');
   }
 
   /**
@@ -395,9 +657,98 @@ export class GameScene extends Phaser.Scene {
       case 'h':
         this.openHelp();
         break;
+      case 'arrowleft':
+      case 'arrowup':
+        this.moveFocus(-1);
+        e.preventDefault();
+        break;
+      case 'arrowright':
+      case 'arrowdown':
+        this.moveFocus(1);
+        e.preventDefault();
+        break;
+      case 'enter':
+      case ' ':
+        this.focusVisible = true;
+        this.activateFocus();
+        e.preventDefault();
+        break;
       default:
         break;
     }
+  }
+
+  // ---------- select-then-place (keyboard + touch) ----------
+
+  private moveFocus(delta: number): void {
+    if (this.focusTargets.length === 0) return;
+    this.focusVisible = true;
+    this.focusIndex = (this.focusIndex + delta + this.focusTargets.length) % this.focusTargets.length;
+    this.renderAll();
+  }
+
+  /** Enter on the focused ring entry: pick a card up, or drop the held card here. */
+  private activateFocus(): void {
+    const target = this.focusTargets[this.focusIndex];
+    if (!target || !this.editor) return;
+    if (target.kind === 'card') {
+      this.selectCard(target.id!);
+      return;
+    }
+    this.placeSelected(target.kind, target.id ?? null);
+  }
+
+  private selectCard(cardId: string): void {
+    this.selectedCardId = this.selectedCardId === cardId ? null : cardId;
+    this.focusIndex = 0;
+    playSfx(this, this.selectedCardId ? 'sfx-pickup' : 'sfx-snap', 0.4);
+    this.renderAll();
+  }
+
+  private clearSelection(): void {
+    if (this.selectedCardId === null) return;
+    this.selectedCardId = null;
+    this.focusIndex = 0;
+    this.renderAll();
+  }
+
+  /**
+   * Commit the held card to a destination. Mirrors `onCardDropped`'s rules exactly — same
+   * tutorial gate, same hand-vs-table branch — so tapping and dragging can never disagree.
+   */
+  private placeSelected(kind: FocusTarget['kind'], meldId: string | null): void {
+    const cardId = this.selectedCardId;
+    if (!cardId || !this.editor) return;
+    const fromHand = this.editor.getRemainingHand().some((c) => c.id === cardId);
+    if (!this.tutorialAllows({ type: fromHand ? 'playHandCard' : 'moveTableCard', cardId })) {
+      playSfx(this, 'sfx-invalid', 0.15);
+      return;
+    }
+    let acted = false;
+    if (fromHand) {
+      if (kind !== 'hand') acted = this.editor.playHandCard(cardId, kind === 'meld' ? meldId : null);
+    } else if (kind === 'hand') {
+      acted = this.editor.returnHandCard(cardId); // only cards played this turn can go back
+    } else {
+      acted = this.editor.moveTableCard(cardId, kind === 'meld' ? meldId : null);
+    }
+    playSfx(this, acted ? 'sfx-drop' : 'sfx-invalid', 0.5);
+    if (acted) this.clearLastMove();
+    this.selectedCardId = null;
+    this.focusIndex = 0;
+    this.renderAll();
+  }
+
+  /** Tap on a card while holding another: the tapped card names the destination (its meld, or the hand). */
+  private onCardTapped(cardId: string): void {
+    if (!this.editor) return;
+    if (this.selectedCardId === null || this.selectedCardId === cardId) {
+      this.selectCard(cardId);
+      return;
+    }
+    const meld = this.editor.getDraft().melds.find((m) => m.cards.some((c) => c.id === cardId));
+    if (meld) this.placeSelected('meld', meld.id);
+    else this.placeSelected('hand', null);
   }
 
   /** H shortcut: opens the rules panel directly (same AI-timer pause/resume dance as the gear/Esc pause menu). */
@@ -414,6 +765,10 @@ export class GameScene extends Phaser.Scene {
 
   private onFeito(): void {
     if (!this.editor) return;
+    if (this.online) {
+      this.onFeitoOnline();
+      return;
+    }
     if (!this.tutorialAllows({ type: 'feito' })) {
       playSfx(this, 'sfx-invalid', 0.15);
       return;
@@ -425,6 +780,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     playSfx(this, 'sfx-feito');
+    this.clearLastMove();
     const draft = this.editor.getDraft();
     const handCardIds = new Set(draft.handCardsPlayed);
     const sparkleTargets = this.cardSprites
@@ -458,14 +814,45 @@ export class GameScene extends Phaser.Scene {
 
   private onComprar(): void {
     if (!this.editor) return;
+    if (this.online) {
+      this.onComprarOnline();
+      return;
+    }
     if (!this.tutorialAllows({ type: 'comprar' })) {
       playSfx(this, 'sfx-invalid', 0.15);
       return;
     }
     playSfx(this, 'sfx-draw');
+    this.clearLastMove();
     this.editor = null;
     this.store.drawEndTurn();
     if (this.store.get().phase === 'playing') this.renderAll();
+  }
+
+  /** FEITO online: submit-and-wait. Never mutates the store locally — only a server state_sync does. */
+  private onFeitoOnline(): void {
+    if (!this.editor || !this.online || this.onlinePending) return;
+    const check = this.editor.canConfirm();
+    const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
+    if (!check.ok || !heldLongEnough) {
+      playSfx(this, 'sfx-invalid');
+      return;
+    }
+    playSfx(this, 'sfx-feito');
+    const draft = this.editor.getDraft();
+    const melds: SubmitTurnMeld[] = draft.melds.map((m) => ({ id: m.id, cardIds: m.cards.map((c) => c.id) }));
+    this.onlinePending = true;
+    this.online.client.submitTurn(this.online.lastRev, melds);
+    this.renderAll();
+  }
+
+  /** COMPRAR online: same submit-and-wait discipline as FEITO. */
+  private onComprarOnline(): void {
+    if (!this.editor || !this.online || this.onlinePending) return;
+    playSfx(this, 'sfx-draw');
+    this.onlinePending = true;
+    this.online.client.drawEndTurn(this.online.lastRev);
+    this.renderAll();
   }
 
   // ---------- rendering ----------
@@ -481,19 +868,24 @@ export class GameScene extends Phaser.Scene {
 
     const state = this.store.get();
     const active = state.activePlayerIndex;
-    const human = !state.players[active]!.isAi && this.editor !== null;
+    const human = this.editor !== null; // editor only exists on the local seat's own turn
+    const interactive = human && !this.onlinePending; // pending FEITO/COMPRAR locks input, not just AI turns
 
     // top bar: opponents — the active seat gets a bigger avatar + double gold ring, a static (not
     // animated) highlight so it stays reduced-motion-safe with zero extra tweens per render.
     let x = 60;
     state.players.forEach((p, i) => {
-      if (i === 0) return; // human rendered at bottom
+      if (i === this.localSeat) return; // local seat rendered at bottom
       const key = this.avatarKey(i);
       const isActiveP = i === active;
       const avSize = isActiveP ? 25 : 20;
+      // text offset follows the avatar's outer extent (rings included) so it clears them at every
+      // size instead of a fixed offset that a short name can end up hiding behind (L3).
+      const outer = isActiveP ? avSize + 11 : avSize;
+      const textX = x + outer / 2 + 4;
       const av = this.add.image(x, 14, key).setDisplaySize(avSize, avSize);
-      const name = this.add.text(x + 14, 3, p.name, fontStyle(9, isActiveP ? '#f7d23e' : '#d8d0c0'));
-      const count = this.add.text(x + 14, 16, `x${p.hand.length}`, fontStyle(8));
+      const name = this.add.text(textX, 3, p.name, fontStyle(9, isActiveP ? '#f7d23e' : '#d8d0c0'));
+      const count = this.add.text(textX, 16, `x${p.hand.length}`, fontStyle(8));
       if (isActiveP) {
         const ring = this.add.rectangle(x, 14, avSize + 6, avSize + 6).setStrokeStyle(2, 0xf7d23e, 1);
         const glow = this.add.rectangle(x, 14, avSize + 11, avSize + 11).setStrokeStyle(1, 0xf7d23e, 0.4);
@@ -510,20 +902,22 @@ export class GameScene extends Phaser.Scene {
 
     // banner
     const activeName = state.players[active]!.name;
-    this.banner.setText(human ? t('game.yourTurn') : t('game.turnOf', { name: activeName }));
+    this.banner.setText(
+      human ? t('game.yourTurn') : this.online ? t('game.opponentTurn', { name: activeName }) : t('game.turnOf', { name: activeName }),
+    );
     this.bannerBg.setSize(this.banner.width + 14, this.banner.height + 6);
 
     // table melds (draft when human editing, committed otherwise)
     const melds = this.editor ? this.editor.getDraft().melds : state.table;
     const invalidReasons = new Map((this.editor?.invalidMelds() ?? []).map((r) => [r.meldId, t(r.reason)]));
-    this.layoutMelds(melds, invalidReasons, human);
+    this.layoutMelds(melds, invalidReasons, interactive, state.config);
 
-    // human hand
-    const hand = this.editor ? this.editor.getRemainingHand() : state.players[0]!.hand;
-    this.layoutHand(hand, human);
+    // local seat's hand
+    const hand = this.editor ? this.editor.getRemainingHand() : state.players[this.localSeat]!.hand;
+    this.layoutHand(hand, interactive);
 
     // buttons + reason
-    if (human && this.editor) {
+    if (interactive && this.editor) {
       const check = this.editor.canConfirm();
       if (check.ok && !this.lastValidOk) this.validSince = this.time.now;
       if (!check.ok) this.validSince = null;
@@ -535,12 +929,13 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.setFeitoEnabled(false);
       this.comprarBtn.setEnabled(false);
-      this.reasonText.setText('');
+      this.reasonText.setText(human && this.onlinePending ? t('game.pending') : '');
       debugApi.validation = null;
       this.validSince = null;
       this.lastValidOk = false;
     }
 
+    this.renderSelectionLayer(interactive);
     debugApi.a11y = { invalidBadges: invalidReasons.size };
     if (this.tutorialDirector) this.renderTutorialOverlay();
   }
@@ -659,16 +1054,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   private avatarKey(playerIndex: number): string {
-    if (playerIndex === 0) return 'avatar-player';
+    if (playerIndex === this.localSeat) return 'avatar-player';
     const p = this.personalities[playerIndex];
     return p ? `avatar-${p}` : 'avatar-player';
   }
 
-  private sortedForDisplay(meld: Meld): Card[] {
-    return [...meld.cards].sort((a, b) => a.rank - b.rank || a.suit.localeCompare(b.suit));
+  private sortedForDisplay(meld: Meld, config: RulesConfig): Card[] {
+    return sortMeldCards(meld.cards, config);
   }
 
-  private layoutMelds(melds: readonly Meld[], invalidReasons: Map<string, string>, interactive: boolean): void {
+  private layoutMelds(
+    melds: readonly Meld[],
+    invalidReasons: Map<string, string>,
+    interactive: boolean,
+    config: RulesConfig,
+  ): void {
     this.meldGlowRects = [];
     const handCardIds = new Set(this.editor?.getDraft().handCardsPlayed ?? []);
     const inputs: MeldLayoutInput[] = melds.map((m) => ({ id: m.id, cardCount: m.cards.length }));
@@ -682,7 +1082,7 @@ export class GameScene extends Phaser.Scene {
       const pad = MELD_PAD * scale;
       const cx = TABLE_LEFT + pos.x;
       const cy = TABLE_TOP + 6 + pos.y;
-      const cards = this.sortedForDisplay(meld);
+      const cards = this.sortedForDisplay(meld, config);
 
       const zoneRect = new Phaser.Geom.Rectangle(cx, cy - pad, pos.width, pos.height);
       this.meldZones.push({ meldId: meld.id, rect: zoneRect });
@@ -696,6 +1096,18 @@ export class GameScene extends Phaser.Scene {
       }
 
       const isInvalid = invalidReasons.has(meld.id);
+      // Joker hint: never derive this ourselves — analyzeMeld is the single source of truth for
+      // what a joker stands for. Skip entirely on an invalid meld (task requirement: never invent
+      // an assignment when the meld is invalid).
+      const jokerLabels = new Map<string, string>();
+      if (!isInvalid && meld.cards.some((c) => c.isJoker)) {
+        const analysis = analyzeMeld(meld.cards, config);
+        if (analysis.valid) {
+          for (const a of analysis.assignments) {
+            jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
+          }
+        }
+      }
       const color = isInvalid ? 0xd83a3a : 0x3ec06a;
       // colorblind-safe shape channel: solid stroke for valid, dashed for invalid — not hue alone.
       const glow = this.add
@@ -738,16 +1150,37 @@ export class GameScene extends Phaser.Scene {
         const sprite = this.makeCardSprite(x, y, card, interactive, 'table', handCardIds.has(card.id), scale);
         sprite.setDepth(3);
         this.cardSprites.push(sprite);
+        const jokerLabel = jokerLabels.get(card.id);
+        if (jokerLabel) {
+          // Read-only hover, works even when it isn't the local player's turn — separate from
+          // the drag/tap interactivity above, which is gated on `interactive`.
+          if (!sprite.input) sprite.setInteractive();
+          const rect = new Phaser.Geom.Rectangle(x - cw / 2, y - ch / 2, cw, ch);
+          sprite.on('pointerover', () => this.showMeldReasonTooltip(rect, t('joker.standsFor', { card: jokerLabel })));
+          sprite.on('pointerout', () => this.hideMeldReasonTooltip());
+        }
+        if (this.lastMoveIds.has(card.id)) {
+          // persistent "the opponent touched this" marker — stays until the local player acts
+          const mark = this.add
+            .rectangle(x, y, cw + 3, ch + 3)
+            .setStrokeStyle(1, 0xf0a030, 0.95)
+            .setDepth(4);
+          this.hud.push(mark);
+        }
       });
     });
   }
 
   private layoutHand(hand: readonly Card[], interactive: boolean): void {
-    const sorted = [...hand].sort((a, b) =>
-      this.sortMode === 'suit'
-        ? a.suit.localeCompare(b.suit) || a.rank - b.rank
-        : a.rank - b.rank || a.suit.localeCompare(b.suit),
-    );
+    const sorted = [...hand].sort((a, b) => {
+      if (a.isJoker || b.isJoker) {
+        if (a.isJoker && b.isJoker) return a.id.localeCompare(b.id);
+        return a.isJoker ? 1 : -1;
+      }
+      return this.sortMode === 'suit'
+        ? a.suit!.localeCompare(b.suit!) || a.rank! - b.rank!
+        : a.rank! - b.rank! || a.suit!.localeCompare(b.suit!);
+    });
     const maxSpan = 330;
     const gap = Math.min(CARD_W + 2, sorted.length > 1 ? maxSpan / (sorted.length - 1) : CARD_W);
     const total = (sorted.length - 1) * gap;
@@ -768,14 +1201,31 @@ export class GameScene extends Phaser.Scene {
     handAdded: boolean,
     scale = 1,
   ): Phaser.GameObjects.Image {
-    const key = `card-${card.suit}-${card.rank}`;
+    const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
     const w = CARD_W * scale;
     const h = CARD_H * scale;
     const sprite = this.add.image(x, y, key).setDisplaySize(w, h);
     sprite.setData({ cardId: card.id, origin, homeX: x, homeY: y, baseW: w, baseH: h });
     if (interactive) {
-      sprite.setInteractive({ useHandCursor: true, draggable: true });
+      // Hit area padded past the art, mostly vertically: on a phone-sized viewport a hand card
+      // renders around 20x26 CSS px, far under a comfortable touch target. The pad is in frame
+      // coordinates so it scales with the card and costs nothing on desktop. Overlapping hand
+      // cards still resolve by depth, so the fanned order behaves as before.
+      const fw = sprite.frame.width;
+      const fh = sprite.frame.height;
+      const padX = fw * 0.12;
+      const padY = fh * 0.3;
+      sprite.setInteractive(
+        new Phaser.Geom.Rectangle(-padX, -padY, fw + padX * 2, fh + padY * 2),
+        Phaser.Geom.Rectangle.Contains,
+      );
+      if (sprite.input) sprite.input.cursor = 'pointer';
+      this.input.setDraggable(sprite);
       this.wireDrag(sprite);
+      sprite.on('pointerup', () => {
+        if (sprite.getData('dragged')) return; // that was a drag, dragend already handled it
+        this.onCardTapped(card.id);
+      });
     }
     if (handAdded) {
       // marks a card played from hand this turn — still returnable to hand
@@ -798,6 +1248,7 @@ export class GameScene extends Phaser.Scene {
       sprite.setDisplaySize(baseW, baseH);
       sprite.setDepth(10);
     });
+    sprite.on('pointerdown', () => sprite.setData('dragged', false));
     sprite.on('dragstart', () => {
       sprite.setData('dragging', true);
       sprite.setDepth(300);
@@ -810,6 +1261,7 @@ export class GameScene extends Phaser.Scene {
       this.showDropZoneHighlights();
     });
     sprite.on('drag', (_p: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+      sprite.setData('dragged', true);
       sprite.setPosition(dragX, dragY);
       this.dragShadow?.setPosition(dragX + 2, dragY + 7);
       this.updateDropZoneHover(dragX, dragY);
@@ -913,6 +1365,7 @@ export class GameScene extends Phaser.Scene {
 
     const settle = { displayWidth: CARD_W, displayHeight: CARD_H, ease: 'Back.out', duration: Math.max(1, this.motion(140)) };
     if (acted) {
+      this.clearLastMove();
       playSfx(this, 'sfx-drop', 0.5);
       this.tweens.add({ targets: sprite, ...settle, onComplete: () => this.renderAll() });
     } else {
@@ -924,6 +1377,66 @@ export class GameScene extends Phaser.Scene {
         ...settle,
         onComplete: () => this.renderAll(),
       });
+    }
+  }
+
+  private spriteRect(s: Phaser.GameObjects.Image): Phaser.Geom.Rectangle {
+    return new Phaser.Geom.Rectangle(s.x - s.displayWidth / 2, s.y - s.displayHeight / 2, s.displayWidth, s.displayHeight);
+  }
+
+  /**
+   * Rebuilds the select-then-place ring for the current board and draws it. With no card held the
+   * ring is every playable card; with one held it is every destination, and each destination also
+   * becomes a tappable zone under the cards (depth 1, cards sit at 3+) so touch players can drop
+   * without dragging. The dashed white outline only appears once the keyboard has been used.
+   */
+  private renderSelectionLayer(interactive: boolean): void {
+    this.focusTargets = [];
+    if (!interactive || !this.editor) {
+      this.selectedCardId = null;
+      return;
+    }
+    const heldSprite = this.cardSprites.find((s) => s.getData('cardId') === this.selectedCardId);
+    if (this.selectedCardId !== null && !heldSprite) this.selectedCardId = null; // undo/reset ate it
+
+    if (this.selectedCardId === null) {
+      for (const s of this.cardSprites) {
+        this.focusTargets.push({ kind: 'card', id: s.getData('cardId') as string, rect: this.spriteRect(s) });
+      }
+    } else {
+      // widest destination first: equal-depth zones resolve by display order, so the melds and the
+      // hand strip added afterwards stay tappable on top of the whole-table "new meld" zone.
+      this.focusTargets.push({
+        kind: 'new',
+        rect: new Phaser.Geom.Rectangle(TABLE_LEFT, TABLE_TOP, TABLE_AREA_W, TABLE_BOTTOM - TABLE_TOP),
+      });
+      for (const z of this.meldZones) this.focusTargets.push({ kind: 'meld', id: z.meldId, rect: z.rect });
+      this.focusTargets.push({ kind: 'hand', rect: new Phaser.Geom.Rectangle(20, HAND_Y - 24, 360, 48) });
+
+      for (const target of this.focusTargets) {
+        const zone = this.add
+          .rectangle(target.rect.centerX, target.rect.centerY, target.rect.width, target.rect.height, GOLD, 0.07)
+          .setDepth(1)
+          .setInteractive({ useHandCursor: true });
+        zone.on('pointerup', () => this.placeSelected(target.kind, target.id ?? null));
+        this.hud.push(zone);
+      }
+      if (heldSprite) {
+        this.hud.push(
+          this.add
+            .rectangle(heldSprite.x, heldSprite.y, heldSprite.displayWidth + 4, heldSprite.displayHeight + 4)
+            .setStrokeStyle(2, GOLD, 1)
+            .setDepth(260),
+        );
+      }
+    }
+
+    if (this.focusIndex >= this.focusTargets.length) this.focusIndex = 0;
+    const focused = this.focusTargets[this.focusIndex];
+    if (this.focusVisible && focused) {
+      const gfx = this.add.graphics().setDepth(280);
+      this.drawDashedRect(gfx, focused.rect.x - 2, focused.rect.y - 2, focused.rect.width + 4, focused.rect.height + 4, 0xffffff, 0.95);
+      this.hud.push(gfx, label(this, 190, 265, t('game.selectHint'), 7, '#b8b0a0'));
     }
   }
 

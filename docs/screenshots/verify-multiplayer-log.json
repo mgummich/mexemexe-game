@@ -1,0 +1,796 @@
+{
+  "generatedAt": "2026-09-09T07:48:37.352Z",
+  "roomCode": "VKXQN",
+  "seed": 2,
+  "revisionsObserved": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89,
+    90,
+    91,
+    92,
+    93,
+    94,
+    95,
+    96,
+    97
+  ],
+  "clients": {
+    "a": {
+      "consoleErrors": [],
+      "pageErrors": []
+    },
+    "b": {
+      "consoleErrors": [],
+      "pageErrors": []
+    }
+  },
+  "server": {
+    "stdout": [
+      "MEXE! server listening on :8799 (protocol v2)\n"
+    ],
+    "stderr": []
+  },
+  "trace": {
+    "a": [
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "game_over"
+      },
+      {
+        "dir": "out",
+        "type": "ping"
+      },
+      {
+        "dir": "in",
+        "type": "pong"
+      }
+    ],
+    "b": [
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "out",
+        "type": "draw_end_turn"
+      },
+      {
+        "dir": "in",
+        "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "game_over"
+      }
+    ]
+  },
+  "illegalProposal": {
+    "reasons": [
+      "reason.unknownCard"
+    ],
+    "accepted": false
+  },
+  "reconnect": {
+    "revisionBefore": 2,
+    "revisionAfter": 2,
+    "noticeObserved": "Adversário desconectou. Esperando reconectar...",
+    "screenshots": {
+      "opponentDisconnected": "docs/screenshots/mp-opponent-disconnected-a.png",
+      "reconnecting": "docs/screenshots/mp-reconnecting-b.png",
+      "reconnected": "docs/screenshots/mp-reconnected-b.png"
+    }
+  },
+  "screenshots": [
+    "docs/screenshots/mp-lobby-code-a.png",
+    "docs/screenshots/mp-both-ready-a.png",
+    "docs/screenshots/mp-both-ready-b.png",
+    "docs/screenshots/mp-in-match-active.png",
+    "docs/screenshots/mp-in-match-waiting.png",
+    "docs/screenshots/mp-opponent-disconnected-a.png",
+    "docs/screenshots/mp-reconnecting-b.png",
+    "docs/screenshots/mp-reconnected-b.png",
+    "docs/screenshots/mp-resumed-b.png",
+    "docs/screenshots/mp-rejection-b.png",
+    "docs/screenshots/mp-win-a.png",
+    "docs/screenshots/mp-win-b.png"
+  ]
+}
