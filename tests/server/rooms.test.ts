@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
-import { parseClientMessage, PROTOCOL_VERSION } from '../../src/net/protocol';
+import { digestOfState, digestOfView, parseClientMessage, PROTOCOL_VERSION, stateHash } from '../../src/net/protocol';
 import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
 import { createRng } from '../../src/core/rng';
 import type { Card } from '../../src/rules/types';
@@ -109,7 +109,8 @@ function startRoom(seed: number) {
   const { code } = mustCreate(mgr, 'Alice');
   mgr.joinRoom(code, 'Bob');
   mgr.setReady(code, 0, true);
-  const result = mgr.setReady(code, 1, true);
+  mgr.setReady(code, 1, true);
+  const result = mgr.startGame(code, 0);
   return { mgr, code, started: result.ok && result.started };
 }
 
@@ -130,12 +131,13 @@ describe('room lifecycle', () => {
     expect(mgr.getPlayers(code)).toHaveLength(2);
   });
 
-  it('rejects a third join with room_full', () => {
+  it('assigns stable clockwise seats through four players and rejects a fifth', () => {
     const mgr = testManager();
     const { code } = mustCreate(mgr, 'Alice');
-    mgr.joinRoom(code, 'Bob');
-    const third = mgr.joinRoom(code, 'Carol');
-    expect(third).toEqual({ ok: false, error: 'room_full' });
+    expect(mgr.joinRoom(code, 'Bob')).toMatchObject({ ok: true, seat: 1 });
+    expect(mgr.joinRoom(code, 'Carol')).toMatchObject({ ok: true, seat: 2 });
+    expect(mgr.joinRoom(code, 'Dina')).toMatchObject({ ok: true, seat: 3 });
+    expect(mgr.joinRoom(code, 'Eve')).toEqual({ ok: false, error: 'room_full' });
   });
 
   it('rejects joining a room that does not exist', () => {
@@ -143,7 +145,7 @@ describe('room lifecycle', () => {
     expect(mgr.joinRoom('NOPE', 'Bob')).toEqual({ ok: false, error: 'room_not_found' });
   });
 
-  it('deals and sets rev=1 when both seats ready', () => {
+  it('starts only when host explicitly starts a room with two ready seats', () => {
     const { mgr, code, started } = startRoom(42);
     expect(started).toBe(true);
     const room = mgr.getRoom(code);
@@ -168,9 +170,52 @@ describe('room lifecycle', () => {
     const mgr = testManager();
     const { code } = mustCreate(mgr, 'Alice');
     mgr.joinRoom(code, 'Bob');
-    const result = mgr.setReady(code, 0, true);
+    mgr.setReady(code, 0, true);
+    const result = mgr.startGame(code, 0);
     expect(result.ok && result.started).toBe(false);
     expect(mgr.getRoom(code)?.state).toBeNull();
+  });
+
+  it('deals deterministically for three and four ready players and preserves clockwise turns', () => {
+    for (const playerCount of [3, 4]) {
+      const mgr = testManager(42);
+      const { code } = mustCreate(mgr, 'Alice');
+      for (const name of ['Bob', 'Carol', 'Dina'].slice(0, playerCount - 1)) mgr.joinRoom(code, name);
+      for (let seat = 0; seat < playerCount; seat++) mgr.setReady(code, seat, true);
+      expect(mgr.startGame(code, 0)).toMatchObject({ ok: true, started: true });
+      const state = mgr.getRoom(code)!.state!;
+      expect(state.players).toHaveLength(playerCount);
+      expect(state.players.map((p) => p.hand.length)).toEqual(Array(playerCount).fill(7));
+      for (let seat = 0; seat < playerCount; seat++) {
+        const rev = mgr.getRoom(code)!.rev;
+        expect(mgr.drawEndTurn(code, seat, rev).ok).toBe(true);
+        expect(mgr.getRoom(code)!.state!.activePlayerIndex).toBe((seat + 1) % playerCount);
+      }
+    }
+  });
+
+  it('rejects non-host start and a start with an unready member', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    mgr.setReady(code, 0, true);
+    expect(mgr.startGame(code, 1)).toMatchObject({ ok: false, error: 'not_host' });
+    expect(mgr.startGame(code, 0)).toMatchObject({ ok: false, error: 'not_ready' });
+  });
+
+  it('does not compact stable seats after a lobby leave; host must refill the gap before start', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    mgr.joinRoom(code, 'Carol');
+    mgr.leaveRoom(code, 1);
+    mgr.setReady(code, 0, true);
+    mgr.setReady(code, 2, true);
+    expect(mgr.startGame(code, 0)).toMatchObject({ ok: false, error: 'seat_gap' });
+    expect(mgr.joinRoom(code, 'Dina')).toMatchObject({ ok: true, seat: 1 });
+    mgr.setReady(code, 1, true);
+    expect(mgr.startGame(code, 0)).toMatchObject({ ok: true, started: true });
+    expect(mgr.getRoom(code)!.state!.players.map((p) => p.id)).toEqual(['p0', 'p1', 'p2']);
   });
 
   it('cleans up an empty room', () => {
@@ -531,5 +576,143 @@ describe('parseClientMessage boundary validation', () => {
   it('accepts a well-formed ping', () => {
     const result = parseClientMessage(JSON.stringify({ v: PROTOCOL_VERSION, type: 'ping', reqId: 'r1' }));
     expect(result).toEqual({ v: PROTOCOL_VERSION, type: 'ping', reqId: 'r1' });
+  });
+});
+
+describe('protocol v3 additions', () => {
+  it('accepts a well-formed resync', () => {
+    const result = parseClientMessage(JSON.stringify({ v: PROTOCOL_VERSION, type: 'resync', reqId: 'r9' }));
+    expect(result).toEqual({ v: PROTOCOL_VERSION, type: 'resync', reqId: 'r9' });
+  });
+
+  it('every seat view of one revision carries the same hash, and it matches the server state', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Host');
+    mgr.joinRoom(code, 'Guest');
+    mgr.setReady(code, 0, true);
+    mgr.setReady(code, 1, true);
+    mgr.startGame(code, 0);
+    const room = mgr.getRoom(code)!;
+    const v0 = mgr.getView(code, 0)!;
+    const v1 = mgr.getView(code, 1)!;
+    // Hidden cards are excluded from the digest by construction, so seats agree despite
+    // seeing different hands.
+    expect(v0.hash).toBe(v1.hash);
+    expect(v0.hash).toBe(stateHash(digestOfState(room.state!, room.rev)));
+    expect(v0.hash).toBe(stateHash(digestOfView(v0)));
+  });
+
+  it('a diverged reconstruction hashes differently', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Host');
+    mgr.joinRoom(code, 'Guest');
+    mgr.setReady(code, 0, true);
+    mgr.setReady(code, 1, true);
+    mgr.startGame(code, 0);
+    const view = mgr.getView(code, 0)!;
+    const drifted = { ...digestOfView(view), drawCount: view.drawCount - 1 };
+    expect(stateHash(drifted)).not.toBe(view.hash);
+  });
+});
+
+describe('stalled-turn recovery', () => {
+  function started3P(clock: { t: number }, graceMs: number) {
+    const mgr = new RoomManager({
+      now: () => clock.t,
+      genCode: () => 'STALL',
+      genToken: () => `T${Math.random()}`,
+      genSeed: () => 7,
+      disconnectGraceMs: graceMs,
+    });
+    const created = mgr.createRoom('Host');
+    if (!created.ok) throw new Error('setup');
+    mgr.joinRoom('STALL', 'B');
+    mgr.joinRoom('STALL', 'C');
+    for (const seat of [0, 1, 2]) mgr.setReady('STALL', seat, true);
+    mgr.startGame('STALL', 0);
+    return mgr;
+  }
+
+  it('does not touch a match whose active seat is still connected', () => {
+    const clock = { t: 1000 };
+    const mgr = started3P(clock, 100);
+    clock.t += 10_000;
+    expect(mgr.advanceStalledTurns()).toEqual([]);
+  });
+
+  it('waits out the grace period before acting', () => {
+    const clock = { t: 1000 };
+    const mgr = started3P(clock, 5000);
+    mgr.disconnect('STALL', 0);
+    clock.t += 1000;
+    expect(mgr.advanceStalledTurns()).toEqual([]);
+    expect(mgr.getRoom('STALL')!.state!.activePlayerIndex).toBe(0);
+  });
+
+  it('draws and ends the turn for a seat gone past the grace period', () => {
+    const clock = { t: 1000 };
+    const mgr = started3P(clock, 5000);
+    const revBefore = mgr.getRoom('STALL')!.rev;
+    const drawBefore = mgr.getRoom('STALL')!.state!.drawPile.length;
+    mgr.disconnect('STALL', 0);
+    clock.t += 6000;
+    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'STALL', gameOver: false }]);
+    const room = mgr.getRoom('STALL')!;
+    expect(room.state!.activePlayerIndex).toBe(1);
+    expect(room.rev).toBe(revBefore + 1);
+    expect(room.state!.drawPile.length).toBe(drawBefore - 1);
+  });
+
+  it('leaves an entirely empty room to the sweep instead of advancing it', () => {
+    const clock = { t: 1000 };
+    const mgr = started3P(clock, 5000);
+    for (const seat of [0, 1, 2]) mgr.disconnect('STALL', seat);
+    clock.t += 6000;
+    expect(mgr.advanceStalledTurns()).toEqual([]);
+  });
+});
+
+describe('load: repeated room churn', () => {
+  it('ten sequential create/join/leave cycles leave no room behind', () => {
+    let counter = 0;
+    const clock = { t: 1000 };
+    const mgr = new RoomManager({
+      now: () => clock.t,
+      genCode: () => `R${++counter}`,
+      genToken: () => `TK${counter}-${Math.random()}`,
+      genSeed: () => 3,
+      disconnectGraceMs: 1000,
+    });
+    for (let i = 0; i < 10; i++) {
+      const created = mgr.createRoom('Host');
+      if (!created.ok) throw new Error('unexpected room_limit');
+      mgr.joinRoom(created.code, 'Guest');
+      mgr.leaveRoom(created.code, 1);
+      mgr.leaveRoom(created.code, 0);
+      clock.t += 100;
+    }
+    expect(mgr.roomCount()).toBe(0);
+    expect(mgr.sweep()).toEqual([]);
+  });
+
+  it('abandoned rooms are reaped by the sweep rather than accumulating', () => {
+    let counter = 0;
+    const clock = { t: 1000 };
+    const mgr = new RoomManager({
+      now: () => clock.t,
+      genCode: () => `A${++counter}`,
+      genToken: () => `TK${counter}`,
+      genSeed: () => 3,
+      disconnectGraceMs: 1000,
+    });
+    for (let i = 0; i < 10; i++) {
+      const created = mgr.createRoom('Host');
+      if (!created.ok) throw new Error('unexpected room_limit');
+      mgr.disconnect(created.code, 0);
+    }
+    expect(mgr.roomCount()).toBe(10);
+    clock.t += 5000;
+    expect(mgr.sweep()).toHaveLength(10);
+    expect(mgr.roomCount()).toBe(0);
   });
 });

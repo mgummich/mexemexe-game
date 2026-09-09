@@ -18,6 +18,14 @@ import {
 
 const PORT = Number(process.env.PORT) || 8787;
 const SWEEP_INTERVAL_MS = 30_000;
+/** Liveness probe. A half-open socket (lid closed, dead NAT entry) otherwise holds its seat
+ * `connected` until TCP gives up, so the disconnect grace never starts (docs/PHASE7_AUDIT.md #1). */
+const HEARTBEAT_INTERVAL_MS = 15_000;
+/** How often stalled matches are checked. Independent of the grace period itself. */
+const TURN_TICK_MS = 5_000;
+/** Largest inbound frame accepted. The biggest legal message is a submit_turn with the whole
+ * deck as card ids; 16 KiB is far above that and far below anything that hurts (#2). */
+const MAX_PAYLOAD_BYTES = 16 * 1024;
 
 // Deterministic deal for verify:multiplayer only — never set in a real deployment.
 const testSeed = process.env.MEXE_TEST_SEED ? Number(process.env.MEXE_TEST_SEED) : undefined;
@@ -36,8 +44,8 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   }
 }
 
-function sendError(ws: WebSocket, code: string, message: string): void {
-  send(ws, { v: PROTOCOL_VERSION, type: 'error', code, message });
+function sendError(ws: WebSocket, code: string, message: string, reqId?: string): void {
+  send(ws, { v: PROTOCOL_VERSION, type: 'error', code, message, ...(reqId === undefined ? {} : { reqId }) });
 }
 
 function attachSocket(code: string, seat: number, ws: WebSocket): void {
@@ -96,9 +104,13 @@ function broadcastRoomState(code: string): void {
 function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void {
   switch (msg.type) {
     case 'create_room': {
+      if (conn.code !== null) {
+        sendError(ws, 'already_in_room', 'leave current room before creating another', msg.reqId);
+        return;
+      }
       const result = rooms.createRoom(msg.name);
       if (!result.ok) {
-        sendError(ws, result.error, 'server has reached its room limit, try again later');
+        sendError(ws, result.error, 'server has reached its room limit, try again later', msg.reqId);
         return;
       }
       const { code, seat, token } = result;
@@ -116,9 +128,13 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       return;
     }
     case 'join_room': {
+      if (conn.code !== null) {
+        sendError(ws, 'already_in_room', 'leave current room before joining another', msg.reqId);
+        return;
+      }
       const result = rooms.joinRoom(msg.code, msg.name);
       if (!result.ok) {
-        sendError(ws, result.error, `cannot join room: ${result.error}`);
+        sendError(ws, result.error, `cannot join room: ${result.error}`, msg.reqId);
         return;
       }
       conn.code = msg.code;
@@ -151,33 +167,39 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
     }
     case 'ready': {
       if (conn.code === null || conn.seat === null) {
-        sendError(ws, 'no_room', 'not in a room');
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
         return;
       }
       const result = rooms.setReady(conn.code, conn.seat, msg.ready);
       if (!result.ok) {
-        sendError(ws, result.error, 'room not found');
+        sendError(ws, result.error, 'room not found', msg.reqId);
         return;
       }
-      if (result.started) {
-        const bySeat = sockets.get(conn.code);
-        const room = rooms.getRoom(conn.code);
-        if (bySeat && room?.state) {
-          for (const [seat, sock] of bySeat) {
-            const view = rooms.getView(conn.code, seat);
-            if (view) {
-              send(sock, { v: PROTOCOL_VERSION, type: 'game_started', view });
-            }
-          }
+      broadcastRoomState(conn.code);
+      return;
+    }
+    case 'start_game': {
+      if (conn.code === null || conn.seat === null) {
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
+        return;
+      }
+      const result = rooms.startGame(conn.code, conn.seat);
+      if (!result.ok) {
+        sendError(ws, result.error, `cannot start room: ${result.error}`, msg.reqId);
+        return;
+      }
+      const bySeat = sockets.get(conn.code);
+      if (bySeat) {
+        for (const [seat, sock] of bySeat) {
+          const view = rooms.getView(conn.code, seat);
+          if (view) send(sock, { v: PROTOCOL_VERSION, type: 'game_started', view });
         }
-      } else {
-        broadcastRoomState(conn.code);
       }
       return;
     }
     case 'submit_turn': {
       if (conn.code === null || conn.seat === null) {
-        sendError(ws, 'no_room', 'not in a room');
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
         return;
       }
       const result = rooms.submitTurn(conn.code, conn.seat, msg.rev, msg.melds);
@@ -191,7 +213,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
     }
     case 'draw_end_turn': {
       if (conn.code === null || conn.seat === null) {
-        sendError(ws, 'no_room', 'not in a room');
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
         return;
       }
       const result = rooms.drawEndTurn(conn.code, conn.seat, msg.rev);
@@ -206,7 +228,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
     case 'reconnect': {
       const result = rooms.reconnect(msg.token);
       if (!result.ok) {
-        sendError(ws, result.error, 'invalid or expired token');
+        sendError(ws, result.error, 'invalid or expired token', msg.reqId);
         return;
       }
       // Exactly one connection may ever act for a seat: evict whatever socket previously
@@ -235,6 +257,19 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       }
       return;
     }
+    case 'resync': {
+      // Recovery is one-way: the server re-sends what it already holds and never reads any
+      // client state. A lobby seat gets the room list, an in-match seat the full view.
+      if (conn.code === null || conn.seat === null) {
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
+        return;
+      }
+      const players = rooms.getPlayers(conn.code);
+      if (players) send(ws, { v: PROTOCOL_VERSION, type: 'room_state', players });
+      const view = rooms.getView(conn.code, conn.seat);
+      if (view) send(ws, { v: PROTOCOL_VERSION, type: 'state_sync', view });
+      return;
+    }
     case 'ping':
       send(ws, { v: PROTOCOL_VERSION, type: 'pong' });
       return;
@@ -251,11 +286,17 @@ const server = createServer((req, res) => {
   res.end();
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: MAX_PAYLOAD_BYTES });
+
+/** Sockets that answered the last heartbeat probe. A socket missing from this set when the next
+ * probe fires is terminated rather than left holding its seat. */
+const alive = new Set<WebSocket>();
 
 wss.on('connection', (ws: WebSocket) => {
   const conn: ConnState = newConnState(Date.now());
   connections.set(ws, conn);
+  alive.add(ws);
+  ws.on('pong', () => alive.add(ws));
 
   ws.on('message', (data) => {
     try {
@@ -290,6 +331,7 @@ wss.on('connection', (ws: WebSocket) => {
       }
     }
     connections.delete(ws);
+    alive.delete(ws);
   });
 
   ws.on('error', (err) => {
@@ -301,6 +343,30 @@ setInterval(() => {
   // Reaped rooms must not leave their sockets stuck forever on a dead code (S1).
   for (const code of rooms.sweep()) closeRoom(code, 'room closed: timed out');
 }, SWEEP_INTERVAL_MS).unref();
+
+setInterval(() => {
+  for (const ws of connections.keys()) {
+    if (!alive.has(ws)) {
+      // Missed a full probe interval: drop it now so `close` runs the normal disconnect path
+      // and the seat's grace timer actually starts.
+      ws.terminate();
+      continue;
+    }
+    alive.delete(ws);
+    try {
+      ws.ping();
+    } catch {
+      // socket already closing — the close handler will clean up
+    }
+  }
+}, HEARTBEAT_INTERVAL_MS).unref();
+
+setInterval(() => {
+  for (const { code, gameOver } of rooms.advanceStalledTurns()) {
+    broadcastStateSync(code);
+    if (gameOver) broadcastGameOver(code);
+  }
+}, TURN_TICK_MS).unref();
 
 process.on('uncaughtException', (err) => {
   console.error('uncaughtException', err);

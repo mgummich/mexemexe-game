@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { t as translate } from '../src/localization/i18n';
+import { errorMessage, SERVER_ERROR_CODES } from '../src/net/errors';
 
 const OUT_DIR = 'docs/screenshots';
 const LOG_PATH = path.join(OUT_DIR, 'verify-log.json');
@@ -261,13 +263,14 @@ test('reset-data: settings APAGAR DADOS + confirm clears the versioned save and 
   trackConsoleErrors(page);
   await page.goto('/?seed=1&showcase=settings');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  // dirty the save first (mute toggle, top button of the settings panel) so the wipe is provable
-  const [mx, my] = toScreen(240, 47);
+  // dirty the save first (mute toggle, top button of the settings panel) so the wipe is provable.
+  // Row coords track src/ui/settings-panel.ts: panel top = 135 - h/2, first row at top + 28, 22px pitch.
+  const [mx, my] = toScreen(240, 36);
   await page.mouse.click(mx, my);
   const savedBefore = await page.evaluate(() => localStorage.getItem('mexe-save'));
   expect(savedBefore).not.toBeNull();
-  // "APAGAR DADOS" button, logical (240, 205)
-  const [dx, dy] = toScreen(240, 205);
+  // "APAGAR DADOS" button, logical (240, 216) — 7th row
+  const [dx, dy] = toScreen(240, 216);
   await page.mouse.click(dx, dy);
   await page.waitForTimeout(150);
   // confirm dialog "Sim" button, logical (200, 160)
@@ -426,6 +429,286 @@ test('repeated-suit-group: two same-suit cards from different decks are rejected
     expect(validation.ok).toBe(false);
     expect(validation.reasons).toContain('reason.groupDuplicateSuit');
   });
+});
+
+/** Meld id currently holding `cardId` in the live draft, or throws — robust against melds being
+ * created in any order (unlike tracking "the first meld" by array index). */
+async function meldIdOf(p: Page, cardId: string): Promise<string> {
+  return p.evaluate((id) => {
+    const draft = window.__MEXE__.mexe!.getDraft()!;
+    const meld = draft.melds.find((m) => m.cards.some((c) => c.id === id));
+    if (!meld) throw new Error(`no meld holds ${id}`);
+    return meld.id;
+  }, cardId);
+}
+
+test('tutorial: first-run 12-step completion, including the trinca-limit and joker steps', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=42&showcase=menu');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  // MenuScene TUTORIAL button, logical (240, 207)
+  const [tx, ty] = toScreen(240, 207);
+  await page.mouse.click(tx, ty);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'tutorial' && window.__MEXE__.mexe !== null);
+  await page.waitForFunction(() => window.__MEXE__.tutorialStep === 0);
+
+  const [nextX, nextY] = toScreen(438, 144); // tutorial NEXT button
+  const clickNext = async (): Promise<void> => {
+    await page.mouse.click(nextX, nextY);
+  };
+  const waitStep = async (step: number): Promise<void> => {
+    await page.waitForFunction((s) => window.__MEXE__.tutorialStep === s, step, { timeout: 15_000 });
+  };
+
+  // step0 "goal": explanatory only
+  await clickNext();
+  await waitStep(1);
+
+  // step1 "set": lay the three natural 9s
+  await page.evaluate(() => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('hearts-9-d0', null);
+  });
+  const meldA = await meldIdOf(page, 'hearts-9-d0');
+  await page.evaluate((id) => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('spades-9-d0', id);
+    mexe.playHandCard('clubs-9-d0', id);
+  }, meldA);
+  await waitStep(2);
+
+  // step2 "trinca-limit": drop the second-deck duplicate-suit 9 into the same set, hit the
+  // exact rule reason a real player meets, screenshot it, then fix it into its own valid trio.
+  const trincaReasons = await page.evaluate((id) => {
+    window.__MEXE__.mexe!.playHandCard('hearts-9-d1', id);
+    return window.__MEXE__.validation as { ok: boolean; reasons: string[] };
+  }, meldA);
+  expect(trincaReasons.ok).toBe(false);
+  expect(trincaReasons.reasons).toContain('reason.groupDuplicateSuit');
+  await snap(page, 'tutorial-trinca');
+
+  await page.evaluate(() => window.__MEXE__.mexe!.moveTableCard('hearts-9-d1', null));
+  const meldD = await meldIdOf(page, 'hearts-9-d1');
+  await page.evaluate((id) => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('spades-9-d1', id);
+    mexe.playHandCard('clubs-9-d1', id);
+  }, meldD);
+  await waitStep(3);
+
+  // step3 "run": diamonds 3-4-5
+  await page.evaluate(() => window.__MEXE__.mexe!.playHandCard('diamonds-3-d0', null));
+  const meldRun = await meldIdOf(page, 'diamonds-3-d0');
+  await page.evaluate((id) => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('diamonds-4-d0', id);
+    mexe.playHandCard('diamonds-5-d0', id);
+  }, meldRun);
+  await waitStep(4);
+
+  // step4 "extend": diamonds 6
+  await page.evaluate((id) => window.__MEXE__.mexe!.playHandCard('diamonds-6-d0', id), meldRun);
+  await waitStep(5);
+
+  // step5 "joker": screenshot the teaching moment (joker glowing in hand, not yet placed), then place it
+  await snap(page, 'tutorial-joker');
+  await page.evaluate((id) => window.__MEXE__.mexe!.playHandCard('joker-d0-1', id), meldRun);
+  await waitStep(6);
+
+  // step6 "mexe-explain": explanatory only
+  await clickNext();
+  await waitStep(7);
+
+  // step7 "rebuild": break the original set of 9s apart
+  await page.evaluate(() => window.__MEXE__.mexe!.moveTableCard('clubs-9-d0', null));
+  await waitStep(8);
+
+  // step8 "invalid": explanatory only — the broken 9s-set is now on screen showing its own reason
+  await clickNext();
+  await waitStep(9);
+
+  // step9 "feito": repair the table (put the 9 of clubs back with its natural pair) and confirm
+  const fixedValidation = await page.evaluate((id) => {
+    window.__MEXE__.mexe!.moveTableCard('clubs-9-d0', id);
+    return window.__MEXE__.validation as { ok: boolean; reasons: string[] };
+  }, meldA);
+  expect(fixedValidation.ok).toBe(true);
+  await page.waitForTimeout(300); // FEITO accidental-confirm guard (CONFIRM_GUARD_MS)
+  const confirmed1 = await page.evaluate(() => window.__MEXE__.mexe!.feito());
+  expect(confirmed1).toBe(true);
+  await waitStep(10);
+
+  // step10 "comprar": wait out the tutorial AI's scripted auto-draw turn, then draw our own card
+  await page.waitForFunction(() => window.__MEXE__.mexe !== null, undefined, { timeout: 10_000 });
+  await page.evaluate(() => window.__MEXE__.mexe!.comprar());
+  await waitStep(11);
+
+  // step11 "win": the draw (diamonds 7) plus the leftover diamonds 9 complete the run — again
+  // waiting out the AI's own scripted turn first before it's our editor again.
+  await page.waitForFunction(() => window.__MEXE__.mexe !== null, undefined, { timeout: 10_000 });
+  const winValidation = await page.evaluate((id) => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('diamonds-7-d0', id);
+    mexe.playHandCard('diamonds-9-d0', id);
+    return window.__MEXE__.validation as { ok: boolean; reasons: string[] };
+  }, meldRun);
+  expect(winValidation.ok).toBe(true);
+  await page.waitForTimeout(300);
+  const confirmed2 = await page.evaluate(() => window.__MEXE__.mexe!.feito());
+  expect(confirmed2).toBe(true);
+  await page.waitForFunction(() => window.__MEXE__.state!()!.winnerId !== null, undefined, { timeout: 10_000 });
+
+  expect(await page.evaluate(() => window.__MEXE__.tutorialStep)).toBe(11);
+  const saved = JSON.parse((await page.evaluate(() => localStorage.getItem('mexe-save')))!) as {
+    progress: { tutorialCompleted: boolean };
+  };
+  expect(saved.progress.tutorialCompleted).toBe(true);
+
+  await snap(page, 'tutorial-complete');
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
+test('tutorial: skipping mid-tutorial records the furthest step reached', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=42&showcase=menu');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const [tx, ty] = toScreen(240, 207);
+  await page.mouse.click(tx, ty);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'tutorial' && window.__MEXE__.mexe !== null);
+  await page.waitForFunction(() => window.__MEXE__.tutorialStep === 0);
+
+  const [nextX, nextY] = toScreen(438, 144);
+  await page.mouse.click(nextX, nextY);
+  await page.waitForFunction(() => window.__MEXE__.tutorialStep === 1);
+
+  await page.evaluate(() => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('hearts-9-d0', null);
+    const meldId = mexe.getDraft()!.melds[0]!.id;
+    mexe.playHandCard('spades-9-d0', meldId);
+    mexe.playHandCard('clubs-9-d0', meldId);
+  });
+  await page.waitForFunction(() => window.__MEXE__.tutorialStep === 2, undefined, { timeout: 10_000 });
+
+  const [skipX, skipY] = toScreen(438, 162); // tutorial SKIP button
+  await page.mouse.click(skipX, skipY);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'menu', undefined, { timeout: 10_000 });
+
+  const summary = await page.evaluate(() => window.__MEXE__.playlog.summary());
+  expect(summary.tutorialFurthestStep).toBe(2);
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
+test('playlog: a real local game records turn/draw events and exports without leaking the player name', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=77&showcase=mexe');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  const playerName = await page.evaluate(() => window.__MEXE__.state!()!.players[0]!.name);
+
+  const before = await page.evaluate(() => window.__MEXE__.state!()!.turn);
+  await page.evaluate(() => window.__MEXE__.mexe!.comprar());
+  await page.waitForFunction(
+    (t) => {
+      const s = window.__MEXE__.state?.();
+      return s !== null && s !== undefined && s.turn >= t + 2 && !s.players[s.activePlayerIndex]!.isAi;
+    },
+    before,
+    { timeout: 10_000 },
+  );
+  await page.evaluate(() => window.__MEXE__.mexe!.comprar());
+  await page.waitForFunction(
+    (t) => {
+      const s = window.__MEXE__.state?.();
+      return s !== null && s !== undefined && s.turn >= t + 4 && !s.players[s.activePlayerIndex]!.isAi;
+    },
+    before,
+    { timeout: 10_000 },
+  );
+
+  const entries = await page.evaluate(() => window.__MEXE__.playlog.entries());
+  expect(entries.some((e) => e.type === 'turn:start')).toBe(true);
+  const summary = await page.evaluate(() => window.__MEXE__.playlog.summary());
+  expect(summary.totalTurns).toBeGreaterThan(0);
+
+  const exported = await page.evaluate(() => window.__MEXE__.playlog.exportJson());
+  const parsed: unknown = JSON.parse(exported); // throws if not valid JSON
+  expect(typeof parsed).toBe('object');
+  expect(exported.includes(playerName)).toBe(false);
+
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
+test('playlog: disabled via ?playlog=0 records nothing', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=77&showcase=mexe&playlog=0');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  const before = await page.evaluate(() => window.__MEXE__.state!()!.turn);
+  await page.evaluate(() => window.__MEXE__.mexe!.comprar());
+  await page.waitForFunction(
+    (t) => {
+      const s = window.__MEXE__.state?.();
+      return s !== null && s !== undefined && s.turn >= t + 2 && !s.players[s.activePlayerIndex]!.isAi;
+    },
+    before,
+    { timeout: 10_000 },
+  );
+  expect(await page.evaluate(() => window.__MEXE__.playlog.entries())).toEqual([]);
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  expect(trackConsoleErrors(page)).toEqual([]);
+});
+
+test('invalid FEITO explains itself in translated copy and is logged by reason', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'feito-invalid-explained', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    // same illegal meld as the "repeated-suit-group" case: two diamonds in one group
+    await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation) as { ok: boolean; reasons: string[] };
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.groupDuplicateSuit');
+
+    // the FEITO button is disabled for an invalid draft (never fires); the F keyboard shortcut
+    // calls the confirm path directly regardless of button state, which is the one way a real
+    // player can hit the invalid-confirm branch that records feito:blocked.
+    await p.keyboard.press('f');
+    await p.waitForFunction(
+      () => (window.__MEXE__.playlog.summary().invalidFeitoByReason['reason.groupDuplicateSuit'] ?? 0) > 0,
+      undefined,
+      { timeout: 5000 },
+    );
+  });
+
+  // The on-screen reason text is `t(check.reasons[0])` computed from the exact same reasons
+  // array asserted above (src/scenes/GameScene.ts renderAll) — reproduce that lookup here since
+  // Playwright cannot read canvas-rendered text directly. Never a bare `reason.*` key.
+  const reasonText = translate('reason.groupDuplicateSuit');
+  expect(reasonText).not.toBe('reason.groupDuplicateSuit');
+  expect(reasonText).not.toMatch(/^reason\./);
+});
+
+test('english pass: rule-reason and server-error copy are translated, not bare keys', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe&lang=en', 'feito-invalid-explained-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation) as { ok: boolean; reasons: string[] };
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.groupDuplicateSuit');
+  });
+
+  for (const reason of ['reason.groupDuplicateSuit', 'reason.runWrap', 'reason.notYourTurn']) {
+    expect(translate(reason)).not.toMatch(/^reason\./);
+  }
+  // Every server error code the client can receive (src/net/errors.ts) resolves to real EN copy,
+  // never the raw code — OnlineScene always renders errorMessage(code), never msg.code/msg.message.
+  for (const code of SERVER_ERROR_CODES) {
+    const msg = errorMessage(code);
+    expect(msg).not.toBe(code);
+    expect(msg.length).toBeGreaterThan(0);
+  }
+  // OnlineScene sets this one directly (t('online.err.unreachable')), not through errorMessage() —
+  // 'unreachable' is a client-side marker, never a code the server itself sends.
+  expect(translate('online.err.unreachable')).not.toMatch(/^online\.err\./);
 });
 
 test.afterAll(() => {

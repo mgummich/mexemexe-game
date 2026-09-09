@@ -1,4 +1,48 @@
-# MEXE! 1.1.0 — Release notes (online alpha)
+# MEXE! 1.2.0 — Release notes (playtest demo)
+
+## Phase 8 playtest update
+
+This build is the **public playtest demo**. Nothing about the rules or the wire
+protocol changed; what changed is everything a first-time player runs into.
+
+The tutorial now teaches the ruleset the game actually enforces — it explains
+that a trinca is exactly three or four cards with no repeated suit, then hands
+you a card that breaks that rule so you meet the rejection with a coach next to
+you, and it finally introduces the jokers that have been in the deck since the
+rules adaptation. Online errors are written for players instead of developers:
+where a tester used to read `cannot join room: room_full`, they now read "That
+room is full." A server that was never reachable says so, rather than looking
+like a dropped connection. Lobby buttons no longer fire twice when double-
+clicked.
+
+Underneath, the build keeps a session-only play log of turn durations, rejected-
+play reasons, undo/reset counts and tutorial progress, so "it felt confusing"
+becomes something countable. It stays in memory, it strips names and tokens, and
+it goes nowhere unless a tester exports it and attaches it themselves —
+`?playlog=0` turns it off entirely. See `docs/PLAYTEST_GUIDE.md`.
+
+## Phase 7 beta update
+
+Online play is now a **beta** on wire protocol **v3**. What changed for
+players: you type the room code on a proper in-canvas screen instead of a
+browser dialog, the lobby tells you why START is greyed out, a dropped
+connection no longer freezes everyone else's match (after 30s the server draws
+and ends the missing player's turn for them), and a client that ever falls out
+of step with the server now notices and pulls a fresh authoritative state
+instead of drawing a stale board.
+
+Under the hood: server-side socket liveness probes, a 16 KiB inbound frame
+cap, per-revision state digests with client-side mismatch detection, a
+client-initiated `resync` message, and `reqId` echoed on errors. Still no
+accounts, matchmaking, chat, or online rematch.
+
+## Phase 6 alpha update
+
+Private rooms now support **2–4 players**. Share room code, wait for every
+occupied seat to ready, then seat 0 presses START. Seats, IDs and reconnect
+tokens remain stable; server still owns deal, turns, validation and winner.
+The alpha still has no matchmaking/accounts/chat/rematch and falls safely back
+to local menu after its single bounded reconnect retry fails.
 
 *Arruma. Desarruma. Bate.* This release adds an **ALPHA** online multiplayer
 mode on top of the 1.0.0 launch build. Everything in the 1.0.0 notes below
@@ -6,8 +50,8 @@ still applies unchanged to local play.
 
 ## What's new: online alpha
 
-- **2-player private rooms** over WebSocket: create a room, share the
-  5-character code, join, both ready, auto-start.
+- **2–4-player private rooms** over WebSocket: create a room, share the
+  5-character code, join, ready, then host-start.
 - **Authoritative server**: the server (`npm run server`, plain Node + `ws`,
   port 8787 by default, `GET /health`) holds the only real game state and
   validates every move against the same rules engine (`canConfirmTurn`) local
@@ -28,7 +72,6 @@ still applies unchanged to local play.
   in-canvas input.
 - Opponent avatar is the generic player icon (no accounts to show one).
 - No accounts, matchmaking, ranked play, or chat.
-- 2 players only — no 3/4-player online rooms.
 - No online rematch — the win screen online only offers MENU.
 - No socket liveness probe — a half-open connection can hold a seat until the
   disconnect grace timer notices.

@@ -1,8 +1,29 @@
 import Phaser from 'phaser';
+import { playlog } from '../core/playlog';
 import { settings } from '../core/settings';
 import { getLocale, setLocale, t } from '../localization/i18n';
 import { buildOverlay } from './overlay';
 import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
+
+/** Copies the play-log export to the clipboard for a tester who won't open a console. Falls
+ * back to `console.log` if the Clipboard API is unavailable or the write is rejected (denied
+ * permission, insecure context, etc.) — never throws into the caller either way. */
+function copyPlaylog(onDone: (ok: boolean) => void): void {
+  const json = playlog.exportJson();
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('no clipboard API');
+    navigator.clipboard
+      .writeText(json)
+      .then(() => onDone(true))
+      .catch(() => {
+        console.log(json);
+        onDone(false);
+      });
+  } catch {
+    console.log(json);
+    onDone(false);
+  }
+}
 
 /** Opens the settings overlay (mute, sfx/music volume, reduced motion, language, reset data). Returns a close() fn. */
 export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): () => void {
@@ -18,7 +39,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     objs = [];
     const w = 200;
     // grows with the large-text setting itself so its own extra row/taller buttons still fit at 125%.
-    const h = Math.round(232 * settings.fontScale());
+    const h = Math.round(254 * settings.fontScale());
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
     const { cx, top } = base;
@@ -97,6 +118,18 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       showMain();
     }, { textureBase: 'btn-comprar', w: 150, h: 16, size: 7 }).setDepth(510);
     objs.push(langBtn);
+
+    y += 22;
+    const exportBtn = new PixelButton(scene, cx, y, t('settings.exportLog'), () => {
+      copyPlaylog((ok) => {
+        // Panel may have closed (or rebuilt for a settings change) before this callback runs —
+        // never touch a destroyed button.
+        if (!exportBtn.active) return;
+        exportBtn.setLabel(ok ? t('settings.exportLogCopied') : t('settings.exportLogFailed'));
+        scene.time.delayedCall(1500, () => exportBtn.active && exportBtn.setLabel(t('settings.exportLog')));
+      });
+    }, { textureBase: 'btn-comprar', w: 170, h: 16, size: 7 }).setDepth(510);
+    objs.push(exportBtn);
 
     y += 22;
     objs.push(

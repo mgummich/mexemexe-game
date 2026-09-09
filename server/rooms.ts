@@ -27,6 +27,8 @@ const CODE_LENGTH = 5;
 const DEFAULT_DISCONNECT_GRACE_MS = 30_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_ROOMS = 500;
+export const MIN_PLAYERS = 2;
+export const MAX_PLAYERS = 4;
 
 export interface RoomManagerDeps {
   /** Injectable clock, for deterministic tests. */
@@ -64,7 +66,7 @@ interface Seat {
 
 interface RoomInternal {
   code: string;
-  seats: (Seat | null)[]; // length 2, index === seat number
+  seats: (Seat | null)[]; // length MAX_PLAYERS, index === stable clockwise seat
   state: GameState | null;
   rev: number;
   // Defensive re-entrancy guard only: the manager is fully synchronous between the check and
@@ -82,7 +84,7 @@ export type CreateRoomResult =
 
 export type JoinRoomResult =
   | { ok: true; seat: number; token: string; players: RoomPlayerSummary[] }
-  | { ok: false; error: 'room_not_found' | 'room_full' };
+  | { ok: false; error: 'room_not_found' | 'room_full' | 'game_started' };
 
 export type ReconnectResult =
   | { ok: true; code: string; seat: number; view: GameView | null; players: RoomPlayerSummary[] }
@@ -90,7 +92,11 @@ export type ReconnectResult =
 
 export type ReadyResult =
   | { ok: true; started: boolean; players: RoomPlayerSummary[] }
-  | { ok: false; error: 'room_not_found' };
+  | { ok: false; error: 'room_not_found' | 'not_member' | 'game_started' };
+
+export type StartResult =
+  | { ok: true; started: true; players: RoomPlayerSummary[] }
+  | { ok: false; error: 'room_not_found' | 'not_host' | 'not_ready' | 'seat_gap' | 'game_started' };
 
 export type TurnResult =
   | { ok: true; gameOver: boolean }
@@ -98,6 +104,11 @@ export type TurnResult =
 
 function idOf(seat: number): string {
   return `p${seat}`;
+}
+
+function displayName(name: string, seat: number): string {
+  const trimmed = name.trim().slice(0, 64);
+  return trimmed || `Player ${seat + 1}`;
 }
 
 export class RoomManager {
@@ -132,7 +143,7 @@ export class RoomManager {
     const seat: Seat = {
       seat: 0,
       id: idOf(0),
-      name,
+      name: displayName(name, 0),
       token,
       ready: false,
       connected: true,
@@ -140,7 +151,7 @@ export class RoomManager {
     };
     const room: RoomInternal = {
       code,
-      seats: [seat, null],
+      seats: [seat, ...Array<Seat | null>(MAX_PLAYERS - 1).fill(null)],
       state: null,
       rev: 0,
       processing: false,
@@ -154,13 +165,14 @@ export class RoomManager {
   joinRoom(code: string, name: string): JoinRoomResult {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: 'room_not_found' };
+    if (room.state) return { ok: false, error: 'game_started' };
     const freeSeat = room.seats.findIndex((s) => s === null);
     if (freeSeat === -1) return { ok: false, error: 'room_full' };
     const token = this.genToken();
     room.seats[freeSeat] = {
       seat: freeSeat,
       id: idOf(freeSeat),
-      name,
+      name: displayName(name, freeSeat),
       token,
       ready: false,
       connected: true,
@@ -189,36 +201,40 @@ export class RoomManager {
   setReady(code: string, seat: number, ready: boolean): ReadyResult {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: 'room_not_found' };
+    if (room.state) return { ok: false, error: 'game_started' };
     const s = room.seats[seat];
-    if (s) s.ready = ready;
+    if (!s) return { ok: false, error: 'not_member' };
+    s.ready = ready;
     room.lastActivityAt = this.now();
-    const bothReady = room.seats.every((x) => x !== null && x.ready);
-    if (bothReady && !room.state) {
-      const seed = this.genSeed();
-      const rng = createRng(seed);
-      const deck = shuffleDeck(createDeck(DEFAULT_RULES), rng);
-      const { hands, drawPile } = dealInitialHands(deck, 2, DEFAULT_RULES.handSize);
-      const players: PlayerState[] = room.seats.map((seatData, i) => ({
-        id: idOf(i),
-        name: seatData!.name,
-        isAi: false,
-        hand: hands[i]!,
-      }));
-      room.state = {
-        seed,
-        players,
-        activePlayerIndex: 0,
-        table: [],
-        drawPile,
-        turn: 1,
-        winnerId: null,
-        phase: 'playing',
-        config: DEFAULT_RULES,
-      };
-      room.rev = 1;
-      return { ok: true, started: true, players: this.summarize(room) };
-    }
     return { ok: true, started: false, players: this.summarize(room) };
+  }
+
+  /** Seat 0 starts only a full-ready 2–4P lobby. Seats never move, so turn order is stable. */
+  startGame(code: string, seat: number): StartResult {
+    const room = this.rooms.get(code);
+    if (!room) return { ok: false, error: 'room_not_found' };
+    if (room.state) return { ok: false, error: 'game_started' };
+    if (seat !== 0) return { ok: false, error: 'not_host' };
+    const occupied = room.seats.filter((s): s is Seat => s !== null);
+    if (occupied.length < MIN_PLAYERS || occupied.some((s) => !s.ready)) return { ok: false, error: 'not_ready' };
+    // GameState indexes players by turn seat. Never compact a lobby gap (e.g. seats 0 and 2),
+    // because that would make socket seat 2 point at a nonexistent player after start.
+    if (room.seats.slice(0, occupied.length).some((s) => s === null)) return { ok: false, error: 'seat_gap' };
+
+    const seed = this.genSeed();
+    const rng = createRng(seed);
+    const deck = shuffleDeck(createDeck(DEFAULT_RULES), rng);
+    const { hands, drawPile } = dealInitialHands(deck, occupied.length, DEFAULT_RULES.handSize);
+    const players: PlayerState[] = occupied.map((seatData, i) => ({
+      id: idOf(i), name: seatData.name, isAi: false, hand: hands[i]!,
+    }));
+    room.state = {
+      seed, players, activePlayerIndex: 0, table: [], drawPile, turn: 1,
+      winnerId: null, phase: 'playing', config: DEFAULT_RULES,
+    };
+    room.rev = 1;
+    room.lastActivityAt = this.now();
+    return { ok: true, started: true, players: this.summarize(room) };
   }
 
   /** Full validation path per docs/MULTIPLAYER_ARCHITECTURE.md §5. */
@@ -290,6 +306,31 @@ export class RoomManager {
     } finally {
       room.processing = false;
     }
+  }
+
+  /** Keep a match moving when the seat whose turn it is has been gone past the disconnect grace:
+   * the server plays that seat's always-legal move (draw and end turn) so the survivors are not
+   * stuck on a board that can never advance (docs/PHASE7_AUDIT.md #4). Only fires while at least
+   * one other seat is still connected — an empty room is the sweep's job, not this one. Returns
+   * the rooms whose state advanced. */
+  advanceStalledTurns(): { code: string; gameOver: boolean }[] {
+    const t = this.now();
+    const advanced: { code: string; gameOver: boolean }[] = [];
+    for (const [code, room] of this.rooms) {
+      const state = room.state;
+      if (!state || state.phase !== 'playing') continue;
+      const active = room.seats[state.activePlayerIndex];
+      if (!active || active.connected || active.disconnectedAt === null) continue;
+      if (t - active.disconnectedAt <= this.disconnectGraceMs) continue;
+      if (!room.seats.some((s) => s !== null && s.connected)) continue;
+      const next = drawAndEndTurn(state);
+      assertConservation(next);
+      room.state = next;
+      room.rev += 1;
+      room.lastActivityAt = t;
+      advanced.push({ code, gameOver: next.phase === 'finished' });
+    }
+    return advanced;
   }
 
   disconnect(code: string, seat: number): void {

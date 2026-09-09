@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { startMusic } from './audio/music';
+import { bus } from './core/events';
+import { playlog } from './core/playlog';
 import { t } from './localization/i18n';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
@@ -11,6 +13,7 @@ import { WinScene } from './scenes/WinScene';
 import { debugApi, installDebugApi } from './verification/debug-api';
 
 installDebugApi();
+playlog.attachToBus(bus);
 startMusic();
 
 // The world is authored in 480x270 units, but the canvas renders at RENDER_SCALE times that so

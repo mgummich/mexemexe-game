@@ -1,5 +1,6 @@
 import type { DraftState, GameState } from '../rules/types';
 import { settings } from '../core/settings';
+import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { ConnStatus } from '../net/client';
 import type { RoomPlayerSummary, SubmitTurnMeld } from '../net/protocol';
 
@@ -19,6 +20,7 @@ export interface MexeOnlineDebugApi {
   createRoom: (name?: string) => void;
   joinRoom: (code: string, name?: string) => void;
   setReady: (ready: boolean) => void;
+  startGame: () => void;
   /** In-match draw-and-end-turn; a thin alias over the same action COMPRAR triggers. */
   comprar: () => void;
   /** Verification-only: submit a proposal straight to the server, bypassing the editor's
@@ -27,6 +29,11 @@ export interface MexeOnlineDebugApi {
   /** Verification-only: force-close the socket as if the network died, to exercise the
    * disconnect/reconnect path (see NetClient.forceDrop). */
   forceDrop: () => void;
+  /** Verification-only: number of server/client state-hash mismatches seen this match. Always 0
+   * in a healthy run; non-zero means a desync was detected and a resync was requested. */
+  desyncs: () => number;
+  /** Verification-only: ask the server for a fresh authoritative snapshot. */
+  requestResync: () => void;
 }
 
 /** Exposed on window.__MEXE__ for Playwright verification. */
@@ -59,6 +66,14 @@ export interface MexeDebugApi {
     getDraft: () => DraftState | null;
   } | null;
   online: MexeOnlineDebugApi | null;
+  /** Dev-only playtest instrumentation: session-scoped, in-memory, never a network sink. */
+  playlog: {
+    entries: () => PlaylogEntry[];
+    summary: () => PlaylogSummary;
+    exportJson: () => string;
+    clear: () => void;
+    setEnabled: (on: boolean) => void;
+  };
 }
 
 declare global {
@@ -83,6 +98,13 @@ export const debugApi: MexeDebugApi = {
   music: () => ({ track: '', playing: false, volume: 0 }),
   mexe: null,
   online: null,
+  playlog: {
+    entries: () => playlog.entries(),
+    summary: () => playlog.summary(),
+    exportJson: () => playlog.exportJson(),
+    clear: () => playlog.clear(),
+    setEnabled: (on) => playlog.setEnabled(on),
+  },
 };
 
 export function installDebugApi(): void {
