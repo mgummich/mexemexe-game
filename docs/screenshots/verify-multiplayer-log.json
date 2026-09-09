@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-09T14:53:42.778Z",
-  "roomCode": "J55XP",
+  "generatedAt": "2026-09-09T17:10:44.906Z",
+  "roomCode": "2NN8V",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-09T14:53:34.837Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":3,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-09T17:10:36.833Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":3,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -156,7 +156,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "8FPQB",
+    "code": "Z2N4H",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {

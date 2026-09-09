@@ -21,6 +21,7 @@ import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 import { computeMeldLayout, type MeldLayoutInput } from '../table/layout';
+import { computeSnapTargets, snapTargetFor, type SnapStatus, type SnapTarget } from '../table/snap';
 import { buildTutorialState } from '../tutorial/fixture';
 import { TutorialDirector, type TutorialAction } from '../tutorial/director';
 import { openPauseMenu } from '../ui/pause-menu';
@@ -112,8 +113,19 @@ export class GameScene extends Phaser.Scene {
 
   // drag feel
   private dragShadow: Phaser.GameObjects.Ellipse | null = null;
-  private dragZoneHighlights: { meldId: string; gfx: Phaser.GameObjects.Rectangle }[] = [];
+  private dragZoneHighlights: {
+    meldId: string;
+    status: SnapStatus;
+    solid: Phaser.GameObjects.Rectangle | null;
+    dashed: Phaser.GameObjects.Graphics | null;
+  }[] = [];
   private dragTableOutline: Phaser.GameObjects.Graphics | null = null;
+  /** Snap targets for the card currently being dragged — computed once on dragstart (Phase 12). */
+  private snapTargets: SnapTarget[] = [];
+  /** Non-mutating ghost preview panel shown while hovering a drop zone. */
+  private ghostPreview: Phaser.GameObjects.GameObject[] = [];
+  /** Which zone the ghost preview currently reflects: undefined = none, '' = empty table area, else a meldId. Lets hover redraw only on actual change, never per pointer-move. */
+  private hoverKey: string | undefined = undefined;
 
   // FEITO accidental-confirm guard
   private validSince: number | null = null;
@@ -544,7 +556,30 @@ export class GameScene extends Phaser.Scene {
       },
       comprar: () => this.onComprar(),
       getDraft: () => this.editor?.getDraft() ?? null,
+      // Verification-only reads (Phase 12) — mirror what the drag highlights use, never mutate anything.
+      cardPos: (cardId: string) => {
+        const s = this.cardSprites.find((c) => c.getData('cardId') === cardId);
+        return s ? { x: s.x, y: s.y } : null;
+      },
+      meldPos: (meldId: string) => {
+        const z = this.meldZones.find((m) => m.meldId === meldId);
+        return z ? { x: z.rect.centerX, y: z.rect.centerY } : null;
+      },
+      snapTargets: (cardId: string) =>
+        this.computeSnapTargetsFor(cardId).map((tg) => ({ meldId: tg.meldId, status: tg.status, reason: tg.reason })),
     };
+  }
+
+  /** Resolves `cardId` against the live draft (table melds, then remaining hand) and runs the pure
+   * snap model once. Shared by dragstart and the debug-api readback so they can never disagree. */
+  private computeSnapTargetsFor(cardId: string): SnapTarget[] {
+    if (!this.editor) return [];
+    const draft = this.editor.getDraft();
+    const card =
+      draft.melds.flatMap((m) => m.cards).find((c) => c.id === cardId) ??
+      this.editor.getRemainingHand().find((c) => c.id === cardId);
+    if (!card) return [];
+    return computeSnapTargets(draft, card, this.store.get().config);
   }
 
   /** Tutorial-mode action gate — always true outside a tutorial. */
@@ -991,6 +1026,10 @@ export class GameScene extends Phaser.Scene {
 
   private renderAll(): void {
     if (this.tutorialDirector) this.checkTutorialProgress();
+    this.clearGhostPreview();
+    // The tooltip's objects live outside `hud`, and a latched (tapped) one has no pointerout to
+    // close it — a re-render must not leave it floating over a board it no longer describes.
+    this.hideMeldReasonTooltip();
     for (const s of this.cardSprites) s.destroy();
     this.cardSprites = [];
     for (const h of this.hud) h.destroy();
@@ -1063,7 +1102,11 @@ export class GameScene extends Phaser.Scene {
       // cover almost every turn; the rare remainder (e.g. a returned table card) falls back to the
       // specific canConfirm() reason, same text as before.
       const phase = objectivePhase(check.ok, invalidReasons.size > 0, this.editor.getDraft().handCardsPlayed.length > 0);
-      this.reasonText.setText(phase ? t(objectiveKey(phase)) : check.ok ? '' : t(check.reasons[0] ?? ''));
+      // The exact top reason beats the generic "fix the invalid meld" phase text whenever one exists.
+      const topInvalidReason = analysis.invalidMelds[0]?.reason ?? null;
+      this.reasonText.setText(
+        topInvalidReason ? t(topInvalidReason) : phase ? t(objectiveKey(phase)) : check.ok ? '' : t(check.reasons[0] ?? ''),
+      );
       debugApi.validation = { ok: check.ok, reasons: check.ok ? [] : check.reasons };
     } else {
       this.setFeitoEnabled(false);
@@ -1281,9 +1324,26 @@ export class GameScene extends Phaser.Scene {
         // fully inside the table area so it can never render off the visible playfield.
         const reason = invalidReasons.get(meld.id);
         if (reason) {
-          badge.setInteractive({ useHandCursor: false });
+          // Enlarged hit rect: the glyph itself is a few px, far under a usable touch target.
+          const pad = 5;
+          badge.setInteractive(
+            new Phaser.Geom.Rectangle(-pad, -pad, badge.width + pad * 2, badge.height + pad * 2),
+            Phaser.Geom.Rectangle.Contains,
+          );
+          // Tappable, not just hover-only: touch devices have no hover, and a tap there emits
+          // pointerover -> pointerdown -> pointerup -> pointerout in one gesture. So the tap
+          // latches (`tapped`) and pointerout only hides while unlatched — otherwise the release
+          // half of the very tap that opened the tooltip would close it again the same instant.
+          let tapped = false;
           badge.on('pointerover', () => this.showMeldReasonTooltip(zoneRect, reason));
-          badge.on('pointerout', () => this.hideMeldReasonTooltip());
+          badge.on('pointerout', () => {
+            if (!tapped) this.hideMeldReasonTooltip();
+          });
+          badge.on('pointerdown', () => {
+            tapped = !tapped;
+            if (tapped) this.showMeldReasonTooltip(zoneRect, reason);
+            else this.hideMeldReasonTooltip();
+          });
         }
       }
 
@@ -1403,6 +1463,8 @@ export class GameScene extends Phaser.Scene {
         .ellipse(sprite.x + 2, sprite.y + 5, baseW * 1.05, baseH * 0.5, 0x000000, 0.35)
         .setDepth(299);
       playSfx(this, 'sfx-pickup', 0.4);
+      this.hideMeldReasonTooltip();
+      this.snapTargets = this.computeSnapTargetsFor(sprite.getData('cardId') as string);
       this.showDropZoneHighlights();
     });
     sprite.on('drag', (_p: Phaser.Input.Pointer, dragX: number, dragY: number) => {
@@ -1417,42 +1479,155 @@ export class GameScene extends Phaser.Scene {
       this.dragShadow = null;
       this.clearDropZoneHighlights();
       this.onCardDropped(sprite);
+      this.snapTargets = [];
     });
   }
 
-  /** Soft gold stroke over every meld zone + a dashed outline over the table area ("drop here for a new meld"). */
+  /** True inside the table drop area, matching `onCardDropped`'s own bounds check exactly — hover
+   * preview and drop resolution must never disagree on where "the empty table" is. */
+  private inTableArea(x: number, y: number): boolean {
+    return y > TABLE_TOP - 6 && y < TABLE_BOTTOM + 10 && x < W - 84;
+  }
+
+  /**
+   * Colours each meld zone by its snap status (Phase 12) — solid green for legal, today's soft
+   * gold for incomplete, dashed red for illegal (shape channel, not just hue). Targets were
+   * computed once on dragstart; this only draws them.
+   */
   private showDropZoneHighlights(): void {
     this.clearDropZoneHighlights();
-    for (const z of this.meldZones) {
-      const gfx = this.add
-        .rectangle(z.rect.centerX, z.rect.centerY, z.rect.width, z.rect.height)
-        .setStrokeStyle(1, GOLD, 0.45)
-        .setDepth(150);
-      this.dragZoneHighlights.push({ meldId: z.meldId, gfx });
-    }
+    this.hoverKey = undefined;
+    this.redrawZoneHighlights();
     const outline = this.add.graphics().setDepth(140);
     this.drawDashedRect(outline, TABLE_LEFT, TABLE_TOP, TABLE_AREA_W, TABLE_BOTTOM - TABLE_TOP, GOLD, 0.3);
     this.dragTableOutline = outline;
   }
 
-  private updateDropZoneHover(x: number, y: number): void {
-    const zone = this.meldZones.find((z) => z.rect.contains(x, y));
+  private redrawZoneHighlights(): void {
     for (const h of this.dragZoneHighlights) {
-      const hovered = zone?.meldId === h.meldId;
-      h.gfx.setStrokeStyle(hovered ? 2 : 1, GOLD, hovered ? 0.95 : 0.45);
+      h.solid?.destroy();
+      h.dashed?.destroy();
+    }
+    this.dragZoneHighlights = [];
+    for (const z of this.meldZones) {
+      const target = snapTargetFor(this.snapTargets, z.meldId);
+      const status: SnapStatus = target?.status ?? 'incomplete';
+      const hovered = this.hoverKey === z.meldId;
+      let solid: Phaser.GameObjects.Rectangle | null = null;
+      let dashed: Phaser.GameObjects.Graphics | null = null;
+      if (status === 'illegal') {
+        dashed = this.add.graphics().setDepth(150);
+        this.drawDashedRect(dashed, z.rect.x, z.rect.y, z.rect.width, z.rect.height, 0xd83a3a, hovered ? 1 : 0.85, hovered ? 2 : 1);
+      } else {
+        const color = status === 'legal' ? 0x3ec06a : GOLD;
+        const baseWidth = status === 'legal' ? 2 : 1;
+        const baseAlpha = status === 'legal' ? 0.9 : 0.45;
+        solid = this.add
+          .rectangle(z.rect.centerX, z.rect.centerY, z.rect.width, z.rect.height)
+          .setStrokeStyle(hovered ? baseWidth + 1 : baseWidth, color, hovered ? Math.min(1, baseAlpha + 0.3) : baseAlpha)
+          .setDepth(150);
+      }
+      this.dragZoneHighlights.push({ meldId: z.meldId, status, solid, dashed });
     }
   }
 
+  /** Emphasises the hovered zone within its own status colour (never overwrites it with gold) and
+   * redraws the ghost preview — only when the hovered zone actually changed, never per pointer-move. */
+  private updateDropZoneHover(x: number, y: number): void {
+    const zone = this.meldZones.find((z) => z.rect.contains(x, y));
+    const inTable = !zone && this.inTableArea(x, y);
+    const key = zone ? zone.meldId : inTable ? '' : undefined;
+    if (key === this.hoverKey) return;
+    this.hoverKey = key;
+    this.redrawZoneHighlights();
+    if (key === undefined) {
+      this.clearGhostPreview();
+      return;
+    }
+    const target = snapTargetFor(this.snapTargets, zone ? zone.meldId : null);
+    if (!target) {
+      this.clearGhostPreview();
+      return;
+    }
+    const rect = zone ? zone.rect : new Phaser.Geom.Rectangle(TABLE_LEFT, TABLE_TOP, TABLE_AREA_W, TABLE_BOTTOM - TABLE_TOP);
+    this.showGhostPreview(target, rect);
+  }
+
   private clearDropZoneHighlights(): void {
-    for (const h of this.dragZoneHighlights) h.gfx.destroy();
+    for (const h of this.dragZoneHighlights) {
+      h.solid?.destroy();
+      h.dashed?.destroy();
+    }
     this.dragZoneHighlights = [];
     this.dragTableOutline?.destroy();
     this.dragTableOutline = null;
+    this.hoverKey = undefined;
+    this.clearGhostPreview();
+  }
+
+  /**
+   * Non-mutating ghost preview (Phase 12): builds purely from `target` — never touches
+   * `cardSprites`/`meldZones`, never calls a DraftEditor mutator. Dark rounded panel clamped
+   * inside the playfield, small card images in resulting order, a joker hint taken only from
+   * `target.jokerAssignments` (never derived here), and one status line.
+   */
+  private showGhostPreview(target: SnapTarget, rect: Phaser.Geom.Rectangle): void {
+    this.clearGhostPreview();
+    const cw = CARD_W * 0.6;
+    const ch = CARD_H * 0.6;
+    const cards = target.preview;
+    const maxSpread = 120;
+    const cardGap = Math.min(cw + 3, cards.length > 1 ? maxSpread / (cards.length - 1) : cw);
+    const cardsW = cards.length > 0 ? (cards.length - 1) * cardGap + cw : cw;
+
+    const jokerLabels = new Map<string, string>();
+    if (target.status === 'legal') {
+      for (const a of target.jokerAssignments) {
+        jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
+      }
+    }
+    const hasJokerHint = cards.some((c) => jokerLabels.has(c.id));
+    const cardRowH = ch + (hasJokerHint ? 8 : 0);
+
+    const statusText =
+      target.status === 'legal' ? t('snap.legal') : target.status === 'incomplete' ? t('snap.incomplete') : t(target.reason ?? '');
+    const statusColor = target.status === 'legal' ? '#7ee0a0' : target.status === 'incomplete' ? '#f0c040' : '#ff6b5e';
+    const panelW = Math.min(150, Math.max(70, cardsW + 16));
+    const st = label(this, 0, 0, statusText, 6, statusColor);
+    st.setWordWrapWidth(panelW - 8, true);
+
+    const panelH = 6 + cardRowH + 4 + st.height + 6;
+    const cx = Phaser.Math.Clamp(rect.centerX, panelW / 2 + 2, W - 96 - 2);
+    const cy = Phaser.Math.Clamp(rect.bottom + 8 + panelH / 2, panelH / 2 + 2, H - 30);
+
+    const g = this.add.graphics().setDepth(500);
+    g.fillStyle(0x1a1410, 0.9);
+    g.fillRoundedRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH, 3);
+
+    const rowY = cy - panelH / 2 + 6 + ch / 2;
+    const startX = cx - cardsW / 2;
+    const objs: Phaser.GameObjects.GameObject[] = [g];
+    cards.forEach((card, i) => {
+      const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
+      const x = startX + i * cardGap + cw / 2;
+      objs.push(this.add.image(x, rowY, key).setDisplaySize(cw, ch).setAlpha(0.75).setDepth(501));
+      const hint = jokerLabels.get(card.id);
+      if (hint) objs.push(label(this, x, rowY + ch / 2 + 5, hint, 5, '#f0c040').setDepth(501));
+    });
+
+    st.setPosition(cx, cy + panelH / 2 - 6 - st.height / 2).setDepth(501);
+    objs.push(st);
+    this.ghostPreview = objs;
+  }
+
+  private clearGhostPreview(): void {
+    for (const o of this.ghostPreview) o.destroy();
+    this.ghostPreview = [];
   }
 
   // ponytail: hand-rolled dashed border — Phaser has no native dashed stroke and this is only a few lines.
-  private drawDashedRect(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, color: number, alpha: number): void {
-    g.lineStyle(1, color, alpha);
+  private drawDashedRect(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, color: number, alpha: number, width = 1): void {
+    g.lineStyle(width, color, alpha);
     const dash = 4;
     const gap = 3;
     for (let sx = x; sx < x + w; sx += dash + gap) {
@@ -1478,7 +1653,7 @@ export class GameScene extends Phaser.Scene {
     const y = sprite.y;
 
     const zone = this.meldZones.find((z) => z.rect.contains(x, y));
-    const inTableArea = y > TABLE_TOP - 6 && y < TABLE_BOTTOM + 10 && x < W - 84;
+    const inTableArea = this.inTableArea(x, y);
     const inHandArea = y >= HAND_Y - 30;
 
     const action: TutorialAction = origin === 'hand'
@@ -1497,26 +1672,32 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Which meld target (existing/new) this drop lands on, for the snap-status sfx below.
+    // Stays undefined for a return-to-hand — that path has no snap target.
+    let landedMeldId: string | null | undefined;
     let acted = false;
     if (origin === 'hand') {
-      if (zone) acted = this.editor.playHandCard(cardId, zone.meldId);
-      else if (inTableArea) acted = this.editor.playHandCard(cardId, null);
+      if (zone) { acted = this.editor.playHandCard(cardId, zone.meldId); landedMeldId = zone.meldId; }
+      else if (inTableArea) { acted = this.editor.playHandCard(cardId, null); landedMeldId = null; }
     } else {
       const currentMeld = this.editor.getDraft().melds.find((m) => m.cards.some((c) => c.id === cardId));
       if (zone && zone.meldId !== currentMeld?.id) {
         acted = this.editor.moveTableCard(cardId, zone.meldId);
+        landedMeldId = zone.meldId;
       } else if (inHandArea) {
         acted = this.editor.returnHandCard(cardId); // only works for cards played this turn
         if (!acted) playSfx(this, 'sfx-invalid', 0.5);
       } else if (inTableArea && !zone) {
         acted = this.editor.moveTableCard(cardId, null);
+        landedMeldId = null;
       }
     }
 
     const settle = { displayWidth: CARD_W, displayHeight: CARD_H, ease: 'Back.out', duration: Math.max(1, this.motion(140)) };
     if (acted) {
       this.clearLastMove();
-      playSfx(this, 'sfx-drop', 0.5);
+      const landedTarget = landedMeldId !== undefined ? snapTargetFor(this.snapTargets, landedMeldId) : null;
+      playSfx(this, landedTarget?.status === 'legal' ? 'sfx-snap' : 'sfx-drop', 0.5);
       this.tweens.add({ targets: sprite, ...settle, onComplete: () => this.renderAll() });
     } else {
       // snap back

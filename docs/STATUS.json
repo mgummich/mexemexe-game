@@ -30,11 +30,12 @@
     "e2e"
   ],
   "tests": {
-    "unit": "301/301 pass (21 files, incl. server config + logger redaction + client ws-url config)",
-    "e2e": "22 screenshot captures via npm run verify (fps 53-60, zero console errors) + 7/7 multiplayer e2e",
-    "preview": "npm run verify:preview OK - built client serves, 5 assets resolve, 2 js files scanned, no secrets",
+    "unit": "330/330 pass (22 files, incl. tests/snap.test.ts — 10 snap-target-model tests)",
+    "e2e": "51 screenshot captures via npm run verify (fps 56-60, zero console errors) + 7/7 multiplayer e2e with 14 captures",
+    "server": "72/72 pass (npm run test:server, 4 files)",
+    "preview": "npm run verify:preview OK (last run, Phase 11) - built client serves, assets resolve, no secrets",
     "lint": "clean (eslint + tsc --noEmit)",
-    "build": "pass - 121.26 kB game chunk + 1481.77 kB phaser chunk (38.12/337.86 kB gzip)"
+    "build": "clean (tsc --noEmit + vite build)"
   },
   "screenshots": [
     "docs/screenshots/final/a11y-large-text.png",
@@ -84,7 +85,7 @@
     "PT accents slightly rough at 6-7px font sizes",
     "no renderAll sprite pooling (fps 59 at 21 sprites+20 zones; revisit only if a lower-end target dips below 50)"
   ],
-  "nextTask": "optional: run npm run verify:multiplayer to confirm the 1-joker rule end-to-end over the live protocol",
+  "nextTask": "Phase 12 closed. Commit the branch; no blockers open.",
   "phase4Scores": {
     "launchStability": 9.5,
     "fullFlow": 9,
@@ -100,7 +101,7 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": 11,
+  "phase": 12,
   "phase6": {
     "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
     "blockers": [],
@@ -294,29 +295,29 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-09T15:27:39.880Z",
+    "generatedAt": "2026-09-09T17:15:59.920Z",
     "perShotFps": {
       "menu": 60,
       "game": 58,
-      "game4": 58,
+      "game4": 57,
       "tutorial": 57,
       "tutorial-step2": 57,
       "setup": 58,
       "settings": 56,
-      "win": 51,
-      "mexe-invalid": 55,
+      "win": 58,
+      "mexe-invalid": 58,
       "comprar-flow": 58,
-      "ai-showcase-mid": 57,
+      "ai-showcase-mid": 58,
       "ai-showcase-after": 58,
       "ai-cida": 58,
       "ai-juninho": 58,
-      "ai-bia": 57,
+      "ai-bia": 58,
       "ai-ze": 58,
       "pause": 57,
       "help": 56,
-      "help-en": 56,
+      "help-en": 57,
       "menu-en": 60,
-      "game-en": 58,
+      "game-en": 57,
       "a11y-large-text": 57,
       "keyboard-comprar": 58,
       "stress-table": 58,
@@ -325,28 +326,35 @@
       "joker-in-run": 58,
       "joker-in-group": 58,
       "mexe-invalid-two-jokers-run": 58,
-      "mexe-invalid-two-jokers-trinca-en": 57,
+      "mexe-invalid-two-jokers-trinca-en": 58,
       "mexe-valid-one-joker-each": 58,
       "mexe-invalid-kA2": 58,
       "repeated-suit-group": 58,
-      "tutorial-trinca": 57,
-      "tutorial-joker": 58,
+      "snap-targets-legal": 57,
+      "snap-target-illegal": 56,
+      "snap-preview-valid": 57,
+      "snap-preview-invalid": 57,
+      "snap-preview-joker": 58,
+      "snap-reason-tapped": 58,
+      "snap-preview-en": 57,
+      "tutorial-trinca": 58,
+      "tutorial-joker": 57,
       "tutorial-complete": 59,
       "feito-invalid-explained": 58,
       "feito-invalid-explained-en": 58,
       "game-theme-boteco": 58,
       "game-theme-kitchen": 58,
-      "game-theme-quintal": 54,
-      "game-theme-feira": 57,
-      "cosmetics-panel": 53,
+      "game-theme-quintal": 58,
+      "game-theme-feira": 58,
+      "cosmetics-panel": 57,
       "a11y-reduced-motion": 58
     },
     "viewports": [
       "1280x720",
       "1920x1080"
     ],
-    "unitTests": "301/301 pass (21 files, incl. server config + logger redaction + client ws-url config)",
-    "e2eScreenshots": 44
+    "unitTests": "330/330 pass (22 files, incl. tests/snap.test.ts — 10 snap-target-model tests)",
+    "e2eScreenshots": 51
   },
   "phase3Scores": {
     "fullFlow": 9,
@@ -941,5 +949,43 @@
       "docs/screenshots/help.png, help-en.png (rules text with the 1-joker rule + strategy tip)",
       "docs/screenshots/tutorial-joker.png (tutorial joker step with the strategy tip)"
     ]
+  },
+  "phase12": {
+    "auditSummary": "docs/PHASE12_AUDIT.md. Entry state re-measured, not assumed: 320/320 unit tests green on feat/joker-one-per-meld. The audit found drag feel already solid (lift, shadow, shadowed hover, snap-back, tap/keyboard parity) but legality-blind: every meld glowed the same gold whether the dragged card extended it, wrecked it, or was a second joker it could never accept, so the player only learned the difference after dropping. Two further gaps: the invalid-meld reason was reachable only by hover (unusable on touch, and the objective copy literally said \"passe o mouse no ✗\"), and the FEITO strip collapsed every invalid meld to a generic phase message even though the exact reason was already computed.",
+    "decision": "The brief asked for bounce/restore on an invalid drop. Mexe Mode is built on temporarily invalid drafts — rearranging the table means passing through states the validator rejects — so bouncing every rule-invalid drop would remove rearranging entirely. Decision: the drop is still accepted and the meld still draws invalid; what changed is that the player sees red BEFORE letting go. Bounce stays reserved for drops the editor genuinely refuses (tutorial gate, table card that may not return to hand). Illegality is communicated by the helper, never enforced by it; the FEITO gate is untouched, so no helper can allow an illegal confirm.",
+    "delivered": [
+      "src/table/snap.ts — pure snap-target model. computeSnapTargets(draft, card, config) returns one target per meld plus the new-meld target, each with status legal/incomplete/illegal, the validator reason, a display-sorted preview of the resulting meld, and joker assignments. Three statuses, not a boolean: a meld under 3 cards is a normal mid-edit state, not an error. Calls analyzeMeld/sortMeldCards — never re-derives a rule.",
+      "GameScene drag highlights coloured by status: solid green legal, soft gold incomplete, dashed red illegal (shape channel, not hue alone). Targets computed once on dragstart, never per pointer move.",
+      "Non-mutating ghost preview panel on drag-over: the resulting meld as small cards in resulting order, a joker hint taken only from the model assignments and only when legal, and one status line. Cleared on drag leave, dragend and at the top of renderAll.",
+      "sfx-snap instead of sfx-drop when an accepted drop landed on a legal target.",
+      "Invalid-meld ✗ badge is now tappable with an enlarged hit rect, not hover-only; objective.invalidEdit reworded to \"toque no ✗\" / \"tap the ✗\" in both locales.",
+      "FEITO strip shows the exact top invalid-meld reason instead of the generic phase text.",
+      "New i18n keys snap.legal / snap.incomplete in pt and en (parity test enforces both).",
+      "Verification-only debug hooks mexe.cardPos / mexe.meldPos / mexe.snapTargets so e2e can drive a real browser mouse drag instead of only the editor hooks."
+    ],
+    "screenshots": [
+      "docs/screenshots/snap-targets-legal.png",
+      "docs/screenshots/snap-target-illegal.png",
+      "docs/screenshots/snap-preview-valid.png",
+      "docs/screenshots/snap-preview-invalid.png",
+      "docs/screenshots/snap-preview-joker.png",
+      "docs/screenshots/snap-reason-tapped.png",
+      "docs/screenshots/snap-preview-en.png"
+    ],
+    "perf": "All seven new mid-drag captures render at 58 fps with the ghost preview on screen; the run minimum across all 51 captures is 56 fps. Snap targets are computed once per pickup (one analyzeMeld per meld), never per pointer move.",
+    "blockers": [],
+    "notDone": [
+      "No bounce on a rule-invalid drop — see decision above; deliberate, not missed.",
+      "The preview shows the destination meld only. Moving a table card can also invalidate its SOURCE meld, and that is not previewed.",
+      "objective.invalidEdit is now unreachable from the FEITO strip (the exact reason wins) but is kept in both dictionaries and still returned by objectivePhase(); removing it would mean changing src/core/objective.ts and its tests for no user-visible gain."
+    ],
+    "modelRoles": {
+      "inspectionAudit": "haiku (read-only drag/table/Mexe/rules/i18n/online/e2e locator pass)",
+      "proseDocsAndDesignDecisions": "opus (docs/PHASE12_AUDIT.md, the invalid-drop decision, the snap-model API contract, this STATUS entry)",
+      "implementation": "sonnet (src/table/snap.ts + tests/snap.test.ts in one agent; GameScene/i18n/debug-api/e2e/check-verify wiring in a second)",
+      "review": "sonnet (diff review pass)"
+    },
+    "cavemanUsage": "Both Sonnet implementation agents and the Sonnet reviewer were instructed to invoke the caveman:caveman skill before working. The Haiku inspection agent ran as caveman:cavecrew-investigator, which is caveman-native. The Opus reasoning/prose role ran under session-level caveman mode from a SessionStart hook rather than a per-task Skill invocation — stated plainly, not claimed as equivalent.",
+    "extraAgents": "None. One inspection agent, two implementation agents (split only because the second depends on the first API), one reviewer — the default fleet. No repeated verify failure, rule/preview conflict, local-online divergence or input regression required an extra agent."
   }
 }

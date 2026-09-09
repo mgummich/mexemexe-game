@@ -1,8 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { t as translate } from '../src/localization/i18n';
+import { getLocale, setLocale, t as translate } from '../src/localization/i18n';
 import { errorMessage, SERVER_ERROR_CODES } from '../src/net/errors';
+import { computeMeldLayout } from '../src/table/layout';
 
 const OUT_DIR = 'docs/screenshots';
 const LOG_PATH = path.join(OUT_DIR, 'verify-log.json');
@@ -486,6 +487,133 @@ async function meldIdOf(p: Page, cardId: string): Promise<string> {
     return meld.id;
   }, cardId);
 }
+
+// ---------- Phase 12: smart drag/snap helpers ----------
+
+/**
+ * Real mouse drag (dispatches actual browser pointer events, same as a player's mouse): move onto
+ * the card, press, move onto the target in a few steps so Phaser's drag threshold fires and the
+ * legality-aware highlights/ghost preview update, then leave the mouse DOWN so the caller's
+ * `capture()` screenshot lands mid-drag. Never releases — the page closes at test end regardless
+ * (ponytail: no explicit mouse-up cleanup needed for a single-shot e2e test).
+ */
+async function dragCardOnto(p: Page, cardId: string, toLogical: { x: number; y: number }): Promise<void> {
+  const from = await p.evaluate((id) => window.__MEXE__.mexe!.cardPos(id), cardId);
+  if (!from) throw new Error(`card ${cardId} not on screen`);
+  const [fx, fy] = toScreen(from.x, from.y);
+  const [tx, ty] = toScreen(toLogical.x, toLogical.y);
+  await p.mouse.move(fx, fy);
+  await p.mouse.down();
+  await p.mouse.move(tx, ty, { steps: 8 });
+}
+
+/**
+ * Logical position of an invalid meld's ✗ badge — same layout math as `GameScene.layoutMelds`
+ * (`TABLE_LEFT`/`TABLE_TOP`/`MELD_PAD` + the badge's `+4,+2` offset), built on the same pure
+ * `computeMeldLayout` the scene itself uses, so this can never drift from the real position.
+ */
+async function badgeLogicalPos(p: Page, meldId: string): Promise<{ x: number; y: number }> {
+  const melds = await p.evaluate(() =>
+    window.__MEXE__.mexe!.getDraft()!.melds.map((m) => ({ id: m.id, cardCount: m.cards.length })),
+  );
+  const TABLE_LEFT = 14;
+  const TABLE_TOP = 80;
+  const TABLE_AREA_W = 480 - 96 - TABLE_LEFT;
+  const TABLE_AREA_H = 188 - TABLE_TOP - 6;
+  const MELD_PAD = 4;
+  const pos = computeMeldLayout(melds, TABLE_AREA_W, TABLE_AREA_H).find((m) => m.meldId === meldId)!;
+  const pad = MELD_PAD * pos.cardScale;
+  return { x: TABLE_LEFT + pos.x + 4, y: TABLE_TOP + 6 + pos.y - pad + 2 };
+}
+
+test('snap-targets-legal: dragging a card that legally extends a run highlights it green, not gold', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-targets-legal', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    // AI-built run already on the table: clubs 10, 11, joker(=12). clubs-13-d0 is in hand and
+    // extends it to 10-11-12-13 legally.
+    const meldId = await meldIdOf(p, 'clubs-10-d0');
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'clubs-13-d0');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'clubs-13-d0', meldPos!);
+  });
+});
+
+test('snap-target-illegal: dragging a duplicate-suit card over a partial group highlights it red', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-target-illegal', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'clubs-2-d1']); // 2-card partial group
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'diamonds-2-d0');
+    const target = targets.find((t) => t.meldId === meldId);
+    expect(target?.status).toBe('illegal');
+    expect(target?.reason).toBe('reason.groupDuplicateSuit');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'diamonds-2-d0', meldPos!);
+  });
+});
+
+test('snap-preview-valid: ghost preview shows the resulting run and a legal status line', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-preview-valid', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await meldIdOf(p, 'clubs-10-d0');
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'clubs-13-d0');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'clubs-13-d0', meldPos!);
+  });
+});
+
+test('snap-preview-invalid: ghost preview shows the illegal reason line, no joker hint', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-preview-invalid', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'clubs-2-d1']);
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'diamonds-2-d0');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('illegal');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'diamonds-2-d0', meldPos!);
+  });
+});
+
+test('snap-preview-joker: dragging a joker onto a partial run shows what it stands for', async ({ page }) => {
+  await capture(page, '/?seed=16&showcase=mexe', 'snap-preview-joker', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['hearts-5-d0', 'hearts-6-d0']); // 2-card partial run
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'joker-d0-1');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal'); // joker fills 7
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'joker-d0-1', meldPos!);
+  });
+});
+
+test('snap-reason-tapped: tapping the ✗ badge shows the reason without hovering', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-reason-tapped', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']); // invalid: duplicate suit
+    const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean; reasons: string[] };
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.groupDuplicateSuit');
+    const badgePos = await badgeLogicalPos(p, meldId);
+    const [bx, by] = toScreen(badgePos.x, badgePos.y);
+    await p.mouse.click(bx, by); // tap, not hover
+  });
+});
+
+test('snap-preview-en: the legal snap status line reads in English', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe&lang=en', 'snap-preview-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await meldIdOf(p, 'clubs-10-d0');
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'clubs-13-d0');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'clubs-13-d0', meldPos!);
+  });
+  // translate() is this Node process's own copy of the dict, independent of the page's ?lang=en —
+  // set/reset the locale around the assertion so it doesn't leak into other tests in this file.
+  const prev = getLocale();
+  setLocale('en');
+  expect(translate('snap.legal')).toBe('Fits here');
+  setLocale(prev);
+});
 
 test('tutorial: first-run 12-step completion, including the trinca-limit and joker steps', async ({ page }) => {
   trackConsoleErrors(page);

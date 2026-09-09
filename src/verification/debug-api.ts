@@ -81,6 +81,12 @@ export interface MexeDebugApi {
     comprar: () => void;
     /** Current Mexe Mode draft (melds may be temporarily invalid), for e2e. */
     getDraft: () => DraftState | null;
+    /** Verification-only: logical canvas position of a rendered card sprite, or null if not on screen. */
+    cardPos: (cardId: string) => { x: number; y: number } | null;
+    /** Verification-only: logical canvas centre of a meld's drop zone, or null. */
+    meldPos: (meldId: string) => { x: number; y: number } | null;
+    /** Verification-only: snap-target readback for the given card — the same model the drag highlights use. */
+    snapTargets: (cardId: string) => { meldId: string | null; status: string; reason: string | null }[];
   } | null;
   online: MexeOnlineDebugApi | null;
   /** Results-screen summary — see MexeResultsSummary. Null outside WinScene. */
