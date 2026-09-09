@@ -3,6 +3,53 @@
 All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 
+## 1.4.0 — Phase 10 (production hardening)
+
+Content-rich beta → deployable production build. No rules change, no protocol
+change, no gameplay change: local and online play behave exactly as in 1.3.0.
+
+- **HTTPS deployments work by default** (`src/config.ts`): the WebSocket URL
+  fallback is now protocol-aware — `wss://<host>/ws` over https (matching the
+  reverse-proxy layout documented in `SELF_HOSTING.md`), `ws://<hostname>:8787`
+  over http. Previously the https case fell back to a plain `ws://` URL that
+  browsers block outright, so any TLS deployment that forgot `VITE_WS_URL` got a
+  silently dead ONLINE menu. `?ws=` and `VITE_WS_URL` still take precedence, in
+  that order.
+- **Server configuration is centralized and validated** (`server/config.ts`):
+  `PORT`, `HOST`, `MEXE_ENV`/`NODE_ENV`, `LOG_LEVEL`, `MEXE_MAX_ROOMS`,
+  `MEXE_DISCONNECT_GRACE_MS`, `MEXE_IDLE_TIMEOUT_MS`, `MEXE_TEST_SEED`. A
+  malformed numeric value fails startup naming the variable instead of silently
+  falling back to a default, and `MEXE_TEST_SEED` set in production mode is a
+  fatal error — a seeded deck would deal every match identically. Room capacity
+  and timeouts are now operator-tunable rather than hardcoded in `rooms.ts`.
+- **Graceful shutdown** (`server/index.ts`): `SIGTERM`/`SIGINT` send every
+  connected client a `server_shutdown` error so they see a real message instead
+  of a silent drop, then clear the timers, close the sockets and the HTTP
+  listener, and exit 0. Idempotent, with a 5s hard-exit backstop. The new code is
+  translated (PT/EN) rather than falling through to the generic error copy.
+- **Structured, privacy-enforcing logs** (`server/log.ts`): one JSON line per
+  event, `debug`/`info` to stdout and `error` to stderr only. Redaction lives in
+  the logger rather than at call sites — `name`, `playerName`, `token`,
+  `sessionToken`, `ip` and `userAgent` are redacted, every array/object field
+  collapses to its length so hands and melds can never be serialized, and room
+  codes are logged only as a length. Still no persistence, no telemetry, no
+  analytics, nothing written to disk.
+- **`/health` is diagnosable**: `{ok, uptimeSec, rooms, connections, protocol}`,
+  with no room codes and no player names. Previously `{"ok":true}`, which proved
+  the process was listening and nothing else.
+- **Phaser is a separate cached chunk** (`vite.config.ts`): the build went from
+  one 1604 kB chunk to 121 kB of game code plus a 1482 kB Phaser chunk, so a
+  game-code release no longer invalidates Phaser in returning players' caches.
+- **The built client is now gated** (`npm run verify:preview`,
+  `scripts/check-preview.mjs`): serves `dist/` on :4173 and fails on an asset
+  that does not resolve, a missing boot-time asset, or a credential-shaped
+  string in any emitted `.js`. Nothing previously exercised the production build.
+- **Operations documentation** (`docs/OPERATIONS.md`): environment reference,
+  build and run, health-check reading, log format and privacy guarantees,
+  troubleshooting, rollback, verify commands, known limits. Plus
+  `docs/PHASE10_AUDIT.md`, and `SELF_HOSTING.md`/`docker-compose.yml` updated
+  for the new defaults (`mexe-server` now runs with `MEXE_ENV=production`).
+
 ## 1.3.0 — Phase 9 (content-rich beta)
 
 Playtest-ready demo → content-rich beta. No rules change, no protocol change.

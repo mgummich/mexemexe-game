@@ -17,6 +17,7 @@ export const SERVER_ERROR_CODES = [
   'seat_gap',
   'invalid_token',
   'room_closed',
+  'server_shutdown',
   'rate_limited',
   'bad_message',
   'internal_error',

@@ -1,3 +1,79 @@
+# MEXEMEXE! 1.4.0 — Release notes (production hardening)
+
+## Phase 10 update
+
+This build makes MEXEMEXE! deployable. **Nothing about the game changed** — same
+rules, same wire protocol (v3), same content as 1.3.0. What changed is
+everything around it: how it is configured, how it starts and stops, what it
+writes to a log, and how a release is proven before it ships.
+
+**HTTPS deployments now work without configuration.** The one real bug this
+phase fixed: a page served over `https://` is forbidden by the browser from
+opening a plain `ws://` connection, and the client's fallback URL was exactly
+that. Any TLS deployment that forgot to set `VITE_WS_URL` at build time got an
+ONLINE menu that silently never connected — documented as "the most common
+first-deployment surprise", which is really an admission that the default was
+wrong. The fallback now follows the page's protocol: `wss://<host>/ws` over
+https, matching the reverse-proxy layout in `SELF_HOSTING.md`, so following that
+guide is enough. `?ws=` and `VITE_WS_URL` still override, in that order.
+
+**The server can no longer be misconfigured quietly.** All of its settings —
+port, bind address, mode, log level, room capacity, disconnect grace, idle
+timeout — are read once at startup and validated. A malformed value fails
+startup naming the variable, instead of falling back to a default nobody chose.
+`MEXE_TEST_SEED` is the sharp one: it forces a deterministic deal for the test
+suite, and setting it in production mode is now a fatal error rather than a
+silently identical deal for every match.
+
+**It shuts down like a service.** On `SIGTERM`/`SIGINT` — a `docker compose
+down`, a rollout, a Ctrl-C — the server tells every connected client the server
+is shutting down before closing, so players see a real message instead of an
+unexplained drop. Rooms live in memory and still end on restart; that is by
+design and now documented, but the players get told.
+
+**Logs are structured and private by construction.** One JSON line per event.
+Player names, session tokens, addresses and user-agents are redacted, card and
+hand data can never be serialized (any array or object collapses to its size),
+and room codes — which are shared secrets that grant entry to a room — are
+logged only as a length. The redaction lives in the logger, so it holds no
+matter what a future call site passes. Still no telemetry, no analytics, no
+persistence, nothing written to disk, and the in-browser play log remains
+memory-only and never leaves the machine.
+
+**`/health` says something useful**: uptime, live room count, connection count
+and protocol version, and deliberately no room codes or player names. It used to
+answer `{"ok":true}`, which told an operator only that a process was listening —
+a crash-looping server looked identical to a healthy one.
+
+**Returning players re-download less.** Phaser is now its own cached chunk, so a
+game-code release stops invalidating the ~1.5 MB engine in the browser cache —
+121 kB of game code instead of 1.6 MB, for anyone who has played before.
+
+**The build itself is now tested.** A new gate (`npm run verify:preview`) serves
+the production build and fails if any asset fails to resolve, a boot-time asset
+is missing, or anything credential-shaped appears in the emitted JavaScript.
+Nothing previously exercised `dist/` at all, so a production-only regression
+could have shipped through a green suite.
+
+**Operators get a manual.** `docs/OPERATIONS.md` covers the environment
+reference, building and running, reading the health check, the log format and
+its privacy guarantees, troubleshooting, rollback and the known limits.
+
+### Verification
+
+`npm run verify` (22 captures, 53–60 fps, zero console errors),
+`npm run verify:preview`, and `npm run verify:multiplayer` (7/7, empty server
+stderr) all pass, alongside 297 unit tests and a clean lint and build.
+
+### Still true, still not fixed
+
+Rooms are in-memory and single-process, so there is no horizontal scaling and a
+restart ends matches in progress. The flood guard is per connection, not per IP.
+There is no online rematch, no online results summary, no matchmaking, no
+accounts, and no chat.
+
+---
+
 # MEXEMEXE! 1.3.0 — Release notes (content-rich beta)
 
 ## Phase 9 beta update

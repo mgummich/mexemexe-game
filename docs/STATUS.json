@@ -30,10 +30,11 @@
     "e2e"
   ],
   "tests": {
-    "unit": "281/281 pass (18 files, incl. 56 server + play log + net error mapper + cosmetics + music + AI personality)",
-    "e2e": "46/46 pass (npm run verify) + 7/7 multiplayer e2e (npm run verify:multiplayer)",
+    "unit": "301/301 pass (21 files, incl. server config + logger redaction + client ws-url config)",
+    "e2e": "22 screenshot captures via npm run verify (fps 53-60, zero console errors) + 7/7 multiplayer e2e",
+    "preview": "npm run verify:preview OK - built client serves, 5 assets resolve, 2 js files scanned, no secrets",
     "lint": "clean (eslint + tsc --noEmit)",
-    "build": "pass (gated in verify)"
+    "build": "pass - 121.26 kB game chunk + 1481.77 kB phaser chunk (38.12/337.86 kB gzip)"
   },
   "screenshots": [
     "docs/screenshots/final/a11y-large-text.png",
@@ -83,7 +84,7 @@
     "PT accents slightly rough at 6-7px font sizes",
     "no renderAll sprite pooling (fps 59 at 21 sprites+20 zones; revisit only if a lower-end target dips below 50)"
   ],
-  "nextTask": "Phase 7 shipped online beta on protocol v3. Carried items for a future pass: per-IP rate limiting, online rematch (needs room-token semantics design), a persistent (not single-shot) reconnect retry, opponent-rearranging indicator during another seat`s draft, and spectator/matchmaking are still out of scope.",
+  "nextTask": "Phase 10 shipped a deployable production build. Carried for a future pass: per-IP rate limiting, online rematch (needs room-token semantics), online results summary (needs a protocol change), a persistent reconnect retry, and turnTimerSeconds. The top non-code ask is unchanged: log a real playtest session.",
   "phase4Scores": {
     "launchStability": 9.5,
     "fullFlow": 9,
@@ -99,7 +100,7 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": 9,
+  "phase": 10,
   "phase6": {
     "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
     "blockers": [],
@@ -293,48 +294,48 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-09T14:10:32.978Z",
+    "generatedAt": "2026-09-09T14:31:51.046Z",
     "perShotFps": {
       "menu": 60,
-      "game": 58,
+      "game": 57,
       "game4": 58,
       "tutorial": 57,
       "tutorial-step2": 57,
       "setup": 58,
-      "settings": 56,
+      "settings": 55,
       "win": 58,
-      "mexe-invalid": 58,
+      "mexe-invalid": 57,
       "comprar-flow": 58,
-      "ai-showcase-mid": 58,
-      "ai-showcase-after": 58,
+      "ai-showcase-mid": 57,
+      "ai-showcase-after": 57,
       "ai-cida": 58,
-      "ai-juninho": 58,
-      "ai-bia": 58,
+      "ai-juninho": 57,
+      "ai-bia": 57,
       "ai-ze": 58,
       "pause": 57,
       "help": 56,
       "help-en": 56,
       "menu-en": 60,
       "game-en": 58,
-      "a11y-large-text": 58,
-      "keyboard-comprar": 58,
-      "stress-table": 58,
-      "game-1080p": 58,
-      "joker-in-hand": 58,
+      "a11y-large-text": 57,
+      "keyboard-comprar": 53,
+      "stress-table": 53,
+      "game-1080p": 57,
+      "joker-in-hand": 57,
       "joker-in-run": 58,
-      "joker-in-group": 53,
-      "mexe-invalid-kA2": 55,
+      "joker-in-group": 57,
+      "mexe-invalid-kA2": 57,
       "repeated-suit-group": 57,
-      "tutorial-trinca": 56,
+      "tutorial-trinca": 57,
       "tutorial-joker": 57,
       "tutorial-complete": 59,
-      "feito-invalid-explained": 58,
+      "feito-invalid-explained": 57,
       "feito-invalid-explained-en": 57,
       "game-theme-boteco": 58,
       "game-theme-kitchen": 58,
       "game-theme-quintal": 58,
       "game-theme-feira": 58,
-      "cosmetics-panel": 56,
+      "cosmetics-panel": 55,
       "a11y-reduced-motion": 58
     },
     "viewports": [
@@ -716,5 +717,92 @@
     "docs": 9,
     "publicDemoReadiness": 9
   },
-  "phase8PassGate": "PASS: all twelve phase8Scores >= 8.5. 234/234 unit (12 files), lint + tsc clean, build green, 37/37 local e2e with verify: OK, 7/7 multiplayer e2e with verify:multiplayer: OK and 14 captures. Zero client console errors and zero server errors in both runs. No illegal synced confirm, no hand leak, no stuck flow (server-unavailable, bad room code, room-full and double-click paths all end in a recoverable, translated state). No personal-data telemetry: the play log is in-memory only, strips name/token keys before export, uses page-relative timestamps, and is disabled by ?playlog=0. Balance/pacing and AI fairness are scored 8.5 rather than higher because they are deliberately unmeasured — the phase instrumented them for the playtest instead of tuning them blind, and the numbers to justify a change do not exist yet."
+  "phase8PassGate": "PASS: all twelve phase8Scores >= 8.5. 234/234 unit (12 files), lint + tsc clean, build green, 37/37 local e2e with verify: OK, 7/7 multiplayer e2e with verify:multiplayer: OK and 14 captures. Zero client console errors and zero server errors in both runs. No illegal synced confirm, no hand leak, no stuck flow (server-unavailable, bad room code, room-full and double-click paths all end in a recoverable, translated state). No personal-data telemetry: the play log is in-memory only, strips name/token keys before export, uses page-relative timestamps, and is disabled by ?playlog=0. Balance/pacing and AI fairness are scored 8.5 rather than higher because they are deliberately unmeasured — the phase instrumented them for the playtest instead of tuning them blind, and the numbers to justify a change do not exist yet.",
+  "phase10": {
+    "auditSummary": "docs/PHASE10_AUDIT.md. Phase 9 closed green (281 unit, 46 local e2e, 7 multiplayer e2e, lint/build clean), with no TODOs and no secrets anywhere in shipped source, so Phase 10 was a narrow production-hardening pass rather than a repair job. Three real blockers: the client's ws:// fallback is mixed-content-blocked on any HTTPS deployment, the server had no SIGTERM/SIGINT handling, and nothing enforced that MEXE_TEST_SEED never reaches production. Everything else was structural: no config module on either side, unstructured console logging with privacy left to call sites, a /health that only proved the process was listening, a single bundle chunk that made every game-code release invalidate Phaser in browser caches, and no gate exercising the built client.",
+    "blockers": [
+      "RESOLVED B1: client fallback ws://<hostname>:8787 was mixed-content-blocked over HTTPS. Now protocol-aware in src/config.ts: wss://<host>/ws over https (matching SELF_HOSTING.md's documented Caddy /ws route), ws://<hostname>:8787 over http. VITE_WS_URL and ?ws= still take precedence.",
+      "RESOLVED B2: no graceful shutdown. SIGTERM/SIGINT now notify every socket with a server_shutdown error, clear the three timers, close wss + http server, exit 0; idempotent, 5s hard-exit backstop.",
+      "RESOLVED B3: no production config validation. server/config.ts refuses to start when MEXE_TEST_SEED is set with MEXE_ENV/NODE_ENV=production, and rejects any non-numeric/non-positive numeric env var by name instead of silently defaulting."
+    ],
+    "priorityIssues": [
+      "rooms are in-memory and single-process: no horizontal scaling, and a server restart ends every match in progress (by design, documented in docs/OPERATIONS.md known limits)",
+      "flood guard is per connection, not per IP (carried from Phase 5/7/8/9)",
+      "no online rematch (carried)",
+      "no online results summary on WinScene - needs a protocol change (carried from Phase 9)",
+      "turnTimerSeconds still a declared, unimplemented, off-by-default hook (carried)",
+      "no real playtest session has ever been logged (carried - still the top ask)"
+    ],
+    "delivered": [
+      "server/config.ts - pure loadConfig(env) + frozen singleton. PORT, HOST, MEXE_ENV/NODE_ENV, LOG_LEVEL, MEXE_MAX_ROOMS, MEXE_DISCONNECT_GRACE_MS, MEXE_IDLE_TIMEOUT_MS, MEXE_TEST_SEED. Numeric vars must be finite and positive or startup fails naming the var; MEXE_TEST_SEED in production mode is fatal. Room tuning now flows into RoomManager instead of sitting hardcoded in rooms.ts.",
+      "server/log.ts - level-gated structured logger, one JSON line per call, {ts,level,event,...fields}. debug/info to stdout, error to stderr only (verify:multiplayer fails on any server stderr line). Privacy enforced in the logger, not at call sites: name/playerName/token/sessionToken/ip/userAgent redacted; every array/object field collapsed to length/key-count so hands and melds can never be serialized; room codes logged only as codeLength.",
+      "server/index.ts - 6 console.* replaced with the logger; graceful SIGTERM/SIGINT shutdown; /health now returns {ok,uptimeSec,rooms,connections,protocol} with no room codes or player names; startup logs port/host/mode/protocol/maxRooms and never the seed.",
+      "src/config.ts - single client config module. Protocol-aware resolveWsUrl(loc) with an injectable location for tests, ?ws= and VITE_WS_URL precedence preserved; clientConfig exposes only mode/isProduction, with an explicit note that no VITE_-prefixed var may hold a secret.",
+      "vite.config.ts - Phaser split into its own vendor chunk via manualChunks, so a game-code release stops invalidating the ~1.5MB Phaser chunk in returning players' caches. Bundle went from one 1604kB chunk to 121kB game code + 1482kB phaser. Prod source maps stay off, now documented as a decision.",
+      "scripts/check-preview.mjs + npm run verify:preview - production-build smoke gate: dist/ present, boot-time assets on disk, credential-shaped secret scan of every emitted .js, preview server reachable on :4173, every index.html asset reference resolves 200 (base-path regression), three runtime assets resolve 200. Failures throw so the finally block always kills the preview child instead of stranding :4173.",
+      "docs/OPERATIONS.md - env reference, local dev, prod build, prod server run, health-endpoint reading, log format and privacy guarantees, troubleshooting, rollback, verify commands, known limits.",
+      "docs/PHASE10_AUDIT.md - full audit.",
+      "SELF_HOSTING.md + docker-compose.yml - documented the protocol-aware default and the richer health payload; the mexe-server service now runs with MEXE_ENV=production.",
+      "src/net/errors.ts + src/localization/i18n.ts - added the server_shutdown error code with PT/EN copy, so the graceful-shutdown notice reaches the player as a real message instead of the generic unknown-error fallback (found in the Phase 10 review pass)."
+    ],
+    "modelCavemanLog": [
+      {
+        "role": "inspection",
+        "model": "haiku",
+        "task": "repo-wide sweep: hardcoded URLs, env usage, console calls, TODOs, asset sizes, secret-shaped strings, doc inventory",
+        "caveman": "available (cavecrew-investigator, caveman-compressed output)",
+        "run": "phase10-inspect"
+      },
+      {
+        "role": "audit+review",
+        "model": "opus",
+        "task": "production-risk audit, docs/PHASE10_AUDIT.md, https fallback decision (bare wss://host vs documented /ws route), docs/OPERATIONS.md, SELF_HOSTING/compose updates, review of all three implementation diffs",
+        "caveman": "available (session-level full mode)",
+        "run": "phase10-audit"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "server config module, structured privacy-safe logger, graceful shutdown, expanded /health, server tests",
+        "caveman": "available, used",
+        "run": "phase10-server"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "client config module, protocol-aware ws URL, Phaser vendor chunk split, config tests",
+        "caveman": "available, used",
+        "run": "phase10-client"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "built-client preview smoke gate (scripts/check-preview.mjs, npm run verify:preview)",
+        "caveman": "available, used",
+        "run": "phase10-preview"
+      }
+    ],
+    "extraAgentsRationale": "Three implementation agents instead of one, on strictly disjoint file sets (server/, src/+vite, scripts/+package.json), to keep concurrent edits from colliding. No repeated-failure escalation was needed: no gate failed twice.",
+    "verification": {
+      "verify": "OK (docs/screenshots/verify-log.json) - 22 captures, all missingAssets=0, fps 53-60 against a >=30 gate and a 50 target",
+      "verifyPreview": "OK - bundle=assets/index-Bn-t4B2W.js assetsChecked=5 jsFilesScanned=2 port=4173",
+      "verifyMultiplayer": "OK - 7/7 passed in 35.0s, room=CPRFK seed=2 revisions=[1,2], 14 screenshots, server stderr empty, illegal proposal rejected, hand privacy proven, resync round-trip clean",
+      "buildMode": "production (vite build, base './', no sourcemaps)",
+      "serverUrlMode": "protocol-aware default; e2e drive it via the ?ws= override",
+      "perf": "53-60 fps across 22 captures (worst: keyboard-comprar and stress-table at 53); dist 16MB total, of which 14MB is lazily streamed audio never in the boot path",
+      "opsSmoke": "manual, MEXE_ENV=production PORT=8799: /health -> {\"ok\":true,\"uptimeSec\":0,\"rooms\":0,\"connections\":0,\"protocol\":3}; SIGTERM -> server_listening / shutdown_start / shutdown_complete on stdout, exit 0, zero server-emitted stderr lines (only npm wrapper notices); MEXE_ENV=production with MEXE_TEST_SEED=42 refuses to start with '[config] MEXE_TEST_SEED must not be set when MEXE_ENV/NODE_ENV=production'.",
+      "postReview": "after the review fixes: 301/301 unit, lint clean, verify:preview OK, verify:multiplayer 7/7 OK with empty server stderr"
+    },
+    "reviewPass": {
+      "model": "sonnet (cavecrew-reviewer), one pass, no Opus escalation needed - no blocker found",
+      "result": "0 blockers, 1 major, 3 minor, all accepted and fixed",
+      "findings": [
+        "MAJOR server/log.ts: redaction matched exact key names only, so a string under any other key (a raw room code, an address) would pass through verbatim while the module doc claimed privacy was enforced in the logger. Fixed: case-insensitive substring key matching plus a string-length cap, and the doc comment now states what is actually guaranteed.",
+        "MINOR server/index.ts: server.close() waits on keep-alive HTTP connections, so a reverse proxy or health prober holding one would burn the 5s timeout and hard-exit 1, reporting a clean deploy as shutdown_timeout. Fixed with server.closeAllConnections().",
+        "MINOR server/config.ts: MEXE_TEST_SEED=0 fails startup because '0' is truthy but not positive. Behaviour kept (0 is not a meaningful seed), comment added.",
+        "MINOR scripts/check-preview.mjs: secret scan had no AWS access-key or raw-JWT pattern. Both added; generic long-hex/base64 patterns deliberately not added, since they false-positive on minified strings and hashed asset names."
+      ],
+      "notFound": "no secret reachable from the client bundle, no hand/card data reachable from any log line or /health response, no illegal-sync path, no network or config code added to the offline play path"
+    }
+  }
 }

@@ -4,6 +4,7 @@
  * an exception the caller has to catch. See docs/PHASE5_CLIENT_PLAN.md.
  */
 import { playlog } from '../core/playlog';
+import { resolveWsUrl } from '../config';
 import { PROTOCOL_VERSION } from './protocol';
 import type { ClientMessage, ServerMessage, SubmitTurnMeld } from './protocol';
 
@@ -14,14 +15,6 @@ const PING_INTERVAL_MS = 20_000;
 const TRACE_CAP = 80;
 /** C1: single bounded retry — one reconnect attempt this long after an unexpected close. */
 const RECONNECT_DELAY_MS = 800;
-
-function resolveWsUrl(): string {
-  const override = new URLSearchParams(location.search).get('ws');
-  if (override) return override;
-  const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  if (envUrl) return envUrl;
-  return `ws://${location.hostname}:8787`;
-}
 
 type ServerListener = (msg: ServerMessage) => void;
 
