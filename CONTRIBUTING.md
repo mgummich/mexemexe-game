@@ -26,10 +26,27 @@ This runs, in order:
    via the `window.__MEXE__` debug API and captures screenshots)
 4. `scripts/check-verify.mjs` — gates on console errors, missing assets and low FPS
 
-Playwright needs its browser once: `npx playwright install chromium`.
+Cross-browser layout gate (canvas fits, stays centred and keeps 16:9 on Chrome,
+Firefox, Safari/WebKit and phone viewports):
+
+```bash
+npm run verify:cross
+```
+
+Playwright needs its browsers once: `npx playwright install chromium firefox webkit`.
 
 Tip: kill any stale `vite preview` on port 4173 before running the e2e suite —
 Playwright reuses an existing server and would test an old build.
+
+### Pre-push hook
+
+`.githooks/pre-push` runs `npm run lint` and `npm run test` (about five seconds
+together). The Playwright suites are left to CI so pushing stays fast. Enable it
+once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ## Project conventions
 

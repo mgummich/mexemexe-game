@@ -7,6 +7,9 @@ import { debugApi } from '../verification/debug-api';
 import { buildOverlay } from './overlay';
 import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
 
+/** Vertical pitch between settings rows — 12 rows must fit the 262-unit panel. */
+const ROW_PITCH = 20;
+
 /** Next id in a cosmetics catalog list, wrapping around — same tap-to-cycle pattern as SetupScene's AI avatar picker. */
 function cycleCosmeticId(list: readonly CosmeticOption[], currentId: string): string {
   const idx = list.findIndex((o) => o.id === currentId);
@@ -46,15 +49,16 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     for (const o of objs) o.destroy();
     objs = [];
     const w = 200;
-    // grows with the large-text setting itself so its own extra row/taller buttons still fit at 125%.
-    const h = Math.round(298 * settings.fontScale());
+    // Fixed height: 12 rows at ROW_PITCH must fit inside the 270-unit world, so the panel frame
+    // and its title stay on screen. Large text scales the glyphs inside the rows, not the panel.
+    const h = 262;
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
     const { cx, top } = base;
 
-    objs.push(label(scene, cx, top + 12, t('settings.title'), 9, '#f7d23e').setDepth(510));
+    objs.push(label(scene, cx, top + 10, t('settings.title'), 9, '#f7d23e').setDepth(510));
 
-    let y = top + 28;
+    let y = top + 22;
     const muteBtn = new PixelButton(
       scene,
       cx,
@@ -68,15 +72,15 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(muteBtn);
 
-    y += 24;
+    y += ROW_PITCH;
     objs.push(label(scene, cx - 84, y, t('settings.sfx'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
     objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().sfxVolume, (v) => settings.update({ sfxVolume: v })));
 
-    y += 22;
+    y += ROW_PITCH;
     objs.push(label(scene, cx - 84, y, t('settings.music'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
     objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().musicVolume, (v) => settings.update({ musicVolume: v })));
 
-    y += 22;
+    y += ROW_PITCH;
     const musicBtn = new PixelButton(
       scene,
       cx,
@@ -90,7 +94,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(musicBtn);
 
-    y += 22;
+    y += ROW_PITCH;
     const contextBtn = new PixelButton(
       scene,
       cx,
@@ -104,7 +108,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(contextBtn);
 
-    y += 24;
+    y += ROW_PITCH;
     const motionBtn = new PixelButton(
       scene,
       cx,
@@ -118,7 +122,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(motionBtn);
 
-    y += 22;
+    y += ROW_PITCH;
     const largeTextBtn = new PixelButton(
       scene,
       cx,
@@ -132,7 +136,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(largeTextBtn);
 
-    y += 22;
+    y += ROW_PITCH;
     const langBtn = new PixelButton(scene, cx, y, t('menu.language'), () => {
       const next = getLocale() === 'pt' ? 'en' : 'pt';
       setLocale(next);
@@ -141,7 +145,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     }, { textureBase: 'btn-comprar', w: 150, h: 16, size: 7 }).setDepth(510);
     objs.push(langBtn);
 
-    y += 22;
+    y += ROW_PITCH;
     const exportBtn = new PixelButton(scene, cx, y, t('settings.exportLog'), () => {
       copyPlaylog((ok) => {
         // Panel may have closed (or rebuilt for a settings change) before this callback runs —
@@ -153,21 +157,21 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     }, { textureBase: 'btn-comprar', w: 170, h: 16, size: 7 }).setDepth(510);
     objs.push(exportBtn);
 
-    y += 22;
+    y += ROW_PITCH;
     objs.push(
       new PixelButton(scene, cx, y, t('cosmetics.title'), showCosmetics, {
         textureBase: 'btn-comprar', w: 150, h: 16, size: 7,
       }).setDepth(510),
     );
 
-    y += 22;
+    y += ROW_PITCH;
     objs.push(
       new PixelButton(scene, cx, y, t('settings.resetData'), showResetConfirm, {
         textureBase: 'btn-comprar', w: 150, h: 16, size: 7, color: DANGER_TINT,
       }).setDepth(510),
     );
 
-    y += 22;
+    y += ROW_PITCH;
     objs.push(
       new PixelButton(scene, cx, y, t('settings.close'), close, {
         textureBase: 'btn-comprar', w: 90, h: 16, size: 7,
@@ -326,12 +330,27 @@ function makeSlider(
     handle.x = x + local * w;
     onChange(Math.round(local * 100));
   };
+  // worldX, not x: the camera is zoomed RENDER_SCALE times, so pointer.x is in canvas pixels
+  // while the slider lives in 480x270 world units.
+  let dragging = false;
   const moveHandler = (p: Phaser.Input.Pointer): void => {
-    if (p.isDown) update(p.x);
+    if (dragging && p.isDown) update(p.worldX);
   };
-  track.on('pointerdown', (p: Phaser.Input.Pointer) => update(p.x));
+  const endDrag = (): void => {
+    dragging = false;
+  };
+  track.on('pointerdown', (p: Phaser.Input.Pointer) => {
+    dragging = true;
+    update(p.worldX);
+  });
   scene.input.on('pointermove', moveHandler);
-  track.on('destroy', () => scene.input.off('pointermove', moveHandler));
+  scene.input.on('pointerup', endDrag);
+  scene.input.on('pointerupoutside', endDrag);
+  track.on('destroy', () => {
+    scene.input.off('pointermove', moveHandler);
+    scene.input.off('pointerup', endDrag);
+    scene.input.off('pointerupoutside', endDrag);
+  });
 
   return [track, fill, handle];
 }

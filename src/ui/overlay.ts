@@ -11,7 +11,8 @@ export function buildOverlay(
   const cy = 135;
   const dim = scene.add.rectangle(240, 135, 480, 270, 0x000000, 0.6).setDepth(500).setInteractive();
   dim.on('pointerdown', (p: Phaser.Input.Pointer) => {
-    const inPanel = Math.abs(p.x - cx) < w / 2 && Math.abs(p.y - cy) < h / 2;
+    // worldX/worldY: pointer.x is in canvas pixels, the panel in 480x270 world units.
+    const inPanel = Math.abs(p.worldX - cx) < w / 2 && Math.abs(p.worldY - cy) < h / 2;
     if (!inPanel) onClose();
   });
   const g = scene.add.graphics().setDepth(501);

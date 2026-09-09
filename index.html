@@ -2,12 +2,34 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>MEXEMEXE! — Arruma. Desarruma. Bate.</title>
     <style>
-      html, body { margin: 0; padding: 0; background: #1a0f0a; height: 100%; overflow: hidden; }
-      #game { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-      canvas { image-rendering: pixelated; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #1a0f0a;
+        height: 100%;
+        overflow: hidden;
+        /* iOS Safari: no rubber-band scroll or double-tap zoom stealing drags */
+        overscroll-behavior: none;
+        touch-action: none;
+        -webkit-text-size-adjust: 100%;
+      }
+      #game {
+        width: 100vw;
+        /* 100dvh so the iOS Safari toolbar showing/hiding doesn't crop the canvas */
+        height: 100vh;
+        height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      canvas {
+        image-rendering: pixelated;
+        touch-action: none;
+        display: block;
+      }
     </style>
   </head>
   <body>

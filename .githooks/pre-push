@@ -1,0 +1,7 @@
+#!/bin/sh
+# Pre-push gate: only the checks that finish in seconds. The Playwright suites
+# (npm run verify, npm run verify:cross) take ~90s and run in CI instead.
+# Enable with: git config core.hooksPath .githooks
+set -e
+npm run lint
+npm run test
