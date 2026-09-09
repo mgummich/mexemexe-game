@@ -34,7 +34,8 @@ const game = new Phaser.Game({
   backgroundColor: '#1a0f0a',
   scale: {
     mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
+    // No autoCenter: #game already centres the canvas with flexbox, and Phaser's margin-based
+    // centring stacks on top of that — off-centre by half the leftover space on phone viewports.
   },
   scene: [BootScene, MenuScene, SetupScene, GameScene, WinScene, TutorialScene, OnlineScene],
 });

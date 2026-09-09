@@ -275,15 +275,15 @@ test('reset-data: settings APAGAR DADOS + confirm clears the versioned save and 
   await page.goto('/?seed=1&showcase=settings');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   // dirty the save first (mute toggle, top button of the settings panel) so the wipe is provable.
-  // Row coords track src/ui/settings-panel.ts: panel top = 135 - h/2 (h=298, top=-14), first row
-  // at top + 28 = 14, 22-24px pitch per row (mute, sfx, music, musicEnabled, musicContext, motion,
+  // Row coords track src/ui/settings-panel.ts: panel top = 135 - h/2 (h=262, top=4), first row
+  // at top + 22 = 26, ROW_PITCH=20 per row (mute, sfx, music, musicEnabled, musicContext, motion,
   // largeText, lang, export, cosmetics, resetData, close).
-  const [mx, my] = toScreen(240, 14);
+  const [mx, my] = toScreen(240, 26);
   await page.mouse.click(mx, my);
   const savedBefore = await page.evaluate(() => localStorage.getItem('mexe-save'));
   expect(savedBefore).not.toBeNull();
-  // "APAGAR DADOS" button, logical (240, 238) — 11th row (after cosmetics was added)
-  const [dx, dy] = toScreen(240, 238);
+  // "APAGAR DADOS" button, logical (240, 226) — 11th row (after cosmetics was added)
+  const [dx, dy] = toScreen(240, 226);
   await page.mouse.click(dx, dy);
   await page.waitForTimeout(150);
   // confirm dialog "Sim" button, logical (200, 160)
@@ -733,7 +733,7 @@ const CYCLE_BTN = toScreen(286, TABLE_THEME_ROW_Y); // row's cycle button, cx(24
 async function setTableTheme(p: Page, clicks: number): Promise<void> {
   await p.goto('/?seed=1&showcase=settings');
   await p.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  const [cx, cy] = toScreen(240, 216); // COSMETICS row, see reset-data test above
+  const [cx, cy] = toScreen(240, 206); // COSMETICS row, see reset-data test above
   await p.mouse.click(cx, cy);
   await p.waitForTimeout(150);
   for (let i = 0; i < clicks; i++) {
@@ -772,7 +772,7 @@ test('cosmetics: avatar/card-back selection persists across a reload', async ({ 
   trackConsoleErrors(page);
   await page.goto('/?seed=1&showcase=settings');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  const [cx, cy] = toScreen(240, 216); // COSMETICS row
+  const [cx, cy] = toScreen(240, 206); // COSMETICS row
   await page.mouse.click(cx, cy);
   await page.waitForTimeout(150);
   await snap(page, 'cosmetics-panel');
@@ -837,8 +837,8 @@ test('music: "music by context" toggle switches the track pool selection mode', 
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   const before = (await readSave(page)).settings.musicContextAware;
   expect(before).toBe(true); // default on
-  // musicContext row: mute(14) + 24(sfx) + 22(music label) + 22(musicEnabled toggle) + 22(this row) = 104
-  const [bx, by] = toScreen(240, 104);
+  // musicContext row: mute(26) + 4 * ROW_PITCH(20) = 106
+  const [bx, by] = toScreen(240, 106);
   await page.mouse.click(bx, by);
   const after = (await readSave(page)).settings.musicContextAware;
   expect(after).toBe(false);

@@ -74,7 +74,8 @@ export class MenuScene extends Phaser.Scene {
     this.add.image(240, 135, 'bg-menu').setDisplaySize(480, 270);
     this.add.rectangle(240, 135, 480, 270, 0x1a0f0a, 0.35);
     // backdrop so controls read against the busy boteco scene
-    this.add.rectangle(240, 180, 150, 160, 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
+    // wide enough to actually contain the rules/language row (x 146..334) and the online button
+    this.add.rectangle(240, 184, 204, 168, 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
     if (this.textures.exists('logo') && !debugApi.missingAssets.includes('logo')) {
       // logo.png ships at 3x (600x240) like every other sprite — pin it to its logical size
       const logo = this.add.image(240, 62, 'logo').setDisplaySize(200, 80);
@@ -84,12 +85,6 @@ export class MenuScene extends Phaser.Scene {
       const title = label(this, 240, 52, t('menu.title'), 32, '#f7d23e');
       this.tweens.add({ targets: title, y: '+=3', duration: Math.max(1, this.motion(1400)), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
       label(this, 240, 84, t('menu.tagline'), 8, '#f7f2e7');
-    }
-
-    // cheap character presence: a familiar face idling off to the side, away from every button
-    if (this.textures.exists('avatar-juninho')) {
-      const buddy = this.add.image(404, 150, 'avatar-juninho').setDisplaySize(26, 26).setAlpha(0.92);
-      this.tweens.add({ targets: buddy, y: '+=4', duration: Math.max(1, this.motion(1200)), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
     }
 
     new PixelButton(this, 240, 145, t('menu.play'), () => gotoScene(this, 'setup'), {
