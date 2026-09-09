@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-09T13:25:28.469Z",
-  "roomCode": "XFVWM",
+  "generatedAt": "2026-09-09T14:53:42.778Z",
+  "roomCode": "J55XP",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "MEXE! server listening on :8799 (protocol v3)\n"
+      "{\"ts\":\"2026-09-09T14:53:34.837Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":3,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -156,7 +156,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "NKQ3V",
+    "code": "8FPQB",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {

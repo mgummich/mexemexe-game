@@ -6,6 +6,8 @@ import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { RoomManager } from './rooms';
+import { config } from './config';
+import { createLogger } from './log';
 import {
   attachSocket as attach,
   closeRoomSockets,
@@ -16,7 +18,8 @@ import {
   type ConnState,
 } from './connections';
 
-const PORT = Number(process.env.PORT) || 8787;
+const log = createLogger(config.logLevel);
+
 const SWEEP_INTERVAL_MS = 30_000;
 /** Liveness probe. A half-open socket (lid closed, dead NAT entry) otherwise holds its seat
  * `connected` until TCP gives up, so the disconnect grace never starts (docs/PHASE7_AUDIT.md #1). */
@@ -26,10 +29,19 @@ const TURN_TICK_MS = 5_000;
 /** Largest inbound frame accepted. The biggest legal message is a submit_turn with the whole
  * deck as card ids; 16 KiB is far above that and far below anything that hurts (#2). */
 const MAX_PAYLOAD_BYTES = 16 * 1024;
+/** Hard-exit if graceful shutdown hasn't finished by this deadline (a stuck close handler
+ * must never keep the process alive forever). */
+const SHUTDOWN_TIMEOUT_MS = 5_000;
 
-// Deterministic deal for verify:multiplayer only — never set in a real deployment.
-const testSeed = process.env.MEXE_TEST_SEED ? Number(process.env.MEXE_TEST_SEED) : undefined;
-const rooms = new RoomManager(testSeed === undefined ? {} : { genSeed: () => testSeed });
+// Deterministic deal for verify:multiplayer only — never set in a real deployment
+// (config.ts refuses to start with this set in production mode).
+const testSeed = config.testSeed;
+const rooms = new RoomManager({
+  maxRooms: config.maxRooms,
+  disconnectGraceMs: config.disconnectGraceMs,
+  idleTimeoutMs: config.idleTimeoutMs,
+  ...(testSeed === undefined ? {} : { genSeed: () => testSeed }),
+});
 
 const connections = new Map<WebSocket, ConnState>();
 // code -> seat -> socket, for broadcast/targeted send
@@ -40,7 +52,7 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   try {
     ws.send(JSON.stringify(msg));
   } catch (err) {
-    console.error('send failed', err);
+    log.error('send_failed', { message: String(err) });
   }
 }
 
@@ -60,6 +72,8 @@ function detachSocket(code: string, seat: number, ws: WebSocket): void {
 function closeRoom(code: string, message: string): void {
   const msg: ServerMessage = { v: PROTOCOL_VERSION, type: 'error', code: 'room_closed', message };
   closeRoomSockets(sockets, connections, code, msg);
+  // Room codes are shared secrets that let anyone join — log only their length (docs above).
+  log.debug('room_closed', { codeLength: code.length });
 }
 
 function broadcastStateSync(code: string): void {
@@ -117,6 +131,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       conn.code = code;
       conn.seat = seat;
       attachSocket(code, seat, ws);
+      log.debug('room_created', { codeLength: code.length });
       send(ws, {
         v: PROTOCOL_VERSION,
         type: 'room_joined',
@@ -276,10 +291,20 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
   }
 }
 
+const startedAt = Date.now();
+
 const server = createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
+        rooms: rooms.roomCount(),
+        connections: connections.size,
+        protocol: PROTOCOL_VERSION,
+      }),
+    );
     return;
   }
   res.writeHead(404);
@@ -316,7 +341,7 @@ wss.on('connection', (ws: WebSocket) => {
       handleMessage(ws, conn, parsed);
     } catch (err) {
       // A handler must never crash the process on malformed/hostile input.
-      console.error('message handler error', err);
+      log.error('message_handler_error', { message: String(err) });
       sendError(ws, 'internal_error', 'internal error');
     }
   });
@@ -335,16 +360,16 @@ wss.on('connection', (ws: WebSocket) => {
   });
 
   ws.on('error', (err) => {
-    console.error('socket error', err);
+    log.error('socket_error', { message: String(err) });
   });
 });
 
-setInterval(() => {
+const sweepTimer = setInterval(() => {
   // Reaped rooms must not leave their sockets stuck forever on a dead code (S1).
   for (const code of rooms.sweep()) closeRoom(code, 'room closed: timed out');
 }, SWEEP_INTERVAL_MS).unref();
 
-setInterval(() => {
+const heartbeatTimer = setInterval(() => {
   for (const ws of connections.keys()) {
     if (!alive.has(ws)) {
       // Missed a full probe interval: drop it now so `close` runs the normal disconnect path
@@ -361,7 +386,7 @@ setInterval(() => {
   }
 }, HEARTBEAT_INTERVAL_MS).unref();
 
-setInterval(() => {
+const turnTickTimer = setInterval(() => {
   for (const { code, gameOver } of rooms.advanceStalledTurns()) {
     broadcastStateSync(code);
     if (gameOver) broadcastGameOver(code);
@@ -369,12 +394,60 @@ setInterval(() => {
 }, TURN_TICK_MS).unref();
 
 process.on('uncaughtException', (err) => {
-  console.error('uncaughtException', err);
+  log.error('uncaught_exception', { message: String(err) });
 });
 process.on('unhandledRejection', (err) => {
-  console.error('unhandledRejection', err);
+  log.error('unhandled_rejection', { message: String(err) });
 });
 
-server.listen(PORT, () => {
-  console.log(`MEXEMEXE! server listening on :${PORT} (protocol v${PROTOCOL_VERSION})`);
+let shuttingDown = false;
+
+/** Stop accepting new work and tear everything down cleanly on SIGTERM/SIGINT. Idempotent —
+ * a second signal during shutdown is a no-op — and hard-exits if something hangs past the
+ * timeout rather than leaving the process stuck. */
+function shutdown(signal: NodeJS.Signals): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log.info('shutdown_start', { signal });
+
+  const hardExit = setTimeout(() => {
+    log.error('shutdown_timeout');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  hardExit.unref();
+
+  clearInterval(sweepTimer);
+  clearInterval(heartbeatTimer);
+  clearInterval(turnTickTimer);
+
+  const shutdownMsg: ServerMessage = { v: PROTOCOL_VERSION, type: 'error', code: 'server_shutdown', message: 'server shutting down' };
+  for (const ws of connections.keys()) {
+    send(ws, shutdownMsg);
+    ws.close();
+  }
+
+  wss.close(() => {
+    // Drop idle keep-alive sockets (e.g. a reverse proxy or health prober) instead of waiting
+    // for them to close on their own — otherwise server.close() can hang the full
+    // SHUTDOWN_TIMEOUT_MS and hard-exit even on an otherwise clean shutdown. Node >=18.2.
+    server.closeAllConnections();
+    server.close(() => {
+      clearTimeout(hardExit);
+      log.info('shutdown_complete');
+      process.exit(0);
+    });
+  });
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+server.listen(config.port, config.host, () => {
+  log.info('server_listening', {
+    port: config.port,
+    host: config.host,
+    mode: config.mode,
+    protocol: PROTOCOL_VERSION,
+    maxRooms: config.maxRooms,
+  });
 });

@@ -1,7 +1,7 @@
 {
   "name": "mexemexe-game",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,8 @@
     "screenshot": "npm run build && playwright test e2e/screenshot.spec.ts",
     "verify": "npm run test && npm run lint && npm run screenshot && node scripts/check-verify.mjs",
     "verify:multiplayer": "npm run build && playwright test -c playwright.multiplayer.config.ts && node scripts/check-verify-multiplayer.mjs",
-    "verify:cross": "npm run build && playwright test -c playwright.cross.config.ts"
+    "verify:cross": "npm run build && playwright test -c playwright.cross.config.ts",
+    "verify:preview": "npm run build && node scripts/check-preview.mjs"
   },
   "dependencies": {
     "phaser": "^3.87.0",

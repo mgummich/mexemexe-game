@@ -100,6 +100,7 @@ see Known issues below before you invite anyone to try it.
 ```bash
 npm run server      # tsx server/index.ts, listens on :8787 by default
 PORT=9000 npm run server   # override the port
+MEXE_ENV=production npm run server   # production mode (see docs/OPERATIONS.md)
 ```
 
 Or run the game and the server together with Docker:
@@ -108,13 +109,20 @@ Or run the game and the server together with Docker:
 docker compose up -d --build   # game on :8080, server on :8787
 ```
 
-See `SELF_HOSTING.md` for HTTPS/`wss://` deployments.
+See `SELF_HOSTING.md` for HTTPS/`wss://` deployments, and `docs/OPERATIONS.md`
+for the environment-variable reference, log format, health-check reading,
+troubleshooting and rollback.
 
 The server is a plain Node + `ws` process, separate from the Vite dev
-server/static build. It exposes a health check at `GET /health` (`{"ok":true}`)
-and has no other HTTP routes. It caps inbound frames at 16 KiB, probes every
-socket with a WebSocket ping every 15s and terminates one that misses a probe,
-and rate-limits each connection. Local play (menu → JOGAR) never touches this
+server/static build. It exposes a health check at `GET /health`
+(`{"ok":true,"uptimeSec":142,"rooms":3,"connections":7,"protocol":3}` — never
+room codes or player names) and has no other HTTP routes. It caps inbound frames
+at 16 KiB, probes every socket with a WebSocket ping every 15s and terminates one
+that misses a probe, and rate-limits each connection. It reads its configuration
+from the environment once at startup and refuses to start on an invalid value,
+logs one JSON line per event with player names, tokens, addresses and card data
+redacted in the logger itself, and shuts down gracefully on `SIGTERM`/`SIGINT`,
+telling connected clients why. Local play (menu → JOGAR) never touches this
 process — the game works fully offline with the server down or not running at
 all; only the `ONLINE (ALFA)` menu path needs it.
 
@@ -146,12 +154,14 @@ The client resolves the server URL in this order:
 1. `?ws=` query param override (e.g. `?ws=wss://example.com:8787`) — highest
    priority, mainly for testing against a non-default server.
 2. `VITE_WS_URL` build-time environment variable.
-3. Same-host default: `ws://<current hostname>:8787`.
+3. Same-origin default, following the page's protocol:
+   `ws://<current hostname>:8787` over HTTP, `wss://<current host>/ws` over HTTPS.
 
-**HTTPS caveat**: a page served over `https://` cannot open a plain `ws://`
-connection — the browser will block it. Any deployment serving the game over
-HTTPS must set `VITE_WS_URL` to a `wss://` URL pointing at a TLS-terminated
-WebSocket endpoint. This is the most common first-deployment surprise.
+**HTTPS**: a page served over `https://` cannot open a plain `ws://` connection —
+the browser blocks it. The default handles this by switching to `wss://<host>/ws`,
+which matches the reverse-proxy layout in `SELF_HOSTING.md`, so a TLS deployment
+that follows that guide works without any build configuration. Set `VITE_WS_URL`
+to a `wss://` URL only if your WebSocket endpoint lives somewhere else.
 
 ### Local vs online
 
@@ -189,6 +199,7 @@ own hand, the opponent as a card count).
 | `npm run server` | Runs the WebSocket server (`server/index.ts` via `tsx`) |
 | `npm run test:server` | Runs the server unit suite (`tests/server`) only |
 | `npm run verify:multiplayer` | Builds, runs 2P legal/reconnect safety, 3P/4P turn rotation, and the in-canvas join / hand-privacy / resync flows, then gates on client console errors, server stderr, illegal-proposal rejection, hand privacy and state-hash agreement |
+| `npm run verify:preview` | Builds, serves `dist/` on :4173 and gates on the built client: every asset reference resolves, boot-time assets load, no credential-shaped strings in the emitted bundle |
 
 ## Controls
 
@@ -255,7 +266,13 @@ npm run screenshot  # npm run build, then Playwright: boots the game, drives
 npm run verify      # all of the above + gate on console errors/missing assets/low fps;
                     # also merges perf/test metrics into docs/STATUS.json
 npm run gen:cosmetics # regenerate the procedural table/card-back/emote PNGs (deterministic)
+npm run verify:preview # production-build smoke: dist/ serves, assets resolve, no secrets
+                       # in the bundle
 ```
+
+Release gate: `npm run verify`, `npm run verify:preview` and
+`npm run verify:multiplayer` must all pass, with zero console errors and zero
+server stderr lines.
 
 ## Opponents
 

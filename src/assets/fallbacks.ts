@@ -6,13 +6,6 @@ import { SUITS, type Suit } from '../rules/types';
  * Tracked in verification so final builds must ship real art.
  */
 
-export const SUIT_COLOR: Record<Suit, number> = {
-  hearts: 0xd82e2e,
-  diamonds: 0xe07b28,
-  clubs: 0x2b2b33,
-  spades: 0x2b2b33,
-};
-
 export const SUIT_CHAR: Record<Suit, string> = {
   hearts: '♥',
   diamonds: '♦',

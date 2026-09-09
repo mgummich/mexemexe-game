@@ -230,8 +230,11 @@ function countIds(cards: readonly Card[]): Map<string, number> {
  *  - every committed table card is still on the draft table (no return to hand)
  *  - at least one card added from hand
  *  - all draft melds valid (per state.config)
+ *
+ * `invalidMeldReasons`, when given, is reused instead of recomputed — pass the caller's own
+ * `getInvalidMeldReasons(draft.melds, state.config)` result to avoid analyzing every meld twice.
  */
-export function canConfirmTurn(state: GameState, draft: DraftState): ConfirmResult {
+export function canConfirmTurn(state: GameState, draft: DraftState, invalidMeldReasons?: MeldReason[]): ConfirmResult {
   const reasons: ReasonCode[] = [];
   const draftCards = draft.melds.flatMap((m) => m.cards);
   const draftCount = countIds(draftCards);
@@ -264,7 +267,7 @@ export function canConfirmTurn(state: GameState, draft: DraftState): ConfirmResu
   const playedFromHand = draftCards.filter((c) => handIds.has(c.id));
   if (playedFromHand.length === 0) reasons.push('reason.noHandCard');
 
-  for (const r of getInvalidMeldReasons(draft.melds, state.config)) {
+  for (const r of invalidMeldReasons ?? getInvalidMeldReasons(draft.melds, state.config)) {
     if (!reasons.includes(r.reason)) reasons.push(r.reason);
   }
 

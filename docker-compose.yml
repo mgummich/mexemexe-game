@@ -15,6 +15,10 @@ services:
     build:
       context: .
       target: server
+    environment:
+      # Production mode also makes the server refuse to start if MEXE_TEST_SEED
+      # ever leaks into the environment (see docs/OPERATIONS.md).
+      MEXE_ENV: production
     ports:
       - "8787:8787"
     restart: unless-stopped

@@ -119,4 +119,19 @@ describe('loadSave', () => {
     const storage = memoryStorage({ [SAVE_KEY]: '{{{not json' });
     expect(loadSave(storage)).toEqual({ version: 1, settings: DEFAULT_SETTINGS, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
   });
+
+  it('returns defaults without throwing when storage.getItem throws (e.g. blocked site data)', () => {
+    const storage: Storage = {
+      getItem: () => {
+        throw new Error('SecurityError');
+      },
+      setItem: () => undefined,
+      removeItem: () => undefined,
+      clear: () => undefined,
+      key: () => null,
+      length: 0,
+    } as Storage;
+    expect(() => loadSave(storage)).not.toThrow();
+    expect(loadSave(storage)).toEqual({ version: 1, settings: DEFAULT_SETTINGS, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
+  });
 });

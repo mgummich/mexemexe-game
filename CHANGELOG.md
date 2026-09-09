@@ -3,6 +3,118 @@
 All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 
+## 1.5.0 — Phase 11 (resilience, render cost, cleanup)
+
+Deployable production build → one that survives a hostile browser. No rules
+change, no protocol change, no gameplay change: local and online play behave
+exactly as in 1.4.0.
+
+The phase opened expecting a client performance problem and did not find one.
+No scene implements `update()`, nothing allocates per frame, rendering is driven
+by interactions rather than by the frame loop, and the crowded-table capture
+already held 58 fps. The real defects were three ways the game could fail to
+start or silently stop working, and one online path that could lock input
+forever. See `docs/PHASE11_AUDIT.md`, including the perf items that were
+investigated and deliberately left alone.
+
+- **The game boots on a browser with storage blocked** (`src/core/persistence.ts`).
+  `loadSave()` read `localStorage` unguarded, and `src/core/settings.ts` calls it
+  at module scope — so in Safari with site data blocked, or any webview with
+  storage disabled, reading storage *threw* during module evaluation and the game
+  never started at all: a blank canvas. Reads are now fail-safe, and the
+  `localStorage` default parameter is resolved lazily inside a `try`, because
+  reading the property itself throws before any guard in the function body could
+  run. A blocked browser now plays normally, with settings simply not persisting.
+- **A blocked browser no longer breaks online reconnect** (`src/net/client.ts`).
+  `sessionStorage` was touched unguarded inside `ws.onopen`, `ws.onclose`,
+  `ws.onmessage` and `leaveRoom()`. A throw inside a socket callback aborts that
+  callback: the reconnect handshake would never send, and the
+  retry-versus-terminal decision would be skipped, leaving the interface parked on
+  a dead socket showing no notice at all. All four sites now go through guarded
+  token accessors. No protocol, status-transition or reconnect-timing change.
+- **A failed asset step no longer strands the player on a black screen**
+  (`src/scenes/BootScene.ts`). `finish()` was `async`, called without `await`, and
+  had no error handling, so a throw from font loading or card-face composition was
+  an unhandled rejection and the menu never started — even though the scene
+  already generates procedural fallbacks for every asset and the game is fully
+  playable without composed faces. The failure is now caught, recorded in
+  `debugApi.errors` rather than swallowed, and the menu always starts.
+- **Online input can no longer lock forever** (`src/scenes/GameScene.ts`). The
+  pending-move lock was released only by `state_sync` or `proposal_rejected`; a
+  dropped or ignored proposal on a socket that stayed open produced neither, and
+  there was no timeout, so the player was left with a dead board and no
+  explanation. The lock now has a single set/clear point owning a 10s timer: on
+  expiry it releases, shows the resyncing notice, asks the server for a fresh
+  authoritative snapshot, and re-renders.
+- **The render path stopped analyzing every meld twice** (`src/scenes/GameScene.ts`,
+  `src/mexe-mode/draft.ts`, `src/rules/rules.ts`). Each render of a human turn ran
+  the whole table through meld analysis once to draw the invalid badges and again
+  to gate the FEITO button. `DraftEditor.analyze()` now does one pass and
+  `canConfirmTurn()` reuses it. Rules semantics are unchanged — the new parameter
+  is optional and every existing caller behaves exactly as before. The
+  `tutorial-complete` capture, previously the lowest reading in the whole suite at
+  44 fps, now measures 59.
+- **Dead code removed**: the unused `clientConfig` export (`src/config.ts`) and the
+  unused `SUIT_COLOR` export (`src/assets/fallbacks.ts`), both left over from
+  Phase 10. A full slop scan of `src/`, `server/`, `tests/`, `scripts/` and the
+  three e2e suites found nothing else: no `TODO`/`FIXME`/`HACK`, no commented-out
+  code, no duplicated implementations, no stub fallback paths, no docs claiming
+  features that do not exist.
+- **Tests**: 301 → 303. New coverage for the blocked-storage load path and for the
+  collapsed meld analysis agreeing with the two calls it replaced, on both a valid
+  and an invalid draft.
+
+Verification: 303/303 unit tests, lint clean, build clean, `npm run verify` OK
+(28 captures, fps 54–60, zero console errors, zero missing assets),
+`npm run verify:multiplayer` 7/7, `npm run verify:preview` OK.
+
+## 1.4.0 — Phase 10 (production hardening)
+
+Content-rich beta → deployable production build. No rules change, no protocol
+change, no gameplay change: local and online play behave exactly as in 1.3.0.
+
+- **HTTPS deployments work by default** (`src/config.ts`): the WebSocket URL
+  fallback is now protocol-aware — `wss://<host>/ws` over https (matching the
+  reverse-proxy layout documented in `SELF_HOSTING.md`), `ws://<hostname>:8787`
+  over http. Previously the https case fell back to a plain `ws://` URL that
+  browsers block outright, so any TLS deployment that forgot `VITE_WS_URL` got a
+  silently dead ONLINE menu. `?ws=` and `VITE_WS_URL` still take precedence, in
+  that order.
+- **Server configuration is centralized and validated** (`server/config.ts`):
+  `PORT`, `HOST`, `MEXE_ENV`/`NODE_ENV`, `LOG_LEVEL`, `MEXE_MAX_ROOMS`,
+  `MEXE_DISCONNECT_GRACE_MS`, `MEXE_IDLE_TIMEOUT_MS`, `MEXE_TEST_SEED`. A
+  malformed numeric value fails startup naming the variable instead of silently
+  falling back to a default, and `MEXE_TEST_SEED` set in production mode is a
+  fatal error — a seeded deck would deal every match identically. Room capacity
+  and timeouts are now operator-tunable rather than hardcoded in `rooms.ts`.
+- **Graceful shutdown** (`server/index.ts`): `SIGTERM`/`SIGINT` send every
+  connected client a `server_shutdown` error so they see a real message instead
+  of a silent drop, then clear the timers, close the sockets and the HTTP
+  listener, and exit 0. Idempotent, with a 5s hard-exit backstop. The new code is
+  translated (PT/EN) rather than falling through to the generic error copy.
+- **Structured, privacy-enforcing logs** (`server/log.ts`): one JSON line per
+  event, `debug`/`info` to stdout and `error` to stderr only. Redaction lives in
+  the logger rather than at call sites — `name`, `playerName`, `token`,
+  `sessionToken`, `ip` and `userAgent` are redacted, every array/object field
+  collapses to its length so hands and melds can never be serialized, and room
+  codes are logged only as a length. Still no persistence, no telemetry, no
+  analytics, nothing written to disk.
+- **`/health` is diagnosable**: `{ok, uptimeSec, rooms, connections, protocol}`,
+  with no room codes and no player names. Previously `{"ok":true}`, which proved
+  the process was listening and nothing else.
+- **Phaser is a separate cached chunk** (`vite.config.ts`): the build went from
+  one 1604 kB chunk to 121 kB of game code plus a 1482 kB Phaser chunk, so a
+  game-code release no longer invalidates Phaser in returning players' caches.
+- **The built client is now gated** (`npm run verify:preview`,
+  `scripts/check-preview.mjs`): serves `dist/` on :4173 and fails on an asset
+  that does not resolve, a missing boot-time asset, or a credential-shaped
+  string in any emitted `.js`. Nothing previously exercised the production build.
+- **Operations documentation** (`docs/OPERATIONS.md`): environment reference,
+  build and run, health-check reading, log format and privacy guarantees,
+  troubleshooting, rollback, verify commands, known limits. Plus
+  `docs/PHASE10_AUDIT.md`, and `SELF_HOSTING.md`/`docker-compose.yml` updated
+  for the new defaults (`mexe-server` now runs with `MEXE_ENV=production`).
+
 ## 1.3.0 — Phase 9 (content-rich beta)
 
 Playtest-ready demo → content-rich beta. No rules change, no protocol change.

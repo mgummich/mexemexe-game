@@ -47,14 +47,20 @@ export class BootScene extends Phaser.Scene {
     }
 
     const finish = async (): Promise<void> => {
-      const font = await loadPixelFont();
-      setPixelFont(font);
-      composeCardFaces(this, font);
-      // Composed faces are real PixelLab-derived art — unmark them as missing.
-      if (this.textures.exists('card-blank')) {
-        debugApi.missingAssets = debugApi.missingAssets.filter(
-          (k) => !(k.startsWith('card-') && this.textures.exists(k)),
-        );
+      // Composed card faces are optional polish — every asset has a makeFallback, so a failure
+      // here (e.g. font load throws) must never block reaching the menu.
+      try {
+        const font = await loadPixelFont();
+        setPixelFont(font);
+        composeCardFaces(this, font);
+        // Composed faces are real PixelLab-derived art — unmark them as missing.
+        if (this.textures.exists('card-blank')) {
+          debugApi.missingAssets = debugApi.missingAssets.filter(
+            (k) => !(k.startsWith('card-') && this.textures.exists(k)),
+          );
+        }
+      } catch (err) {
+        debugApi.errors.push(`BootScene.finish: ${String(err)}`);
       }
       for (const a of manifest) {
         if (!this.textures.exists(a.key)) makeFallback(this, a.key, a.w, a.h);
@@ -64,10 +70,10 @@ export class BootScene extends Phaser.Scene {
     };
 
     if (queued > 0) {
-      this.load.once('complete', finish);
+      this.load.once('complete', () => void finish());
       this.load.start();
     } else {
-      finish();
+      void finish();
     }
   }
 }
