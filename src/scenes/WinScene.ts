@@ -1,8 +1,11 @@
 import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
 import { PERSONALITY_STYLE, type Personality } from '../ai/ai';
+import { bus } from '../core/events';
 import { t } from '../localization/i18n';
 import type { NetClient } from '../net/client';
+import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
+import { view } from '../ui/viewport';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi } from '../verification/debug-api';
 import type { GameSceneConfig } from './GameScene';
@@ -54,34 +57,39 @@ export class WinScene extends Phaser.Scene {
         draws: r.draws ?? 0,
       })),
     };
-    this.add.image(240, 135, 'bg-boteco').setDisplaySize(480, 270);
-    this.add.rectangle(240, 135, 480, 270, 0x1a0f0a, 0.55);
+    // No live connection held by this scene beyond `data.online.client`, which `scene.restart`
+    // passes straight back through — a full restart on orientation flip is simplest and correct.
+    const unsub = bus.on('viewport:changed', () => this.scene.restart(data));
+    this.events.once('shutdown', unsub);
+
+    coverBackground(this, 'bg-boteco');
+    this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.55);
     // banner ships at 3x (480x144); logical size is 160x48, so scale 1/3 is "full size"
     const bannerScale = 1 / 3;
-    const banner = this.add.image(240, 90, 'banner-victory').setScale(bannerScale);
+    const banner = this.add.image(cx(), vy(90), 'banner-victory').setScale(bannerScale);
     this.tweens.add({
       targets: banner,
       scale: { from: bannerScale * 0.6, to: bannerScale },
       duration: 300,
       ease: 'Back.out',
     });
-    label(this, 240, 88, t('win.title'), 24, '#f7d23e');
+    label(this, cx(), vy(88), t('win.title'), 24, '#f7d23e');
     label(
       this,
-      240,
-      148,
+      cx(),
+      vy(148),
       data.stalemate ? t('win.stalemate', { name: data.winnerName }) : t('win.wins', { name: data.winnerName }),
       11,
     );
 
     // sparkle burst
     for (let i = 0; i < 14; i++) {
-      const s = this.add.image(240, 90, 'sparkle').setDisplaySize(8, 8);
+      const s = this.add.image(cx(), vy(90), 'sparkle').setDisplaySize(8, 8);
       const angle = (i / 14) * Math.PI * 2;
       this.tweens.add({
         targets: s,
-        x: 240 + Math.cos(angle) * (60 + (i % 3) * 25),
-        y: 90 + Math.sin(angle) * (40 + (i % 3) * 18),
+        x: cx() + Math.cos(angle) * (60 + (i % 3) * 25),
+        y: vy(90) + Math.sin(angle) * (40 + (i % 3) * 18),
         alpha: 0,
         duration: 700 + (i % 4) * 150,
         onComplete: () => s.destroy(),
@@ -89,11 +97,11 @@ export class WinScene extends Phaser.Scene {
     }
 
     const results = data.results ?? [];
-    let y = 160;
+    let y = vy(160);
     // biggest gap this screen used to have: the winner is named, but not what they actually did.
     if (!data.stalemate && data.winningMoveText) {
       const moveTxt = this.add
-        .text(240, y, data.winningMoveText, { ...fontStyle(7, '#d8c890'), align: 'center', wordWrap: { width: 380 } })
+        .text(cx(), y, data.winningMoveText, { ...fontStyle(7, '#d8c890'), align: 'center', wordWrap: { width: panelW(380) } })
         .setOrigin(0.5, 0);
       y += moveTxt.height + 4;
     }
@@ -103,11 +111,11 @@ export class WinScene extends Phaser.Scene {
     if (!data.online && results.length > 0) {
       const line = results.map((r) => t('win.statLine', { name: r.name, turns: r.turnsPlayed ?? 0, cards: r.cardsPlayed ?? 0, draws: r.draws ?? 0 })).join('    ');
       const statsTxt = this.add
-        .text(240, y, line, { ...fontStyle(6, '#b8ac98'), align: 'center', wordWrap: { width: 400 } })
+        .text(cx(), y, line, { ...fontStyle(6, '#b8ac98'), align: 'center', wordWrap: { width: panelW(400) } })
         .setOrigin(0.5, 0);
       y += statsTxt.height + 6;
     }
-    const buttonY0 = Math.max(190, Math.min(225, y + 4));
+    const buttonY0 = Math.max(vy(190), Math.min(vy(225), y + 4));
 
     debugApi.winButtonY = buttonY0;
 
@@ -115,7 +123,7 @@ export class WinScene extends Phaser.Scene {
       // online rematch is out of MVP scope (docs/PHASE5_CLIENT_PLAN.md §A) — never strand the
       // player on a dead room, just leave it and go back to the local menu.
       const client = data.online.client;
-      new PixelButton(this, 240, buttonY0, t('win.menu'), () => {
+      new PixelButton(this, cx(), buttonY0, t('win.menu'), () => {
         client.leaveRoom();
         debugApi.online = null;
         gotoScene(this, 'menu');
@@ -123,14 +131,14 @@ export class WinScene extends Phaser.Scene {
       return;
     }
 
-    new PixelButton(this, 240, buttonY0, t('win.replaySame'), () => gotoScene(this, 'game', data.config), {
+    new PixelButton(this, cx(), buttonY0, t('win.replaySame'), () => gotoScene(this, 'game', data.config), {
       textureBase: 'btn-feito', w: 130, h: 20, size: 8,
     });
-    new PixelButton(this, 240, buttonY0 + 22, t('win.newSeed'), () => {
+    new PixelButton(this, cx(), buttonY0 + 22, t('win.newSeed'), () => {
       const newConfig = { ...data.config, seed: Date.now() % 2147483647 };
       gotoScene(this, 'game', newConfig);
     }, { textureBase: 'btn-comprar', w: 130, h: 18, size: 7 });
-    new PixelButton(this, 240, buttonY0 + 42, t('win.menu'), () => gotoScene(this, 'menu'), {
+    new PixelButton(this, cx(), buttonY0 + 42, t('win.menu'), () => gotoScene(this, 'menu'), {
       textureBase: 'btn-comprar', w: 130, h: 18, size: 7,
     });
   }
@@ -141,8 +149,8 @@ export class WinScene extends Phaser.Scene {
   private renderResults(results: PlayerResult[], y: number): number {
     if (results.length === 0) return y;
     const rowY = y + 8;
-    const slotW = Math.min(96, 440 / results.length);
-    const startX = 240 - ((results.length - 1) * slotW) / 2;
+    const slotW = Math.min(96, (view().w - 40) / results.length);
+    const startX = cx() - ((results.length - 1) * slotW) / 2;
     results.forEach((r, i) => {
       const x = startX + i * slotW;
       if (r.isWinner) {

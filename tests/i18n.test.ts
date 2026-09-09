@@ -26,6 +26,7 @@ const REASON_CODES: ReasonCode[] = [
   'reason.groupDuplicateSuit',
   'reason.groupAllJokers',
   'reason.jokerUnassignable',
+  'reason.tooManyJokers',
   'reason.runWrap',
   'reason.notYourTurn',
   'reason.staleRevision',

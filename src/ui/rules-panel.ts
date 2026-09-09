@@ -1,13 +1,15 @@
 import Phaser from 'phaser';
 import { t } from '../localization/i18n';
+import { cx as centreX, panelW } from './menu-layout';
 import { buildOverlay } from './overlay';
+import { view } from './viewport';
 import { fontStyle, label, PixelButton } from './widgets';
 
 /** Opens a compact rules-summary overlay. Returns a close() fn. */
 export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void): () => void {
   const objs: Phaser.GameObjects.GameObject[] = [];
-  const w = 260;
-  const cx = 240; // matches buildOverlay's fixed panel center — needed before buildOverlay runs
+  const w = panelW(260);
+  const cx = centreX(); // matches buildOverlay's panel center — needed before buildOverlay runs
   const close = (): void => {
     for (const o of objs) o.destroy();
     onClosed();
@@ -32,7 +34,10 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void): () =>
     })
     .setOrigin(0.5, 0)
     .setDepth(510);
-  const h = Math.round(24 + body.height + 6 + shortcuts.height + 20);
+  // Coarse pointer: grow the close button to a real 24-unit tap target (it's the panel's only
+  // way out other than tapping the dim backdrop).
+  const closeH = view().touch ? 24 : 16;
+  const h = Math.round(24 + body.height + 6 + shortcuts.height + closeH + 12);
 
   const base = buildOverlay(scene, w, h, close);
   objs.push(...base.objs);
@@ -44,8 +49,8 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void): () =>
   shortcuts.setPosition(cx, top + 24 + body.height + 6);
   objs.push(shortcuts);
 
-  objs.push(new PixelButton(scene, cx, top + h - 14, t('settings.close'), close, {
-    textureBase: 'btn-comprar', w: 90, h: 16, size: 7, color: 0x6b6b73,
+  objs.push(new PixelButton(scene, cx, top + h - closeH / 2 - 6, t('settings.close'), close, {
+    textureBase: 'btn-comprar', w: 90, h: closeH, size: 7, color: 0x6b6b73,
   }).setDepth(510));
   return close;
 }

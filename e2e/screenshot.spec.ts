@@ -1,8 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { t as translate } from '../src/localization/i18n';
+import { getLocale, setLocale, t as translate } from '../src/localization/i18n';
 import { errorMessage, SERVER_ERROR_CODES } from '../src/net/errors';
+import { computeMeldLayout } from '../src/table/layout';
+import { gameRegions, type GameRegions } from '../src/ui/regions';
+import { pickProfile } from '../src/ui/viewport';
 
 const OUT_DIR = 'docs/screenshots';
 const LOG_PATH = path.join(OUT_DIR, 'verify-log.json');
@@ -420,6 +423,38 @@ test('joker-group: a joker stands in for the third card of a group of 3s', async
   });
 });
 
+test('two-joker-run: a run holding 2 jokers is rejected with the too-many-jokers reason (PT)', async ({ page }) => {
+  await capture(page, '/?seed=16&showcase=mexe', 'mexe-invalid-two-jokers-run', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['hearts-5-d0', 'hearts-6-d0', 'joker-d0-1', 'joker-d1-2']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation as { ok: boolean; reasons: string[] });
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.tooManyJokers');
+  });
+  expect(translate('reason.tooManyJokers')).not.toMatch(/^reason\./);
+});
+
+test('two-joker-trinca: a trinca holding 2 jokers is rejected with the too-many-jokers reason (EN)', async ({ page }) => {
+  await capture(page, '/?seed=16&showcase=mexe&lang=en', 'mexe-invalid-two-jokers-trinca-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['hearts-6-d0', 'spades-6-d1', 'joker-d0-1', 'joker-d1-2']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation as { ok: boolean; reasons: string[] });
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.tooManyJokers');
+  });
+  expect(translate('reason.tooManyJokers')).not.toMatch(/^reason\./);
+});
+
+test('one-joker melds stay legal: a joker completes a run and a trinca on the same table', async ({ page }) => {
+  await capture(page, '/?seed=16&showcase=mexe', 'mexe-valid-one-joker-each', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['hearts-5-d0', 'hearts-6-d0', 'joker-d0-1']);
+    await buildMeld(p, ['spades-5-d1', 'spades-6-d1', 'joker-d1-2']);
+    const validation = await p.evaluate(() => window.__MEXE__.validation as { ok: boolean; reasons: string[] });
+    expect(validation.reasons).not.toContain('reason.tooManyJokers');
+  });
+});
+
 test('k-a-2-invalid: no-wrap rule rejects K-A-2 with the run-wrap reason', async ({ page }) => {
   await capture(page, '/?seed=242&showcase=mexe', 'mexe-invalid-kA2', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
@@ -454,6 +489,178 @@ async function meldIdOf(p: Page, cardId: string): Promise<string> {
     return meld.id;
   }, cardId);
 }
+
+// ---------- Phase 12: smart drag/snap helpers ----------
+
+/**
+ * Real mouse drag (dispatches actual browser pointer events, same as a player's mouse): move onto
+ * the card, press, move onto the target in a few steps so Phaser's drag threshold fires and the
+ * legality-aware highlights/ghost preview update, then leave the mouse DOWN so the caller's
+ * `capture()` screenshot lands mid-drag. Never releases — the page closes at test end regardless
+ * (ponytail: no explicit mouse-up cleanup needed for a single-shot e2e test).
+ */
+async function dragCardOnto(p: Page, cardId: string, toLogical: { x: number; y: number }): Promise<void> {
+  const from = await p.evaluate((id) => window.__MEXE__.mexe!.cardPos(id), cardId);
+  if (!from) throw new Error(`card ${cardId} not on screen`);
+  const [fx, fy] = toScreen(from.x, from.y);
+  const [tx, ty] = toScreen(toLogical.x, toLogical.y);
+  await p.mouse.move(fx, fy);
+  await p.mouse.down();
+  await p.mouse.move(tx, ty, { steps: 8 });
+}
+
+// ---------- mobile viewports ----------
+// The board has two authored worlds (src/ui/viewport.ts): 480x270 landscape and 270x480 portrait.
+// These are the same tables the scene lays out from, so a capture can address a real button.
+const DESKTOP_REGIONS = gameRegions(pickProfile(1280, 720, false));
+const PORTRAIT_REGIONS = gameRegions(pickProfile(390, 844, false));
+const PHONE_PORTRAIT = { width: 390, height: 844 };
+const PHONE_LANDSCAPE = { width: 844, height: 390 };
+
+/**
+ * World -> screen for whichever world is live, read from the canvas rect and `viewport()` rather
+ * than a baked-in scale factor — the fixed `toScreen` above only holds at 1280x720.
+ */
+async function toCanvasPoint(p: Page, wx: number, wy: number): Promise<[number, number]> {
+  const pt = await p.evaluate(
+    ({ x, y }) => {
+      const c = document.querySelector('canvas')!.getBoundingClientRect();
+      const v = window.__MEXE__.viewport();
+      return { x: c.left + (x / v.w) * c.width, y: c.top + (y / v.h) * c.height };
+    },
+    { x: wx, y: wy },
+  );
+  return [pt.x, pt.y];
+}
+
+async function tapWorld(p: Page, wx: number, wy: number): Promise<void> {
+  const [x, y] = await toCanvasPoint(p, wx, wy);
+  await p.mouse.click(x, y);
+}
+
+/** Tap a rendered card by id — the touch path, no drag involved. */
+async function tapCard(p: Page, cardId: string): Promise<void> {
+  const pos = await p.evaluate((id) => window.__MEXE__.mexe!.cardPos(id), cardId);
+  if (!pos) throw new Error(`card ${cardId} not on screen`);
+  await tapWorld(p, pos.x, pos.y);
+}
+
+async function tapMeld(p: Page, meldId: string): Promise<void> {
+  const pos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+  if (!pos) throw new Error(`meld ${meldId} not on screen`);
+  await tapWorld(p, pos.x, pos.y);
+}
+
+async function meldCardIds(p: Page, meldId: string): Promise<string[]> {
+  return p.evaluate(
+    (id) => window.__MEXE__.mexe!.getDraft()!.melds.find((m) => m.id === id)?.cards.map((c) => c.id) ?? [],
+    meldId,
+  );
+}
+
+/**
+ * Logical position of an invalid meld's ✗ badge — same layout math as `GameScene.layoutMelds`
+ * (`TABLE_LEFT`/`TABLE_TOP`/`MELD_PAD` + the badge's `+4,+2` offset), built on the same pure
+ * `computeMeldLayout` the scene itself uses, so this can never drift from the real position.
+ */
+async function badgeLogicalPos(p: Page, meldId: string, r: GameRegions = DESKTOP_REGIONS): Promise<{ x: number; y: number }> {
+  const melds = await p.evaluate(() =>
+    window.__MEXE__.mexe!.getDraft()!.melds.map((m) => ({ id: m.id, cardCount: m.cards.length })),
+  );
+  const MELD_PAD = 4;
+  const pos = computeMeldLayout(melds, r.tableAreaW, r.tableAreaH).find((m) => m.meldId === meldId)!;
+  const pad = MELD_PAD * pos.cardScale;
+  return { x: r.tableLeft + pos.x + 4, y: r.tableTop + 6 + pos.y - pad + 2 };
+}
+
+test('snap-targets-legal: dragging a card that legally extends a run highlights it green, not gold', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-targets-legal', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    // AI-built run already on the table: clubs 10, 11, joker(=12). clubs-13-d0 is in hand and
+    // extends it to 10-11-12-13 legally.
+    const meldId = await meldIdOf(p, 'clubs-10-d0');
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'clubs-13-d0');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'clubs-13-d0', meldPos!);
+  });
+});
+
+test('snap-target-illegal: dragging a duplicate-suit card over a partial group highlights it red', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-target-illegal', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'clubs-2-d1']); // 2-card partial group
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'diamonds-2-d0');
+    const target = targets.find((t) => t.meldId === meldId);
+    expect(target?.status).toBe('illegal');
+    expect(target?.reason).toBe('reason.groupDuplicateSuit');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'diamonds-2-d0', meldPos!);
+  });
+});
+
+test('snap-preview-valid: ghost preview shows the resulting run and a legal status line', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-preview-valid', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await meldIdOf(p, 'clubs-10-d0');
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'clubs-13-d0');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'clubs-13-d0', meldPos!);
+  });
+});
+
+test('snap-preview-invalid: ghost preview shows the illegal reason line, no joker hint', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-preview-invalid', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'clubs-2-d1']);
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'diamonds-2-d0');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('illegal');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'diamonds-2-d0', meldPos!);
+  });
+});
+
+test('snap-preview-joker: dragging a joker onto a partial run shows what it stands for', async ({ page }) => {
+  await capture(page, '/?seed=16&showcase=mexe', 'snap-preview-joker', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['hearts-5-d0', 'hearts-6-d0']); // 2-card partial run
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'joker-d0-1');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal'); // joker fills 7
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'joker-d0-1', meldPos!);
+  });
+});
+
+test('snap-reason-tapped: tapping the ✗ badge shows the reason without hovering', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe', 'snap-reason-tapped', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']); // invalid: duplicate suit
+    const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean; reasons: string[] };
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.groupDuplicateSuit');
+    const badgePos = await badgeLogicalPos(p, meldId);
+    const [bx, by] = toScreen(badgePos.x, badgePos.y);
+    await p.mouse.click(bx, by); // tap, not hover
+  });
+});
+
+test('snap-preview-en: the legal snap status line reads in English', async ({ page }) => {
+  await capture(page, '/?seed=37&showcase=mexe&lang=en', 'snap-preview-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await meldIdOf(p, 'clubs-10-d0');
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), 'clubs-13-d0');
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, 'clubs-13-d0', meldPos!);
+  });
+  // translate() is this Node process's own copy of the dict, independent of the page's ?lang=en —
+  // set/reset the locale around the assertion so it doesn't leak into other tests in this file.
+  const prev = getLocale();
+  setLocale('en');
+  expect(translate('snap.legal')).toBe('Fits here');
+  setLocale(prev);
+});
 
 test('tutorial: first-run 12-step completion, including the trinca-limit and joker steps', async ({ page }) => {
   trackConsoleErrors(page);
@@ -853,6 +1060,112 @@ test('a11y-reduced-motion: ?motion=0 disables cosmetic tweens/fades', async ({ p
     settings: { reducedMotion: boolean };
   };
   expect(saved.settings.reducedMotion).toBe(true);
+});
+
+// ---------- Phase 13: mobile layout + tap-first controls ----------
+
+test('mobile-portrait-menu: the menu reflows into the 270x480 portrait world', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=menu', 'mobile-portrait-menu');
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  expect(v).toMatchObject({ w: 270, h: 480, portrait: true });
+});
+
+test('mobile-portrait-game: full-width table, hand carousel and a pinned action bar', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=game', 'mobile-portrait-game', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  expect(v.portrait).toBe(true);
+  // the portrait board hands the meld packer a much larger box than the landscape one
+  expect(PORTRAIT_REGIONS.tableAreaW * PORTRAIT_REGIONS.tableAreaH).toBeGreaterThan(
+    DESKTOP_REGIONS.tableAreaW * DESKTOP_REGIONS.tableAreaH,
+  );
+});
+
+test('mobile-landscape-game: a phone in landscape keeps the desktop board', async ({ page }) => {
+  await page.setViewportSize(PHONE_LANDSCAPE);
+  await capture(page, '/?seed=42&showcase=game', 'mobile-landscape-game', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  expect(v).toMatchObject({ w: 480, h: 270, portrait: false });
+});
+
+test('mobile-tap-select: tapping a hand card selects it, tapping it again clears it', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-tap-select', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await tapCard(p, 'clubs-13-d0');
+  });
+  // deselect must not move anything: the card is still in hand, the table is untouched
+  const meldsBefore = await page.evaluate(() => window.__MEXE__.mexe!.getDraft()!.melds.length);
+  await tapCard(page, 'clubs-13-d0');
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.getDraft()!.melds.length)).toBe(meldsBefore);
+});
+
+test('mobile-tap-move-valid: tap a card then tap a legal meld moves it', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-tap-move-valid', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await meldIdOf(p, 'clubs-10-d0'); // AI-built run 10-11-joker(12)
+    await tapCard(p, 'clubs-13-d0');
+    await tapMeld(p, meldId);
+    expect(await meldCardIds(p, meldId)).toContain('clubs-13-d0');
+    const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean };
+    expect(validation.ok).toBe(true);
+  });
+});
+
+test('mobile-tap-move-invalid: an illegal tap move is shown as invalid, never silently confirmed', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-tap-move-invalid', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'clubs-2-d1']); // 2-card partial group
+    await tapCard(p, 'diamonds-2-d0'); // duplicate suit for that group
+    await tapMeld(p, meldId);
+    const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean; reasons: string[] };
+    expect(validation.ok).toBe(false);
+    expect(validation.reasons).toContain('reason.groupDuplicateSuit');
+  });
+});
+
+test('mobile-feito-blocked: tapping the disabled FEITO explains why, and confirms nothing', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-feito-blocked', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']); // invalid: duplicate suit
+    const turnBefore = await p.evaluate(() => window.__MEXE__.state!()!.turn);
+    await tapWorld(p, PORTRAIT_REGIONS.feito.x, PORTRAIT_REGIONS.feito.y);
+    // Playwright taps with a real mouse, so it also leaves a hover tooltip on the button; a finger
+    // does not. Move the pointer to empty table (still inside the canvas, or Phaser never sees the
+    // move and the hover never ends) so the capture shows what a phone player sees.
+    const [ax, ay] = await toCanvasPoint(p, 30, 300);
+    await p.mouse.move(ax, ay);
+    const validation = (await p.evaluate(() => window.__MEXE__.validation)) as { ok: boolean; reasons: string[] };
+    expect(validation.ok).toBe(false);
+    // the blocked tap must not have confirmed the turn
+    expect(await p.evaluate(() => window.__MEXE__.state!()!.turn)).toBe(turnBefore);
+  });
+});
+
+test('mobile-badge-reason: the ✗ badge reason is reachable by tap in portrait', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=37&showcase=mexe', 'mobile-badge-reason', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']);
+    expect(await p.evaluate(() => window.__MEXE__.a11y.invalidBadges)).toBeGreaterThan(0);
+    const badge = await badgeLogicalPos(p, meldId, PORTRAIT_REGIONS);
+    await tapWorld(p, badge.x, badge.y);
+  });
+});
+
+test('mobile-portrait-en: the portrait board reads in English', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=game&lang=en', 'mobile-portrait-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
 });
 
 test.afterAll(() => {

@@ -10,25 +10,25 @@ import { OnlineScene } from './scenes/OnlineScene';
 import { SetupScene } from './scenes/SetupScene';
 import { TutorialScene } from './scenes/TutorialScene';
 import { WinScene } from './scenes/WinScene';
+import { refreshProfile, view } from './ui/viewport';
 import { debugApi, installDebugApi } from './verification/debug-api';
 
 installDebugApi();
 playlog.attachToBus(bus);
 startMusic();
 
-// The world is authored in 480x270 units, but the canvas renders at RENDER_SCALE times that so
-// sprites hit their native texture resolution instead of being crushed (cards are 48x64 files
-// drawn at 24x32 units). Every camera is zoomed by the same factor and re-centred on the world,
-// so scene code keeps using plain 480x270 coordinates.
-const WORLD_W = 480;
-const WORLD_H = 270;
+// The world is authored in view().w x view().h units (480x270 landscape, 270x480 portrait — see
+// src/ui/viewport.ts), but the canvas renders at RENDER_SCALE times that so sprites hit their
+// native texture resolution instead of being crushed (cards are 48x64 files drawn at 24x32
+// units). Every camera is zoomed by the same factor and re-centred on the world, so scene code
+// keeps using plain world-unit coordinates.
 const RENDER_SCALE = 3;
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
-  width: WORLD_W * RENDER_SCALE,
-  height: WORLD_H * RENDER_SCALE,
+  width: view().w * RENDER_SCALE,
+  height: view().h * RENDER_SCALE,
   pixelArt: true,
   roundPixels: true,
   backgroundColor: '#1a0f0a',
@@ -43,9 +43,26 @@ const game = new Phaser.Game({
 game.events.once(Phaser.Core.Events.READY, () => {
   for (const scene of game.scene.scenes) {
     scene.events.on(Phaser.Scenes.Events.CREATE, () => {
-      scene.cameras.main.setZoom(RENDER_SCALE).centerOn(WORLD_W / 2, WORLD_H / 2);
+      scene.cameras.main.setZoom(RENDER_SCALE).centerOn(view().w / 2, view().h / 2);
     });
   }
+});
+
+// ---------- viewport resize / orientation flip ----------
+// Debounced: window resize fires repeatedly mid-drag (and on iOS, mid-toolbar-animation), so
+// only re-detect once it settles.
+let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (!refreshProfile()) return;
+    game.scale.resize(view().w * RENDER_SCALE, view().h * RENDER_SCALE);
+    for (const scene of game.scene.scenes) {
+      if (!scene.scene.isActive()) continue;
+      scene.cameras.main.setZoom(RENDER_SCALE).centerOn(view().w / 2, view().h / 2);
+    }
+    bus.emit('viewport:changed', { portrait: view().portrait });
+  }, 150);
 });
 
 // Scene-agnostic fps sample for the debug API — every scene, not just GameScene.
@@ -54,10 +71,9 @@ game.events.on('step', () => {
 });
 
 // ---------- portrait hint ----------
-// The board is a fixed 16:9 world, so FIT letterboxes it to ~390x219 on a portrait phone and
-// every card lands under a comfortable touch size. Tapping to select/place (GameScene) makes
-// that playable; landscape makes it comfortable. ponytail: a hint, not a second layout — a real
-// portrait board is a reflow of the whole scene, not a scale tweak.
+// Portrait is now a real playable layout (src/ui/viewport.ts + regions.ts), so this hint must
+// not sit on top of the board forever: show it briefly on load / on entering portrait, then
+// auto-hide so it doesn't block the re-stacked board it used to warn people away from.
 const portraitHint = document.createElement('div');
 portraitHint.textContent = t('a11y.rotateHint');
 portraitHint.style.cssText =
@@ -67,8 +83,17 @@ portraitHint.style.cssText =
 document.body.appendChild(portraitHint);
 
 const portrait = window.matchMedia('(orientation: portrait) and (max-width: 820px)');
+let hintTimer: ReturnType<typeof setTimeout> | undefined;
 function updatePortraitHint(): void {
-  portraitHint.style.display = portrait.matches ? 'block' : 'none';
+  clearTimeout(hintTimer);
+  if (!portrait.matches) {
+    portraitHint.style.display = 'none';
+    return;
+  }
+  portraitHint.style.display = 'block';
+  hintTimer = setTimeout(() => {
+    portraitHint.style.display = 'none';
+  }, 6000);
 }
 portrait.addEventListener('change', updatePortraitHint);
 updatePortraitHint();

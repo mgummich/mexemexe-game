@@ -565,3 +565,92 @@ test('room full: a 5th joiner sees a translated room_full error', async ({ brows
   appendLog({ screenshots: [shot] });
   for (const p of pages) await p.context().close();
 });
+
+// ---------- Phase 13: the online flow on a phone ----------
+
+/** Same flow as `newClient`, on a portrait phone viewport and addressing the ONLINE button
+ *  through the live world size instead of the 1280x720 scale factor. */
+async function newPhoneClient(browser: Browser): Promise<Page> {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  trackConsoleErrors(page);
+  await page.goto(`/?ws=${encodeURIComponent(WS_URL)}&showcase=menu`);
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const point = await page.evaluate(() => {
+    const c = document.querySelector('canvas')!.getBoundingClientRect();
+    // MenuScene's ONLINE button is authored at (240, 258) on the 480x270 grid; menu-layout maps
+    // that proportionally onto whichever world is live, so the same fractions hold in portrait.
+    return { x: c.left + 0.5 * c.width, y: c.top + (258 / 270) * c.height };
+  });
+  await page.mouse.click(point.x, point.y);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
+  await page.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 10_000 });
+  return page;
+}
+
+test('mobile: the lobby and the locked non-active seat stay readable in portrait', async ({ browser }) => {
+  const host = await newPhoneClient(browser);
+  const guest = await newPhoneClient(browser);
+
+  expect(await host.evaluate(() => window.__MEXE__.viewport().portrait)).toBe(true);
+
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Host'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+  await guest.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Guest'), code);
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+
+  const screenshots: string[] = [];
+  await shot({ host, guest }, 'mobile-lobby', screenshots);
+
+  await host.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await guest.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await host.waitForFunction(() => window.__MEXE__.online!.players().every((p) => p.ready), undefined, { timeout: 10_000 });
+  await host.evaluate(() => window.__MEXE__.online!.startGame());
+  for (const p of [host, guest]) {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 10_000 });
+  }
+
+  // Whichever client is not the active seat must show a readable waiting board with no editor —
+  // an inactive online player can never move a card, on a phone or anywhere else.
+  const hostActive = await host.evaluate(() => {
+    const s = window.__MEXE__.state?.();
+    return s !== null && s !== undefined && s.activePlayerIndex === 0;
+  });
+  const waiting = hostActive ? guest : host;
+  expect(await waiting.evaluate(() => window.__MEXE__.mexe)).toBeNull();
+  await shot({ waiting }, 'mobile-waiting', screenshots);
+
+  for (const p of [host, guest]) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('mobile: an unreachable server is a readable, recoverable state in portrait', async ({ browser }) => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  trackConsoleErrors(page);
+  const DEAD_WS_URL = 'ws://localhost:18798'; // nothing listens here
+  await page.goto(`/?ws=${encodeURIComponent(DEAD_WS_URL)}&showcase=menu`);
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const point = await page.evaluate(() => {
+    const c = document.querySelector('canvas')!.getBoundingClientRect();
+    return { x: c.left + 0.5 * c.width, y: c.top + (258 / 270) * c.height };
+  });
+  await page.mouse.click(point.x, point.y);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
+  await page.waitForFunction(() => window.__MEXE__.online?.status() === 'error', undefined, { timeout: 10_000 });
+  await page.waitForTimeout(300);
+  const shot = path.join(OUT_DIR, 'mp-mobile-unreachable.png');
+  await page.screenshot({ path: shot });
+
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  // Same carve-out as the desktop 'server unavailable' case: Chrome logs the failed handshake
+  // this test deliberately provokes; only app-level errors are the gate.
+  expect(trackConsoleErrors(page).filter((e) => !e.includes('WebSocket connection'))).toEqual([]);
+  appendLog({ screenshots: [shot] });
+  await ctx.close();
+});

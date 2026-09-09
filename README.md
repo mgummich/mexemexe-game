@@ -33,9 +33,12 @@ Full ruleset (authoritative): [`docs/RULES.md`](docs/RULES.md). Summary:
 - Melds: **runs** (3+ same suit, consecutive ranks, ace low *or* high, never
   both in the same run — no K-A-2 wrap) and **groups** (exactly 3 or 4 cards
   of one rank, with no repeated natural suits, even across decks).
-- **Jokers** are wildcards in a run or group. Every joker in a valid meld must
-  resolve to a concrete card; a group joker fills a different missing suit of
+- **Jokers** are wildcards in a run or group, but **each meld can use at most
+  1 joker** — a meld with 2 or more jokers is invalid. Every joker in a valid
+  meld must resolve to a concrete card; a group joker fills a missing suit of
   its natural rank, and every group needs at least one natural card to anchor it.
+  Strategy: the table is shared, so playing a joker early can help other
+  players — it is often best to save it for your final move.
 - **MEXE MODE**: on your turn, freely break, move, split, merge and rebuild the
   shared table melds — every meld on the table is shared. Temporary invalid
   states are fine while editing.

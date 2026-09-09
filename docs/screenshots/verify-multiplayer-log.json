@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-09T14:53:42.778Z",
-  "roomCode": "J55XP",
+  "generatedAt": "2026-09-09T17:59:38.610Z",
+  "roomCode": "HBMVX",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-09T14:53:34.837Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":3,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-09T17:59:29.521Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":3,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -134,7 +134,11 @@
     "docs/screenshots/mp-join-input.png",
     "docs/screenshots/mp-unreachable.png",
     "docs/screenshots/mp-room-not-found.png",
-    "docs/screenshots/mp-room-full.png"
+    "docs/screenshots/mp-room-full.png",
+    "docs/screenshots/mp-mobile-lobby-host.png",
+    "docs/screenshots/mp-mobile-lobby-guest.png",
+    "docs/screenshots/mp-mobile-waiting-waiting.png",
+    "docs/screenshots/mp-mobile-unreachable.png"
   ],
   "playerCountRuns": {
     "3": {
@@ -156,7 +160,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "8FPQB",
+    "code": "VMHSD",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {

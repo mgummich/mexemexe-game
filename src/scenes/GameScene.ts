@@ -21,10 +21,14 @@ import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 import { computeMeldLayout, type MeldLayoutInput } from '../table/layout';
+import { computeSnapTargets, snapTargetFor, type SnapStatus, type SnapTarget } from '../table/snap';
 import { buildTutorialState } from '../tutorial/fixture';
 import { TutorialDirector, type TutorialAction } from '../tutorial/director';
 import { openPauseMenu } from '../ui/pause-menu';
+import { gameRegions, type GameRegions } from '../ui/regions';
 import { openRulesPanel } from '../ui/rules-panel';
+import { view } from '../ui/viewport';
+import { coverBackground } from '../ui/menu-layout';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi } from '../verification/debug-api';
 
@@ -52,20 +56,8 @@ export function buildTutorialLaunchConfig(): GameSceneConfig {
   };
 }
 
-const W = 480;
-const H = 270;
-// pushed down from 36 + reserved column widened from 90: table backgrounds bake in props (napkin,
-// bottle-cap, mug) near the top/right edge — this margin keeps the meld grid clear of them instead
-// of fighting individual prop rects (ponytail: simple margin, not a full exclusion-zone layout).
-const TABLE_TOP = 80;
-const TABLE_BOTTOM = 188;
-const HAND_Y = 240;
 const MELD_PAD = 4;
-const TABLE_LEFT = 14;
-const TABLE_AREA_W = W - 96 - TABLE_LEFT; // right column reserved for HUD/buttons
-const TABLE_AREA_H = TABLE_BOTTOM - TABLE_TOP - 6;
 const GOLD = 0xf7d23e;
-const BAR_H = 30; // top status bar height
 const CONFIRM_GUARD_MS = 250;
 /** Bound on how long onlinePending may lock input: a healthy FEITO/COMPRAR round trip is well
  * under this. If neither state_sync nor proposal_rejected arrives in time (dropped/ignored
@@ -96,6 +88,9 @@ export class GameScene extends Phaser.Scene {
   private editor: DraftEditor | null = null;
   private config!: GameSceneConfig;
   private personalities: (Personality | null)[] = [];
+  private r!: GameRegions;
+  /** Every object buildStaticUi() creates, so relayout() can destroy and rebuild the lot on an orientation flip. */
+  private staticUi: Phaser.GameObjects.GameObject[] = [];
 
   private cardSprites: Phaser.GameObjects.Image[] = [];
   private meldZones: MeldZone[] = [];
@@ -112,8 +107,19 @@ export class GameScene extends Phaser.Scene {
 
   // drag feel
   private dragShadow: Phaser.GameObjects.Ellipse | null = null;
-  private dragZoneHighlights: { meldId: string; gfx: Phaser.GameObjects.Rectangle }[] = [];
+  private dragZoneHighlights: {
+    meldId: string;
+    status: SnapStatus;
+    solid: Phaser.GameObjects.Rectangle | null;
+    dashed: Phaser.GameObjects.Graphics | null;
+  }[] = [];
   private dragTableOutline: Phaser.GameObjects.Graphics | null = null;
+  /** Snap targets for the card currently being dragged — computed once on dragstart (Phase 12). */
+  private snapTargets: SnapTarget[] = [];
+  /** Non-mutating ghost preview panel shown while hovering a drop zone. */
+  private ghostPreview: Phaser.GameObjects.GameObject[] = [];
+  /** Which zone the ghost preview currently reflects: undefined = none, '' = empty table area, else a meldId. Lets hover redraw only on actual change, never per pointer-move. */
+  private hoverKey: string | undefined = undefined;
 
   // FEITO accidental-confirm guard
   private validSince: number | null = null;
@@ -209,20 +215,29 @@ export class GameScene extends Phaser.Scene {
     this.tutorialDirector = config.tutorial ? new TutorialDirector() : null;
     debugApi.tutorialStep = this.tutorialDirector?.stepIndex ?? null;
 
+    this.r = gameRegions(view());
+
     const playerCount = this.store.get().players.length;
     // Local cosmetic choice — purely visual, never affects rules/protocol. Missing art (theme
     // not shipped yet) degrades to the default table rather than a broken/blank image.
     const tableKey = cosmeticTextureKey(TABLE_THEMES, settings.cosmetics().tableTheme, DEFAULT_TABLE_THEME, debugApi.missingAssets);
-    this.add.image(W / 2, H / 2, tableKey).setDisplaySize(W, H);
+    // Cover-fit, not stretch: the table art is authored 480x270, and squashing it into the
+    // 270x480 portrait world smears the baked-in props. Identity in landscape.
+    coverBackground(this, tableKey);
     // calm the busy tablecloth/props so cards and HUD stay readable
-    this.add.rectangle(W / 2, H / 2, W, H, 0x1a0f0a, playerCount > 2 ? 0.22 : 0.08);
+    this.add.rectangle(this.r.w / 2, this.r.h / 2, this.r.w, this.r.h, 0x1a0f0a, playerCount > 2 ? 0.22 : 0.08);
     // near-opaque top bar: baked-in table props (mug/etc.) sit right behind this strip in some
     // backgrounds — keep it solid enough that avatars/names never fight prop art for legibility.
-    this.add.rectangle(W / 2, BAR_H / 2, W, BAR_H, 0x1a0f0a, 0.88);
-    this.add.rectangle(444, 226, 72, 96, 0x1a0f0a, 0.55);
-    if (playerCount <= 2) {
-      // covers a paint smudge on the boteco felt
-      this.add.image(60, 60, 'prop-dominoes').setDisplaySize(32, 24).setDepth(1);
+    this.add.rectangle(this.r.w / 2, this.r.barH / 2, this.r.w, this.r.barH, 0x1a0f0a, 0.88);
+    if (!this.r.portrait) {
+      // Landscape-only felt dressing, both keyed to the 480x270 art: a dim patch behind the
+      // right-hand action column, and a prop covering a paint smudge on the boteco felt. Portrait
+      // reframes that art entirely (and puts the action bar along the bottom), so neither lands
+      // where it was drawn for — the portrait board dims the whole table instead.
+      this.add.rectangle(444, 226, 72, 96, 0x1a0f0a, 0.55);
+      if (playerCount <= 2) {
+        this.add.image(60, 60, 'prop-dominoes').setDisplaySize(32, 24).setDepth(1);
+      }
     }
 
     this.buildStaticUi();
@@ -233,6 +248,7 @@ export class GameScene extends Phaser.Scene {
       settings.onChange(() => {
         if (this.ambienceSound) this.ambienceSound.volume = settings.musicVolume();
       }),
+      bus.on('viewport:changed', () => this.relayout()),
     );
     if (config.online) this.wireOnline(config.online.client);
     this.events.once('shutdown', () => {
@@ -544,7 +560,30 @@ export class GameScene extends Phaser.Scene {
       },
       comprar: () => this.onComprar(),
       getDraft: () => this.editor?.getDraft() ?? null,
+      // Verification-only reads (Phase 12) — mirror what the drag highlights use, never mutate anything.
+      cardPos: (cardId: string) => {
+        const s = this.cardSprites.find((c) => c.getData('cardId') === cardId);
+        return s ? { x: s.x, y: s.y } : null;
+      },
+      meldPos: (meldId: string) => {
+        const z = this.meldZones.find((m) => m.meldId === meldId);
+        return z ? { x: z.rect.centerX, y: z.rect.centerY } : null;
+      },
+      snapTargets: (cardId: string) =>
+        this.computeSnapTargetsFor(cardId).map((tg) => ({ meldId: tg.meldId, status: tg.status, reason: tg.reason })),
     };
+  }
+
+  /** Resolves `cardId` against the live draft (table melds, then remaining hand) and runs the pure
+   * snap model once. Shared by dragstart and the debug-api readback so they can never disagree. */
+  private computeSnapTargetsFor(cardId: string): SnapTarget[] {
+    if (!this.editor) return [];
+    const draft = this.editor.getDraft();
+    const card =
+      draft.melds.flatMap((m) => m.cards).find((c) => c.id === cardId) ??
+      this.editor.getRemainingHand().find((c) => c.id === cardId);
+    if (!card) return [];
+    return computeSnapTargets(draft, card, this.store.get().config);
   }
 
   /** Tutorial-mode action gate — always true outside a tutorial. */
@@ -652,63 +691,91 @@ export class GameScene extends Phaser.Scene {
   // ---------- static UI ----------
 
   private buildStaticUi(): void {
+    this.staticUi = [];
     // opaque backdrop behind the whole FEITO/COMPRAR/undo cluster: table backgrounds bake props
     // (e.g. a cookie plate in the 4p kitchen) right under this column, and the disabled-reason
     // tooltip must stay readable regardless of what's drawn there.
+    const ap = this.r.actionPanel;
     const panel = this.add.graphics();
     panel.fillStyle(0x1a1410, 0.82);
-    panel.fillRoundedRect(398, 140, 78, 130, 4);
-    panel.lineStyle(1, GOLD, 0.35);
-    panel.strokeRoundedRect(398, 140, 78, 130, 4);
+    if (this.r.portrait) {
+      // portrait's bottom bar is a plain full-width strip, not a floating card — a rounded rect
+      // there would leave visible corners of table art poking through.
+      panel.fillRect(ap.x, ap.y, ap.w, ap.h);
+      panel.lineStyle(1, GOLD, 0.35);
+      panel.strokeRect(ap.x, ap.y, ap.w, ap.h);
+    } else {
+      panel.fillRoundedRect(ap.x, ap.y, ap.w, ap.h, 4);
+      panel.lineStyle(1, GOLD, 0.35);
+      panel.strokeRoundedRect(ap.x, ap.y, ap.w, ap.h, 4);
+    }
 
-    this.feitoBtn = new PixelButton(this, 440, 210, t('game.feito'), () => this.onFeito(), {
-      textureBase: 'btn-feito', w: 64, h: 22, size: 9, tooltip: t('tooltip.feito'),
+    this.feitoBtn = new PixelButton(this, this.r.feito.x, this.r.feito.y, t('game.feito'), () => this.onFeito(), {
+      textureBase: 'btn-feito', w: this.r.feito.w, h: this.r.feito.h, size: this.r.feito.size, tooltip: t('tooltip.feito'),
+      onBlocked: () => this.onFeitoBlocked(),
     });
-    this.comprarBtn = new PixelButton(this, 440, 237, t('game.comprar'), () => this.onComprar(), {
-      textureBase: 'btn-comprar', w: 64, h: 20, size: 8, tooltip: t('tooltip.comprar'),
+    this.comprarBtn = new PixelButton(this, this.r.comprar.x, this.r.comprar.y, t('game.comprar'), () => this.onComprar(), {
+      textureBase: 'btn-comprar', w: this.r.comprar.w, h: this.r.comprar.h, size: this.r.comprar.size, tooltip: t('tooltip.comprar'),
     });
-    new PixelButton(this, 414, 260, '↶', () => this.onUndo(), { textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.undo') });
-    new PixelButton(this, 434, 260, '↷', () => this.onRedo(), { textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.redo') });
-    new PixelButton(this, 460, 260, '⟲', () => this.onReset(), { textureBase: 'btn-small', w: 22, h: 14, size: 8, color: 0x8e4632, tooltip: t('tooltip.reset') });
+    const undoBtn = new PixelButton(this, this.r.undo.x, this.r.undo.y, '↶', () => this.onUndo(), { textureBase: 'btn-small', w: this.r.undo.w, h: this.r.undo.h, size: this.r.undo.size, color: 0x5e5646, tooltip: t('tooltip.undo') });
+    const redoBtn = new PixelButton(this, this.r.redo.x, this.r.redo.y, '↷', () => this.onRedo(), { textureBase: 'btn-small', w: this.r.redo.w, h: this.r.redo.h, size: this.r.redo.size, color: 0x5e5646, tooltip: t('tooltip.redo') });
+    const resetBtn = new PixelButton(this, this.r.reset.x, this.r.reset.y, '⟲', () => this.onReset(), { textureBase: 'btn-small', w: this.r.reset.w, h: this.r.reset.h, size: this.r.reset.size, color: 0x8e4632, tooltip: t('tooltip.reset') });
 
     // shifted off the corner: at (18,254) the table-frame art clipped this icon on both edges.
-    new PixelButton(this, 30, 246, '⇅', () => {
+    const sortBtn = new PixelButton(this, this.r.sort.x, this.r.sort.y, '⇅', () => {
       this.sortMode = this.sortMode === 'suit' ? 'rank' : 'suit';
       this.renderAll();
-    }, { textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.sort') });
+    }, { textureBase: 'btn-small', w: this.r.sort.w, h: this.r.sort.h, size: this.r.sort.size, color: 0x5e5646, tooltip: t('tooltip.sort') });
+
+    this.staticUi.push(panel, this.feitoBtn, this.comprarBtn, undoBtn, redoBtn, resetBtn, sortBtn);
 
     if (!this.config.tutorial) {
       // tutorial mode uses the whole right column for its step panel — no room for the gear there (Esc still opens pause)
-      new PixelButton(this, 462, 10, '⚙', () => this.togglePause(), {
-        textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.settings'),
+      const gearBtn = new PixelButton(this, this.r.gear.x, this.r.gear.y, '⚙', () => this.togglePause(), {
+        textureBase: 'btn-small', w: this.r.gear.w, h: this.r.gear.h, size: this.r.gear.size, color: 0x5e5646, tooltip: t('tooltip.settings'),
       });
+      this.staticUi.push(gearBtn);
     }
 
     this.reasonText = this.add
-      .text(440, 191, '', { ...fontStyle(9, '#f7d23e'), align: 'center', wordWrap: { width: 72 } })
-      .setOrigin(0.5, 1);
+      .text(this.r.reason.x, this.r.reason.y, '', { ...fontStyle(this.r.reason.size, '#f7d23e'), align: 'center', wordWrap: { width: this.r.reason.wrap } })
+      .setOrigin(0.5, this.r.reason.originY);
     // bolder turn prompt: its own row below the avatar strip (not overlapping opponent name/avatar
     // cells at 3-4p) with an opaque pill behind the text (resized in renderAll) so "Sua vez" / the
     // AI's name always reads clearly regardless of what's behind it.
-    this.bannerBg = this.add.rectangle(240, 41, 10, 10, 0x1a1410, 0.78).setDepth(49);
-    this.banner = label(this, 240, 41, '', 11, '#f7d23e').setDepth(50);
+    this.bannerBg = this.add.rectangle(this.r.banner.x, this.r.banner.y, 10, 10, 0x1a1410, 0.78).setDepth(49);
+    this.banner = label(this, this.r.banner.x, this.r.banner.y, '', 11, '#f7d23e').setDepth(50);
     // one-line readback of the opponent's last action, just above the table
     this.lastMoveText = this.add
-      .text(240, 70, '', { ...fontStyle(8, '#d8c890'), align: 'center', wordWrap: { width: 300 } })
+      .text(this.r.lastMove.x, this.r.lastMove.y, '', { ...fontStyle(8, '#d8c890'), align: 'center', wordWrap: { width: this.r.lastMove.wrap } })
       .setOrigin(0.5)
       .setDepth(50);
+    this.staticUi.push(this.reasonText, this.bannerBg, this.banner, this.lastMoveText);
 
     if (this.online) {
       // small corner connection indicator — never a modal, per docs/PHASE5_CLIENT_PLAN.md section A
-      this.onlineStatusDot = this.add.circle(6, H - 6, 3, 0x3ec06a).setDepth(600);
+      this.onlineStatusDot = this.add.circle(this.r.onlineDot.x, this.r.onlineDot.y, 3, 0x3ec06a).setDepth(600);
       // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
       // presence — not just its color — is the "you are online" tell (task: never ambiguous).
-      label(this, 16, H - 6, t('game.onlineBadge'), 6, '#8a7f68').setOrigin(0, 0.5).setDepth(600);
+      const onlineLabel = label(this, this.r.onlineDot.x + 10, this.r.onlineDot.y, t('game.onlineBadge'), 6, '#8a7f68').setOrigin(0, 0.5).setDepth(600);
       this.onlineNoticeText = this.add
-        .text(240, 58, '', { ...fontStyle(8, '#f0c040'), align: 'center', wordWrap: { width: 300 } })
+        .text(this.r.onlineNotice.x, this.r.onlineNotice.y, '', { ...fontStyle(8, '#f0c040'), align: 'center', wordWrap: { width: this.r.onlineNotice.wrap } })
         .setOrigin(0.5)
         .setDepth(600);
+      this.staticUi.push(this.onlineStatusDot, onlineLabel, this.onlineNoticeText);
     }
+  }
+
+  /** Re-lays-out the live scene on an orientation/pointer flip (bus 'viewport:changed') without
+   * restarting it — this.store/this.editor/the online client all hold live match state. */
+  private relayout(): void {
+    if (!this.scene.isActive()) return;
+    this.r = gameRegions(view());
+    const savedNotice = this.onlineNoticeText?.text ?? '';
+    for (const o of this.staticUi) o.destroy();
+    this.buildStaticUi();
+    this.onlineNoticeText?.setText(savedNotice);
+    this.renderAll();
   }
 
   private refreshDraft(): void {
@@ -991,6 +1058,10 @@ export class GameScene extends Phaser.Scene {
 
   private renderAll(): void {
     if (this.tutorialDirector) this.checkTutorialProgress();
+    this.clearGhostPreview();
+    // The tooltip's objects live outside `hud`, and a latched (tapped) one has no pointerout to
+    // close it — a re-render must not leave it floating over a board it no longer describes.
+    this.hideMeldReasonTooltip();
     for (const s of this.cardSprites) s.destroy();
     this.cardSprites = [];
     for (const h of this.hud) h.destroy();
@@ -1005,7 +1076,7 @@ export class GameScene extends Phaser.Scene {
 
     // top bar: opponents — the active seat gets a bigger avatar + double gold ring, a static (not
     // animated) highlight so it stays reduced-motion-safe with zero extra tweens per render.
-    let x = 60;
+    let x = this.r.opponentX0;
     state.players.forEach((p, i) => {
       if (i === this.localSeat) return; // local seat rendered at bottom
       const key = this.avatarKey(i);
@@ -1015,22 +1086,22 @@ export class GameScene extends Phaser.Scene {
       // size instead of a fixed offset that a short name can end up hiding behind (L3).
       const outer = isActiveP ? avSize + 11 : avSize;
       const textX = x + outer / 2 + 4;
-      const av = this.add.image(x, 14, key).setDisplaySize(avSize, avSize);
-      const name = this.add.text(textX, 3, p.name, fontStyle(9, isActiveP ? '#f7d23e' : '#d8d0c0'));
-      const count = this.add.text(textX, 16, `x${p.hand.length}`, fontStyle(8));
+      const av = this.add.image(x, this.r.opponentY, key).setDisplaySize(avSize, avSize);
+      const name = this.add.text(textX, this.r.opponentY - 11, p.name, fontStyle(9, isActiveP ? '#f7d23e' : '#d8d0c0'));
+      const count = this.add.text(textX, this.r.opponentY + 2, `x${p.hand.length}`, fontStyle(8));
       if (isActiveP) {
-        const ring = this.add.rectangle(x, 14, avSize + 6, avSize + 6).setStrokeStyle(2, 0xf7d23e, 1);
-        const glow = this.add.rectangle(x, 14, avSize + 11, avSize + 11).setStrokeStyle(1, 0xf7d23e, 0.4);
+        const ring = this.add.rectangle(x, this.r.opponentY, avSize + 6, avSize + 6).setStrokeStyle(2, 0xf7d23e, 1);
+        const glow = this.add.rectangle(x, this.r.opponentY, avSize + 11, avSize + 11).setStrokeStyle(1, 0xf7d23e, 0.4);
         this.hud.push(glow, ring);
       }
       this.hud.push(av, name, count);
-      x += 105;
+      x += this.r.opponentStep;
     });
 
     // deck counter
     const cardBackKey = cosmeticTextureKey(CARD_BACKS, settings.cosmetics().cardBack, DEFAULT_CARD_BACK, debugApi.missingAssets);
-    const deckImg = this.add.image(22, 14, cardBackKey).setDisplaySize(14, 19);
-    const deckTxt = this.add.text(34, 8, String(state.drawPile.length), fontStyle(9));
+    const deckImg = this.add.image(this.r.deckImg.x, this.r.deckImg.y, cardBackKey).setDisplaySize(14, 19);
+    const deckTxt = this.add.text(this.r.deckText.x, this.r.deckText.y, String(state.drawPile.length), fontStyle(9));
     this.hud.push(deckImg, deckTxt);
 
     // banner
@@ -1059,11 +1130,7 @@ export class GameScene extends Phaser.Scene {
       this.lastValidOk = check.ok;
       this.setFeitoEnabled(check.ok && this.tutorialAllows({ type: 'feito' }));
       this.comprarBtn.setEnabled(this.tutorialAllows({ type: 'comprar' }));
-      // "what does the game want right now": ready-to-confirm / fix-the-invalid-meld / play-or-draw
-      // cover almost every turn; the rare remainder (e.g. a returned table card) falls back to the
-      // specific canConfirm() reason, same text as before.
-      const phase = objectivePhase(check.ok, invalidReasons.size > 0, this.editor.getDraft().handCardsPlayed.length > 0);
-      this.reasonText.setText(phase ? t(objectiveKey(phase)) : check.ok ? '' : t(check.reasons[0] ?? ''));
+      this.reasonText.setText(this.blockingReasonText());
       debugApi.validation = { ok: check.ok, reasons: check.ok ? [] : check.reasons };
     } else {
       this.setFeitoEnabled(false);
@@ -1074,9 +1141,33 @@ export class GameScene extends Phaser.Scene {
       this.lastValidOk = false;
     }
 
-    this.renderSelectionLayer(interactive);
+    this.renderSelectionLayer(interactive, invalidReasons.size > 0);
     debugApi.a11y = { invalidBadges: invalidReasons.size };
     if (this.tutorialDirector) this.renderTutorialOverlay();
+  }
+
+  /** What's blocking FEITO right now: top invalid-meld reason, else the objective-phase text, else
+   * the raw canConfirm() reason. Single source for both the on-screen reasonText and the disabled
+   * FEITO button's tap feedback, so the two can never disagree. */
+  private blockingReasonText(): string {
+    if (!this.editor) return '';
+    const analysis = this.editor.analyze();
+    const check = analysis.check;
+    // "what does the game want right now": ready-to-confirm / fix-the-invalid-meld / play-or-draw
+    // cover almost every turn; the rare remainder (e.g. a returned table card) falls back to the
+    // specific canConfirm() reason, same text as before.
+    const phase = objectivePhase(check.ok, analysis.invalidMelds.length > 0, this.editor.getDraft().handCardsPlayed.length > 0);
+    // The exact top reason beats the generic "fix the invalid meld" phase text whenever one exists.
+    const topInvalidReason = analysis.invalidMelds[0]?.reason ?? null;
+    return topInvalidReason ? t(topInvalidReason) : phase ? t(objectiveKey(phase)) : check.ok ? '' : t(check.reasons[0] ?? '');
+  }
+
+  /** Tap on a disabled FEITO: silently ignoring the press hides the reason it's blocked, so surface
+   * it explicitly instead of only via the (hover-only, desktop) tint. */
+  private onFeitoBlocked(): void {
+    const reason = this.blockingReasonText() || t('tooltip.feito');
+    this.reasonText.setText(`${t('mobile.feitoBlocked')} ${reason}`);
+    playSfx(this, 'sfx-invalid', 0.15);
   }
 
   /** FEITO enabled state: beyond the tint, prefix the label with ✕ when disabled so it's not a color-only cue. */
@@ -1177,13 +1268,13 @@ export class GameScene extends Phaser.Scene {
    */
   private showMeldReasonTooltip(rect: Phaser.Geom.Rectangle, text: string): void {
     this.hideMeldReasonTooltip();
-    const maxW = 96;
+    const maxW = this.r.tooltip.maxW;
     const txt = label(this, 0, 0, text, 8, '#f0c040').setDepth(500);
     txt.setWordWrapWidth(maxW - 8, true);
     const w = Math.min(maxW, txt.width + 8);
     const h = txt.height + 6;
-    const x = Phaser.Math.Clamp(rect.centerX, w / 2 + 2, W - 92);
-    const y = Phaser.Math.Clamp(rect.bottom + 6 + h / 2, h / 2 + 2, H - 30);
+    const x = Phaser.Math.Clamp(rect.centerX, w / 2 + 2, this.r.tooltip.maxX);
+    const y = Phaser.Math.Clamp(rect.bottom + 6 + h / 2, h / 2 + 2, this.r.tooltip.maxY);
     const g = this.add.graphics().setDepth(499);
     g.fillStyle(0x1a1410, 0.9);
     g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 3);
@@ -1217,7 +1308,7 @@ export class GameScene extends Phaser.Scene {
     this.meldGlowRects = [];
     const handCardIds = new Set(this.editor?.getDraft().handCardsPlayed ?? []);
     const inputs: MeldLayoutInput[] = melds.map((m) => ({ id: m.id, cardCount: m.cards.length }));
-    const positions = computeMeldLayout(inputs, TABLE_AREA_W, TABLE_AREA_H);
+    const positions = computeMeldLayout(inputs, this.r.tableAreaW, this.r.tableAreaH);
     const posByMeld = new Map(positions.map((p) => [p.meldId, p]));
 
     melds.forEach((meld, meldIndex) => {
@@ -1225,8 +1316,8 @@ export class GameScene extends Phaser.Scene {
       if (!pos) return; // computeMeldLayout always returns one per meld; defensive only
       const scale = pos.cardScale;
       const pad = MELD_PAD * scale;
-      const cx = TABLE_LEFT + pos.x;
-      const cy = TABLE_TOP + 6 + pos.y;
+      const cx = this.r.tableLeft + pos.x;
+      const cy = this.r.tableTop + 6 + pos.y;
       const cards = this.sortedForDisplay(meld, config);
 
       const zoneRect = new Phaser.Geom.Rectangle(cx, cy - pad, pos.width, pos.height);
@@ -1281,9 +1372,26 @@ export class GameScene extends Phaser.Scene {
         // fully inside the table area so it can never render off the visible playfield.
         const reason = invalidReasons.get(meld.id);
         if (reason) {
-          badge.setInteractive({ useHandCursor: false });
+          // Enlarged hit rect: the glyph itself is a few px, far under a usable touch target.
+          const pad = 5;
+          badge.setInteractive(
+            new Phaser.Geom.Rectangle(-pad, -pad, badge.width + pad * 2, badge.height + pad * 2),
+            Phaser.Geom.Rectangle.Contains,
+          );
+          // Tappable, not just hover-only: touch devices have no hover, and a tap there emits
+          // pointerover -> pointerdown -> pointerup -> pointerout in one gesture. So the tap
+          // latches (`tapped`) and pointerout only hides while unlatched — otherwise the release
+          // half of the very tap that opened the tooltip would close it again the same instant.
+          let tapped = false;
           badge.on('pointerover', () => this.showMeldReasonTooltip(zoneRect, reason));
-          badge.on('pointerout', () => this.hideMeldReasonTooltip());
+          badge.on('pointerout', () => {
+            if (!tapped) this.hideMeldReasonTooltip();
+          });
+          badge.on('pointerdown', () => {
+            tapped = !tapped;
+            if (tapped) this.showMeldReasonTooltip(zoneRect, reason);
+            else this.hideMeldReasonTooltip();
+          });
         }
       }
 
@@ -1326,12 +1434,12 @@ export class GameScene extends Phaser.Scene {
         ? a.suit!.localeCompare(b.suit!) || a.rank! - b.rank!
         : a.rank! - b.rank! || a.suit!.localeCompare(b.suit!);
     });
-    const maxSpan = 330;
+    const maxSpan = this.r.handSpan;
     const gap = Math.min(CARD_W + 2, sorted.length > 1 ? maxSpan / (sorted.length - 1) : CARD_W);
     const total = (sorted.length - 1) * gap;
-    const startX = 200 - total / 2;
+    const startX = this.r.handCenterX - total / 2;
     sorted.forEach((card, i) => {
-      const sprite = this.makeCardSprite(startX + i * gap, HAND_Y, card, interactive, 'hand', false);
+      const sprite = this.makeCardSprite(startX + i * gap, this.r.handY, card, interactive, 'hand', false);
       sprite.setDepth(10 + i);
       this.cardSprites.push(sprite);
     });
@@ -1403,6 +1511,8 @@ export class GameScene extends Phaser.Scene {
         .ellipse(sprite.x + 2, sprite.y + 5, baseW * 1.05, baseH * 0.5, 0x000000, 0.35)
         .setDepth(299);
       playSfx(this, 'sfx-pickup', 0.4);
+      this.hideMeldReasonTooltip();
+      this.snapTargets = this.computeSnapTargetsFor(sprite.getData('cardId') as string);
       this.showDropZoneHighlights();
     });
     sprite.on('drag', (_p: Phaser.Input.Pointer, dragX: number, dragY: number) => {
@@ -1417,42 +1527,155 @@ export class GameScene extends Phaser.Scene {
       this.dragShadow = null;
       this.clearDropZoneHighlights();
       this.onCardDropped(sprite);
+      this.snapTargets = [];
     });
   }
 
-  /** Soft gold stroke over every meld zone + a dashed outline over the table area ("drop here for a new meld"). */
+  /** True inside the table drop area, matching `onCardDropped`'s own bounds check exactly — hover
+   * preview and drop resolution must never disagree on where "the empty table" is. */
+  private inTableArea(x: number, y: number): boolean {
+    return y > this.r.tableTop - 6 && y < this.r.tableBottom + 10 && x < this.r.tableRightBound;
+  }
+
+  /**
+   * Colours each meld zone by its snap status (Phase 12) — solid green for legal, today's soft
+   * gold for incomplete, dashed red for illegal (shape channel, not just hue). Targets were
+   * computed once on dragstart; this only draws them.
+   */
   private showDropZoneHighlights(): void {
     this.clearDropZoneHighlights();
-    for (const z of this.meldZones) {
-      const gfx = this.add
-        .rectangle(z.rect.centerX, z.rect.centerY, z.rect.width, z.rect.height)
-        .setStrokeStyle(1, GOLD, 0.45)
-        .setDepth(150);
-      this.dragZoneHighlights.push({ meldId: z.meldId, gfx });
-    }
+    this.hoverKey = undefined;
+    this.redrawZoneHighlights();
     const outline = this.add.graphics().setDepth(140);
-    this.drawDashedRect(outline, TABLE_LEFT, TABLE_TOP, TABLE_AREA_W, TABLE_BOTTOM - TABLE_TOP, GOLD, 0.3);
+    this.drawDashedRect(outline, this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop, GOLD, 0.3);
     this.dragTableOutline = outline;
   }
 
-  private updateDropZoneHover(x: number, y: number): void {
-    const zone = this.meldZones.find((z) => z.rect.contains(x, y));
+  private redrawZoneHighlights(): void {
     for (const h of this.dragZoneHighlights) {
-      const hovered = zone?.meldId === h.meldId;
-      h.gfx.setStrokeStyle(hovered ? 2 : 1, GOLD, hovered ? 0.95 : 0.45);
+      h.solid?.destroy();
+      h.dashed?.destroy();
+    }
+    this.dragZoneHighlights = [];
+    for (const z of this.meldZones) {
+      const target = snapTargetFor(this.snapTargets, z.meldId);
+      const status: SnapStatus = target?.status ?? 'incomplete';
+      const hovered = this.hoverKey === z.meldId;
+      let solid: Phaser.GameObjects.Rectangle | null = null;
+      let dashed: Phaser.GameObjects.Graphics | null = null;
+      if (status === 'illegal') {
+        dashed = this.add.graphics().setDepth(150);
+        this.drawDashedRect(dashed, z.rect.x, z.rect.y, z.rect.width, z.rect.height, 0xd83a3a, hovered ? 1 : 0.85, hovered ? 2 : 1);
+      } else {
+        const color = status === 'legal' ? 0x3ec06a : GOLD;
+        const baseWidth = status === 'legal' ? 2 : 1;
+        const baseAlpha = status === 'legal' ? 0.9 : 0.45;
+        solid = this.add
+          .rectangle(z.rect.centerX, z.rect.centerY, z.rect.width, z.rect.height)
+          .setStrokeStyle(hovered ? baseWidth + 1 : baseWidth, color, hovered ? Math.min(1, baseAlpha + 0.3) : baseAlpha)
+          .setDepth(150);
+      }
+      this.dragZoneHighlights.push({ meldId: z.meldId, status, solid, dashed });
     }
   }
 
+  /** Emphasises the hovered zone within its own status colour (never overwrites it with gold) and
+   * redraws the ghost preview — only when the hovered zone actually changed, never per pointer-move. */
+  private updateDropZoneHover(x: number, y: number): void {
+    const zone = this.meldZones.find((z) => z.rect.contains(x, y));
+    const inTable = !zone && this.inTableArea(x, y);
+    const key = zone ? zone.meldId : inTable ? '' : undefined;
+    if (key === this.hoverKey) return;
+    this.hoverKey = key;
+    this.redrawZoneHighlights();
+    if (key === undefined) {
+      this.clearGhostPreview();
+      return;
+    }
+    const target = snapTargetFor(this.snapTargets, zone ? zone.meldId : null);
+    if (!target) {
+      this.clearGhostPreview();
+      return;
+    }
+    const rect = zone ? zone.rect : new Phaser.Geom.Rectangle(this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop);
+    this.showGhostPreview(target, rect);
+  }
+
   private clearDropZoneHighlights(): void {
-    for (const h of this.dragZoneHighlights) h.gfx.destroy();
+    for (const h of this.dragZoneHighlights) {
+      h.solid?.destroy();
+      h.dashed?.destroy();
+    }
     this.dragZoneHighlights = [];
     this.dragTableOutline?.destroy();
     this.dragTableOutline = null;
+    this.hoverKey = undefined;
+    this.clearGhostPreview();
+  }
+
+  /**
+   * Non-mutating ghost preview (Phase 12): builds purely from `target` — never touches
+   * `cardSprites`/`meldZones`, never calls a DraftEditor mutator. Dark rounded panel clamped
+   * inside the playfield, small card images in resulting order, a joker hint taken only from
+   * `target.jokerAssignments` (never derived here), and one status line.
+   */
+  private showGhostPreview(target: SnapTarget, rect: Phaser.Geom.Rectangle): void {
+    this.clearGhostPreview();
+    const cw = CARD_W * 0.6;
+    const ch = CARD_H * 0.6;
+    const cards = target.preview;
+    const maxSpread = 120;
+    const cardGap = Math.min(cw + 3, cards.length > 1 ? maxSpread / (cards.length - 1) : cw);
+    const cardsW = cards.length > 0 ? (cards.length - 1) * cardGap + cw : cw;
+
+    const jokerLabels = new Map<string, string>();
+    if (target.status === 'legal') {
+      for (const a of target.jokerAssignments) {
+        jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
+      }
+    }
+    const hasJokerHint = cards.some((c) => jokerLabels.has(c.id));
+    const cardRowH = ch + (hasJokerHint ? 8 : 0);
+
+    const statusText =
+      target.status === 'legal' ? t('snap.legal') : target.status === 'incomplete' ? t('snap.incomplete') : t(target.reason ?? '');
+    const statusColor = target.status === 'legal' ? '#7ee0a0' : target.status === 'incomplete' ? '#f0c040' : '#ff6b5e';
+    const panelW = Math.min(150, Math.max(70, cardsW + 16));
+    const st = label(this, 0, 0, statusText, 6, statusColor);
+    st.setWordWrapWidth(panelW - 8, true);
+
+    const panelH = 6 + cardRowH + 4 + st.height + 6;
+    const cx = Phaser.Math.Clamp(rect.centerX, panelW / 2 + 2, this.r.w - 96 - 2);
+    const cy = Phaser.Math.Clamp(rect.bottom + 8 + panelH / 2, panelH / 2 + 2, this.r.h - 30);
+
+    const g = this.add.graphics().setDepth(500);
+    g.fillStyle(0x1a1410, 0.9);
+    g.fillRoundedRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH, 3);
+
+    const rowY = cy - panelH / 2 + 6 + ch / 2;
+    const startX = cx - cardsW / 2;
+    const objs: Phaser.GameObjects.GameObject[] = [g];
+    cards.forEach((card, i) => {
+      const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
+      const x = startX + i * cardGap + cw / 2;
+      objs.push(this.add.image(x, rowY, key).setDisplaySize(cw, ch).setAlpha(0.75).setDepth(501));
+      const hint = jokerLabels.get(card.id);
+      if (hint) objs.push(label(this, x, rowY + ch / 2 + 5, hint, 5, '#f0c040').setDepth(501));
+    });
+
+    st.setPosition(cx, cy + panelH / 2 - 6 - st.height / 2).setDepth(501);
+    objs.push(st);
+    this.ghostPreview = objs;
+  }
+
+  private clearGhostPreview(): void {
+    for (const o of this.ghostPreview) o.destroy();
+    this.ghostPreview = [];
   }
 
   // ponytail: hand-rolled dashed border — Phaser has no native dashed stroke and this is only a few lines.
-  private drawDashedRect(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, color: number, alpha: number): void {
-    g.lineStyle(1, color, alpha);
+  private drawDashedRect(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, color: number, alpha: number, width = 1): void {
+    g.lineStyle(width, color, alpha);
     const dash = 4;
     const gap = 3;
     for (let sx = x; sx < x + w; sx += dash + gap) {
@@ -1478,8 +1701,8 @@ export class GameScene extends Phaser.Scene {
     const y = sprite.y;
 
     const zone = this.meldZones.find((z) => z.rect.contains(x, y));
-    const inTableArea = y > TABLE_TOP - 6 && y < TABLE_BOTTOM + 10 && x < W - 84;
-    const inHandArea = y >= HAND_Y - 30;
+    const inTableArea = this.inTableArea(x, y);
+    const inHandArea = y >= this.r.handY - 30;
 
     const action: TutorialAction = origin === 'hand'
       ? { type: 'playHandCard', cardId }
@@ -1497,26 +1720,32 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Which meld target (existing/new) this drop lands on, for the snap-status sfx below.
+    // Stays undefined for a return-to-hand — that path has no snap target.
+    let landedMeldId: string | null | undefined;
     let acted = false;
     if (origin === 'hand') {
-      if (zone) acted = this.editor.playHandCard(cardId, zone.meldId);
-      else if (inTableArea) acted = this.editor.playHandCard(cardId, null);
+      if (zone) { acted = this.editor.playHandCard(cardId, zone.meldId); landedMeldId = zone.meldId; }
+      else if (inTableArea) { acted = this.editor.playHandCard(cardId, null); landedMeldId = null; }
     } else {
       const currentMeld = this.editor.getDraft().melds.find((m) => m.cards.some((c) => c.id === cardId));
       if (zone && zone.meldId !== currentMeld?.id) {
         acted = this.editor.moveTableCard(cardId, zone.meldId);
+        landedMeldId = zone.meldId;
       } else if (inHandArea) {
         acted = this.editor.returnHandCard(cardId); // only works for cards played this turn
         if (!acted) playSfx(this, 'sfx-invalid', 0.5);
       } else if (inTableArea && !zone) {
         acted = this.editor.moveTableCard(cardId, null);
+        landedMeldId = null;
       }
     }
 
     const settle = { displayWidth: CARD_W, displayHeight: CARD_H, ease: 'Back.out', duration: Math.max(1, this.motion(140)) };
     if (acted) {
       this.clearLastMove();
-      playSfx(this, 'sfx-drop', 0.5);
+      const landedTarget = landedMeldId !== undefined ? snapTargetFor(this.snapTargets, landedMeldId) : null;
+      playSfx(this, landedTarget?.status === 'legal' ? 'sfx-snap' : 'sfx-drop', 0.5);
       this.tweens.add({ targets: sprite, ...settle, onComplete: () => this.renderAll() });
     } else {
       // snap back
@@ -1540,7 +1769,7 @@ export class GameScene extends Phaser.Scene {
    * becomes a tappable zone under the cards (depth 1, cards sit at 3+) so touch players can drop
    * without dragging. The dashed white outline only appears once the keyboard has been used.
    */
-  private renderSelectionLayer(interactive: boolean): void {
+  private renderSelectionLayer(interactive: boolean, hasInvalidMeld: boolean): void {
     this.focusTargets = [];
     if (!interactive || !this.editor) {
       this.selectedCardId = null;
@@ -1558,10 +1787,13 @@ export class GameScene extends Phaser.Scene {
       // hand strip added afterwards stay tappable on top of the whole-table "new meld" zone.
       this.focusTargets.push({
         kind: 'new',
-        rect: new Phaser.Geom.Rectangle(TABLE_LEFT, TABLE_TOP, TABLE_AREA_W, TABLE_BOTTOM - TABLE_TOP),
+        rect: new Phaser.Geom.Rectangle(this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop),
       });
       for (const z of this.meldZones) this.focusTargets.push({ kind: 'meld', id: z.meldId, rect: z.rect });
-      this.focusTargets.push({ kind: 'hand', rect: new Phaser.Geom.Rectangle(20, HAND_Y - 24, 360, 48) });
+      this.focusTargets.push({
+        kind: 'hand',
+        rect: new Phaser.Geom.Rectangle(this.r.handZone.x, this.r.handZone.y, this.r.handZone.w, this.r.handZone.h),
+      });
 
       for (const target of this.focusTargets) {
         const zone = this.add
@@ -1583,10 +1815,16 @@ export class GameScene extends Phaser.Scene {
 
     if (this.focusIndex >= this.focusTargets.length) this.focusIndex = 0;
     const focused = this.focusTargets[this.focusIndex];
-    if (this.focusVisible && focused) {
+    const focusRingVisible = this.focusVisible && !!focused;
+    if (focusRingVisible) {
       const gfx = this.add.graphics().setDepth(280);
       this.drawDashedRect(gfx, focused.rect.x - 2, focused.rect.y - 2, focused.rect.width + 4, focused.rect.height + 4, 0xffffff, 0.95);
-      this.hud.push(gfx, label(this, 190, 265, t('game.selectHint'), 7, '#b8b0a0'));
+      this.hud.push(gfx, label(this, this.r.selectHint.x, this.r.selectHint.y, t('game.selectHint'), 7, '#b8b0a0'));
+    } else if (this.r.portrait && this.selectedCardId === null) {
+      // touch-only one-line caption: guides an untouched board, or points at the ✗ badge once a
+      // meld is invalid — replaced above by the keyboard-driven select hint once the focus ring shows.
+      const capText = hasInvalidMeld ? t('mobile.warnHint') : t('mobile.tapHint');
+      this.hud.push(label(this, this.r.selectHint.x, this.r.selectHint.y, capText, 7, '#b8b0a0'));
     }
   }
 
@@ -1595,7 +1833,7 @@ export class GameScene extends Phaser.Scene {
    * forced draw, near-win. Omit either to show the emote alone (e.g. the error fallback). */
   private showEmote(playerIndex: number, emote: EmoteKey, lineMoment?: 'bigPlay' | 'nearWin' | 'forcedDraw' | null, personality?: Personality): void {
     if (playerIndex === 0) return;
-    const x = 60 + (playerIndex - 1) * 105;
+    const x = this.r.opponentX0 + (playerIndex - 1) * this.r.opponentStep;
     const bubble = this.add.image(x + 16, -2, 'emote-bubble').setDisplaySize(18, 16).setDepth(400);
     const icon = this.add.image(x + 16, -3, `emote-${emote}`).setDisplaySize(12, 12).setDepth(401);
     const targets: Phaser.GameObjects.GameObject[] = [bubble, icon];

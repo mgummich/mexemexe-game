@@ -148,16 +148,10 @@ describe('runs', () => {
     }
   });
 
-  it('2D joker joker AD is valid: ace-low window A-2-3-4 (regression guard)', () => {
-    const j1 = j(0, 1);
-    const j2 = j(0, 2);
-    const result = analyzeMeld([n('diamonds', 2), j1, j2, n('diamonds', 1)]);
-    expect(result.valid).toBe(true);
-    if (result.valid) {
-      const ranks = result.assignments.map((a) => a.rank).sort();
-      expect(ranks).toEqual([3, 4]);
-      expect(result.assignments.every((a) => a.suit === 'diamonds')).toBe(true);
-    }
+  it('2D joker joker AD is invalid: a meld may use at most 1 joker', () => {
+    const result = analyzeMeld([n('diamonds', 2), j(0, 1), j(0, 2), n('diamonds', 1)]);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.reason).toBe('reason.tooManyJokers');
   });
 
   it('an all-joker meld is invalid', () => {
@@ -183,7 +177,6 @@ describe('groups', () => {
     [n('hearts', 7), n('spades', 7), n('diamonds', 7)],
     [n('hearts', 7), n('spades', 7), n('diamonds', 7), n('clubs', 7)],
     [n('clubs', 13), n('diamonds', 13), j(0, 1)],
-    [n('spades', 3), n('hearts', 3), j(0, 1), j(1, 1)],
     [n('hearts', 9), n('diamonds', 9), n('clubs', 9)],
   ])('accepts legal 3- or 4-card group', (...cards) => {
     expect(isValidGroup(cards)).toBe(true);
@@ -204,17 +197,10 @@ describe('groups', () => {
     }
   });
 
-  it('accepts one natural plus two jokers and gives each joker a different missing suit', () => {
-    const first = j(0, 1);
-    const second = j(1, 1);
-    const result = analyzeMeld([n('clubs', 6), first, second]);
-    expect(result.valid).toBe(true);
-    if (result.valid && result.kind === 'group') {
-      expect(result.assignments).toEqual([
-        { cardId: first.id, suit: 'hearts', rank: 6 },
-        { cardId: second.id, suit: 'diamonds', rank: 6 },
-      ]);
-    }
+  it('rejects one natural plus two jokers: a group may use at most 1 joker', () => {
+    const result = analyzeMeld([n('clubs', 6), j(0, 1), j(1, 1)]);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.reason).toBe('reason.tooManyJokers');
   });
 
   it('five same-rank cards -> groupTooLarge (default maxGroupSize 4)', () => {
@@ -786,5 +772,55 @@ describe('empty melds and empty tables', () => {
       { meldId: 'm1', reason: 'reason.meldTooSmall' },
       { meldId: 'm2', reason: 'reason.meldTooSmall' },
     ]);
+  });
+});
+
+describe('one joker per meld', () => {
+  it.each([
+    ['joker + 7H + 8H', [j(0, 1), n('hearts', 7), n('hearts', 8)]],
+    ['7H + 8H + joker', [n('hearts', 7), n('hearts', 8), j(0, 1)]],
+    ['7H + joker + 9H', [n('hearts', 7), j(0, 1), n('hearts', 9)]],
+    ['trinca 7H + 7S + joker', [n('hearts', 7), n('spades', 7), j(0, 1)]],
+    ['run without a joker', [n('hearts', 7), n('hearts', 8), n('hearts', 9)]],
+    ['trinca without a joker', [n('hearts', 7), n('spades', 7), n('clubs', 7)]],
+  ])('accepts %s', (_label, cards) => {
+    expect(isValidMeld(cards)).toBe(true);
+  });
+
+  it.each([
+    ['joker + 7H + joker', [j(0, 1), n('hearts', 7), j(0, 2)]],
+    ['joker + 7H + 8H + joker', [j(0, 1), n('hearts', 7), n('hearts', 8), j(0, 2)]],
+    ['7H + joker + joker', [n('hearts', 7), j(0, 1), j(0, 2)]],
+    ['trinca 7H + 7S + 2 jokers', [n('hearts', 7), n('spades', 7), j(0, 1), j(0, 2)]],
+  ])('rejects %s with tooManyJokers', (_label, cards) => {
+    const result = analyzeMeld(cards);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.reason).toBe('reason.tooManyJokers');
+  });
+
+  it('an all-joker meld stays invalid', () => {
+    expect(isValidMeld([j(0, 1), j(0, 2), j(1, 1)])).toBe(false);
+  });
+
+  it('validateTable rejects a table meld holding 2 jokers', () => {
+    const melds = [{ id: 'm1', cards: [n('hearts', 7), j(0, 1), j(0, 2)] }];
+    expect(validateTable(melds)).toBe(false);
+    expect(getInvalidMeldReasons(melds)).toEqual([{ meldId: 'm1', reason: 'reason.tooManyJokers' }]);
+  });
+
+  it('canConfirmTurn rejects a draft meld holding 2 jokers', () => {
+    const base = fixtureState();
+    const jokers = [j(0, 1), j(0, 2)];
+    const s: GameState = {
+      ...base,
+      players: [{ ...base.players[0]!, hand: [...base.players[0]!.hand, ...jokers] }, base.players[1]!],
+    };
+    const draft: DraftState = {
+      melds: [s.table[0]!, { id: 'd1', cards: [n('hearts', 9), ...jokers] }],
+      handCardsPlayed: [],
+    };
+    const r = canConfirmTurn(s, draft);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reasons).toContain('reason.tooManyJokers');
   });
 });

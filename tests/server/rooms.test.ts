@@ -329,6 +329,24 @@ describe('submit_turn validation', () => {
     expect(mgr.getRoom(code)!.rev).toBe(1); // no mutation
   });
 
+  it('rejects a proposal whose meld holds 2 jokers', () => {
+    // seat 0 needs both jokers plus at least one natural to anchor the meld.
+    let found: { seed: number; jokers: Card[]; natural: Card } | null = null;
+    for (let seed = 1; seed < 5000 && !found; seed++) {
+      const hand = dealFor(seed).hands[0]!;
+      const jokers = hand.filter((c) => c.isJoker);
+      const natural = hand.find((c) => !c.isJoker);
+      if (jokers.length >= 2 && natural) found = { seed, jokers: jokers.slice(0, 2), natural };
+    }
+    expect(found).not.toBeNull();
+    const { mgr, code } = startRoom(found!.seed);
+    const cardIds = [found!.natural.id, found!.jokers[0]!.id, found!.jokers[1]!.id];
+    const result = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds }]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reasons).toContain('reason.tooManyJokers');
+    expect(mgr.getRoom(code)!.rev).toBe(1); // no mutation
+  });
+
   it('accepts a VALID joker meld proposal; the authoritative table holds the joker\'s own card id, not the assigned value', () => {
     const { seed, joker, pair } = findSeedWithJokerAndPair();
     const { mgr, code } = startRoom(seed);

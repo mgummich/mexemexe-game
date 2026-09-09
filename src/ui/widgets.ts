@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { playSfx } from '../audio/sfx';
 import { PIXEL_FONT } from '../assets/compose-cards';
 import { settings } from '../core/settings';
+import { view } from './viewport';
 
 /** Nothing user-facing renders below this (logical px, pre large-text scale) — small pixel-font glyphs turn to mush once upscaled to 720p/1080p. */
 const MIN_FONT_SIZE = 8;
@@ -67,6 +68,8 @@ export interface PixelButtonOpts {
   color?: number;
   /** Small dark label shown above the button 400ms after hover starts. */
   tooltip?: string;
+  /** Fires when the button is tapped/clicked while disabled — no sfx, no onClick, just this. */
+  onBlocked?: () => void;
 }
 
 /** Multiplies an RGB color by a brightness factor, clamped — used to derive hover/pressed/disabled shades from one base palette color. */
@@ -131,6 +134,9 @@ export class PixelButton extends Phaser.GameObjects.Container {
   private tooltipTimer: Phaser.Time.TimerEvent | null = null;
   private tooltipGfx: Phaser.GameObjects.GameObject[] = [];
   private selectedRing?: Phaser.GameObjects.Rectangle;
+  /** Visual (art) size — distinct from the container's hit-box size, which a coarse pointer grows past this. */
+  private readonly visualW: number;
+  private readonly visualH: number;
 
   constructor(
     scene: Phaser.Scene,
@@ -143,6 +149,8 @@ export class PixelButton extends Phaser.GameObjects.Container {
     super(scene, x, y);
     const w = opts.w ?? 56;
     const h = opts.h ?? 20;
+    this.visualW = w;
+    this.visualH = h;
     this.base = opts.textureBase;
     this.paletteColor = opts.color ?? 0xffffff;
     if (this.base && scene.textures.exists(`${this.base}-normal`)) {
@@ -155,7 +163,10 @@ export class PixelButton extends Phaser.GameObjects.Container {
     }
     this.txt = label(scene, 0, 0, text, opts.size ?? 8);
     this.add(this.txt);
-    this.setSize(w, h);
+    // Coarse pointer: grow the hit box past the artwork so a touch target never shrinks below a
+    // usable size — the art itself (visualW/visualH) stays exactly w x h either way.
+    const touch = view().touch;
+    this.setSize(touch ? Math.max(w, 32) : w, touch ? Math.max(h, 26) : h);
     this.setInteractive({ useHandCursor: true });
     this.setBtnTexture('normal'); // apply palette tint immediately, not just on first hover
 
@@ -167,6 +178,16 @@ export class PixelButton extends Phaser.GameObjects.Container {
       });
       this.on('pointerout', () => this.hideTooltip());
       this.on('destroy', () => this.hideTooltip());
+      if (touch) {
+        // no hover on touch — show on tap instead, and auto-hide since there's no pointerout to close it.
+        // Skipped while disabled: a disabled button's tap already answers with its blocking reason
+        // (see onBlocked), and "Confirm your move" next to "you can't confirm yet" reads as a lie.
+        this.on('pointerdown', () => {
+          if (!this.enabledState) return;
+          this.showTooltip(opts.tooltip!, h);
+          this.tooltipTimer = scene.time.delayedCall(2500, () => this.hideTooltip());
+        });
+      }
     }
     this.on('pointerdown', () => {
       if (!this.enabledState) return;
@@ -174,7 +195,10 @@ export class PixelButton extends Phaser.GameObjects.Container {
       this.setScale(0.94);
     });
     this.on('pointerup', () => {
-      if (!this.enabledState) return;
+      if (!this.enabledState) {
+        opts.onBlocked?.();
+        return;
+      }
       this.setBtnTexture('hover');
       this.setScale(1);
       playSfx(scene, 'sfx-click', 0.4);
@@ -187,7 +211,7 @@ export class PixelButton extends Phaser.GameObjects.Container {
     if (this.bgImage && this.base && this.scene.textures.exists(`${this.base}-${state}`)) {
       const key = `${this.base}-${state}`;
       this.bgImage.setTexture(key, inkFrame(this.scene, key));
-      this.bgImage.setDisplaySize(this.width, this.height);
+      this.bgImage.setDisplaySize(this.visualW, this.visualH);
       this.bgImage.setTint(this.paletteColor);
     } else if (this.bgImage) {
       // only a -normal texture shipped: derive hover/pressed/disabled by shading the palette color

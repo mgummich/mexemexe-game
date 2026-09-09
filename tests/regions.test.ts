@@ -1,0 +1,108 @@
+import { describe, expect, it } from 'vitest';
+import { gameRegions } from '../src/ui/regions';
+
+const LANDSCAPE = { w: 480, h: 270, portrait: false, touch: false } as const;
+const PORTRAIT = { w: 270, h: 480, portrait: true, touch: false } as const;
+
+describe('gameRegions landscape desktop regression', () => {
+  it('matches the pre-existing GameScene constants exactly', () => {
+    expect(gameRegions(LANDSCAPE)).toEqual({
+      w: 480,
+      h: 270,
+      portrait: false,
+      touch: false,
+
+      barH: 30,
+      deckImg: { x: 22, y: 14 },
+      deckText: { x: 34, y: 8 },
+      opponentX0: 60,
+      opponentStep: 105,
+      opponentY: 14,
+
+      banner: { x: 240, y: 41 },
+      lastMove: { x: 240, y: 70, wrap: 300 },
+      onlineNotice: { x: 240, y: 58, wrap: 300 },
+      onlineDot: { x: 6, y: 264 },
+
+      tableTop: 80,
+      tableBottom: 188,
+      tableLeft: 14,
+      tableAreaW: 370,
+      tableAreaH: 102,
+      tableRightBound: 396,
+
+      handY: 240,
+      handCenterX: 200,
+      handSpan: 330,
+      handZone: { x: 20, y: 216, w: 360, h: 48 },
+
+      actionPanel: { x: 398, y: 140, w: 78, h: 130 },
+      feito: { x: 440, y: 210, w: 64, h: 22, size: 9 },
+      comprar: { x: 440, y: 237, w: 64, h: 20, size: 8 },
+      undo: { x: 414, y: 260, w: 16, h: 14, size: 8 },
+      redo: { x: 436, y: 260, w: 16, h: 14, size: 8 },
+      reset: { x: 460, y: 260, w: 22, h: 14, size: 8 },
+      sort: { x: 30, y: 246, w: 16, h: 14, size: 8 },
+      gear: { x: 462, y: 10, w: 16, h: 14, size: 8 },
+
+      reason: { x: 440, y: 191, wrap: 72, originY: 1, size: 9 },
+      selectHint: { x: 190, y: 265 },
+
+      tooltip: { maxW: 96, minX: 0, maxX: 388, maxY: 240 },
+    });
+  });
+});
+
+describe('gameRegions landscape touch', () => {
+  it('grows FEITO/COMPRAR and keeps the action column non-overlapping', () => {
+    const r = gameRegions({ w: 480, h: 270, portrait: false, touch: true });
+    expect(r.feito.h).toBeGreaterThanOrEqual(26);
+    expect(r.comprar.h).toBeGreaterThanOrEqual(24);
+
+    const feitoBottom = r.feito.y + r.feito.h / 2;
+    const comprarTop = r.comprar.y - r.comprar.h / 2;
+    const comprarBottom = r.comprar.y + r.comprar.h / 2;
+    const rowTop = r.undo.y - r.undo.h / 2;
+
+    expect(comprarTop).toBeGreaterThanOrEqual(feitoBottom);
+    expect(rowTop).toBeGreaterThanOrEqual(comprarBottom);
+    // ...and the whole grown cluster still fits inside the world and its backdrop panel.
+    const rowBottom = r.undo.y + r.undo.h / 2;
+    expect(rowBottom).toBeLessThanOrEqual(r.h);
+    expect(r.feito.y - r.feito.h / 2).toBeGreaterThanOrEqual(r.actionPanel.y);
+  });
+});
+
+describe('gameRegions portrait', () => {
+  const r = gameRegions(PORTRAIT);
+
+  it('world is 270x480', () => {
+    expect(r.w).toBe(270);
+    expect(r.h).toBe(480);
+  });
+
+  it('every button lies fully inside the world', () => {
+    for (const b of [r.feito, r.comprar, r.undo, r.redo, r.reset, r.sort, r.gear]) {
+      expect(b.x - b.w / 2).toBeGreaterThanOrEqual(0);
+      expect(b.x + b.w / 2).toBeLessThanOrEqual(270);
+      expect(b.y - b.h / 2).toBeGreaterThanOrEqual(0);
+      expect(b.y + b.h / 2).toBeLessThanOrEqual(480);
+    }
+  });
+
+  it('FEITO and COMPRAR do not overlap horizontally', () => {
+    const feitoLeft = r.feito.x - r.feito.w / 2;
+    const comprarRight = r.comprar.x + r.comprar.w / 2;
+    expect(comprarRight).toBeLessThanOrEqual(feitoLeft);
+  });
+
+  it('the table area fits inside the world', () => {
+    expect(r.tableLeft).toBeGreaterThanOrEqual(0);
+    expect(r.tableLeft + r.tableAreaW).toBeLessThanOrEqual(270);
+  });
+
+  it('hand sits above the action panel, table sits above the hand', () => {
+    expect(r.handY + 16).toBeLessThanOrEqual(r.actionPanel.y);
+    expect(r.tableBottom).toBeLessThan(r.handY - 16);
+  });
+});

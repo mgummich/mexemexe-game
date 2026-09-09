@@ -83,8 +83,8 @@ const ACE_MODES: AceMode[] = [
 
 /**
  * Run analysis: 3+ cards, same suit, consecutive values in exactly one ace mode (low: A=1,
- * high: A=14 — never both in the same run, so Q-K-A-2-3 always fails). Jokers fill whatever
- * window slots the naturals don't cover.
+ * high: A=14 — never both in the same run, so Q-K-A-2-3 always fails). At most 1 joker per meld;
+ * it fills whatever window slot the naturals don't cover.
  */
 function hasDuplicateIds(cards: readonly Card[]): boolean {
   return new Set(cards.map((c) => c.id)).size !== cards.length;
@@ -96,6 +96,7 @@ function analyzeRun(cards: readonly Card[], _config: RulesConfig): MeldAnalysis 
   const naturals = cards.filter((c) => !c.isJoker);
   const jokers = cards.filter((c) => c.isJoker);
   if (naturals.length === 0) return { valid: false, reason: 'reason.jokerUnassignable' };
+  if (jokers.length > 1) return { valid: false, reason: 'reason.tooManyJokers' };
   const suit = naturals[0]!.suit!;
   if (!naturals.every((c) => c.suit === suit)) return { valid: false, reason: 'reason.notAMeld' };
 
@@ -146,7 +147,7 @@ function analyzeRun(cards: readonly Card[], _config: RulesConfig): MeldAnalysis 
   return { valid: false, reason: hasNaturalAce ? 'reason.runWrap' : 'reason.jokerUnassignable' };
 }
 
-/** Group analysis: exactly 3-4 cards, same rank, unique natural suits, jokers fill unused suits. */
+/** Group analysis: exactly 3-4 cards, same rank, unique natural suits, at most 1 joker filling an unused suit. */
 function analyzeGroup(cards: readonly Card[], _config: RulesConfig): MeldAnalysis {
   if (hasDuplicateIds(cards)) return { valid: false, reason: 'reason.duplicateCard' };
   if (cards.length < 3) return { valid: false, reason: 'reason.meldTooSmall' };
@@ -154,6 +155,7 @@ function analyzeGroup(cards: readonly Card[], _config: RulesConfig): MeldAnalysi
   const naturals = cards.filter((c) => !c.isJoker);
   const jokers = cards.filter((c) => c.isJoker);
   if (naturals.length === 0) return { valid: false, reason: 'reason.groupAllJokers' };
+  if (jokers.length > 1) return { valid: false, reason: 'reason.tooManyJokers' };
   const rank = naturals[0]!.rank!;
   if (!naturals.every((c) => c.rank === rank)) return { valid: false, reason: 'reason.notAMeld' };
   const naturalSuits = naturals.map((c) => c.suit!);
