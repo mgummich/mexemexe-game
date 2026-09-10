@@ -33,6 +33,13 @@ export function buildManifest(): AssetDef[] {
   out.push(def('bg-quintal', 'assets/tables/quintal.png', 480, 270));
   out.push(def('bg-feira', 'assets/tables/feira.png', 480, 270));
   out.push(def('bg-menu', 'assets/tables/menu.png', 480, 270));
+  // Portrait table art: exact 9:16 (224x400, PixelLab's closest 4-aligned size to 225x400) so
+  // coverBackground never crops it in portrait — see menu-layout.ts.
+  out.push(def('bg-boteco-portrait', 'assets/tables/boteco-portrait.png', 224, 400));
+  out.push(def('bg-kitchen-portrait', 'assets/tables/kitchen-portrait.png', 224, 400));
+  out.push(def('bg-quintal-portrait', 'assets/tables/quintal-portrait.png', 224, 400));
+  out.push(def('bg-feira-portrait', 'assets/tables/feira-portrait.png', 224, 400));
+  out.push(def('bg-menu-portrait', 'assets/tables/menu-portrait.png', 224, 400));
   out.push(def('logo', 'assets/ui/logo.png', 200, 80));
   for (const name of ['cida', 'juninho', 'bia', 'ze', 'rosa', 'tuca', 'nina', 'ivo']) {
     out.push(def(`avatar-${name}`, `assets/characters/avatar-${name}.png`, 24, 24));

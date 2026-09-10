@@ -36,12 +36,32 @@ export function panelW(w: number): number {
   return Math.min(w, view().w - 12);
 }
 
+const LANDSCAPE_BG_W = 480;
+const LANDSCAPE_BG_H = 270;
+const PORTRAIT_BG_W = 224;
+const PORTRAIT_BG_H = 400;
+
+/**
+ * Picks which background texture to use for a given base key (`bg-boteco`, `bg-menu`, ...):
+ * the dedicated `${key}-portrait` art in portrait, the landscape key otherwise. Falls back to
+ * the landscape key when the portrait texture failed to load — never a blank screen. Pure
+ * function so it's testable without a Phaser scene.
+ */
+export function backgroundKeyFor(baseKey: string, portrait: boolean, hasPortraitTexture: boolean): string {
+  if (!portrait) return baseKey;
+  return hasPortraitTexture ? `${baseKey}-portrait` : baseKey;
+}
+
 /**
  * Adds the menu/lobby background image centred on the world and scaled to COVER it (crop, don't
- * stretch) — the art is authored 480x270, so stretching it to a 270x480 portrait world would
- * smear it. Same idea as CSS `background-size: cover`.
+ * stretch). Landscape art is authored 480x270; portrait art is dedicated 224x400 (9:16, matching
+ * the 270x480 portrait world) so cover-scaling it never crops away most of the art the way
+ * stretching the landscape art would. Same idea as CSS `background-size: cover`.
  */
 export function coverBackground(scene: Phaser.Scene, key: string): Phaser.GameObjects.Image {
-  const scale = Math.max(view().w / 480, view().h / 270);
-  return scene.add.image(cx(), cy(), key).setDisplaySize(480 * scale, 270 * scale);
+  const portraitKey = `${key}-portrait`;
+  const useKey = backgroundKeyFor(key, view().portrait, scene.textures.exists(portraitKey));
+  const [srcW, srcH] = useKey === portraitKey ? [PORTRAIT_BG_W, PORTRAIT_BG_H] : [LANDSCAPE_BG_W, LANDSCAPE_BG_H];
+  const scale = Math.max(view().w / srcW, view().h / srcH);
+  return scene.add.image(cx(), cy(), useKey).setDisplaySize(srcW * scale, srcH * scale);
 }
