@@ -59,7 +59,14 @@ window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     if (!refreshProfile()) return;
-    game.scale.resize(view().w * RENDER_SCALE, view().h * RENDER_SCALE);
+    const w = view().w * RENDER_SCALE;
+    const h = view().h * RENDER_SCALE;
+    // Phaser's FIT display size keeps the aspect ratio it was built with (Size.setSize never
+    // recomputes it in FIT mode), so a portrait<->landscape flip would keep fitting the canvas
+    // into the old aspect. Re-state it, then refresh so the fit uses the rotated parent bounds.
+    game.scale.displaySize.setAspectRatio(w / h);
+    game.scale.resize(w, h);
+    game.scale.refresh();
     for (const scene of game.scene.scenes) {
       if (!scene.scene.isActive()) continue;
       scene.cameras.main.setZoom(RENDER_SCALE).centerOn(view().w / 2, view().h / 2);
