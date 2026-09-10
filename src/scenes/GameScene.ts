@@ -280,7 +280,7 @@ export class GameScene extends Phaser.Scene {
       const state = config.tutorial
         ? buildTutorialState()
         : debugApi.showcase === 'mexe'
-          ? buildShowcaseState(config.seed, playerCfgs)
+          ? buildShowcaseState(config.seed, playerCfgs, debugApi.crowd ?? undefined)
           : createNewGame(config.seed, playerCfgs);
       this.store = new GameStore(state);
     }

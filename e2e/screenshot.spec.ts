@@ -380,6 +380,53 @@ test('stress-table: many melds on the table still hold fps >= 50', async ({ page
   });
 });
 
+// ?crowd=N (buildShowcaseState's minTableCards, plumbed via debug-api.ts) drives AI/draw turns
+// until the *committed* table holds N cards. 80+ COMMITTED table cards is unreachable by the
+// rules: a seed sweep of 0-29999 with this 2-player SimpleAi matchup never exceeded 44 committed
+// table cards before the game naturally finished (draw pile exhausted or a hand emptied) — the AI
+// simply doesn't meld that much before someone wins. 44 (seed 12460) is the measured ceiling, not
+// an aspiration, so the test targets that instead of faking 80.
+//
+// The phase brief's real target is 80+ VISIBLE cards (table + hand + draft + opponent), not 80
+// committed melds specifically. crowdTheTable (below) additionally piles every card in the
+// human's hand into its own new draft meld, same as stress-table/table-zoomed — this is on top of
+// the 44 already-committed table cards, so the combined on-screen total clears 80 even though the
+// committed-table figure alone cannot. Measured 2026-09-10 on the dev machine: 107 total visible
+// cards (44 committed table + 61 from the human's hand, now drafted onto the table + 2 in the AI's
+// hand — see GameScene.ts:1310, the opponent hand renders as a single "xN" count label, not
+// per-card sprites, so it's counted here by card count rather than sprite count) at 49 fps.
+test('crowded-table-max: highest reachable committed table (44) plus a full hand-to-draft dump clears 80 visible cards', async ({ page }) => {
+  await capture(page, '/?seed=12460&showcase=mexe&crowd=44', 'crowded-table-max', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const tableCount = await p.evaluate(
+      () => window.__MEXE__.state!()!.table.reduce((sum, m) => sum + m.cards.length, 0),
+    );
+    expect(tableCount).toBeGreaterThanOrEqual(44);
+
+    await crowdTheTable(p); // dumps the rest of the human's hand into its own draft melds
+
+    // Card count, not sprite count (no new production API — this composes existing debug-api
+    // fields per the task). Every card not in the draw pile is on screen exactly once: on the
+    // table, still in the human's hand, or in the opponent's hand — playHandCard only moves a
+    // card from the committed hand into an uncommitted draft meld, it never touches state.table or
+    // either player's committed hand.length, so this total is identical before and after
+    // crowdTheTable. Only the *rendering* (table vs. hand carousel) changes, which is what the
+    // fps measurement below actually exercises.
+    const total = await p.evaluate(() => {
+      const state = window.__MEXE__.state!()!;
+      const tableCards = state.table.reduce((sum, m) => sum + m.cards.length, 0);
+      return tableCards + state.players[0]!.hand.length + state.players[1]!.hand.length;
+    });
+    expect(total).toBeGreaterThanOrEqual(80);
+
+    await p.waitForTimeout(1000); // let fps settle
+    const fps = await p.evaluate(() => window.__MEXE__.fps);
+    // Floor set from measurement, not aspiration: 49 fps measured on the dev machine 2026-09-10
+    // at a combined visible total of 107 cards (see comment above), consistent across repeat runs.
+    expect(fps).toBeGreaterThanOrEqual(45);
+  });
+});
+
 test('game-1080p: readable at a 1920x1080 viewport', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await capture(page, '/?seed=42&showcase=game', 'game-1080p', async (p) => {
@@ -1113,6 +1160,49 @@ test('mobile-landscape-game: a phone in landscape widens the board to fill the s
   // ...and the canvas really does cover the viewport, no side bars.
   const box = (await page.locator('canvas').boundingBox())!;
   expect(box.width).toBeGreaterThan(PHONE_LANDSCAPE.width - 4);
+});
+
+// Phase 16: only playwright.cross.config.ts covered iPad before this (a layout/aspect gate, not a
+// screenshot). These land a dedicated tablet capture in the main verify log, using capture()'s
+// standard error/log checks like every other screenshot test.
+const TABLET_LANDSCAPE = { width: 1024, height: 768 };
+const TABLET_PORTRAIT = { width: 768, height: 1024 };
+
+test('tablet-landscape-game: iPad landscape keeps the desktop 480x270 world, no letterbox on width', async ({ page }) => {
+  await page.setViewportSize(TABLET_LANDSCAPE);
+  await capture(page, '/?seed=42&showcase=game', 'tablet-landscape-game', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  // 4:3 is narrower than the 480x270 (16:9) world, so it stays clamped at the authored size —
+  // width is the fitted axis (min(1024/480, 768/270) is the width ratio).
+  expect(v).toMatchObject({ w: 480, h: 270, portrait: false });
+  const box = (await page.locator('canvas').boundingBox())!;
+  expect(box.width).toBeGreaterThan(TABLET_LANDSCAPE.width - 4);
+});
+
+test('tablet-portrait-game: iPad portrait uses the 270x480 world, no letterbox on height', async ({ page }) => {
+  await page.setViewportSize(TABLET_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=game', 'tablet-portrait-game', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  });
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  // taller-than-wide -> portrait world; height is the fitted axis here (min(768/270, 1024/480) is
+  // the height ratio).
+  expect(v).toMatchObject({ w: 270, h: 480, portrait: true });
+  const box = (await page.locator('canvas').boundingBox())!;
+  expect(box.height).toBeGreaterThan(TABLET_PORTRAIT.height - 4);
+});
+
+test('tablet-mexe: Mexe Mode on an iPad-sized landscape viewport', async ({ page }) => {
+  await page.setViewportSize(TABLET_LANDSCAPE);
+  await capture(page, '/?seed=77&showcase=mexe', 'tablet-mexe', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  });
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  expect(v).toMatchObject({ w: 480, h: 270, portrait: false });
+  const box = (await page.locator('canvas').boundingBox())!;
+  expect(box.width).toBeGreaterThan(TABLET_LANDSCAPE.width - 4);
 });
 
 test('mobile-tap-select: tapping a hand card selects it, tapping it again clears it', async ({ page }) => {

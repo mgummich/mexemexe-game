@@ -3,8 +3,11 @@
 //
 // Bump VERSION on every release that should evict the previous cache — the
 // activate handler deletes every cache whose name isn't the current one.
-// Keep this release cache key in lockstep with package.json. Activation removes prior keys.
-const VERSION = 'mexe-v1.6.0';
+// The placeholder below is substituted by the vite.config.ts build plugin
+// (see closeBundle there) from package.json, so the cache key can't drift
+// out of lockstep by hand-editing. The literal placeholder is the dev
+// default (unbuilt public/sw.js).
+const VERSION = 'mexe-v__BUILD_VERSION__';
 const CACHE_NAME = VERSION;
 
 const APP_SHELL = ['./', './index.html'];
@@ -14,12 +17,25 @@ self.addEventListener('install', (event) => {
   // client explicitly asks for it (see the message handler below), so an
   // update never yanks the app out from under an active game.
   //
-  // We only precache the app shell entry. Everything else (JS bundle, art,
-  // sfx) gets cached on first use by the fetch handler below. The first
-  // load is online by definition, and BootScene fetches every runtime asset
-  // during that load, so a runtime cache-first policy ends up with the full
-  // offline set anyway — without a build-time asset manifest to keep in sync.
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
+  // We only precache the app shell entry, per URL with Promise.allSettled so
+  // a single missing/404 asset can't abort the whole install. Everything
+  // else (JS bundle, art, sfx) gets cached on first use by the fetch handler
+  // below. The first load is online by definition, and BootScene's
+  // buildManifest() preloads every card, table, portrait, UI and avatar
+  // asset during that load, so the runtime cache-first policy ends up with
+  // the full offline set after one load anyway — without a build-time asset
+  // manifest to keep in sync.
+  //
+  // An eager precache list (built from dist/, warmed in the background) was
+  // tried in Phase 16 and reverted: it bought nothing beyond what
+  // BootScene's first load already caches, but the concurrent fetch burst it
+  // added starved first-load boot fetches — measured as multiplayer e2e boot
+  // timeouts and intermittent webkit page.goto timeouts, 2026-09-10.
+  event.waitUntil(
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => Promise.allSettled(APP_SHELL.map((url) => cache.add(url)))),
+  );
 });
 
 self.addEventListener('activate', (event) => {
