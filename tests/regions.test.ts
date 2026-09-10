@@ -133,3 +133,43 @@ describe('gameRegions portrait', () => {
     expect(r.zoomIn.y + r.zoomIn.h / 2).toBeLessThanOrEqual(r.zoomOut.y - r.zoomOut.h / 2);
   });
 });
+
+describe('gameRegions landscape on a wider-than-16:9 world', () => {
+  // 582x270 is what a 19.5:9 phone in landscape asks for (see viewport.landscapeWidth).
+  const r = gameRegions({ w: 582, h: 270, portrait: false, touch: true });
+
+  it('reports the wider world', () => {
+    expect(r.w).toBe(582);
+    expect(r.h).toBe(270);
+  });
+
+  it('every button still lies fully inside the world', () => {
+    for (const b of [r.feito, r.comprar, r.undo, r.redo, r.reset, r.sort, r.gear, r.zoomIn, r.zoomOut]) {
+      expect(b.x - b.w / 2).toBeGreaterThanOrEqual(0);
+      expect(b.x + b.w / 2).toBeLessThanOrEqual(r.w);
+    }
+  });
+
+  it('the action cluster stays inside its backdrop panel', () => {
+    expect(r.actionPanel.x + r.actionPanel.w).toBeLessThanOrEqual(r.w);
+    for (const b of [r.feito, r.comprar, r.undo, r.redo, r.reset]) {
+      expect(b.x - b.w / 2).toBeGreaterThanOrEqual(r.actionPanel.x - 2);
+    }
+  });
+
+  it('the table grows into the extra width and still clears the action panel', () => {
+    expect(r.tableAreaW).toBe(582 - 96 - 14);
+    expect(r.tableLeft + r.tableAreaW).toBeLessThanOrEqual(r.actionPanel.x);
+    expect(r.tableRightBound).toBeLessThanOrEqual(r.actionPanel.x);
+  });
+
+  it('the hand re-centres over the widened table area', () => {
+    expect(r.handCenterX).toBe(251);
+    expect(r.handZone.x + r.handZone.w).toBeLessThanOrEqual(r.actionPanel.x);
+  });
+
+  it('centred text follows the new centre', () => {
+    expect(r.banner.x).toBe(291);
+    expect(r.lastMove.x).toBe(291);
+  });
+});

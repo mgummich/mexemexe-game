@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Cross-browser layout gate: the game is one fixed 480x270 world scaled with Phaser's FIT mode,
+ * Cross-browser layout gate: the game is one fixed-height world scaled with Phaser's FIT mode,
  * so "aligned" means the canvas fits fully inside the viewport, stays centred, and keeps the
- * 16:9 aspect — on every engine (Chrome, Firefox, Safari/WebKit) and on phone viewports.
+ * live world's aspect — on every engine (Chrome, Firefox, Safari/WebKit) and on phone viewports.
+ * The landscape world widens with the window (src/ui/viewport.ts), so the expected aspect is
+ * read from the running game rather than hardcoded.
  * Runs the same three screens per project; screenshots land per project for eyeballing.
  */
 const OUT_DIR = 'docs/screenshots/cross-browser';
@@ -27,7 +29,12 @@ for (const screen of SCREENS) {
     const box = await page.evaluate(() => {
       const c = document.querySelector('canvas')!;
       const r = c.getBoundingClientRect();
-      return { x: r.x, y: r.y, w: r.width, h: r.height, vw: window.innerWidth, vh: window.innerHeight };
+      const v = window.__MEXE__.viewport();
+      return {
+        x: r.x, y: r.y, w: r.width, h: r.height,
+        vw: window.innerWidth, vh: window.innerHeight,
+        worldAspect: v.w / v.h,
+      };
     });
 
     // no overflow in either axis (1px slack for sub-pixel rounding across engines)
@@ -38,8 +45,8 @@ for (const screen of SCREENS) {
     // centred: equal margins left/right and top/bottom
     expect(Math.abs(box.x - (box.vw - box.w - box.x))).toBeLessThanOrEqual(2);
     expect(Math.abs(box.y - (box.vh - box.h - box.y))).toBeLessThanOrEqual(2);
-    // 16:9 preserved (FIT must never stretch)
-    expect(box.w / box.h).toBeCloseTo(480 / 270, 1);
+    // world aspect preserved (FIT must never stretch)
+    expect(box.w / box.h).toBeCloseTo(box.worldAspect, 1);
     // fills at least one axis — otherwise the world was scaled down for no reason
     expect(Math.max(box.w / box.vw, box.h / box.vh)).toBeGreaterThan(0.98);
 
@@ -57,13 +64,14 @@ test('settings sliders respond to a click at the point clicked', async ({ page }
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 30_000 });
 
   // Click the SFX track near its left end and read back what was persisted. The track spans
-  // world x 210..310 at y 46 (settings-panel.ts: cx-30, first row + ROW_PITCH).
-  const scale = await page.evaluate(() => document.querySelector('canvas')!.getBoundingClientRect().width / 480);
-  const origin = await page.evaluate(() => {
+  // 100 world units starting at cx - 30, at y 46 (settings-panel.ts: first row + ROW_PITCH).
+  // cx follows the live world width, which widens with the window in landscape.
+  const { scale, origin, trackLeft } = await page.evaluate(() => {
     const r = document.querySelector('canvas')!.getBoundingClientRect();
-    return { x: r.x, y: r.y };
+    const v = window.__MEXE__.viewport();
+    return { scale: r.width / v.w, origin: { x: r.x, y: r.y }, trackLeft: v.w / 2 - 30 };
   });
-  await page.mouse.click(origin.x + 220 * scale, origin.y + 46 * scale);
+  await page.mouse.click(origin.x + (trackLeft + 10) * scale, origin.y + 46 * scale);
 
   const vol = await page.evaluate(() => JSON.parse(localStorage.getItem('mexe-save') ?? '{}')?.settings?.sfxVolume);
   expect(vol).toBeGreaterThanOrEqual(0);

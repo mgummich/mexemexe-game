@@ -1102,13 +1102,17 @@ test('mobile-portrait-game: full-width table, hand carousel and a pinned action 
   );
 });
 
-test('mobile-landscape-game: a phone in landscape keeps the desktop board', async ({ page }) => {
+test('mobile-landscape-game: a phone in landscape widens the board to fill the screen', async ({ page }) => {
   await page.setViewportSize(PHONE_LANDSCAPE);
   await capture(page, '/?seed=42&showcase=game', 'mobile-landscape-game', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game');
   });
   const v = await page.evaluate(() => window.__MEXE__.viewport());
-  expect(v).toMatchObject({ w: 480, h: 270, portrait: false });
+  // 19.5:9 in landscape: the world grows sideways instead of being letterboxed by Scale.FIT.
+  expect(v).toMatchObject({ w: 582, h: 270, portrait: false });
+  // ...and the canvas really does cover the viewport, no side bars.
+  const box = (await page.locator('canvas').boundingBox())!;
+  expect(box.width).toBeGreaterThan(PHONE_LANDSCAPE.width - 4);
 });
 
 test('mobile-tap-select: tapping a hand card selects it, tapping it again clears it', async ({ page }) => {
