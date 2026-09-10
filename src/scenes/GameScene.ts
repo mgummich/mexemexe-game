@@ -306,7 +306,7 @@ export class GameScene extends Phaser.Scene {
       // right-hand action column, and a prop covering a paint smudge on the boteco felt. Portrait
       // reframes that art entirely (and puts the action bar along the bottom), so neither lands
       // where it was drawn for — the portrait board dims the whole table instead.
-      this.add.rectangle(444, 226, 72, 96, 0x1a0f0a, 0.55);
+      this.add.rectangle(this.r.w - 36, 226, 72, 96, 0x1a0f0a, 0.55);
       if (playerCount <= 2) {
         this.add.image(60, 60, 'prop-dominoes').setDisplaySize(32, 24).setDepth(1);
       }

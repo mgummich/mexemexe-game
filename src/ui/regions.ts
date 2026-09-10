@@ -81,11 +81,22 @@ export interface GameRegions {
   tutorialPanel: Rect;
 }
 
-/** Landscape button boxes grow a little on a touch screen; the cluster has the slack for it. */
+/**
+ * Landscape button boxes grow a little on a touch screen; the cluster has the slack for it.
+ *
+ * The grid is authored at 480 wide. A wider world (phones in landscape are 19.5:9, see
+ * `landscapeWidth` in viewport.ts) is treated as "the same layout with more table": `dx` is the
+ * extra width, right-anchored furniture (the action cluster, gear, zoom, tutorial panel) slides
+ * right by all of it, the table and the hand grow into it, and centred text follows the new
+ * centre. dx is 0 at 480, so the desktop grid is untouched.
+ */
 function landscape(p: ViewProfile): GameRegions {
   const t = p.touch;
+  const w = Math.max(480, p.w);
+  const dx = w - 480;
+  const half = dx / 2;
   return {
-    w: 480,
+    w,
     h: 270,
     portrait: false,
     touch: t,
@@ -97,44 +108,44 @@ function landscape(p: ViewProfile): GameRegions {
     opponentStep: 105,
     opponentY: 14,
 
-    banner: { x: 240, y: 41 },
-    lastMove: { x: 240, y: 70, wrap: 300 },
-    onlineNotice: { x: 240, y: 58, wrap: 300 },
+    banner: { x: w / 2, y: 41 },
+    lastMove: { x: w / 2, y: 70, wrap: 300 + dx },
+    onlineNotice: { x: w / 2, y: 58, wrap: 300 + dx },
     onlineDot: { x: 6, y: 264 },
 
     tableTop: 80,
     tableBottom: 188,
     tableLeft: 14,
-    tableAreaW: 480 - 96 - 14,
+    tableAreaW: w - 96 - 14,
     tableAreaH: 188 - 80 - 6,
-    tableRightBound: 480 - 84,
+    tableRightBound: w - 84,
 
     handY: 240,
-    handCenterX: 200,
-    handSpan: 330,
-    handZone: { x: 20, y: 240 - 24, w: 360, h: 48 },
+    handCenterX: 200 + half,
+    handSpan: 330 + dx,
+    handZone: { x: 20, y: 240 - 24, w: 360 + dx, h: 48 },
 
-    actionPanel: { x: 398, y: 140, w: 78, h: 130 },
-    feito: { x: 440, y: t ? 208 : 210, w: 64, h: t ? 28 : 22, size: 9 },
-    comprar: { x: 440, y: t ? 239 : 237, w: 64, h: t ? 24 : 20, size: 8 },
-    undo: { x: 414, y: t ? 261 : 260, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
-    redo: { x: 436, y: t ? 261 : 260, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
-    reset: { x: 460, y: t ? 261 : 260, w: t ? 24 : 22, h: t ? 17 : 14, size: 8 },
+    actionPanel: { x: 398 + dx, y: 140, w: 78, h: 130 },
+    feito: { x: 440 + dx, y: t ? 208 : 210, w: 64, h: t ? 28 : 22, size: 9 },
+    comprar: { x: 440 + dx, y: t ? 239 : 237, w: 64, h: t ? 24 : 20, size: 8 },
+    undo: { x: 414 + dx, y: t ? 261 : 260, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
+    redo: { x: 436 + dx, y: t ? 261 : 260, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
+    reset: { x: 460 + dx, y: t ? 261 : 260, w: t ? 24 : 22, h: t ? 17 : 14, size: 8 },
     sort: { x: 30, y: 246, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
-    gear: { x: 462, y: 10, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
+    gear: { x: 462 + dx, y: 10, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
     // unused in landscape — GameScene only ever builds the toggle button in portrait
-    mexeToggle: { x: 462, y: 10, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
-    // Free strip: barH (30) to tableTop (80), right of the table (x>398) — empty except the gear
-    // button (which sits above it, y10) and the tutorial panel (tutorial mode hides these instead).
-    zoomIn: { x: 418, y: 55, w: t ? 22 : 20, h: t ? 19 : 17, size: 9 },
-    zoomOut: { x: 442, y: 55, w: t ? 22 : 20, h: t ? 19 : 17, size: 9 },
+    mexeToggle: { x: 462 + dx, y: 10, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
+    // Free strip: barH (30) to tableTop (80), right of the table (x>398+dx) — empty except the
+    // gear button (which sits above it, y10) and the tutorial panel (tutorial mode hides these).
+    zoomIn: { x: 418 + dx, y: 55, w: t ? 22 : 20, h: t ? 19 : 17, size: 9 },
+    zoomOut: { x: 442 + dx, y: 55, w: t ? 22 : 20, h: t ? 19 : 17, size: 9 },
 
-    reason: { x: 440, y: 191, wrap: 72, originY: 1, size: 9 },
-    selectHint: { x: 190, y: 265 },
+    reason: { x: 440 + dx, y: 191, wrap: 72, originY: 1, size: 9 },
+    selectHint: { x: 190 + half, y: 265 },
 
-    tooltip: { maxW: 96, minX: 0, maxX: 480 - 92, maxY: 270 - 30 },
+    tooltip: { maxW: 96, minX: 0, maxX: w - 92, maxY: 270 - 30 },
 
-    tutorialPanel: { x: 398, y: 2, w: 80, h: 176 },
+    tutorialPanel: { x: 398 + dx, y: 2, w: 80, h: 176 },
   };
 }
 
