@@ -1,4 +1,5 @@
 import { settings } from '../core/settings';
+import { onAppHidden, onAppVisible } from '../core/lifecycle';
 import { debugApi } from '../verification/debug-api';
 
 /**
@@ -130,12 +131,26 @@ export function startMusic(): void {
   });
   settings.onChange(applyVolume);
 
-  // Browsers block autoplay until the player interacts with the page.
+  // Browsers block autoplay until the player interacts with the page. Once playback actually
+  // gets going, these listeners have done their job — remove them instead of leaving two
+  // page-lifetime listeners firing on every pointerdown/keydown for nothing.
   const unlock = (): void => {
-    if (audio && audio.paused && settings.musicVolume() > 0) play();
+    if (!audio) return;
+    if (audio.paused && settings.musicVolume() > 0) play();
+    if (!audio.paused) {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    }
   };
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('keydown', unlock);
+
+  // App sleep/resume: pause while backgrounded so a locked phone doesn't keep decoding audio,
+  // resume on return only if the player still wants music (muted/off must stay silent).
+  onAppHidden(() => audio?.pause());
+  onAppVisible(() => {
+    if (audio && audio.paused && settings.musicVolume() > 0) play();
+  });
 
   debugApi.music = () => ({
     track: audio?.src.split('/').pop() ?? '',

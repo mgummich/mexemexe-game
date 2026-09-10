@@ -74,6 +74,7 @@ export class BootScene extends Phaser.Scene {
         if (!this.textures.exists(a.key)) makeFallback(this, a.key, a.w, a.h);
       }
       debugApi.scene = 'menu';
+      document.getElementById('boot-loading')?.remove();
       this.scene.start('menu');
     };
 

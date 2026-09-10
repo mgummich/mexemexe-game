@@ -42,10 +42,37 @@
         touch-action: none;
         display: block;
       }
+      /* Paints before any JS/Phaser loads — cold boot can spend 10-25s probing/loading assets
+         with nothing else on screen, which reads as a crash. Removed by BootScene once the menu
+         is actually up (see src/scenes/BootScene.ts). */
+      #boot-loading {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #1a0f0a;
+        box-sizing: border-box;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
+      }
+      #boot-loading div {
+        width: 16px;
+        height: 16px;
+        background: #f7d23e;
+        animation: boot-blink 0.9s steps(2) infinite;
+      }
+      @keyframes boot-blink {
+        50% {
+          opacity: 0.2;
+        }
+      }
     </style>
   </head>
   <body>
     <div id="game"></div>
+    <div id="boot-loading"><div></div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

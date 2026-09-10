@@ -7,11 +7,11 @@
 import { settings } from '../core/settings';
 import { cy } from './menu-layout';
 
-/** Vertical pitch between settings rows — 13 rows must fit the 266-unit panel (landscape world is only 270 tall). */
-export const ROW_PITCH = 19;
+/** Vertical pitch between settings rows — 14 rows must fit the 259-unit panel (landscape world is only 270 tall). */
+export const ROW_PITCH = 17;
 
 /** Main settings panel height — see settings-panel.ts's showMain `h`. */
-export const SETTINGS_PANEL_H = 266;
+export const SETTINGS_PANEL_H = 259;
 
 /** Row order in the main settings panel — index into settingsRowY. Keep in sync with showMain. */
 export enum SettingsRow {
@@ -21,13 +21,14 @@ export enum SettingsRow {
   MusicEnabled = 3,
   MusicContext = 4,
   Motion = 5,
-  LargeText = 6,
-  HelperMode = 7,
-  Lang = 8,
-  Export = 9,
-  Cosmetics = 10,
-  ResetData = 11,
-  Close = 12,
+  BatterySaver = 6,
+  LargeText = 7,
+  HelperMode = 8,
+  Lang = 9,
+  Export = 10,
+  Cosmetics = 11,
+  ResetData = 12,
+  Close = 13,
 }
 
 /** Top edge of the main settings panel — same formula buildOverlay uses (`cy() - h / 2`). */

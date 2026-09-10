@@ -13,10 +13,10 @@ import {
 // Guards the regression fixed by this file: settings-panel.ts grew a 13th row (helper mode) and
 // shrank ROW_PITCH to fit, which silently broke e2e clicks hardcoded at the old y-coordinates.
 // This test would have failed the moment ROW_PITCH/row count changed without a matching panel
-// height, or a new row overlapping an existing one.
+// height, or a new row overlapping an existing one. Phase 17 added a 14th row (battery saver).
 
 describe('settings panel row geometry', () => {
-  const rowCount = 13; // Mute..Close, see SettingsRow
+  const rowCount = 14; // Mute..Close, see SettingsRow
 
   it('every main-panel row lands inside the panel bounds', () => {
     const top = settingsPanelTop();

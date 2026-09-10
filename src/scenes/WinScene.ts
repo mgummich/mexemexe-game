@@ -97,25 +97,61 @@ export class WinScene extends Phaser.Scene {
     }
 
     const results = data.results ?? [];
+    // per-player turn/cards/draw breakdown — only meaningful locally; the playlog never observes
+    // server-driven turns in an online match, so every counter there would just read 0.
+    const showStats = !data.online && results.length > 0;
+    const statsLine = showStats
+      ? results.map((r) => t('win.statLine', { name: r.name, turns: r.turnsPlayed ?? 0, cards: r.cardsPlayed ?? 0, draws: r.draws ?? 0 })).join('    ')
+      : '';
+
+    // Buttons are anchored to the bottom of their own stack (1 button for an online match's
+    // dead-end MENU, 3 otherwise) instead of a fixed offset from the top content — a fixed offset
+    // let the last button run past the world's bottom edge on any short landscape viewport (an
+    // iPhone in landscape), since nothing accounted for how tall the stack itself is.
+    const stackExtent = data.online ? 10 : 51; // bottom-most button's edge, relative to buttonY0
+    const buttonY0Max = view().h - 4 - stackExtent;
+    // buttonY0 is the FIRST button's centre, so its own top edge sits FIRST_BTN_HALF above it —
+    // a content/button gap smaller than that (the original bug) puts the button's top edge
+    // *above* the content bottom it was supposedly clamped past, i.e. still overlapping it.
+    const FIRST_BTN_HALF = 10; // MESMA PARTIDA / the online-only MENU button are both h=20
+    const GAP = 6;
+
+    const pitchApplicable = !data.stalemate && !!data.winningMoveText;
+    const measure = (text: string, size: number, color: string, width: number): number => {
+      const probe = this.add.text(0, 0, text, { ...fontStyle(size, color), align: 'center', wordWrap: { width } });
+      const h = probe.height;
+      probe.destroy();
+      return h;
+    };
+    const pitchH = pitchApplicable ? measure(data.winningMoveText!, 7, '#d8c890', panelW(380)) : 0;
+    const statsH = showStats ? measure(statsLine, 6, '#b8ac98', panelW(400)) : 0;
+    const contentBottom = (withPitch: boolean, withStats: boolean) =>
+      vy(160) + (withPitch ? pitchH + 4 : 0) + 36 /* renderResults' fixed offset */ + (withStats ? statsH + 6 : 0);
+    // Fit-priority ladder, cheapest drop first: the results block (avatars + winner) is the one
+    // thing that always stays. A short landscape viewport (an iPhone in landscape, or even
+    // desktop with Safari's tab bar eating vertical space) sheds the pitch line, then the stats
+    // line, until what's left actually fits above the buttons — guaranteeing content never
+    // renders past buttonY0Max, instead of letting it silently run under the button stack.
+    const fits = (bottom: number) => bottom + GAP + FIRST_BTN_HALF <= buttonY0Max;
+    const includePitch = pitchApplicable && fits(contentBottom(true, showStats));
+    const includeStats = showStats && fits(contentBottom(includePitch, true));
+
     let y = vy(160);
     // biggest gap this screen used to have: the winner is named, but not what they actually did.
-    if (!data.stalemate && data.winningMoveText) {
+    if (includePitch) {
       const moveTxt = this.add
-        .text(cx(), y, data.winningMoveText, { ...fontStyle(7, '#d8c890'), align: 'center', wordWrap: { width: panelW(380) } })
+        .text(cx(), y, data.winningMoveText!, { ...fontStyle(7, '#d8c890'), align: 'center', wordWrap: { width: panelW(380) } })
         .setOrigin(0.5, 0);
       y += moveTxt.height + 4;
     }
     y = this.renderResults(results, y + 8);
-    // per-player turn/cards/draw breakdown — only meaningful locally; the playlog never observes
-    // server-driven turns in an online match, so every counter there would just read 0.
-    if (!data.online && results.length > 0) {
-      const line = results.map((r) => t('win.statLine', { name: r.name, turns: r.turnsPlayed ?? 0, cards: r.cardsPlayed ?? 0, draws: r.draws ?? 0 })).join('    ');
+    if (includeStats) {
       const statsTxt = this.add
-        .text(cx(), y, line, { ...fontStyle(6, '#b8ac98'), align: 'center', wordWrap: { width: panelW(400) } })
+        .text(cx(), y, statsLine, { ...fontStyle(6, '#b8ac98'), align: 'center', wordWrap: { width: panelW(400) } })
         .setOrigin(0.5, 0);
       y += statsTxt.height + 6;
     }
-    const buttonY0 = Math.max(vy(190), Math.min(vy(225), y + 4));
+    const buttonY0 = Math.max(vy(190), Math.min(buttonY0Max, y + GAP + FIRST_BTN_HALF));
 
     debugApi.winButtonY = buttonY0;
 
