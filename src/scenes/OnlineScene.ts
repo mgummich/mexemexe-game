@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
 import { bus } from '../core/events';
+import { isOffline, onConnectivityChange } from '../core/pwa';
 import { t } from '../localization/i18n';
 import { NetClient, type ConnStatus } from '../net/client';
 import { errorMessage } from '../net/errors';
@@ -35,6 +36,10 @@ export class OnlineScene extends Phaser.Scene {
    * double-click can't send a second create_room/join_room/start_game before the server (or a
    * cooldown) resolves the first. */
   private inFlight = new Set<string>();
+  /** True while the current 'error' phase was entered because the device is offline (not a real
+   * server rejection) — lets a regained connection drop back to 'idle' instead of staying stuck
+   * on a stale error. */
+  private offlineError = false;
 
   constructor() {
     super('online');
@@ -58,7 +63,29 @@ export class OnlineScene extends Phaser.Scene {
     // A restart would tear down `this.client`'s live socket — re-lay-out in place instead, same
     // as every server push already does via rebuild().
     this.unsubs.push(bus.on('viewport:changed', () => this.rebuild()));
-    this.client.connect();
+    // Connectivity regained just re-renders (buttons re-enable) — never auto-connects behind
+    // the player's back. If the offline error put them here, drop back to 'idle' so they can retry.
+    this.unsubs.push(
+      onConnectivityChange((offline) => {
+        if (!offline && this.offlineError) {
+          this.offlineError = false;
+          this.phase = 'idle';
+          // We entered this scene offline and skipped connect() entirely (see below), so
+          // this.client's socket was never opened — establish it now, first time, not a
+          // reconnect behind the player's back. They still have to press CRIAR SALA / ENTRAR.
+          this.client.connect();
+        }
+        this.rebuild();
+      }),
+    );
+    if (isOffline()) {
+      // Skip the connect attempt entirely — a clear "you're offline" beats a connection timeout.
+      this.offlineError = true;
+      this.phase = 'error';
+      this.errorMsg = t('offline.online');
+    } else {
+      this.client.connect();
+    }
     this.rebuild();
     debugApi.ready = true;
 
@@ -196,6 +223,19 @@ export class OnlineScene extends Phaser.Scene {
     this.rebuild();
   }
 
+  /** Single place deciding whether a lobby action button is enabled: not already in flight, and
+   * not offline (offline never even reaches the server, so there's nothing to be "in flight"). */
+  private canAct(key: string): boolean {
+    return !this.inFlight.has(key) && !isOffline();
+  }
+
+  /** Transient reason line shown when a disabled CRIAR SALA/ENTRAR is tapped while offline. */
+  private flashOfflineReason(): void {
+    if (!isOffline()) return;
+    const el = label(this, cx(), view().portrait ? vy(270) : vy(260), t('offline.online'), 7, '#ff6b5e');
+    this.time.delayedCall(2000, () => el.destroy());
+  }
+
   private submitJoin(): void {
     if (this.codeInput.length === 0) return;
     this.client.joinRoom(this.codeInput, t('menu.you'));
@@ -233,9 +273,9 @@ export class OnlineScene extends Phaser.Scene {
       const createBtn = new PixelButton(
         this, cx(), vy(110), t('online.create'),
         () => this.fireOnce('create', 3000, () => this.client.createRoom(t('menu.you'))),
-        { textureBase: 'btn-feito', w: 140, h: 24, size: 9 },
+        { textureBase: 'btn-feito', w: 140, h: 24, size: 9, onBlocked: () => this.flashOfflineReason() },
       );
-      createBtn.setEnabled(!this.inFlight.has('create'));
+      createBtn.setEnabled(this.canAct('create'));
       new PixelButton(this, cx(), vy(145), t('online.join'), () => {
         this.phase = 'join';
         this.codeInput = '';
@@ -259,9 +299,9 @@ export class OnlineScene extends Phaser.Scene {
     label(this, cx(), vy(118), shown, 20, this.codeInput ? '#f7d23e' : '#8a7f6e');
     label(this, cx(), vy(148), t('online.codeHint'), 7, '#c0b8a8');
     const confirm = new PixelButton(this, cx(), vy(180), t('online.join'), () => this.fireOnce('join', 3000, () => this.submitJoin()), {
-      textureBase: 'btn-feito', w: 120, h: 22, size: 8,
+      textureBase: 'btn-feito', w: 120, h: 22, size: 8, onBlocked: () => this.flashOfflineReason(),
     });
-    confirm.setEnabled(this.codeInput.length > 0 && !this.inFlight.has('join'));
+    confirm.setEnabled(this.codeInput.length > 0 && this.canAct('join'));
   }
 
   private renderLobby(): void {

@@ -100,6 +100,17 @@ scene/state — used by the screenshot suite), `?ai=cida|juninho|bia|ze`
 (forces the single opponent's personality in a 2-player showcase game, for
 per-personality e2e captures).
 
+## PWA / offline
+
+MEXEMEXE! is installable (Add to Home Screen / desktop install) and works fully offline
+once loaded once. Offline: local hot-seat and AI matches, the tutorial, rules/help,
+settings and cosmetics — all unaffected. Not offline: **ONLINE (ALFA)** rooms, which need
+a live connection, and background music, which is a large streamed file deliberately never
+cached, so it stays silent offline (SFX is unaffected). A service worker precaches the app
+shell on first load and serves cached assets on repeat visits; when a new version is
+available, a dismissible banner lets you update after your current match instead of
+interrupting it.
+
 ## Online Beta
 
 2–4-player private rooms over WebSocket. Beta since 1.2.0 (wire protocol v3):
@@ -276,13 +287,17 @@ npm run screenshot  # npm run build, then Playwright: boots the game, drives
 npm run verify      # all of the above + gate on console errors/missing assets/low fps;
                     # also merges perf/test metrics into docs/STATUS.json
 npm run gen:cosmetics # regenerate the procedural table/card-back/emote PNGs (deterministic)
+npm run gen:icons   # regenerate the PWA manifest icons (deterministic)
 npm run verify:preview # production-build smoke: dist/ serves, assets resolve, no secrets
                        # in the bundle
+npm run verify:pwa  # production build only: service worker registers, offline reload
+                    # boots to the menu, offline local/AI/tutorial play, ONLINE disabled
+                    # offline, zero app-level console errors offline
 ```
 
-Release gate: `npm run verify`, `npm run verify:preview` and
-`npm run verify:multiplayer` must all pass, with zero console errors and zero
-server stderr lines.
+Release gate: `npm run verify`, `npm run verify:preview`, `npm run verify:multiplayer`
+and `npm run verify:pwa` must all pass, with zero console errors and zero server stderr
+lines.
 
 ## Opponents
 

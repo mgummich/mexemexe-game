@@ -185,6 +185,22 @@ unconfirmed move. A client that believes it is out of step sends `resync` and th
 re-sends its view; nothing client-side is ever trusted. If it persists, the protocol
 version in `/health` and in the client build have most likely diverged.
 
+## Releasing a new version / cache busting
+
+The client is a PWA with a service worker (`public/sw.js`) that caches the app shell and
+runtime assets. Bump the `VERSION` const in `public/sw.js` on every release — the
+`activate` handler deletes any cache that isn't the current version, so a stale build
+never lingers. Navigations are network-first, so a new `index.html` (and its new hashed
+asset URLs) is always picked up on next load without a manual cache purge. Players see a
+non-intrusive update banner and apply it themselves after their current match; a new
+worker never takes over mid-match.
+
+Known limitation: applying an update is registration-wide, not per-tab. If a player has
+the game open in several tabs on the same origin and applies the update in one of them,
+the `controllerchange` reload fires in all of them — including a tab that is mid-match.
+Single-tab play, which is how the game is played on phones and how every verification run
+exercises it, is unaffected.
+
 ## Rollback
 
 The client is a static directory and the server is stateless. Rollback is therefore

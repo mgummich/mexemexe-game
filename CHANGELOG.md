@@ -3,6 +3,34 @@
 All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 
+## Unreleased — Phase 15 (PWA + offline local/AI play)
+
+The game is now installable and works fully offline once loaded once. See
+`docs/PHASE15_AUDIT.md`.
+
+- **Installable PWA**: `public/manifest.webmanifest` (name MEXE!, standalone
+  display) and three generated icons (`scripts/gen-icons.mjs`,
+  `npm run gen:icons`), linked from `index.html`.
+- **Service worker** (`public/sw.js`): precaches the app shell only —
+  `BootScene` fills the runtime cache on first (online) load. Network-first
+  navigations with the cached `index.html` as an offline fallback, so a new
+  build is always picked up without a manual purge. Background music is
+  passthrough, never cached (~11 MB of streamed mp3, silent offline); every
+  other same-origin GET is cache-first. Cross-origin and non-GET traffic is
+  never touched, so private multiplayer state can never land in the cache.
+- **Offline detection** (`src/core/pwa.ts`): the ONLINE menu button disables
+  itself offline with a reason line; entering the online screen offline goes
+  straight to the existing error state instead of attempting to connect.
+  Every local option (matches, AI, tutorial, rules, settings) stays fully
+  usable offline.
+- **Safe updates**: a new service worker never takes over on its own — a
+  dismissible banner appears when an update is ready, and only a click
+  applies it and reloads, so a match in progress is never interrupted.
+- **New verification**: `npm run verify:pwa` (Playwright, production build
+  only) covers manifest/icons, first-load caching, offline reload, offline
+  local/AI/tutorial play, and returning online. `tests/pwa.test.ts` and
+  `tests/offline.test.ts` added (408/408 unit tests total, was 330).
+
 ## Unreleased — Phase 14 (helper modes, mobile Mexe editor, table zoom, tutorial/help)
 
 Phase 13 gave touch its own board shape; Phase 12 gave tap-select-then-place

@@ -3,6 +3,7 @@ import { setMusicContext } from '../audio/music';
 import { getLocale, setLocale, t } from '../localization/i18n';
 import { settings } from '../core/settings';
 import { bus } from '../core/events';
+import { isOffline, onConnectivityChange } from '../core/pwa';
 import { openRulesPanel } from '../ui/rules-panel';
 import { openSettingsPanel } from '../ui/settings-panel';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
@@ -11,6 +12,8 @@ import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 
 export class MenuScene extends Phaser.Scene {
+  private onlineBtn?: PixelButton;
+
   constructor() {
     super('menu');
   }
@@ -26,6 +29,10 @@ export class MenuScene extends Phaser.Scene {
     // simplest and correct.
     const unsub = bus.on('viewport:changed', () => this.scene.restart());
     this.events.once('shutdown', unsub);
+    // Connectivity only affects the ONLINE button, so just flip its enabled state — no need for
+    // a full rebuild/restart the way an orientation flip needs.
+    const unsubConn = onConnectivityChange(() => this.onlineBtn?.setEnabled(!isOffline()));
+    this.events.once('shutdown', unsubConn);
     this.rebuild();
     this.markReady();
     const showcase = debugApi.showcase;
@@ -118,8 +125,18 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // visually subordinate to JOGAR: smaller, muted, tucked below the rules/language row
-    new PixelButton(this, cx(), vy(258), t('menu.online'), () => gotoScene(this, 'online'), {
+    this.onlineBtn = new PixelButton(this, cx(), vy(258), t('menu.online'), () => gotoScene(this, 'online'), {
       textureBase: 'btn-comprar', w: 100, h: 13, size: 6, color: 0x8a7f68,
+      onBlocked: () => this.flashOnlineBlocked(),
     });
+    this.onlineBtn.setEnabled(!isOffline());
+  }
+
+  /** Transient reason line under ONLINE when it's tapped while offline — same "always say why"
+   * pattern as GameScene's onFeitoBlocked, just local to this button since MenuScene has no
+   * persistent reason-text widget. */
+  private flashOnlineBlocked(): void {
+    const el = label(this, cx(), vy(226), t('offline.online'), 6, '#ff6b5e');
+    this.time.delayedCall(2000, () => el.destroy());
   }
 }

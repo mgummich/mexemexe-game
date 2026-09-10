@@ -1,0 +1,126 @@
+import { t } from '../localization/i18n';
+import { debugApi } from '../verification/debug-api';
+
+/** True when the browser reports no network. `navigator` doesn't exist under the vitest node
+ * environment, so guard it — importing this module in a unit test must never throw. */
+export function isOffline(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return navigator.onLine === false;
+}
+
+interface ConnectivityTarget {
+  addEventListener(type: 'online' | 'offline', fn: () => void): void;
+  removeEventListener(type: 'online' | 'offline', fn: () => void): void;
+}
+
+/** Subscribes to browser online/offline events; returns an unsubscribe. `target` defaults to
+ * `window` but is injectable so a unit test (node env, no real `window`) can stub it. */
+export function onConnectivityChange(
+  fn: (offline: boolean) => void,
+  target: ConnectivityTarget = window,
+): () => void {
+  const onOnline = (): void => fn(false);
+  const onOffline = (): void => fn(true);
+  target.addEventListener('online', onOnline);
+  target.addEventListener('offline', onOffline);
+  return () => {
+    target.removeEventListener('online', onOnline);
+    target.removeEventListener('offline', onOffline);
+  };
+}
+
+// ---------- offline / update banners ----------
+// Same inline-cssText recipe as the portrait hint / error toast in src/main.ts (no stylesheet in
+// this project), same palette, z-index kept below the error toast's 9999.
+function makeBanner(bottom: number, pointerEvents: 'none' | 'auto'): HTMLDivElement {
+  const el = document.createElement('div');
+  el.style.cssText =
+    `position:fixed;left:50%;bottom:${bottom}px;transform:translateX(-50%);display:none;` +
+    `background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:6px 12px;` +
+    `font:12px monospace;border-radius:4px;z-index:9990;opacity:0.95;pointer-events:${pointerEvents};`;
+  document.body.appendChild(el);
+  return el;
+}
+
+function setupOfflineBanner(): void {
+  const el = document.createElement('div');
+  el.style.cssText =
+    // top:44px, not 12px — clears src/main.ts's portraitHint box (top:12px, ~28px tall) so the
+    // two don't stack during the hint's first 6s in portrait.
+    'position:fixed;left:50%;top:44px;transform:translateX(-50%);display:none;' +
+    'background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:6px 12px;' +
+    'font:12px monospace;border-radius:4px;z-index:9990;opacity:0.95;pointer-events:none;';
+  document.body.appendChild(el);
+  const render = (offline: boolean): void => {
+    debugApi.offline = offline;
+    el.textContent = t('offline.banner');
+    el.style.display = offline ? 'block' : 'none';
+  };
+  render(isOffline());
+  onConnectivityChange(render);
+}
+
+function showUpdateBanner(reg: ServiceWorkerRegistration): void {
+  const el = makeBanner(100, 'auto');
+  el.textContent = t('update.available');
+  el.style.cursor = 'pointer';
+  el.style.display = 'block';
+  el.addEventListener('click', () => reg.waiting?.postMessage({ type: 'SKIP_WAITING' }));
+}
+
+function registerServiceWorker(): void {
+  // Vite build uses base:'./' — resolve relative to the current page, not the site root.
+  navigator.serviceWorker
+    .register(new URL('sw.js', location.href))
+    .then((reg) => {
+      // Reload once the new worker takes control — guarded so a second controllerchange (some
+      // browsers fire it more than once) can't reload twice.
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (reloaded) return;
+        reloaded = true;
+        location.reload();
+      });
+      reg.addEventListener('updatefound', () => {
+        const installing = reg.installing;
+        if (!installing) return;
+        installing.addEventListener('statechange', () => {
+          // installed + an existing controller means an update, not the first install — the
+          // first install has nothing to "update available" about.
+          if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+            showUpdateBanner(reg);
+          }
+        });
+      });
+    })
+    .catch(() => {
+      // registration refused (insecure origin, policy, etc) — never break boot over this
+    });
+}
+
+/** Called once from main.ts. Registers the service worker in prod, keeps dev clean of any
+ * stale worker, and mounts the offline/update banners. Never allowed to throw: a browser with
+ * no/blocked service worker support must still boot normally. */
+export function initPwa(): void {
+  try {
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      if (import.meta.env.PROD) {
+        registerServiceWorker();
+      } else {
+        // DEV: a worker registered during an earlier production visit to this origin would
+        // otherwise serve cached files over the Vite dev server and break hot reload.
+        navigator.serviceWorker
+          .getRegistrations()
+          .then((regs) => regs.forEach((r) => void r.unregister()))
+          .catch(() => { /* nothing to clean up, or blocked — fine either way */ });
+      }
+    }
+  } catch {
+    // service workers unsupported/blocked — never break boot
+  }
+  try {
+    setupOfflineBanner();
+  } catch {
+    // no DOM (shouldn't happen outside tests, which don't call initPwa) — never break boot
+  }
+}

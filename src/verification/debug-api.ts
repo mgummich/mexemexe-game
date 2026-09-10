@@ -72,6 +72,8 @@ export interface MexeDebugApi {
   lastAiThought: string | null;
   /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
   a11y: { invalidBadges: number };
+  /** Verification-only (Phase 15 PWA): current offline state, kept in sync by src/core/pwa.ts. */
+  offline: boolean;
   /** Verification-only (Phase 14 perf fix): running count of DraftEditor.analyze() calls this
    * session — used to prove a table pan / editor scroll never re-triggers a legality analysis
    * mid-gesture (it should only grow on an actual content change or renderAll at gesture end). */
@@ -165,6 +167,7 @@ export const debugApi: MexeDebugApi = {
   tutorialStep: null,
   lastAiThought: null,
   a11y: { invalidBadges: 0 },
+  offline: false,
   analyzeCount: 0,
   invalidMeldReasons: () => [],
   viewport: () => view(),

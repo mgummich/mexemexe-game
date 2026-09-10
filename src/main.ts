@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { startMusic } from './audio/music';
 import { bus } from './core/events';
 import { playlog } from './core/playlog';
+import { initPwa } from './core/pwa';
 import { t } from './localization/i18n';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
@@ -16,6 +17,7 @@ import { debugApi, installDebugApi } from './verification/debug-api';
 installDebugApi();
 playlog.attachToBus(bus);
 startMusic();
+initPwa();
 
 // The world is authored in view().w x view().h units (480x270 landscape, 270x480 portrait — see
 // src/ui/viewport.ts), but the canvas renders at RENDER_SCALE times that so sprites hit their
