@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { gameRegions } from '../src/ui/regions';
+import { DraftEditor } from '../src/mexe-mode/draft';
+import type { GameState } from '../src/rules/types';
+import { DEFAULT_RULES } from '../src/rules/types';
+import { n } from './helpers/cards';
 import {
   clampScroll,
   editorZones,
@@ -11,6 +15,8 @@ import {
 } from '../src/table/editor-layout';
 
 const PORTRAIT = gameRegions({ w: 270, h: 480, portrait: true, touch: false });
+const LANDSCAPE = gameRegions({ w: 480, h: 270, portrait: false, touch: false });
+const LANDSCAPE_WIDE = gameRegions({ w: 630, h: 270, portrait: false, touch: false });
 
 describe('editorZones', () => {
   const zones = editorZones(PORTRAIT);
@@ -31,6 +37,39 @@ describe('editorZones', () => {
 
   it('never reaches into the action bar', () => {
     expect(zones.handStrip.y + zones.handStrip.h).toBeLessThanOrEqual(PORTRAIT.actionPanel.y);
+  });
+});
+
+describe('editorZones landscape', () => {
+  for (const [name, r] of [['480 world', LANDSCAPE], ['630 wide world', LANDSCAPE_WIDE]] as const) {
+    describe(name, () => {
+      const zones = editorZones(r);
+
+      it('every zone stays inside the world', () => {
+        for (const z of Object.values(zones)) {
+          expect(z.x).toBeGreaterThanOrEqual(0);
+          expect(z.x + z.w).toBeLessThanOrEqual(r.w);
+          expect(z.y).toBeGreaterThanOrEqual(0);
+          expect(z.y + z.h).toBeLessThanOrEqual(r.h);
+        }
+      });
+
+      it('meld list, workspace and hand strip never overlap each other', () => {
+        // meld list is a full-height left column; workspace/hand strip share the column to its right.
+        expect(zones.meldList.x + zones.meldList.w).toBeLessThanOrEqual(zones.workspace.x);
+        expect(zones.meldList.x + zones.meldList.w).toBeLessThanOrEqual(zones.handStrip.x);
+        expect(zones.workspace.y + zones.workspace.h).toBeLessThanOrEqual(zones.handStrip.y);
+      });
+
+      it('never overlaps the right-hand action column', () => {
+        for (const z of Object.values(zones)) expect(z.x + z.w).toBeLessThanOrEqual(r.tableRightBound);
+      });
+    });
+  }
+
+  it('a wider phone world grows the workspace, not the meld-list column', () => {
+    expect(editorZones(LANDSCAPE_WIDE).meldList.w).toBe(editorZones(LANDSCAPE).meldList.w);
+    expect(editorZones(LANDSCAPE_WIDE).workspace.w).toBeGreaterThan(editorZones(LANDSCAPE).workspace.w);
   });
 });
 
@@ -101,5 +140,50 @@ describe('hitTestMeldListRow', () => {
   it('the trailing row is the new-meld target', () => {
     const y = zone.y + 3 * MELD_LIST_ROW_H + 1;
     expect(hitTestMeldListRow(rows, zone, 0, zone.x + 5, y)?.meldId).toBeNull();
+  });
+
+  it('hit tests the same way against the landscape meld-list column', () => {
+    const lZone = editorZones(LANDSCAPE).meldList;
+    expect(hitTestMeldListRow(rows, lZone, 0, lZone.x + 5, lZone.y + 1)?.meldId).toBe('a');
+    expect(hitTestMeldListRow(rows, lZone, 0, lZone.x + 5, lZone.y + MELD_LIST_ROW_H + 1)?.meldId).toBe('b');
+    expect(hitTestMeldListRow(rows, lZone, 0, lZone.x - 1, lZone.y + 1)).toBeNull();
+  });
+});
+
+function draftState(): GameState {
+  return {
+    seed: 1,
+    players: [
+      { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 2), n('spades', 9)] },
+      { id: 'p1', name: 'B', isAi: true, hand: [n('clubs', 4)] },
+    ],
+    activePlayerIndex: 0,
+    table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
+    drawPile: [],
+    turn: 1,
+    winnerId: null,
+    phase: 'playing',
+    config: DEFAULT_RULES,
+  };
+}
+
+describe('orientation flip preserves the draft', () => {
+  // DraftEditor (src/mexe-mode/draft.ts) never imports viewport/regions — nothing about it is
+  // wired to the ViewProfile a rotation changes. editorZones() is a pure read of GameRegions.
+  // Re-laying-out for a flip is therefore just recomputing zones; it cannot touch, confirm, or
+  // reset the draft sitting in DraftEditor. This test guards that invariant directly.
+  it('a mid-edit (invalid) draft survives recomputing zones for both orientations', () => {
+    const ed = new DraftEditor(draftState());
+    ed.playHandCard('spades-9-d0', 't1'); // breaks the run — invalid meld, draft not confirmable
+    expect(ed.canConfirm().ok).toBe(false);
+    const draftBefore = ed.getDraft();
+
+    editorZones(PORTRAIT);
+    editorZones(LANDSCAPE);
+    editorZones(LANDSCAPE_WIDE);
+    editorZones(PORTRAIT); // flip back
+
+    expect(ed.getDraft()).toEqual(draftBefore);
+    expect(ed.canConfirm().ok).toBe(false); // still not silently confirmed by the flip
   });
 });

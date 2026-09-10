@@ -63,8 +63,7 @@ export interface GameRegions {
   reset: ButtonSpec;
   sort: ButtonSpec;
   gear: ButtonSpec;
-  /** Portrait-only: toggles the focused Mexe editor (Phase 14 Wave C). Landscape carries a value
-   * here too (interface parity) but GameScene never builds the button from it there. */
+  /** Toggles the focused Mexe editor (Phase 14 Wave C, landscape support added later). */
   mexeToggle: ButtonSpec;
   /** Table zoom in/out (Phase 14 Wave D) — a crowded table trades visible area for card size. */
   zoomIn: ButtonSpec;
@@ -125,22 +124,24 @@ function landscape(p: ViewProfile): GameRegions {
     handSpan: 330 + dx,
     handZone: { x: 20, y: 240 - 24, w: 360 + dx, h: 48 },
 
-    actionPanel: { x: 398 + dx, y: 140, w: 78, h: 130 },
-    feito: { x: 440 + dx, y: t ? 208 : 210, w: 64, h: t ? 28 : 22, size: 9 },
-    comprar: { x: 440 + dx, y: t ? 239 : 237, w: 64, h: t ? 24 : 20, size: 8 },
-    undo: { x: 414 + dx, y: t ? 261 : 260, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
-    redo: { x: 436 + dx, y: t ? 261 : 260, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
-    reset: { x: 460 + dx, y: t ? 261 : 260, w: t ? 24 : 22, h: t ? 17 : 14, size: 8 },
-    sort: { x: 30, y: 246, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
-    gear: { x: 462 + dx, y: 10, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
-    // unused in landscape — GameScene only ever builds the toggle button in portrait
-    mexeToggle: { x: 462 + dx, y: 10, w: t ? 20 : 16, h: t ? 17 : 14, size: 8 },
-    // Free strip: barH (30) to tableTop (80), right of the table (x>398+dx) — empty except the
-    // gear button (which sits above it, y10) and the tutorial panel (tutorial mode hides these).
-    zoomIn: { x: 418 + dx, y: 55, w: t ? 22 : 20, h: t ? 19 : 17, size: 9 },
-    zoomOut: { x: 442 + dx, y: 55, w: t ? 22 : 20, h: t ? 19 : 17, size: 9 },
+    // Touch: right column (x>tableRightBound, free y0-270) re-laid-out top to bottom as gear,
+    // zoomIn/zoomOut, reset, feito, comprar, undo/redo — every hit box >=31 tall, none overlap.
+    // Desktop values below are untouched (same numbers as before this fix).
+    actionPanel: t ? { x: 400 + dx, y: 155, w: 80, h: 113 } : { x: 398 + dx, y: 140, w: 78, h: 130 },
+    feito: t ? { x: 438 + dx, y: 176, w: 72, h: 34, size: 10 } : { x: 440 + dx, y: 210, w: 64, h: 22, size: 9 },
+    comprar: t ? { x: 438 + dx, y: 214, w: 72, h: 32, size: 9 } : { x: 440 + dx, y: 237, w: 64, h: 20, size: 8 },
+    undo: t ? { x: 419 + dx, y: 250, w: 36, h: 31, size: 8 } : { x: 414 + dx, y: 260, w: 16, h: 14, size: 8 },
+    redo: t ? { x: 457 + dx, y: 250, w: 36, h: 31, size: 8 } : { x: 436 + dx, y: 260, w: 16, h: 14, size: 8 },
+    reset: t ? { x: 438 + dx, y: 94, w: 72, h: 31, size: 8 } : { x: 460 + dx, y: 260, w: 22, h: 14, size: 8 },
+    sort: t ? { x: 30, y: 246, w: 34, h: 31, size: 8 } : { x: 30, y: 246, w: 16, h: 14, size: 8 },
+    gear: t ? { x: 438 + dx, y: 18, w: 34, h: 31, size: 8 } : { x: 462 + dx, y: 10, w: 16, h: 14, size: 8 },
+    // Free strip between reset (ends y125/y24) and the next cluster (actionPanel y155 / zoomIn
+    // y55) — sized to fit there without touching either neighbour.
+    mexeToggle: t ? { x: 438 + dx, y: 126, w: 72, h: 28, size: 8 } : { x: 438 + dx, y: 30, w: 64, h: 14, size: 8 },
+    zoomIn: t ? { x: 419 + dx, y: 56, w: 36, h: 31, size: 9 } : { x: 418 + dx, y: 55, w: 20, h: 17, size: 9 },
+    zoomOut: t ? { x: 457 + dx, y: 56, w: 36, h: 31, size: 9 } : { x: 442 + dx, y: 55, w: 20, h: 17, size: 9 },
 
-    reason: { x: 440 + dx, y: 191, wrap: 72, originY: 1, size: 9 },
+    reason: t ? { x: 438 + dx, y: 135, wrap: 72, originY: 1, size: 9 } : { x: 440 + dx, y: 191, wrap: 72, originY: 1, size: 9 },
     selectHint: { x: 190 + half, y: 265 },
 
     tooltip: { maxW: 96, minX: 0, maxX: w - 92, maxY: 270 - 30 },
@@ -188,17 +189,19 @@ function portrait(p: ViewProfile): GameRegions {
     actionPanel: { x: 0, y: 360, w: 270, h: 120 },
     feito: { x: 192, y: 452, w: 140, h: 40, size: 12 },
     comprar: { x: 66, y: 452, w: 104, h: 36, size: 9 },
-    undo: { x: 55, y: 412, w: 32, h: 26, size: 9 },
-    redo: { x: 95, y: 412, w: 32, h: 26, size: 9 },
-    reset: { x: 135, y: 412, w: 32, h: 26, size: 9 },
-    sort: { x: 175, y: 412, w: 32, h: 26, size: 9 },
-    gear: { x: 215, y: 412, w: 32, h: 26, size: 9 },
-    // free slot left of undo (undo's left edge sits at 39) — the focused-editor toggle.
-    mexeToggle: { x: 23, y: 412, w: 30, h: 26, size: 9 },
-    // free slot right of gear (gear's right edge sits at 231, tableRightBound is 266) — stacked
-    // since it's narrower than the row is tall.
-    zoomIn: { x: 249, y: 405, w: 28, h: 13, size: 7 },
-    zoomOut: { x: 249, y: 419, w: 28, h: 13, size: 7 },
+    // One row, 8 controls, centres exactly 34 apart — 8 * 34 = 272 barely exceeds the 270-wide
+    // world, so the row is centred with a 1-unit hitbox spill off each edge (imperceptible)
+    // rather than 8 controls squeezed to <34 (that reopens the overlap bug this fixes). y412, h31
+    // hit box spans 396.5-427.5 — clear of reason/selectHint above and feito/comprar (y452, h40,
+    // spans 432-472) below.
+    mexeToggle: { x: 16, y: 412, w: 32, h: 28, size: 9 },
+    undo: { x: 50, y: 412, w: 32, h: 28, size: 9 },
+    redo: { x: 84, y: 412, w: 32, h: 28, size: 9 },
+    reset: { x: 118, y: 412, w: 32, h: 28, size: 9 },
+    sort: { x: 152, y: 412, w: 32, h: 28, size: 9 },
+    gear: { x: 186, y: 412, w: 32, h: 28, size: 9 },
+    zoomIn: { x: 220, y: 412, w: 32, h: 28, size: 7 },
+    zoomOut: { x: 254, y: 412, w: 32, h: 28, size: 7 },
 
     reason: { x: 135, y: 374, wrap: 250, originY: 0, size: 9 },
     selectHint: { x: 135, y: 366 },

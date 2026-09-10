@@ -323,6 +323,12 @@ export class GameScene extends Phaser.Scene {
       bus.on('viewport:changed', () => this.relayout()),
     );
     if (config.online) this.wireOnline(config.online.client);
+    // Phaser's drag plugin has no pointercancel handling (only pointerup/pointerupoutside), so a
+    // pointer the OS steals mid-drag (system gesture, notification) never fires either and leaves
+    // a card stranded with dragging=true. The browser does emit pointercancel — listen for it
+    // directly on the canvas and restore the card exactly like an out-of-bounds drop would.
+    const cancelDragOnPointerCancel = () => this.cancelActiveDrag();
+    this.game.canvas.addEventListener('pointercancel', cancelDragOnPointerCancel);
     this.events.once('shutdown', () => {
       this.sceneGone = true;
       this.unsubs.forEach((u) => u());
@@ -331,6 +337,8 @@ export class GameScene extends Phaser.Scene {
       this.onlinePendingTimer?.remove();
       this.ambienceSound?.stop();
       this.resetZoomPan();
+      this.game.canvas.removeEventListener('pointercancel', cancelDragOnPointerCancel);
+      this.cancelActiveDrag();
     });
 
     this.input.keyboard?.on('keydown-ESC', () => {
@@ -890,13 +898,11 @@ export class GameScene extends Phaser.Scene {
 
     this.staticUi.push(panel, this.feitoBtn, this.comprarBtn, undoBtn, redoBtn, resetBtn, sortBtn);
 
-    if (this.r.portrait) {
-      // Focused Mexe editor toggle (Phase 14 Wave C) — portrait only, landscape is untouched.
-      this.mexeToggleBtn = new PixelButton(this, this.r.mexeToggle.x, this.r.mexeToggle.y, t('mobile.editorToggle'), () => this.toggleMexeEditor(), {
-        textureBase: 'btn-small', w: this.r.mexeToggle.w, h: this.r.mexeToggle.h, size: this.r.mexeToggle.size, color: 0x5e5646, tooltip: t('tooltip.mexeEditor'),
-      });
-      this.staticUi.push(this.mexeToggleBtn);
-    }
+    // Focused Mexe editor toggle (Phase 14 Wave C; landscape support added later) — both orientations.
+    this.mexeToggleBtn = new PixelButton(this, this.r.mexeToggle.x, this.r.mexeToggle.y, t('mobile.editorToggle'), () => this.toggleMexeEditor(), {
+      textureBase: 'btn-small', w: this.r.mexeToggle.w, h: this.r.mexeToggle.h, size: this.r.mexeToggle.size, color: 0x5e5646, tooltip: t('tooltip.mexeEditor'),
+    });
+    this.staticUi.push(this.mexeToggleBtn);
 
     if (!this.config.tutorial) {
       // tutorial mode uses the whole right column for its step panel — no room for the gear there (Esc still opens pause)
@@ -1317,10 +1323,10 @@ export class GameScene extends Phaser.Scene {
     // local seat's hand
     const hand = this.editor ? this.editor.getRemainingHand() : state.players[this.localSeat]!.hand;
 
-    // Focused Mexe editor (Phase 14 Wave C): portrait only, and only while a live draft exists —
-    // rotating to landscape or losing the editor (turn change) drops back to the normal board.
-    if (this.mexeEditorOpen && !this.r.portrait) this.mexeEditorOpen = false;
-    const editorMode = this.mexeEditorOpen && this.r.portrait && this.editor !== null;
+    // Focused Mexe editor (Phase 14 Wave C, both orientations): only while a live draft exists —
+    // losing the editor (turn change) drops back to the normal board. An orientation flip
+    // re-lays-out (relayout()) but must not close the editor or touch the draft itself.
+    const editorMode = this.mexeEditorOpen && this.editor !== null;
     if (editorMode) {
       this.renderMexeEditor(melds, hand, invalidReasons, interactive, state.config);
     } else {
@@ -1351,7 +1357,7 @@ export class GameScene extends Phaser.Scene {
     }
     // Task 4 (Wave C carry-over): the portrait editor toggle looked live to an inactive online
     // player and silently no-op'd on tap. Drive it from the same gate comprarBtn already uses.
-    if (this.r.portrait) this.mexeToggleBtn.setEnabled(interactive);
+    this.mexeToggleBtn.setEnabled(interactive);
     if (!this.config.tutorial) {
       this.zoomInBtn.setEnabled(!editorMode && this.zoomLevel < ZOOM_FLOORS.length - 1);
       this.zoomOutBtn.setEnabled(!editorMode && this.zoomLevel > 0);
@@ -1760,6 +1766,13 @@ export class GameScene extends Phaser.Scene {
         });
         focusIcon.on('pointerover', () => this.showMeldReasonTooltip(zoneRect, t('tooltip.meldFocus')));
         focusIcon.on('pointerout', () => this.hideMeldReasonTooltip());
+        if (this.r.touch) {
+          // No hover on touch: show on tap and auto-hide, same pattern as PixelButton's tooltip.
+          focusIcon.on('pointerdown', () => {
+            this.showMeldReasonTooltip(zoneRect, t('tooltip.meldFocus'));
+            this.time.delayedCall(2500, () => this.hideMeldReasonTooltip());
+          });
+        }
         this.hud.push(focusIcon);
       }
 
@@ -1780,6 +1793,13 @@ export class GameScene extends Phaser.Scene {
           const rect = new Phaser.Geom.Rectangle(x - cw / 2, y - ch / 2, cw, ch);
           sprite.on('pointerover', () => this.showMeldReasonTooltip(rect, t('joker.standsFor', { card: jokerLabel })));
           sprite.on('pointerout', () => this.hideMeldReasonTooltip());
+          if (this.r.touch) {
+            // No hover on touch: show on tap and auto-hide, same pattern as PixelButton's tooltip.
+            sprite.on('pointerdown', () => {
+              this.showMeldReasonTooltip(rect, t('joker.standsFor', { card: jokerLabel }));
+              this.time.delayedCall(2500, () => this.hideMeldReasonTooltip());
+            });
+          }
         }
         if (this.lastMoveIds.has(card.id)) {
           // persistent "the opponent touched this" marker — stays until the local player acts
@@ -2008,7 +2028,8 @@ export class GameScene extends Phaser.Scene {
     this.meldZones = this.mexeEditorMeldId !== undefined ? [{ meldId: this.mexeEditorMeldId ?? '', rect: wsRect }] : [];
 
     if (this.mexeEditorMeldId === undefined) {
-      this.hud.push(label(this, wsRect.centerX, wsRect.centerY, t('mobile.editorSelectMeld'), 8, '#b8b0a0'));
+      this.hud.push(label(this, wsRect.centerX, wsRect.centerY - 6, t('mobile.mexeModeHint'), 7, '#b8b0a0'));
+      this.hud.push(label(this, wsRect.centerX, wsRect.centerY + 6, t('mobile.editorSelectMeld'), 8, '#b8b0a0'));
     } else {
       const wsMeld = melds.find((m) => m.id === this.mexeEditorMeldId);
       const wsCards = wsMeld ? this.sortedForDisplay(wsMeld, config) : [];
@@ -2176,6 +2197,25 @@ export class GameScene extends Phaser.Scene {
       this.hud.push(dot);
     }
     return sprite;
+  }
+
+  /** Restores whichever card sprite is mid-drag and clears its drag state — see the pointercancel
+   * listener in create(). Safe to call when nothing is dragging (no-op). */
+  private cancelActiveDrag(): void {
+    const sprite = this.cardSprites.find((s) => s.getData('dragging'));
+    if (!sprite || !sprite.active) return;
+    sprite.setData('dragging', false);
+    this.dragShadow?.destroy();
+    this.dragShadow = null;
+    this.clearDropZoneHighlights();
+    this.snapTargets = [];
+    this.tweens.add({
+      targets: sprite,
+      x: sprite.getData('homeX') as number,
+      y: sprite.getData('homeY') as number,
+      displayWidth: CARD_W, displayHeight: CARD_H, ease: 'Back.out', duration: 140,
+    });
+    if (this.tableContainer && sprite.active) this.tableContainer.add(sprite);
   }
 
   private wireDrag(sprite: Phaser.GameObjects.Image): void {

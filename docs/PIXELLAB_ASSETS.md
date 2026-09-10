@@ -83,3 +83,88 @@ copyrighted source.
 Tables, card backs and emotes above remain procedurally generated
 (`scripts/gen-cosmetics.mjs`) — this Phase 9 PixelLab pass only covers the 4
 avatars; no re-generation of the procedural set was done or needed.
+
+## Portrait table backgrounds — PixelLab
+
+`coverBackground()` (src/ui/menu-layout.ts) uniform-scales art to fill the
+world; the 480x270 landscape art crops ~69% away in the 270x480 portrait
+world. These are dedicated 9:16 portrait variants (224x400 — PixelLab's
+closest 4px-aligned size to the exact 225x400 ratio, capped by its 400x400
+max canvas area) so portrait needs no cropping. Loaded unconditionally
+alongside the landscape set (no orientation-conditional loading);
+`coverBackground()` picks `${key}-portrait` in portrait, falling back to the
+landscape key if that texture failed to load (`backgroundKeyFor()`, tested
+in tests/menu-layout.test.ts). `makeFallback()`'s `bg-` prefix match already
+covers the new keys, no change needed.
+
+| Asset | Prompt used | Size | Path | Orientation | Used by | Fallback |
+|---|---|---|---|---|---|---|
+| BG boteco portrait | dark green felt table surface filling the frame, thick warm wooden frame around all four edges, a small coffee cup and a folded napkin tucked near the top edge only, large clear empty felt in the middle, flat overhead top-down view, the table surface completely fills the frame edge to edge, no room, no walls, no chairs, no floor, no horizon, no perspective, no text, no signs, no letters, no numbers, no logos, original pixel art | 224×400 | /public/assets/tables/boteco-portrait.png | portrait | WinScene | landscape `bg-boteco` |
+| BG kitchen portrait | vivid red and cream white gingham checkered picnic tablecloth pattern covering entire frame evenly, bold thick red bands crossing cream white bands with clear white cross-hatch where bands overlap, only two props: a red ceramic mug near top edge, a small round plate of pao de queijo bread near bottom edge, large clear checkered area in middle, flat overhead top-down view, surface fills the frame edge to edge, no room, no walls, no chairs, no horizon, no perspective, no text, no letters, no numbers, no logos, original pixel art | 224×400 | /public/assets/tables/kitchen-portrait.png | portrait | (table cosmetic, unused directly by a scene yet — parity with landscape `bg-kitchen`) | landscape `bg-kitchen` |
+| BG menu portrait | Cozy Brazilian pixel-art vertical menu background, dusk boteco exterior facade at night, warm string lights and colorful bunting flags overhead, closed wooden double doors, potted palm plants either side, tiled ground, festive inviting mood, no signage, no readable words, no shop sign, no text, no logos, crisp pixel art, mobile portrait composition | 224×400 | /public/assets/tables/menu-portrait.png | portrait | MenuScene, SetupScene, OnlineScene | landscape `bg-menu` |
+| BG quintal portrait | warm brown vertical wooden plank table surface filling the frame, a yellow and orange checkered tile border running along all four edges, nothing in the middle, flat overhead top-down view, the table surface completely fills the frame edge to edge, no room, no walls, no chairs, no floor, no horizon, no perspective, no text, no signs, no letters, no numbers, no logos, original pixel art | 224×400 | /public/assets/tables/quintal-portrait.png | portrait | (table cosmetic, parity with landscape `bg-quintal`) | landscape `bg-quintal` |
+| BG feira portrait | grey-brown burlap canvas market-stall surface with a clearly visible diagonal weave texture filling the frame, dark wooden posts down left and right edges, a red and cream striped awning valance across the top edge only, nothing in the middle, flat overhead top-down view, surface fills the frame edge to edge, no room, no walls, no chairs, no horizon, no perspective, no text, no letters, no numbers, no logos, original pixel art | 224×400 | /public/assets/tables/feira-portrait.png | portrait | (table cosmetic, parity with landscape `bg-feira`) | landscape `bg-feira` |
+
+First menu-portrait generation baked in a readable shop-sign wordmark
+("BRAZELA BROGUECO") — rejected and regenerated with the shop doors closed
+and an explicit "no signage, no readable words, no shop sign" prompt instead.
+menu-portrait was kept as-is from that earlier pass (it's a street-facade
+scene, not a tabletop, so it wasn't affected by the room/chairs/perspective
+issue below).
+
+Second pass regenerated boteco/kitchen/quintal/feira portrait — the first
+pass had rendered these as 3/4-perspective room scenes (table+chairs,
+market-stall elevation, backyard with door/plants) instead of flat overhead
+table surfaces, and feira had baked-in readable text on signage. Regenerated
+via `create_image_pixflux` with `view: "high top-down"`,
+`outline: "selective outline"`, and `color_image_base64` set to a small
+(~8x8px, 6-color) palette swatch quantized from each landscape sibling PNG
+(ImageMagick `convert -resize 8x8 -colors 6`) to lock the palette without
+transferring the full-size PNG inline. boteco, quintal, feira passed on the
+first attempt; kitchen needed one retry (first attempt drew a busy beige
+overlay box in the middle plus extra unlisted props) — accepted on the
+second attempt, palette leans a bit more salmon/pink than the landscape's
+vivid red/white gingham but is not a clash.
+
+Third pass (composition kept, palette-only refine) re-ran kitchen, quintal
+and feira in place via `create_image_pixflux` `init_image_base64` (the
+existing 224×400 portrait PNG) + `color_image_base64`, per the workflow
+above. The plain `-resize 8x8 -colors 6` swatch used in pass two turned out
+to blend distinct colors into a single averaged pastel when downsizing
+(kitchen's vivid red + white averaged to flat salmon) — switched to
+`-colors 6` (quantize at full res first) then `-filter point -resize 8x8`
+(nearest-neighbor, no blending) for correct discrete swatch colors. Large
+inline PNGs (any raw portrait or landscape base64 over ~15KB, occasionally
+even ~5-6KB) were repeatedly silently truncated in transit by the MCP
+transport, producing "broken data stream" decode errors; worked around by
+quantizing the offending PNG to 16 colors (`-colors 16 PNG8:`) before
+base64-ing, which reliably fit.
+
+- feira: accepted on attempt 2 of 3, `init_image_strength: 150` (attempt 1
+  at 300 kept too much of the original and lost the weave/posts entirely,
+  going flat pinkish-mauve). Result reads clearly as grey-brown burlap with
+  visible wood posts and the red/cream awning matching the landscape; the
+  diagonal weave lines are present but subtle rather than bold. Attempt 3 at
+  100 with a stronger "diagonal woven crosshatch" prompt distorted the posts
+  and was discarded in favor of attempt 2.
+- kitchen: **not fully resolved after 4 attempts** (300, 180, 150, 230, 60 —
+  one extra beyond the nominal 3 since the first two used the flawed swatch
+  above). Every attempt kept the checkered composition and both props
+  (mug/plate) but the palette would not move off muted salmon/tan into the
+  landscape's vivid red + white; lower strengths instead broke the grid into
+  floating squares without gaining saturation. Kept the best version —
+  attempt 2 (`init_image_strength: 180`, flawed swatch) — since it has the
+  cleanest, most regular checkerboard grid of the batch even though the
+  color gap to the landscape remains. Revisit with a stronger/more literal
+  text_guidance_scale or a non-init-image (fresh generation + palette-only
+  lock) approach if this needs to match more closely.
+- quintal: **not resolved after 3 attempts** (300, 180, 120). None produced
+  a visible checkered border — strength 300 left the border-less portrait
+  essentially unchanged, and 180/120 also failed to introduce the border
+  (120 only added faint corner accents) while shifting the plank color
+  further from the landscape's richer brown. Kept the **pre-existing
+  quintal-portrait.png unchanged** (its thin, faint edge line is closer to
+  the landscape than any regenerated attempt) and flagging that a real bold
+  checkered border still needs a different approach — possibly
+  `inpaint_image` targeted at just the border region instead of a
+  whole-image img2img pass.

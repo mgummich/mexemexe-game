@@ -166,7 +166,7 @@ export class PixelButton extends Phaser.GameObjects.Container {
     // Coarse pointer: grow the hit box past the artwork so a touch target never shrinks below a
     // usable size — the art itself (visualW/visualH) stays exactly w x h either way.
     const touch = view().touch;
-    this.setSize(touch ? Math.max(w, 32) : w, touch ? Math.max(h, 26) : h);
+    this.setSize(touch ? Math.max(w, 34) : w, touch ? Math.max(h, 31) : h);
     this.setInteractive({ useHandCursor: true });
     this.setBtnTexture('normal'); // apply palette tint immediately, not just on first hover
 

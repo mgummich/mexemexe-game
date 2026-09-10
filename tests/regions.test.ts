@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { gameRegions } from '../src/ui/regions';
+import { gameRegions, type ButtonSpec, type GameRegions } from '../src/ui/regions';
+
+/** Mirrors PixelButton's coarse-pointer hit-box floor (src/ui/widgets.ts): the art stays w x h,
+ * only the tappable area grows. Desktop (touch=false) is untouched. */
+function hitBox(b: ButtonSpec, touch: boolean): { x: number; y: number; w: number; h: number } {
+  return { x: b.x, y: b.y, w: touch ? Math.max(b.w, 34) : b.w, h: touch ? Math.max(b.h, 31) : b.h };
+}
+
+function overlaps(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean {
+  const ax0 = a.x - a.w / 2, ax1 = a.x + a.w / 2, ay0 = a.y - a.h / 2, ay1 = a.y + a.h / 2;
+  const bx0 = b.x - b.w / 2, bx1 = b.x + b.w / 2, by0 = b.y - b.h / 2, by1 = b.y + b.h / 2;
+  return ax0 < bx1 && bx0 < ax1 && ay0 < by1 && by0 < ay1;
+}
+
+/** Controls GameScene actually builds as buttons in this orientation — mexeToggle is built in
+ * both since landscape Mexe Mode shipped. */
+function controls(r: GameRegions): [string, ButtonSpec][] {
+  return [
+    ['feito', r.feito], ['comprar', r.comprar], ['undo', r.undo], ['redo', r.redo],
+    ['reset', r.reset], ['sort', r.sort], ['gear', r.gear], ['mexeToggle', r.mexeToggle],
+    ['zoomIn', r.zoomIn], ['zoomOut', r.zoomOut],
+  ];
+}
 
 const LANDSCAPE = { w: 480, h: 270, portrait: false, touch: false } as const;
 const PORTRAIT = { w: 270, h: 480, portrait: true, touch: false } as const;
@@ -44,7 +66,7 @@ describe('gameRegions landscape desktop regression', () => {
       reset: { x: 460, y: 260, w: 22, h: 14, size: 8 },
       sort: { x: 30, y: 246, w: 16, h: 14, size: 8 },
       gear: { x: 462, y: 10, w: 16, h: 14, size: 8 },
-      mexeToggle: { x: 462, y: 10, w: 16, h: 14, size: 8 },
+      mexeToggle: { x: 438, y: 30, w: 64, h: 14, size: 8 },
       zoomIn: { x: 418, y: 55, w: 20, h: 17, size: 9 },
       zoomOut: { x: 442, y: 55, w: 20, h: 17, size: 9 },
 
@@ -58,22 +80,29 @@ describe('gameRegions landscape desktop regression', () => {
 });
 
 describe('gameRegions landscape touch', () => {
-  it('grows FEITO/COMPRAR and keeps the action column non-overlapping', () => {
-    const r = gameRegions({ w: 480, h: 270, portrait: false, touch: true });
-    expect(r.feito.h).toBeGreaterThanOrEqual(26);
-    expect(r.comprar.h).toBeGreaterThanOrEqual(24);
+  const r = gameRegions({ w: 480, h: 270, portrait: false, touch: true });
 
-    const feitoBottom = r.feito.y + r.feito.h / 2;
-    const comprarTop = r.comprar.y - r.comprar.h / 2;
-    const comprarBottom = r.comprar.y + r.comprar.h / 2;
-    const rowTop = r.undo.y - r.undo.h / 2;
+  it('grows every control to at least a 34x31 hit box, all inside the world', () => {
+    for (const [, b] of controls(r)) {
+      const hb = hitBox(b, true);
+      expect(hb.h).toBeGreaterThanOrEqual(31);
+      expect(hb.w).toBeGreaterThanOrEqual(34);
+      expect(hb.y - hb.h / 2).toBeGreaterThanOrEqual(0);
+      expect(hb.y + hb.h / 2).toBeLessThanOrEqual(r.h);
+    }
+  });
 
-    expect(comprarTop).toBeGreaterThanOrEqual(feitoBottom);
-    expect(rowTop).toBeGreaterThanOrEqual(comprarBottom);
-    // ...and the whole grown cluster still fits inside the world and its backdrop panel.
-    const rowBottom = r.undo.y + r.undo.h / 2;
-    expect(rowBottom).toBeLessThanOrEqual(r.h);
-    expect(r.feito.y - r.feito.h / 2).toBeGreaterThanOrEqual(r.actionPanel.y);
+  it('reset moved above feito/comprar, out of the cramped bottom row', () => {
+    expect(r.reset.y + r.reset.h / 2).toBeLessThanOrEqual(r.feito.y - r.feito.h / 2);
+  });
+
+  it('no two control hit boxes overlap', () => {
+    const list = controls(r);
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        expect(overlaps(hitBox(list[i]![1], true), hitBox(list[j]![1], true))).toBe(false);
+      }
+    }
   });
 });
 
@@ -127,10 +156,9 @@ describe('gameRegions portrait', () => {
     expect(r.mexeToggle.x + r.mexeToggle.w / 2).toBeLessThanOrEqual(r.undo.x - r.undo.w / 2);
   });
 
-  it('zoom buttons sit right of gear, stacked, without overlapping it or each other', () => {
+  it('zoom buttons sit right of gear in the control row, without overlapping it or each other', () => {
     expect(r.zoomIn.x - r.zoomIn.w / 2).toBeGreaterThanOrEqual(r.gear.x + r.gear.w / 2);
-    expect(r.zoomOut.x - r.zoomOut.w / 2).toBeGreaterThanOrEqual(r.gear.x + r.gear.w / 2);
-    expect(r.zoomIn.y + r.zoomIn.h / 2).toBeLessThanOrEqual(r.zoomOut.y - r.zoomOut.h / 2);
+    expect(r.zoomOut.x - r.zoomOut.w / 2).toBeGreaterThanOrEqual(r.zoomIn.x + r.zoomIn.w / 2);
   });
 });
 
@@ -171,5 +199,42 @@ describe('gameRegions landscape on a wider-than-16:9 world', () => {
   it('centred text follows the new centre', () => {
     expect(r.banner.x).toBe(291);
     expect(r.lastMove.x).toBe(291);
+  });
+});
+
+describe('touch hit boxes: every orientation, no overlaps, desktop unchanged', () => {
+  const profiles = [
+    { name: 'landscape', p: { w: 480, h: 270, portrait: false, touch: true } },
+    { name: 'portrait', p: { w: 270, h: 480, portrait: true, touch: true } },
+  ] as const;
+
+  for (const { name, p } of profiles) {
+    it(`${name}: every control hit box is >=31 world units tall and none overlap`, () => {
+      const r = gameRegions(p);
+      const list = controls(r);
+      for (const [, b] of list) {
+        expect(hitBox(b, true).h).toBeGreaterThanOrEqual(31);
+      }
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          expect(overlaps(hitBox(list[i]![1], true), hitBox(list[j]![1], true))).toBe(false);
+        }
+      }
+    });
+  }
+
+  it('landscape desktop (touch=false) values are byte-identical to the pre-fix constants', () => {
+    const r = gameRegions(LANDSCAPE);
+    expect(r.actionPanel).toEqual({ x: 398, y: 140, w: 78, h: 130 });
+    expect(r.feito).toEqual({ x: 440, y: 210, w: 64, h: 22, size: 9 });
+    expect(r.comprar).toEqual({ x: 440, y: 237, w: 64, h: 20, size: 8 });
+    expect(r.undo).toEqual({ x: 414, y: 260, w: 16, h: 14, size: 8 });
+    expect(r.redo).toEqual({ x: 436, y: 260, w: 16, h: 14, size: 8 });
+    expect(r.reset).toEqual({ x: 460, y: 260, w: 22, h: 14, size: 8 });
+    expect(r.sort).toEqual({ x: 30, y: 246, w: 16, h: 14, size: 8 });
+    expect(r.gear).toEqual({ x: 462, y: 10, w: 16, h: 14, size: 8 });
+    expect(r.zoomIn).toEqual({ x: 418, y: 55, w: 20, h: 17, size: 9 });
+    expect(r.zoomOut).toEqual({ x: 442, y: 55, w: 20, h: 17, size: 9 });
+    expect(r.reason).toEqual({ x: 440, y: 191, wrap: 72, originY: 1, size: 9 });
   });
 });
