@@ -14,6 +14,8 @@ import {
   detachSocket as detach,
   evictSeat,
   hitFlood,
+  hitJoinLimit,
+  moveSocket,
   newConnState,
   type ConnState,
 } from './connections';
@@ -44,6 +46,7 @@ const rooms = new RoomManager({
 });
 
 const connections = new Map<WebSocket, ConnState>();
+const connectionsByIp = new Map<string, number>();
 // code -> seat -> socket, for broadcast/targeted send
 const sockets = new Map<string, Map<number, WebSocket>>();
 
@@ -106,6 +109,19 @@ function broadcastGameOver(code: string): void {
   }
 }
 
+/** A finished match needs no room: free the slot and detach every socket right after the
+ * game_over broadcast, with an explicit close notice, instead of leaving the room pinned
+ * until its players leave or the idle sweep reaps it (#6). */
+function closeFinishedRoom(code: string): void {
+  rooms.deleteRoom(code);
+  closeRoomSockets(sockets, connections, code, {
+    v: PROTOCOL_VERSION,
+    type: 'error',
+    code: 'room_closed',
+    message: 'match finished',
+  } satisfies ServerMessage);
+}
+
 function broadcastRoomState(code: string): void {
   const bySeat = sockets.get(code);
   const players = rooms.getPlayers(code);
@@ -150,6 +166,12 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       const result = rooms.joinRoom(msg.code, msg.name);
       if (!result.ok) {
         sendError(ws, result.error, `cannot join room: ${result.error}`, msg.reqId);
+        // Only nonexistent codes count toward the guess limit — a full or started room is a
+        // real code shared by a real host, not a probe.
+        if (result.error === 'room_not_found' && hitJoinLimit(conn)) {
+          log.info('join_limit_exceeded', {});
+          ws.close(1008, 'too many failed joins');
+        }
         return;
       }
       conn.code = msg.code;
@@ -217,13 +239,17 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         sendError(ws, 'no_room', 'not in a room', msg.reqId);
         return;
       }
-      const result = rooms.submitTurn(conn.code, conn.seat, msg.rev, msg.melds);
+      const code = conn.code;
+      const result = rooms.submitTurn(code, conn.seat, msg.rev, msg.melds);
       if (!result.ok) {
         send(ws, { v: PROTOCOL_VERSION, type: 'proposal_rejected', reqId: msg.reqId, reasons: result.reasons });
         return;
       }
-      broadcastStateSync(conn.code);
-      if (result.gameOver) broadcastGameOver(conn.code);
+      broadcastStateSync(code);
+      if (result.gameOver) {
+        broadcastGameOver(code);
+        closeFinishedRoom(code);
+      }
       return;
     }
     case 'draw_end_turn': {
@@ -231,13 +257,17 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         sendError(ws, 'no_room', 'not in a room', msg.reqId);
         return;
       }
-      const result = rooms.drawEndTurn(conn.code, conn.seat, msg.rev);
+      const code = conn.code;
+      const result = rooms.drawEndTurn(code, conn.seat, msg.rev);
       if (!result.ok) {
         send(ws, { v: PROTOCOL_VERSION, type: 'proposal_rejected', reqId: msg.reqId, reasons: result.reasons });
         return;
       }
-      broadcastStateSync(conn.code);
-      if (result.gameOver) broadcastGameOver(conn.code);
+      broadcastStateSync(code);
+      if (result.gameOver) {
+        broadcastGameOver(code);
+        closeFinishedRoom(code);
+      }
       return;
     }
     case 'reconnect': {
@@ -249,9 +279,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       // Exactly one connection may ever act for a seat: evict whatever socket previously
       // held it before attaching this one (S4).
       evictSeat(sockets, connections, result.code, result.seat, ws);
-      conn.code = result.code;
-      conn.seat = result.seat;
-      attachSocket(result.code, result.seat, ws);
+      moveSocket(sockets, conn, result.code, result.seat, ws);
       // Always re-establish room context first (code/seat/players), then — if a match is already
       // running — the current view. A client that reconnected from a fresh page load has neither,
       // and needs both to resume instead of stranding itself in the lobby.
@@ -317,9 +345,17 @@ const wss = new WebSocketServer({ server, maxPayload: MAX_PAYLOAD_BYTES });
  * probe fires is terminated rather than left holding its seat. */
 const alive = new Set<WebSocket>();
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, req) => {
+  const ip = req.socket.remoteAddress ?? 'unknown';
+  const ipCount = connectionsByIp.get(ip) ?? 0;
+  if (connections.size >= config.maxConnections || ipCount >= config.maxConnectionsPerIp) {
+    log.info('connection_rejected', { reason: connections.size >= config.maxConnections ? 'global_cap' : 'ip_cap' });
+    ws.close(1013, 'capacity');
+    return;
+  }
   const conn: ConnState = newConnState(Date.now());
   connections.set(ws, conn);
+  connectionsByIp.set(ip, ipCount + 1);
   alive.add(ws);
   ws.on('pong', () => alive.add(ws));
 
@@ -356,6 +392,9 @@ wss.on('connection', (ws: WebSocket) => {
       }
     }
     connections.delete(ws);
+    const remaining = (connectionsByIp.get(ip) ?? 1) - 1;
+    if (remaining > 0) connectionsByIp.set(ip, remaining);
+    else connectionsByIp.delete(ip);
     alive.delete(ws);
   });
 
@@ -387,9 +426,17 @@ const heartbeatTimer = setInterval(() => {
 }, HEARTBEAT_INTERVAL_MS).unref();
 
 const turnTickTimer = setInterval(() => {
-  for (const { code, gameOver } of rooms.advanceStalledTurns()) {
+  for (const { code, gameOver, crashed } of rooms.advanceStalledTurns()) {
+    if (crashed) {
+      // Crash policy: the manager already dropped the corrupt room — tell its sockets.
+      closeRoom(code, 'internal error, match ended');
+      continue;
+    }
     broadcastStateSync(code);
-    if (gameOver) broadcastGameOver(code);
+    if (gameOver) {
+      broadcastGameOver(code);
+      closeFinishedRoom(code);
+    }
   }
 }, TURN_TICK_MS).unref();
 

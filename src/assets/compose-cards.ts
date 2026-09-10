@@ -110,7 +110,7 @@ function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: numb
 export async function loadPixelFont(): Promise<string> {
   const FALLBACK = 'monospace';
   try {
-    const res = await fetch('assets/ui/font.ttf', { method: 'HEAD' });
+    const res = await fetch('assets/ui/font.ttf');
     const type = res.headers.get('content-type') ?? '';
     if (!res.ok || type.includes('html')) return FALLBACK;
     const face = new FontFace('MexePixel', 'url(assets/ui/font.ttf)');

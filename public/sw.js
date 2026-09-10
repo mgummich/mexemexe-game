@@ -3,7 +3,8 @@
 //
 // Bump VERSION on every release that should evict the previous cache — the
 // activate handler deletes every cache whose name isn't the current one.
-const VERSION = 'mexe-v1';
+// Keep this release cache key in lockstep with package.json. Activation removes prior keys.
+const VERSION = 'mexe-v1.6.0';
 const CACHE_NAME = VERSION;
 
 const APP_SHELL = ['./', './index.html'];
@@ -40,10 +41,11 @@ self.addEventListener('message', (event) => {
 function cacheMode(url, method, mode) {
   const sameOrigin = url.origin === self.location.origin;
   if (!sameOrigin) return 'passthrough';
-  if (method !== 'GET' && method !== 'HEAD') return 'passthrough';
+  // BootScene probes assets with GET (not HEAD), so plain cache-first covers probes too —
+  // no HEAD special-casing needed here anymore.
+  if (method !== 'GET') return 'passthrough';
   if (mode === 'navigate') return 'navigate';
   if (url.pathname.includes('/assets/audio/music/')) return 'passthrough'; // ~11MB streamed mp3, never cached
-  if (method === 'HEAD') return 'head';
   return 'cache-first';
 }
 
@@ -66,27 +68,6 @@ self.addEventListener('fetch', (event) => {
           return res;
         })
         .catch(() => caches.match('./index.html')),
-    );
-    return;
-  }
-
-  if (mode === 'head') {
-    // BootScene HEAD-probes every asset path before loading it (see
-    // src/scenes/BootScene.ts). The Cache API only ever matches GET
-    // entries, so an untreated HEAD probe fails offline and BootScene falls
-    // back to procedural placeholder art for the whole game. Try the
-    // network first; if that's unavailable, answer from the cached GET
-    // entry for the same URL so the probe still succeeds offline.
-    event.respondWith(
-      fetch(request).catch(async () => {
-        const cached = await caches.match(request.url);
-        if (cached) return new Response(null, { status: 200, headers: cached.headers });
-        // No network, no cache entry: mirror the dev/preview server's SPA fallback
-        // for a path that doesn't exist (200 + text/html). BootScene's probe already
-        // reads that as "asset not present"; a 4xx/5xx would say the same thing but
-        // also spam the console with resource-load errors, which offline.spec.ts gates on.
-        return new Response(null, { status: 200, headers: { 'content-type': 'text/html' } });
-      }),
     );
     return;
   }

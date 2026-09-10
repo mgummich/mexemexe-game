@@ -8,6 +8,9 @@ export type AiDecision =
 
 export interface AiPlayer {
   decide(state: GameState): AiDecision;
+  /** Same decision, but computed in event-loop slices so a long search never blocks a whole
+   * frame (see RearrangerAi). Absent on engines whose decide() is already cheap. */
+  decideSliced?(state: GameState): Promise<AiDecision>;
 }
 
 /** All personalities are deterministic: sorted iteration, first hit wins. */
@@ -407,24 +410,43 @@ export class RearrangerAi implements AiPlayer {
       addCandidate(candidates, simple.draft, simple.explanation);
     }
 
-    if (candidates.length < MAX_CANDIDATES && !timeUp(deadline)) {
-      searchEdgeSteal(state, hand, candidates, deadline);
+    for (const search of REARRANGE_SEARCHES) {
+      if (candidates.length >= MAX_CANDIDATES || timeUp(deadline)) break;
+      search(state, hand, candidates, deadline);
     }
-    if (candidates.length < MAX_CANDIDATES && !timeUp(deadline)) {
-      searchRunSplit(state, hand, candidates, deadline);
-    }
-    if (candidates.length < MAX_CANDIDATES && !timeUp(deadline)) {
-      searchInterMeldMove(state, hand, candidates, deadline);
-    }
-
-    if (candidates.length === 0) {
-      return { kind: 'draw', explanation: 'no play even with rearrange — drawing' };
-    }
-
-    candidates.sort(compareCandidates);
-    const best = candidates[0]!;
-    return { kind: 'confirm', draft: best.draft, explanation: best.explanation };
+    return pickBest(candidates);
   }
+
+  /** The same search, sliced: each phase gets its own bounded slice of the budget and the
+   * event loop runs between phases, so frames render while the AI "thinks" (#8). Total
+   * search budget stays ~400ms like decide(). */
+  async decideSliced(state: GameState, sliceMs = 100): Promise<AiDecision> {
+    const candidates: Candidate[] = [];
+    const hand = sortCards(state.players[state.activePlayerIndex]!.hand);
+
+    const simple = this.simple.decide(state);
+    if (simple.kind === 'confirm') {
+      addCandidate(candidates, simple.draft, simple.explanation);
+    }
+
+    for (const search of REARRANGE_SEARCHES) {
+      if (candidates.length >= MAX_CANDIDATES) break;
+      await new Promise<void>((r) => setTimeout(r, 0));
+      search(state, hand, candidates, performance.now() + sliceMs);
+    }
+    return pickBest(candidates);
+  }
+}
+
+const REARRANGE_SEARCHES = [searchEdgeSteal, searchRunSplit, searchInterMeldMove];
+
+function pickBest(candidates: Candidate[]): AiDecision {
+  if (candidates.length === 0) {
+    return { kind: 'draw', explanation: 'no play even with rearrange — drawing' };
+  }
+  candidates.sort(compareCandidates);
+  const best = candidates[0]!;
+  return { kind: 'confirm', draft: best.draft, explanation: best.explanation };
 }
 
 export type EmoteKey = 'excited' | 'thinking' | 'annoyed' | 'happy' | 'sleepy' | 'confident';
@@ -486,13 +508,23 @@ export function createAi(personality: Personality): AiPlayer {
         return new PatientAi();
     }
   })();
-  return { decide: (state) => tagReason(personality, engine.decide(state)) };
+  return {
+    decide: (state) => tagReason(personality, engine.decide(state)),
+    ...(engine.decideSliced
+      ? { decideSliced: async (state: GameState) => tagReason(personality, await engine.decideSliced!(state)) }
+      : {}),
+  };
 }
 
 class PatientAi implements AiPlayer {
   private inner = new RearrangerAi(true);
   decide(state: GameState): AiDecision {
-    const d = this.inner.decide(state);
+    return this.applyPatience(state, this.inner.decide(state));
+  }
+  async decideSliced(state: GameState): Promise<AiDecision> {
+    return this.applyPatience(state, await this.inner.decideSliced(state));
+  }
+  private applyPatience(state: GameState, d: AiDecision): AiDecision {
     if (d.kind === 'confirm') {
       const played = d.draft.handCardsPlayed.length;
       const hand = state.players[state.activePlayerIndex]!.hand.length;

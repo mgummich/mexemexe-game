@@ -55,8 +55,9 @@ cannot leak an opponent's hand in an online match.
    `start_game`; server requires 2–4 occupied ready seats, picks seed, deals,
    sets `rev = 1`, and broadcasts per-seat `game_started` views.
 4. **playing** — alternating turns; every accepted action increments `rev`.
-5. **game_over** — server broadcasts winner (or stalemate result); room stays
-   alive briefly so both clients can read the result, then is reaped.
+5. **game_over** — server broadcasts winner (or stalemate result), then closes
+   the room immediately: the slot is freed and every socket is detached with a
+   `room_closed` notice. Clients render the result from the `game_over` payload.
 6. **empty/abandoned** — room is destroyed when both sockets are gone past the
    grace window, or after an absolute idle timeout.
 
@@ -76,7 +77,7 @@ submission that caused it.
 | type | payload | notes |
 |---|---|---|
 | `create_room` | `name` | replies `room_joined` |
-| `join_room` | `code`, `name` | replies `room_joined` or `error` |
+| `join_room` | `code`, `name` | replies `room_joined` or `error`; codes over 16 chars are rejected at parse, and 10 nonexistent-code guesses close the connection |
 | `leave_room` | — | explicit, distinct from a dropped socket |
 | `ready` | `ready: boolean` | idempotent |
 | `start_game` | — | seat-0 host only; requires every occupied 2–4P seat ready |

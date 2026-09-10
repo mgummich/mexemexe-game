@@ -96,6 +96,26 @@ describe('RearrangerAi', () => {
     expect(d.kind).toBe('draw');
   });
 
+  it('decideSliced reaches the same decision as decide (#8 frame slicing)', async () => {
+    const ai = new RearrangerAi();
+    const table = [{ id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5), c('hearts', 6)] }];
+    const state = base([c('spades', 6), c('clubs', 6), c('diamonds', 12)], table);
+    const sliced = await ai.decideSliced(state);
+    expect(sliced).toEqual(ai.decide(state));
+    expect(await ai.decideSliced(base([c('hearts', 2), c('spades', 7)]))).toEqual({
+      kind: 'draw',
+      explanation: 'no play even with rearrange — drawing',
+    });
+  });
+
+  it('createAi exposes decideSliced for rearranging personalities and tags its reason', async () => {
+    const ai = createAi('bia');
+    expect(ai.decideSliced).toBeDefined();
+    const d = await ai.decideSliced!(base([c('hearts', 2), c('spades', 7)]));
+    expect(d.kind).toBe('draw');
+    expect(d.explanation.startsWith('bia:')).toBe(true);
+  });
+
   it('splits a 6+ run to reach an interior card when plain extension is impossible', () => {
     const ai = new RearrangerAi();
     // Table: hearts 3..9 (7-run). Hand has two 6s (not hearts) — plain extension

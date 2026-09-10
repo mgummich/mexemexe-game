@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.6.0 — Audit fixes
+
+- Isolate reconnect sockets and harden connection limits.
+- Stop crashed scenes before menu recovery; destroy rebuilt menu-family objects.
+- Rotate the service-worker cache namespace.
+- Rate-limit failed room-code guesses per connection and cap join-code length.
+- Isolate stalled-turn advancement per room; a corrupt room is dropped and its
+  sockets notified instead of throwing on every tick.
+- Close finished-match rooms right after `game_over` (frees the slot, clean
+  `room_closed` notice) instead of waiting for the idle sweep.
+- Slice the rearranging AI search across event-loop turns so it no longer
+  blocks a frame for up to 400ms.
+- Boot asset probes use GET instead of HEAD, so the service worker's HEAD
+  special-case is gone and probe responses prime the offline cache.
+
 All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 

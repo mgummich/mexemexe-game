@@ -77,7 +77,8 @@ describe('sw.js', () => {
 
     expect(cacheMode(new URL(`${origin}/assets/audio/music/full-song-1.mp3`), 'GET', 'no-cors')).toBe('passthrough');
     expect(cacheMode(new URL(`${origin}/`), 'GET', 'navigate')).toBe('navigate');
-    expect(cacheMode(new URL(`${origin}/assets/cards/back-0.png`), 'HEAD', 'no-cors')).toBe('head');
+    // BootScene probes with GET now — HEAD gets no special treatment.
+    expect(cacheMode(new URL(`${origin}/assets/cards/back-0.png`), 'HEAD', 'no-cors')).toBe('passthrough');
     expect(cacheMode(new URL(`${origin}/assets/cards/back-0.png`), 'GET', 'no-cors')).toBe('cache-first');
     expect(cacheMode(new URL('https://other.example/x.png'), 'GET', 'no-cors')).toBe('passthrough');
   });

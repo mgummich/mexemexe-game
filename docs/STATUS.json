@@ -1,4 +1,37 @@
 {
+  "audit_fixes": "complete",
+  "auditSelectedFindings": [
+    1,
+    2,
+    7,
+    3,
+    4,
+    5,
+    6,
+    8,
+    9,
+    10,
+    11,
+    12
+  ],
+  "auditFixModelCavemanLog": [
+    {
+      "role": "Low discovery",
+      "model": "gpt-5.6-luna (closest available to requested Low)",
+      "task": "audit reference map",
+      "caveman": "available",
+      "runLabel": "mexe-audit-low-01"
+    },
+    {
+      "role": "Main implementation",
+      "model": "main (requested Codex implementation tier unavailable by exact name)",
+      "task": "audit fixes/tests/docs",
+      "caveman": "available",
+      "runLabel": "mexe-audit-main-01"
+    }
+  ],
+  "auditNextTask": "None — findings 1-8 and 10-12 fixed; 9 (renderAll sprite pooling) stays deferred by policy until fps drops below the 50 floor (currently 59).",
+  "auditFixEvidence": "2026-09-10: npm run test 420/420; npm run lint; npm run build; verify:multiplayer 9/9; verify:pwa 10/10 all exit 0.",
   "wave": 5,
   "waves": {
     "1-setup": "done",
@@ -30,7 +63,7 @@
     "e2e"
   ],
   "tests": {
-    "unit": "330/330 pass (22 files, incl. tests/snap.test.ts \u2014 10 snap-target-model tests)",
+    "unit": "330/330 pass (22 files, incl. tests/snap.test.ts — 10 snap-target-model tests)",
     "e2e": "51 screenshot captures via npm run verify (fps 56-60, zero console errors) + 7/7 multiplayer e2e with 14 captures",
     "server": "72/72 pass (npm run test:server, 4 files)",
     "preview": "npm run verify:preview OK (last run, Phase 11) - built client serves, assets resolve, no secrets",
@@ -104,7 +137,7 @@
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
   "phase": 15,
   "phase6": {
-    "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2\u20134P seats with host-only explicit start and deterministic turn rotation.",
+    "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
     "blockers": [],
     "priorityIssues": [
       "3P/4P privacy/reconnect integration coverage",
@@ -123,14 +156,14 @@
       {
         "role": "Main implementation",
         "model": "main",
-        "task": "2\u20134P server/client/tests/docs",
+        "task": "2–4P server/client/tests/docs",
         "caveman": "available",
         "runLabel": "phase6-main-01"
       },
       {
         "role": "Review",
         "model": "gpt-5.6-luna",
-        "task": "2\u20134P contract review",
+        "task": "2–4P contract review",
         "caveman": "available",
         "runLabel": "phase6-review-01"
       }
@@ -194,7 +227,7 @@
     {
       "wave": "p2-4 ux/settings/audio",
       "model": "sonnet",
-      "result": "done: SetupScene (seats/personalities), settings+pause (mute/volumes/reduced-motion, localStorage), ambience loop, emotes+dominoes integrated, tooltips, sort toggle, rules panel, Voc\u00ea localized, 2 new e2e captures; verify OK"
+      "result": "done: SetupScene (seats/personalities), settings+pause (mute/volumes/reduced-motion, localStorage), ambience loop, emotes+dominoes integrated, tooltips, sort toggle, rules panel, Você localized, 2 new e2e captures; verify OK"
     },
     {
       "wave": "p2-5 verification expansion",
@@ -219,12 +252,12 @@
     {
       "wave": "p3-3 accessibility",
       "model": "sonnet",
-      "result": "done: colorblind-safe validity (\u2717 badges on invalid meld zones + dashed strokes, not color-only), keyboard shortcuts (Z undo, Y/Shift+Z redo, R reset, C comprar, F feito, S sort, H help, Esc pause), +25% large-text toggle (?textscale=125), meld separators at min gap; 2 new e2e captures (a11y-large-text, keyboard-comprar)"
+      "result": "done: colorblind-safe validity (✗ badges on invalid meld zones + dashed strokes, not color-only), keyboard shortcuts (Z undo, Y/Shift+Z redo, R reset, C comprar, F feito, S sort, H help, Esc pause), +25% large-text toggle (?textscale=125), meld separators at min gap; 2 new e2e captures (a11y-large-text, keyboard-comprar)"
     },
     {
       "wave": "p3-4 perf+release",
       "model": "sonnet",
-      "result": "done: 20-game AI-vs-AI soak (tests/soak.test.ts, SimpleAi vs RearrangerAi seeds 1-20, all terminate, ~100ms wall time, heap well under 150MB ceiling); stress-table e2e (all hand cards to new melds, fps>=50 measured, no renderAll optimization needed); audio rebalanced in scripts/gen-sfx.mjs to win>feito>invalid>drop/draw/deal>pickup/snap>click>ambience with peaks <=0.5, wavs regenerated; npm run build now gated in verify (screenshot script builds once, playwright webServer just previews \u2014 no double build), vite chunkSizeWarningLimit raised with a comment (Phaser is a legitimately large single vendor chunk); check-verify.mjs now merges a metrics object (per-shot fps, viewports, test counts, generatedAt) into STATUS.json; CHANGELOG.md added; README gained Controls/Asset replacement/Known issues sections"
+      "result": "done: 20-game AI-vs-AI soak (tests/soak.test.ts, SimpleAi vs RearrangerAi seeds 1-20, all terminate, ~100ms wall time, heap well under 150MB ceiling); stress-table e2e (all hand cards to new melds, fps>=50 measured, no renderAll optimization needed); audio rebalanced in scripts/gen-sfx.mjs to win>feito>invalid>drop/draw/deal>pickup/snap>click>ambience with peaks <=0.5, wavs regenerated; npm run build now gated in verify (screenshot script builds once, playwright webServer just previews — no double build), vite chunkSizeWarningLimit raised with a comment (Phaser is a legitimately large single vendor chunk); check-verify.mjs now merges a metrics object (per-shot fps, viewports, test counts, generatedAt) into STATUS.json; CHANGELOG.md added; README gained Controls/Asset replacement/Known issues sections"
     },
     {
       "wave": "p3-5 prop depth fix",
@@ -239,12 +272,12 @@
     {
       "wave": "p4-2 layout overflow fix + button unification",
       "model": "sonnet",
-      "result": "done: src/table/layout.ts reworked to prefer gap compression then uniform per-row card-scale shrink (SCALE_STEPS 1/0.85/0.7/0.55/0.45) with row pitch always >= scaled row height so melds NEVER overlap within the reduced TABLE_AREA_H=102 (was overlapping via a y-clamp that collapsed overflow rows onto each other); GameScene.layoutMelds/makeCardSprite/wireDrag now apply per-meld cardScale to sprite size, drag hover/shadow sizing, and meld-pad; 17->21 layout tests incl. no-overlap assertions up to 80-card stress case; invalid-meld reason badge changed from always-on floating label (which spilled onto neighboring melds at crowded tables) to a hover-only tooltip on the \u2717 badge, clamped inside the table/HUD area. Button unification: PixelButton (src/ui/widgets.ts) now actually applies its `color` option as a multiply-tint on textured buttons (previously silently ignored for hover/pressed/disabled), added shade()+STATE_SHADE for consistent hover/pressed/disabled shading from one palette color, added DANGER_TINT export and setSelected() gold-ring state; replaced every flat-rectangle secondary button (MenuScene TUTORIAL/REGRAS/ENGLISH, WinScene NOVA PARTIDA/MENU, SetupScene VOLTAR + player-count chips, settings panel Silenciar/reduced-motion/large-text/English/APAGAR DADOS/FECHAR + reset-confirm Yes/No) with the wooden btn-comprar/btn-small textures (danger buttons tinted red via DANGER_TINT); player-count chips get setSelected(true) gold ring instead of alpha-only. Verify: 112/112 unit (was 110, +2 net after test rewrite), lint clean, tsc clean, 19/19 e2e, 0 console errors, 0 missing assets, 58-60fps; visually confirmed via regenerated screenshots (docs/screenshots/, copied into final/) that stress-table/mexe-invalid no longer show row overlap or floating badge occlusion, and menu/win/setup/settings show no flat rectangles."
+      "result": "done: src/table/layout.ts reworked to prefer gap compression then uniform per-row card-scale shrink (SCALE_STEPS 1/0.85/0.7/0.55/0.45) with row pitch always >= scaled row height so melds NEVER overlap within the reduced TABLE_AREA_H=102 (was overlapping via a y-clamp that collapsed overflow rows onto each other); GameScene.layoutMelds/makeCardSprite/wireDrag now apply per-meld cardScale to sprite size, drag hover/shadow sizing, and meld-pad; 17->21 layout tests incl. no-overlap assertions up to 80-card stress case; invalid-meld reason badge changed from always-on floating label (which spilled onto neighboring melds at crowded tables) to a hover-only tooltip on the ✗ badge, clamped inside the table/HUD area. Button unification: PixelButton (src/ui/widgets.ts) now actually applies its `color` option as a multiply-tint on textured buttons (previously silently ignored for hover/pressed/disabled), added shade()+STATE_SHADE for consistent hover/pressed/disabled shading from one palette color, added DANGER_TINT export and setSelected() gold-ring state; replaced every flat-rectangle secondary button (MenuScene TUTORIAL/REGRAS/ENGLISH, WinScene NOVA PARTIDA/MENU, SetupScene VOLTAR + player-count chips, settings panel Silenciar/reduced-motion/large-text/English/APAGAR DADOS/FECHAR + reset-confirm Yes/No) with the wooden btn-comprar/btn-small textures (danger buttons tinted red via DANGER_TINT); player-count chips get setSelected(true) gold ring instead of alpha-only. Verify: 112/112 unit (was 110, +2 net after test rewrite), lint clean, tsc clean, 19/19 e2e, 0 console errors, 0 missing assets, 58-60fps; visually confirmed via regenerated screenshots (docs/screenshots/, copied into final/) that stress-table/mexe-invalid no longer show row overlap or floating badge occlusion, and menu/win/setup/settings show no flat rectangles."
     },
     {
       "wave": "p4-3 button unification sweep + rematch/reset e2e + personality showcases + release packaging",
       "model": "sonnet",
-      "result": "done: found pause-menu.ts and rules-panel.ts were still calling PixelButton without textureBase (flat-rect fallback, missed by p4-2's sweep) \u2014 added textureBase:'btn-comprar' to all 6 pause-menu buttons (green Continuar, neutral Ajustes/Regras, red DANGER_TINT Sair pra menu + quit-confirm Sim/N\u00e3o) and the rules-panel Fechar button; also converted the 3 tutorial replay/next/skip PixelButtons in GameScene.ts (same missed-textureBase bug). Every PixelButton call in src now passes textureBase (verified: instance count == textureBase count across all files) \u2014 no flat-rect buttons remain. Error toast (src/main.ts) is a plain DOM notification with no action button, nothing to convert there. Rules/help panel already listed all required shortcuts (Esc/Z/Shift+Z/Y/R/C/F/S/H) in both PT and EN localization strings from p3-3 \u2014 no change needed (job 3 was already satisfied). E2e: added MenuScene.startGame ?ai=<personality> URL override (2-player showcase games always defaulted to Dona Cida; now `?showcase=mexe&ai=juninho` etc. forces the single opponent) plus 6 new e2e tests in e2e/screenshot.spec.ts \u2014 4 per-personality AI showcase captures (ai-cida/juninho/bia/ze, seed 77, asserts opponent name + non-null ai:thought, screenshot each), rematch (WinScene MESMA PARTIDA at seed 555 -> asserts new game scene, same seed, turn===1 fresh state, 0 errors), and reset-data (settings APAGAR DADOS + Sim -> asserts localStorage mexe-save cleared and page reboots with ready===true, 0 errors). Release packaging: package.json version 0.1.0->1.0.0, CHANGELOG.md 1.0.0 Phase 4 entry added, docs/RELEASE_NOTES.md DRAFT line removed (reviewed against code, no factual corrections needed), README.md 'Features (Phase 2)' -> 'Features', added ?ai= URL param doc, test count 110->112. Verify: 112/112 unit, 25/25 e2e (was 19), lint clean, tsc clean, build pass, 0 console errors, 0 missing assets, 58-60fps; visually confirmed pause.png/help.png show wooden buttons + shortcuts line, and all 4 ai-<personality>.png captures show correct avatar/name with the ai:thought bubble. 6 new screenshots copied into docs/screenshots/final/."
+      "result": "done: found pause-menu.ts and rules-panel.ts were still calling PixelButton without textureBase (flat-rect fallback, missed by p4-2's sweep) — added textureBase:'btn-comprar' to all 6 pause-menu buttons (green Continuar, neutral Ajustes/Regras, red DANGER_TINT Sair pra menu + quit-confirm Sim/Não) and the rules-panel Fechar button; also converted the 3 tutorial replay/next/skip PixelButtons in GameScene.ts (same missed-textureBase bug). Every PixelButton call in src now passes textureBase (verified: instance count == textureBase count across all files) — no flat-rect buttons remain. Error toast (src/main.ts) is a plain DOM notification with no action button, nothing to convert there. Rules/help panel already listed all required shortcuts (Esc/Z/Shift+Z/Y/R/C/F/S/H) in both PT and EN localization strings from p3-3 — no change needed (job 3 was already satisfied). E2e: added MenuScene.startGame ?ai=<personality> URL override (2-player showcase games always defaulted to Dona Cida; now `?showcase=mexe&ai=juninho` etc. forces the single opponent) plus 6 new e2e tests in e2e/screenshot.spec.ts — 4 per-personality AI showcase captures (ai-cida/juninho/bia/ze, seed 77, asserts opponent name + non-null ai:thought, screenshot each), rematch (WinScene MESMA PARTIDA at seed 555 -> asserts new game scene, same seed, turn===1 fresh state, 0 errors), and reset-data (settings APAGAR DADOS + Sim -> asserts localStorage mexe-save cleared and page reboots with ready===true, 0 errors). Release packaging: package.json version 0.1.0->1.0.0, CHANGELOG.md 1.0.0 Phase 4 entry added, docs/RELEASE_NOTES.md DRAFT line removed (reviewed against code, no factual corrections needed), README.md 'Features (Phase 2)' -> 'Features', added ?ai= URL param doc, test count 110->112. Verify: 112/112 unit, 25/25 e2e (was 19), lint clean, tsc clean, build pass, 0 console errors, 0 missing assets, 58-60fps; visually confirmed pause.png/help.png show wooden buttons + shortcuts line, and all 4 ai-<personality>.png captures show correct avatar/name with the ai:thought bubble. 6 new screenshots copied into docs/screenshots/final/."
     },
     {
       "wave": "p5-1 audit + architecture",
@@ -381,7 +414,7 @@
       "390x844",
       "844x390"
     ],
-    "unitTests": "330/330 pass (22 files, incl. tests/snap.test.ts \u2014 10 snap-target-model tests)",
+    "unitTests": "330/330 pass (22 files, incl. tests/snap.test.ts — 10 snap-target-model tests)",
     "e2eScreenshots": 76
   },
   "phase3Scores": {
@@ -417,7 +450,7 @@
     "alphaReadiness": 8.5
   },
   "phase5PassGate": "PASS: 155 unit tests (incl. 39 server) + 25 local e2e + 1 multiplayer e2e, lint, build, npm run verify, and npm run verify:multiplayer all green; 0 client console errors on either client in the multiplayer run; empty server stderr; an illegal proposal rejected with reason.unknownCard and no revision movement (accepted: false); a forced socket drop on one client reconnected and resynced to the same revision the other client was on (revisionBefore === revisionAfter), captured in docs/screenshots/verify-multiplayer-log.json with disconnected/reconnecting/reconnected screenshots; all ten phase5Scores dimensions >= 8.5.",
-  "cavemanUsage": "Every Sonnet code subagent for Phase 5 (5 code waves: shared core + server MVP, client online flow, server lifecycle fixes S1-S6/S8, reconnect + multiplayer verification, and this docs-finalization wave) was instructed to invoke the caveman:caveman skill via the Skill tool before starting work, and did so. The Opus reasoning role (audit, architecture, client plan, server/client review, critic pass) ran under session-level caveman mode activated by a SessionStart hook rather than by a per-task Skill invocation \u2014 this is a real distinction, not equivalent to the Sonnet waves' explicit per-task invocation, and is stated here plainly rather than claimed as the same thing. Rules-adaptation phase: every subagent (Opus reconciliation/audit/critique and every Sonnet code wave) invoked the caveman:caveman skill before starting its assigned work.",
+  "cavemanUsage": "Every Sonnet code subagent for Phase 5 (5 code waves: shared core + server MVP, client online flow, server lifecycle fixes S1-S6/S8, reconnect + multiplayer verification, and this docs-finalization wave) was instructed to invoke the caveman:caveman skill via the Skill tool before starting work, and did so. The Opus reasoning role (audit, architecture, client plan, server/client review, critic pass) ran under session-level caveman mode activated by a SessionStart hook rather than by a per-task Skill invocation — this is a real distinction, not equivalent to the Sonnet waves' explicit per-task invocation, and is stated here plainly rather than claimed as the same thing. Rules-adaptation phase: every subagent (Opus reconciliation/audit/critique and every Sonnet code wave) invoked the caveman:caveman skill before starting its assigned work.",
   "rules_adaptation": "done",
   "trincas_refinement": {
     "status": "complete",
@@ -475,7 +508,7 @@
     "docs": 9
   },
   "rulesAdaptationPassGate": "PASS: all rulesAdaptationScores >= 8.5, with the final gate run showing 190/190 unit tests, lint clean, build pass, and 1/1 multiplayer e2e green (npm run verify:multiplayer OK, 0 client console errors).",
-  "rulesAdaptationAuditSummary": "Opus audit (docs/RULES_ADAPTATION_AUDIT.md) found the MVP engine assumed a single 52-card deck with no jokers, ace-low-only runs, sets requiring distinct suits, and a stalemate-by-full-round-of-passes end condition \u2014 all four wrong for the final ruleset (two 54-card decks, ace low or high, repeated-suit groups, immediate end on empty pile). It scoped the fix to a nullable-suit/rank Card model with deckId and isJoker, a RulesConfig house-rule surface, and analyzeMeld as the single validity source of truth returning joker assignments, and ranked joker run-assignment correctness and ace-wrap rejection as the top implementation risks.",
+  "rulesAdaptationAuditSummary": "Opus audit (docs/RULES_ADAPTATION_AUDIT.md) found the MVP engine assumed a single 52-card deck with no jokers, ace-low-only runs, sets requiring distinct suits, and a stalemate-by-full-round-of-passes end condition — all four wrong for the final ruleset (two 54-card decks, ace low or high, repeated-suit groups, immediate end on empty pile). It scoped the fix to a nullable-suit/rank Card model with deckId and isJoker, a RulesConfig house-rule surface, and analyzeMeld as the single validity source of truth returning joker assignments, and ranked joker run-assignment correctness and ace-wrap rejection as the top implementation risks.",
   "rulesAdaptationPriorityIssues": [
     "validator correctness (analyzeMeld: joker assignment, ace-wrap rejection)",
     "tests",
@@ -556,7 +589,7 @@
       "docs": 9,
       "betaReadiness": 8.5
     },
-    "passGate": "PASS \u2014 every score >= 8.5, no failed tests, zero client console errors, empty server stderr, no illegal proposal accepted, no hand leak, build green."
+    "passGate": "PASS — every score >= 8.5, no failed tests, zero client console errors, empty server stderr, no illegal proposal accepted, no hand leak, build green."
   },
   "phase8": {
     "auditSummary": "docs/PHASE8_AUDIT.md. Phase 7 closed its beta blockers (protocol v3 liveness, frame cap, state hash + resync, stalled-seat recovery, reqId, in-canvas join code). Phase 8's gaps were everything a stranger meets: zero instrumentation, a 10-step tutorial written against the pre-adaptation ruleset (no jokers, no trinca constraints), raw English server error codes shown to players (`cannot join room: room_full`), and no click debounce in the lobby.",
@@ -564,14 +597,14 @@
     "priorityIssues": [
       "no online rematch (carried from Phase 5)",
       "flood guard is per connection, not per IP (carried)",
-      "turnTimerSeconds is a declared, unimplemented, off-by-default hook \u2014 documented as such, not built",
+      "turnTimerSeconds is a declared, unimplemented, off-by-default hook — documented as such, not built",
       "MAX_PLAYERS is hardcoded 4 with no client override, so the room-full e2e fills a real 4-seat room rather than a forced 2-seat one",
       "OnlineScene error text and GameScene reason text are canvas-rendered with no debug hook, so e2e proves translation by re-running the same t() lookup plus a screenshot, not by reading pixels"
     ],
     "delivered": [
-      "src/core/playlog.ts \u2014 2000-entry session-only ring buffer fed by the existing EventBus; turn durations computed in the log, not the store; name/token key filter enforced by test; ?playlog=0 disables; exposed at window.__MEXE__.playlog and via a COPY TEST LOG button in the settings panel",
+      "src/core/playlog.ts — 2000-entry session-only ring buffer fed by the existing EventBus; turn durations computed in the log, not the store; name/token key filter enforced by test; ?playlog=0 disables; exposed at window.__MEXE__.playlog and via a COPY TEST LOG button in the settings panel",
       "tutorial 10 -> 12 steps: set step now states the exact-size + unique-suit trinca constraints, new trinca-limit step makes the player hit reason.groupDuplicateSuit and recover, new joker step teaches wildcard + concrete-assignment + at-least-one-natural; PT and EN, every step <= 2 sentences",
-      "src/net/errors.ts \u2014 SERVER_ERROR_CODES + errorMessage(); all 15 server codes mapped to player-facing PT/EN copy, unknown codes fall back to a generic sentence and never leak the raw server message; distinct 'unreachable' copy for a server that was never reachable",
+      "src/net/errors.ts — SERVER_ERROR_CODES + errorMessage(); all 15 server codes mapped to player-facing PT/EN copy, unknown codes fall back to a generic sentence and never leak the raw server message; distinct 'unreachable' copy for a server that was never reachable",
       "lobby CREATE/JOIN/READY/START/LEAVE debounced against double-clicks",
       "verify suites extended: 31 -> 37 local e2e, 1 -> 7 multiplayer e2e",
       "docs/PHASE8_AUDIT.md, docs/PLAYTEST_GUIDE.md; README/CHANGELOG/RELEASE_NOTES updated; package.json 1.1.0 -> 1.2.0"
@@ -579,7 +612,7 @@
     "balanceDecisions": [
       "No new config system: DEFAULT_RULES in src/rules/types.ts was already the centralized knob block (deckCount 2, jokersPerDeck 2, handSize 7, groupMinSize 3, groupMaxSize 4, groupUniqueSuits true, firstMeldMinPoints 0, turnTimerSeconds 0) and is documented in the Configuration defaults table of docs/RULES.md. Building a second one next to it was rejected.",
       "Turn timer stays OFF and unimplemented. A timer punishes a first-time player mid-Mexe-draft, which is exactly the population this playtest is for. Documented as a declared hook rather than shipped half-built.",
-      "Joker pacing (4 jokers in 108 cards, 7-card hands) left untouched. Whether it reads as generous or chaotic is a measurement, not a guess \u2014 the play log records the data instead of tuning blind.",
+      "Joker pacing (4 jokers in 108 cards, 7-card hands) left untouched. Whether it reads as generous or chaotic is a measurement, not a guess — the play log records the data instead of tuning blind.",
       "AI difficulty: no Easy/Normal/Hard label invented. Two engines (SimpleAi, RearrangerAi) wrapped by four personalities pickable in the setup screen already form the ladder; it is documented as the ladder in README rather than papered over with a fake control."
     ],
     "privacy": "Play log is in-memory and session-scoped: never written to localStorage, never written to disk, never sent anywhere, destroyed on reload. Timestamps are ms since page load (performance.now()), not wall clock. Keys `name`, `playerName`, `token`, `sessionToken` are stripped before export by an explicit filter, covered by tests/playlog.test.ts. Export is an explicit human action (debug API or the settings-panel button). ?playlog=0 disables it entirely.",
@@ -630,13 +663,13 @@
         "role": "Reviewer + docs",
         "model": "main (opus)",
         "task": "PHASE8_AUDIT.md, PLAYTEST_GUIDE.md, README/CHANGELOG/RELEASE_NOTES/STATUS, diff review and two review fixes",
-        "caveman": "session-level caveman hook, not a per-task Skill invocation \u2014 stated plainly rather than claimed as equivalent",
+        "caveman": "session-level caveman hook, not a per-task Skill invocation — stated plainly rather than claimed as equivalent",
         "runLabel": "phase8-main-review"
       }
     ],
     "extraAgentsReason": "The default budget was 1 low + 1 sonnet + 1 reviewer. Four Sonnet waves were used instead of one because three of them edit files the others also touch (src/localization/i18n.ts by B and C, src/scenes/GameScene.ts by A and B), and running them concurrently would have raced those edits; splitting by file ownership and running them in sequence was the safe form. Wave D was separated because the verification suites can only be written after A-C land. No Opus reasoning pass was triggered: no suite failed twice, no balance tradeoff was ambiguous, and the single e2e failure (reset-data clicking a stale settings-panel coordinate after the export button shifted the rows) had an obvious cause and a one-line fix.",
     "reviewFindings": [
-      "playlog.exportJson() read the raw entries array while entries() returned [] when disabled, so a disabled log could still export its pre-disable contents \u2014 inconsistent with the privacy claim. Fixed: exportJson() now goes through entries().",
+      "playlog.exportJson() read the raw entries array while entries() returned [] when disabled, so a disabled log could still export its pre-disable contents — inconsistent with the privacy claim. Fixed: exportJson() now goes through entries().",
       "NetClient.onclose recorded net:disconnect even for a socket that never opened, inflating the drop metric for anyone who launched with the server down. Fixed: only a socket past 'connecting' counts.",
       "Both fixes covered by a new test; 234/234 and both verify suites re-run green afterwards."
     ],
@@ -645,30 +678,30 @@
   "phase9": {
     "auditSummary": "docs/PHASE9_AUDIT.md. Phase 8 closed the public-demo gate with no blockers; no playtest feedback exists yet (no sessions have been logged), so Phase 9 acted on friction predictable from the code instead: no theme/cosmetic system at all despite 4 card backs and 4 table backgrounds already sitting unused in assets, one flat shuffled playlist with no context awareness, AI personalities differing only in engine choice with no expressed pacing/emotes, and a win screen with no rematch summary.",
     "blockers": [
-      "RESOLVED (2026-09-09, post-close wiring pass): PixelLab subscription renewed. The 4 planned avatars (rosa/tuca/nina/ivo) were generated, wired into the catalog, and shipped \u2014 AVATARS now has 9 entries. See modelCavemanLog's \"avatar wiring\" entry."
+      "RESOLVED (2026-09-09, post-close wiring pass): PixelLab subscription renewed. The 4 planned avatars (rosa/tuca/nina/ivo) were generated, wired into the catalog, and shipped — AVATARS now has 9 entries. See modelCavemanLog's \"avatar wiring\" entry."
     ],
     "priorityIssues": [
-      "online games show no per-player stats and no winning-move text on WinScene \u2014 the client never observes server-driven turns locally, so results-summary has no play-log data to draw from online; fixing it needs a protocol change, out of scope this phase. WinScene hides the stats line entirely for online rather than showing fake zeros",
+      "online games show no per-player stats and no winning-move text on WinScene — the client never observes server-driven turns locally, so results-summary has no play-log data to draw from online; fixing it needs a protocol change, out of scope this phase. WinScene hides the stats line entirely for online rather than showing fake zeros",
       "no online rematch (carried from Phase 5/7/8)",
       "flood guard is per connection, not per IP (carried)",
       "turnTimerSeconds still a declared, unimplemented, off-by-default hook (carried)",
-      "no real playtest session has ever been logged \u2014 top ask for the next phase"
+      "no real playtest session has ever been logged — top ask for the next phase"
     ],
     "delivered": [
-      "src/cosmetics/index.ts \u2014 local-only catalog: 4 table themes (boteco/kitchen/quintal/feira), 5 card backs (back-0..back-4), 9 avatars (player/cida/juninho/bia/ze/rosa/tuca/nina/ivo); resolveCosmeticId/cosmeticTextureKey degrade an unknown id or a missing texture to the default rather than rendering broken",
-      "cosmetics selector: Menu -> settings gear -> COSMETICS sub-panel (src/ui/settings-panel.ts), live preview, persists immediately to localStorage mexe-save under a new cosmetics block (src/core/persistence.ts); an old save without the block migrates to defaults. Selection is strictly client-side \u2014 an e2e test asserts cosmetics never appear in src/net/protocol.ts",
-      "scripts/gen-cosmetics.mjs (npm run gen:cosmetics) \u2014 hand-rolled PNG encoder over node zlib, no dependencies, deterministic (re-running reproduces byte-identical files); produced public/assets/tables/quintal.png + feira.png (480x270), public/assets/cards/back-4.png (72x96, azulejo), public/assets/ui/emote-sleepy.png + emote-confident.png (36x36)",
-      "src/audio/music.ts \u2014 music contexts menu | game | mexe; boteco-table + cafe-pixelado for menu and mexe (calm during the concentration-heavy draft), full-song-1/2/3 for game; 900ms crossfade scaled by motionScale() (instant under reduced motion); new music-by-context settings toggle; deterministic round-robin rotation, no RNG",
-      "src/audio/sfx.ts \u2014 80ms per-key SFX retrigger debounce so rapid repeats do not stack into a loud spike; SFX gains audited and already correct, gen-sfx.mjs re-run byte-identical, no audio assets regenerated",
-      "src/ai/ai.ts PERSONALITY_STYLE table \u2014 per-personality think pace and emotes (Cida 900ms happy/thinking, Juninho 250ms confident/excited/annoyed, Bia 600ms+60ms/table-meld capped +400 happy/excited/thinking, Ze 700ms confident/happy/sleepy); think delay is presentation-only (motionScale(), capped, lives in GameScene, does not extend the 400ms search deadline); move reasons tagged cida:minimal-meld / juninho:dump-all / bia:rearrange-extend / ze:hold-for-bigger; characterful ai.line.<personality>.<moment> lines for bigPlay/nearWin/forcedDraw, pt+en. Search engines unchanged \u2014 legality, determinism, timeout fallback still tested",
-      "src/core/objective.ts \u2014 always-visible objective prompt, states start/invalidEdit/readyToConfirm, falls back to the specific canConfirm() reason otherwise",
-      "src/core/results-summary.ts \u2014 WinScene rematch summary (per player: turns, cards played, draws, from the play log) + winning-move line + per-personality avatar emote reactions",
+      "src/cosmetics/index.ts — local-only catalog: 4 table themes (boteco/kitchen/quintal/feira), 5 card backs (back-0..back-4), 9 avatars (player/cida/juninho/bia/ze/rosa/tuca/nina/ivo); resolveCosmeticId/cosmeticTextureKey degrade an unknown id or a missing texture to the default rather than rendering broken",
+      "cosmetics selector: Menu -> settings gear -> COSMETICS sub-panel (src/ui/settings-panel.ts), live preview, persists immediately to localStorage mexe-save under a new cosmetics block (src/core/persistence.ts); an old save without the block migrates to defaults. Selection is strictly client-side — an e2e test asserts cosmetics never appear in src/net/protocol.ts",
+      "scripts/gen-cosmetics.mjs (npm run gen:cosmetics) — hand-rolled PNG encoder over node zlib, no dependencies, deterministic (re-running reproduces byte-identical files); produced public/assets/tables/quintal.png + feira.png (480x270), public/assets/cards/back-4.png (72x96, azulejo), public/assets/ui/emote-sleepy.png + emote-confident.png (36x36)",
+      "src/audio/music.ts — music contexts menu | game | mexe; boteco-table + cafe-pixelado for menu and mexe (calm during the concentration-heavy draft), full-song-1/2/3 for game; 900ms crossfade scaled by motionScale() (instant under reduced motion); new music-by-context settings toggle; deterministic round-robin rotation, no RNG",
+      "src/audio/sfx.ts — 80ms per-key SFX retrigger debounce so rapid repeats do not stack into a loud spike; SFX gains audited and already correct, gen-sfx.mjs re-run byte-identical, no audio assets regenerated",
+      "src/ai/ai.ts PERSONALITY_STYLE table — per-personality think pace and emotes (Cida 900ms happy/thinking, Juninho 250ms confident/excited/annoyed, Bia 600ms+60ms/table-meld capped +400 happy/excited/thinking, Ze 700ms confident/happy/sleepy); think delay is presentation-only (motionScale(), capped, lives in GameScene, does not extend the 400ms search deadline); move reasons tagged cida:minimal-meld / juninho:dump-all / bia:rearrange-extend / ze:hold-for-bigger; characterful ai.line.<personality>.<moment> lines for bigPlay/nearWin/forcedDraw, pt+en. Search engines unchanged — legality, determinism, timeout fallback still tested",
+      "src/core/objective.ts — always-visible objective prompt, states start/invalidEdit/readyToConfirm, falls back to the specific canConfirm() reason otherwise",
+      "src/core/results-summary.ts — WinScene rematch summary (per player: turns, cards played, draws, from the play log) + winning-move line + per-personality avatar emote reactions",
       "menu idle motion, gotoScene() fade transitions, an ONLINE badge so local mode is never mistaken for online, expanded joker-in-run explanation in the rules panel; everything cosmetic respects reduced motion",
       "debug-api: debugApi.results, debugApi.winButtonY, debugApi.music() reports context; new ?motion=0 query hook",
       "6 new e2e tests + 6 new gated screenshots (game-theme-boteco/kitchen/quintal/feira, cosmetics-panel, a11y-reduced-motion), all added to EXPECTED_SHOTS in scripts/check-verify.mjs; 2 pre-existing e2e tests fixed where Phase 9 layout shifts had moved hardcoded click coordinates (rematch button now reads its real position from the debug API instead of guessing)"
     ],
     "verification": {
-      "npmTest": "PASS: 281/281 (18 files) \u2014 re-run after avatar wiring pass",
+      "npmTest": "PASS: 281/281 (18 files) — re-run after avatar wiring pass",
       "npmLint": "PASS: eslint + tsc --noEmit clean",
       "npmBuild": "PASS (gated inside npm run verify)",
       "npmVerify": "PASS: 46/46 e2e; verify: OK; 0 console errors; 0 missing assets; game-scene fps >= 48 (gate >= 30)",
@@ -739,8 +772,8 @@
         "note": "extra agent; reason: PixelLab subscription renewed after Phase 9 close"
       }
     ],
-    "routingNote": "Reasoning/routing done by the main Opus thread: audit synthesis, content prioritization, the decision to go procedural after the PixelLab block, and this dispatch plan. No extra Opus reasoning agent was needed \u2014 tests never failed twice, and no content direction conflicted.",
-    "nextTask": "Run a real playtest session and log it (docs/PLAYTEST_GUIDE.md) \u2014 no session has ever been recorded, and it is the top ask. Carried from earlier phases: online rematch, per-IP rate limiting, a persistent (not single-shot) reconnect retry, and an online results/stats path that does not need a protocol change."
+    "routingNote": "Reasoning/routing done by the main Opus thread: audit synthesis, content prioritization, the decision to go procedural after the PixelLab block, and this dispatch plan. No extra Opus reasoning agent was needed — tests never failed twice, and no content direction conflicted.",
+    "nextTask": "Run a real playtest session and log it (docs/PLAYTEST_GUIDE.md) — no session has ever been recorded, and it is the top ask. Carried from earlier phases: online rematch, per-IP rate limiting, a persistent (not single-shot) reconnect retry, and an online results/stats path that does not need a protocol change."
   },
   "phase8Scores": {
     "demoStability": 9,
@@ -756,7 +789,7 @@
     "docs": 9,
     "publicDemoReadiness": 9
   },
-  "phase8PassGate": "PASS: all twelve phase8Scores >= 8.5. 234/234 unit (12 files), lint + tsc clean, build green, 37/37 local e2e with verify: OK, 7/7 multiplayer e2e with verify:multiplayer: OK and 14 captures. Zero client console errors and zero server errors in both runs. No illegal synced confirm, no hand leak, no stuck flow (server-unavailable, bad room code, room-full and double-click paths all end in a recoverable, translated state). No personal-data telemetry: the play log is in-memory only, strips name/token keys before export, uses page-relative timestamps, and is disabled by ?playlog=0. Balance/pacing and AI fairness are scored 8.5 rather than higher because they are deliberately unmeasured \u2014 the phase instrumented them for the playtest instead of tuning them blind, and the numbers to justify a change do not exist yet.",
+  "phase8PassGate": "PASS: all twelve phase8Scores >= 8.5. 234/234 unit (12 files), lint + tsc clean, build green, 37/37 local e2e with verify: OK, 7/7 multiplayer e2e with verify:multiplayer: OK and 14 captures. Zero client console errors and zero server errors in both runs. No illegal synced confirm, no hand leak, no stuck flow (server-unavailable, bad room code, room-full and double-click paths all end in a recoverable, translated state). No personal-data telemetry: the play log is in-memory only, strips name/token keys before export, uses page-relative timestamps, and is disabled by ?playlog=0. Balance/pacing and AI fairness are scored 8.5 rather than higher because they are deliberately unmeasured — the phase instrumented them for the playtest instead of tuning them blind, and the numbers to justify a change do not exist yet.",
   "phase10": {
     "auditSummary": "docs/PHASE10_AUDIT.md. Phase 9 closed green (281 unit, 46 local e2e, 7 multiplayer e2e, lint/build clean), with no TODOs and no secrets anywhere in shipped source, so Phase 10 was a narrow production-hardening pass rather than a repair job. Three real blockers: the client's ws:// fallback is mixed-content-blocked on any HTTPS deployment, the server had no SIGTERM/SIGINT handling, and nothing enforced that MEXE_TEST_SEED never reaches production. Everything else was structural: no config module on either side, unstructured console logging with privacy left to call sites, a /health that only proved the process was listening, a single bundle chunk that made every game-code release invalidate Phaser in browser caches, and no gate exercising the built client.",
     "blockers": [
@@ -943,7 +976,7 @@
     "strategy": "Guidance only, never legality: the table is shared, so an early joker helps opponents. cida/bia/ze hold jokers unless the play empties the hand; juninho spends them early; RearrangerAi breaks ties toward the draft that spends fewer jokers.",
     "priorityIssues": [
       "old saves containing a 2-joker meld now fail deserializeGameState as a corrupt save (accepted: that table is illegal under the new rule)",
-      "joker strategy is a heuristic preference, not a search-quality guarantee \u2014 a bot may still spend a joker on a merely-large play"
+      "joker strategy is a heuristic preference, not a search-quality guarantee — a bot may still spend a joker on a merely-large play"
     ],
     "delivered": [
       "src/rules/rules.ts - joker-count guard in analyzeRun and analyzeGroup, placed after the all-joker check so reason.groupAllJokers is preserved",
@@ -979,14 +1012,14 @@
     ]
   },
   "phase12": {
-    "auditSummary": "docs/PHASE12_AUDIT.md. Entry state re-measured, not assumed: 320/320 unit tests green on feat/joker-one-per-meld. The audit found drag feel already solid (lift, shadow, shadowed hover, snap-back, tap/keyboard parity) but legality-blind: every meld glowed the same gold whether the dragged card extended it, wrecked it, or was a second joker it could never accept, so the player only learned the difference after dropping. Two further gaps: the invalid-meld reason was reachable only by hover (unusable on touch, and the objective copy literally said \"passe o mouse no \u2717\"), and the FEITO strip collapsed every invalid meld to a generic phase message even though the exact reason was already computed.",
-    "decision": "The brief asked for bounce/restore on an invalid drop. Mexe Mode is built on temporarily invalid drafts \u2014 rearranging the table means passing through states the validator rejects \u2014 so bouncing every rule-invalid drop would remove rearranging entirely. Decision: the drop is still accepted and the meld still draws invalid; what changed is that the player sees red BEFORE letting go. Bounce stays reserved for drops the editor genuinely refuses (tutorial gate, table card that may not return to hand). Illegality is communicated by the helper, never enforced by it; the FEITO gate is untouched, so no helper can allow an illegal confirm.",
+    "auditSummary": "docs/PHASE12_AUDIT.md. Entry state re-measured, not assumed: 320/320 unit tests green on feat/joker-one-per-meld. The audit found drag feel already solid (lift, shadow, shadowed hover, snap-back, tap/keyboard parity) but legality-blind: every meld glowed the same gold whether the dragged card extended it, wrecked it, or was a second joker it could never accept, so the player only learned the difference after dropping. Two further gaps: the invalid-meld reason was reachable only by hover (unusable on touch, and the objective copy literally said \"passe o mouse no ✗\"), and the FEITO strip collapsed every invalid meld to a generic phase message even though the exact reason was already computed.",
+    "decision": "The brief asked for bounce/restore on an invalid drop. Mexe Mode is built on temporarily invalid drafts — rearranging the table means passing through states the validator rejects — so bouncing every rule-invalid drop would remove rearranging entirely. Decision: the drop is still accepted and the meld still draws invalid; what changed is that the player sees red BEFORE letting go. Bounce stays reserved for drops the editor genuinely refuses (tutorial gate, table card that may not return to hand). Illegality is communicated by the helper, never enforced by it; the FEITO gate is untouched, so no helper can allow an illegal confirm.",
     "delivered": [
-      "src/table/snap.ts \u2014 pure snap-target model. computeSnapTargets(draft, card, config) returns one target per meld plus the new-meld target, each with status legal/incomplete/illegal, the validator reason, a display-sorted preview of the resulting meld, and joker assignments. Three statuses, not a boolean: a meld under 3 cards is a normal mid-edit state, not an error. Calls analyzeMeld/sortMeldCards \u2014 never re-derives a rule.",
+      "src/table/snap.ts — pure snap-target model. computeSnapTargets(draft, card, config) returns one target per meld plus the new-meld target, each with status legal/incomplete/illegal, the validator reason, a display-sorted preview of the resulting meld, and joker assignments. Three statuses, not a boolean: a meld under 3 cards is a normal mid-edit state, not an error. Calls analyzeMeld/sortMeldCards — never re-derives a rule.",
       "GameScene drag highlights coloured by status: solid green legal, soft gold incomplete, dashed red illegal (shape channel, not hue alone). Targets computed once on dragstart, never per pointer move.",
       "Non-mutating ghost preview panel on drag-over: the resulting meld as small cards in resulting order, a joker hint taken only from the model assignments and only when legal, and one status line. Cleared on drag leave, dragend and at the top of renderAll.",
       "sfx-snap instead of sfx-drop when an accepted drop landed on a legal target.",
-      "Invalid-meld \u2717 badge is now tappable with an enlarged hit rect, not hover-only; objective.invalidEdit reworded to \"toque no \u2717\" / \"tap the \u2717\" in both locales.",
+      "Invalid-meld ✗ badge is now tappable with an enlarged hit rect, not hover-only; objective.invalidEdit reworded to \"toque no ✗\" / \"tap the ✗\" in both locales.",
       "FEITO strip shows the exact top invalid-meld reason instead of the generic phase text.",
       "New i18n keys snap.legal / snap.incomplete in pt and en (parity test enforces both).",
       "Verification-only debug hooks mexe.cardPos / mexe.meldPos / mexe.snapTargets so e2e can drive a real browser mouse drag instead of only the editor hooks."
@@ -1003,7 +1036,7 @@
     "perf": "All seven new mid-drag captures render at 58 fps with the ghost preview on screen; the run minimum across all 51 captures is 56 fps. Snap targets are computed once per pickup (one analyzeMeld per meld), never per pointer move.",
     "blockers": [],
     "notDone": [
-      "No bounce on a rule-invalid drop \u2014 see decision above; deliberate, not missed.",
+      "No bounce on a rule-invalid drop — see decision above; deliberate, not missed.",
       "The preview shows the destination meld only. Moving a table card can also invalidate its SOURCE meld, and that is not previewed.",
       "objective.invalidEdit is now unreachable from the FEITO strip (the exact reason wins) but is kept in both dictionaries and still returned by objectivePhase(); removing it would mean changing src/core/objective.ts and its tests for no user-visible gain."
     ],
@@ -1013,8 +1046,8 @@
       "implementation": "sonnet (src/table/snap.ts + tests/snap.test.ts in one agent; GameScene/i18n/debug-api/e2e/check-verify wiring in a second)",
       "review": "sonnet (diff review pass)"
     },
-    "cavemanUsage": "Both Sonnet implementation agents and the Sonnet reviewer were instructed to invoke the caveman:caveman skill before working. The Haiku inspection agent ran as caveman:cavecrew-investigator, which is caveman-native. The Opus reasoning/prose role ran under session-level caveman mode from a SessionStart hook rather than a per-task Skill invocation \u2014 stated plainly, not claimed as equivalent.",
-    "extraAgents": "None. One inspection agent, two implementation agents (split only because the second depends on the first API), one reviewer \u2014 the default fleet. No repeated verify failure, rule/preview conflict, local-online divergence or input regression required an extra agent."
+    "cavemanUsage": "Both Sonnet implementation agents and the Sonnet reviewer were instructed to invoke the caveman:caveman skill before working. The Haiku inspection agent ran as caveman:cavecrew-investigator, which is caveman-native. The Opus reasoning/prose role ran under session-level caveman mode from a SessionStart hook rather than a per-task Skill invocation — stated plainly, not claimed as equivalent.",
+    "extraAgents": "None. One inspection agent, two implementation agents (split only because the second depends on the first API), one reviewer — the default fleet. No repeated verify failure, rule/preview conflict, local-online divergence or input regression required an extra agent."
   },
   "phase13": {
     "auditSummary": "docs/PHASE13_AUDIT.md. Entry state re-measured: 330/330 unit green, verify OK. The game was authored into one fixed 480x270 world fitted with Phaser.Scale.FIT, so a portrait phone got a letterboxed 390x219 board with ~19x26 CSS px cards and a permanent 'rotate your phone' banner instead of a layout. Touch input itself was already sound (Phase 12 select-then-place, tappable invalid badge, padded card hit areas, touch-action none) - the gap was that the board had one shape and phones have two.",
@@ -1102,7 +1135,7 @@
     "auditSummary": "docs/PHASE14_AUDIT.md. Entry state re-measured, not assumed: 353/353 unit green, verify OK. Phase 12 already shipped the machinery Phase 14 needs - computeSnapTargets (joker + trinca aware), per-zone legal/incomplete/illegal painting, a non-mutating ghost preview and a tappable invalid badge - but all of it fired on dragstart only, so the Phase 13 tap/keyboard select-then-place path got zero visual feedback. Two reason codes were also over-broad: a mixed-suit run and a jokerless broken run both reported as notAMeld/jokerUnassignable.",
     "blockers": [],
     "priorityIssues": [
-      "joker 'stands for' table-card tooltip is still hover-only \u2014 pre-existing, documented in docs/PHASE14_AUDIT.md, out of Phase 14 scope"
+      "joker 'stands for' table-card tooltip is still hover-only — pre-existing, documented in docs/PHASE14_AUDIT.md, out of Phase 14 scope"
     ],
     "waves": {
       "A": "helper modes: HelperMode beginner/standard/expert, sanitized persistence fallback, pure helperFlags(), settings row, pt/en strings, tests. 353 -> 362 unit.",
@@ -1161,14 +1194,14 @@
     "nextTask": "Phase 14 complete. Remaining known gap: give the joker 'stands for' tooltip a tap path.",
     "reviewFindings": {
       "major_fixed": [
-        "pan/scroll pointermove called renderAll(), rerunning a full legality analysis per tick \u2014 now repositions existing geometry only and settles with one renderAll() on pointerup; table-zoomed fps 41 -> 52",
+        "pan/scroll pointermove called renderAll(), rerunning a full legality analysis per tick — now repositions existing geometry only and settles with one renderAll() on pointerup; table-zoomed fps 41 -> 52",
         "scripts/check-verify.mjs EXPECTED_SHOTS was missing editor-move (and now pan-perf), so a vanished capture would still print verify: OK"
       ],
       "minor_fixed": [
         "mexeEditorMeldId/mexeEditorScroll/mexeHandScroll survived an orientation flip",
-        "settings.helperModeHint.* were dead keys \u2014 deleted; rules.uiHelp already explains all three modes tap-reachably",
+        "settings.helperModeHint.* were dead keys — deleted; rules.uiHelp already explains all three modes tap-reachably",
         "rules-panel drag-to-scroll registered an unscoped global pointermove",
-        "settings-panel walked row positions manually \u2014 now consumes settingsRowOffset/cosmeticsRowOffset, so panel, unit tests and e2e share one formula"
+        "settings-panel walked row positions manually — now consumes settingsRowOffset/cosmeticsRowOffset, so panel, unit tests and e2e share one formula"
       ],
       "nits_fixed": [
         "restored the analyzeRun heuristic disclaimer, now honest that a lone unusable joker reports jokerUnassignable rather than runGap",
@@ -1176,7 +1209,7 @@
         "tests/helpers.test.ts documents why its canConfirmTurn guard is deliberately tautological"
       ],
       "flake_fixed": "the tutorial 12-step e2e clicked NEXT without confirming the press registered; a click landing during a renderAll() rebuild was swallowed and the step never advanced. clickNext now re-presses until the step moves; waitStep still asserts the exact step.",
-      "verdicts": "11 review checks: 9 PASS at review time, 2 FAIL (performance, screenshot gate) \u2014 both fixed and re-verified."
+      "verdicts": "11 review checks: 9 PASS at review time, 2 FAIL (performance, screenshot gate) — both fixed and re-verified."
     },
     "finalTests": {
       "unit": "395/395 (29 files)",
@@ -1203,7 +1236,10 @@
         "priority": "P1",
         "status": "fixed",
         "summary": "startGame accepted a disconnected ready seat, producing a match where that player missed game_started and the game later relied on stalled-turn recovery",
-        "files": ["server/rooms.ts", "tests/server/rooms.test.ts"],
+        "files": [
+          "server/rooms.ts",
+          "tests/server/rooms.test.ts"
+        ],
         "evidence": "new regression failed before patch (received {ok:true,started:true}) and passed after"
       }
     ],
@@ -1238,8 +1274,8 @@
       "npmVerifyPreview": "PASS: assetsChecked=7, jsFilesScanned=3, no leaked secrets",
       "npmTestServer": "PASS: 72/72",
       "npmVerifyMultiplayer": "PASS: 9/9, 18 screenshots",
-      "npmVerifyPwa": "PASS: 10/10, 9 screenshots in docs/screenshots/pwa/ + docs/screenshots/pwa/pwa-log.json \u2014 manifest/icons served, first online load registers worker and fills cache, offline reload boots to menu with missingAssets===0, ONLINE stays disabled offline, offline local match, offline 4-player AI match, offline tutorial, offline en-US menu, offline 390x844 mobile viewport, back online; zero application-level console errors offline (only tolerated noise: browser reporting uncached music streams)",
-      "buildSize": "index 157.55 kB / phaser 1481.77 kB, unchanged \u2014 precache is the app shell only, music is never precached",
+      "npmVerifyPwa": "PASS: 10/10, 9 screenshots in docs/screenshots/pwa/ + docs/screenshots/pwa/pwa-log.json — manifest/icons served, first online load registers worker and fills cache, offline reload boots to menu with missingAssets===0, ONLINE stays disabled offline, offline local match, offline 4-player AI match, offline tutorial, offline en-US menu, offline 390x844 mobile viewport, back online; zero application-level console errors offline (only tolerated noise: browser reporting uncached music streams)",
+      "buildSize": "index 157.55 kB / phaser 1481.77 kB, unchanged — precache is the app shell only, music is never precached",
       "rerunAfterReviewFixes": "verify:pwa 10/10, verify:multiplayer 9/9, lint clean, unit 408/408"
     },
     "modelCavemanLog": [

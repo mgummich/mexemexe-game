@@ -318,9 +318,9 @@ export class RoomManager {
    * stuck on a board that can never advance (docs/PHASE7_AUDIT.md #4). Only fires while at least
    * one other seat is still connected — an empty room is the sweep's job, not this one. Returns
    * the rooms whose state advanced. */
-  advanceStalledTurns(): { code: string; gameOver: boolean }[] {
+  advanceStalledTurns(): { code: string; gameOver: boolean; crashed?: boolean }[] {
     const t = this.now();
-    const advanced: { code: string; gameOver: boolean }[] = [];
+    const advanced: { code: string; gameOver: boolean; crashed?: boolean }[] = [];
     for (const [code, room] of this.rooms) {
       const state = room.state;
       if (!state || state.phase !== 'playing') continue;
@@ -328,12 +328,21 @@ export class RoomManager {
       if (!active || active.connected || active.disconnectedAt === null) continue;
       if (t - active.disconnectedAt <= this.disconnectGraceMs) continue;
       if (!room.seats.some((s) => s !== null && s.connected)) continue;
-      const next = drawAndEndTurn(state);
-      assertConservation(next);
-      room.state = next;
-      room.rev += 1;
-      room.lastActivityAt = t;
-      advanced.push({ code, gameOver: next.phase === 'finished' });
+      // Per-room isolation: one room whose state can no longer advance legally must not stop
+      // every other stalled room from advancing, or throw out of the caller's interval forever.
+      // Crash policy: such a room is corrupt — drop it and report it so the caller can notify
+      // its sockets, instead of retrying the same throw every tick.
+      try {
+        const next = drawAndEndTurn(state);
+        assertConservation(next);
+        room.state = next;
+        room.rev += 1;
+        room.lastActivityAt = t;
+        advanced.push({ code, gameOver: next.phase === 'finished' });
+      } catch {
+        this.rooms.delete(code);
+        advanced.push({ code, gameOver: false, crashed: true });
+      }
     }
     return advanced;
   }
@@ -369,6 +378,11 @@ export class RoomManager {
   getPlayers(code: string): RoomPlayerSummary[] | null {
     const room = this.rooms.get(code);
     return room ? this.summarize(room) : null;
+  }
+
+  /** Drop a room outright (finished match, corrupt state). The caller detaches its sockets. */
+  deleteRoom(code: string): void {
+    this.rooms.delete(code);
   }
 
   getRoom(code: string): { rev: number; state: GameState | null } | null {

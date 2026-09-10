@@ -246,7 +246,7 @@ A +25% large-text option lives in the settings overlay.
 All art is generated with PixelLab and lives under `public/assets/` (see
 `docs/PIXELLAB_ASSETS.md` for the full prompt/path table). Drop in a
 replacement at the same path/size and it's picked up automatically — no code
-changes needed. `BootScene` HEAD-probes every path in `src/assets/manifest.ts`
+changes needed. `BootScene` GET-probes every path in `src/assets/manifest.ts`
 before loading: a missing file never crashes the game, it silently falls back
 to a procedural placeholder texture (`src/assets/fallbacks.ts`) instead.
 Audio (`public/assets/audio/*.wav`) is synthesized by `scripts/gen-sfx.mjs`

@@ -102,8 +102,17 @@ export class NetClient {
       this.setStatus('error', String(err));
       return;
     }
+    // A CLOSING socket can fire after its replacement is live. Detach its callbacks so it
+    // cannot stop the new ping loop or overwrite the current connection status.
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.onmessage = null;
+    }
     this.ws = ws;
     ws.onopen = () => {
+      if (this.ws !== ws) return;
       if (isRetry) playlog.record('net:reconnect');
       this.reconnectAttempted = false;
       this.setStatus('open');
@@ -112,6 +121,7 @@ export class NetClient {
       if (token) this.sendRaw({ v: PROTOCOL_VERSION, type: 'reconnect', reqId: this.nextReqId(), token });
     };
     ws.onclose = () => {
+      if (this.ws !== ws) return;
       // Only a socket that actually opened counts as a disconnect — a refused connection is a
       // never-reachable server (handled below), and counting it would inflate the drop metric.
       if (this.status !== 'connecting') playlog.record('net:disconnect');
@@ -136,11 +146,13 @@ export class NetClient {
       this.setStatus('closed');
     };
     ws.onerror = () => {
+      if (this.ws !== ws) return;
       // No status change here — onclose fires right after and owns the retry-vs-terminal
       // decision. Setting 'error' here first would race a still-pending reconnect.
       this.lastStatusMessage = 'connection error';
     };
     ws.onmessage = (ev) => {
+      if (this.ws !== ws) return;
       let msg: ServerMessage;
       try {
         msg = JSON.parse(String(ev.data)) as ServerMessage;
