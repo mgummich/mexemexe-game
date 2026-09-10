@@ -64,14 +64,21 @@ test('settings sliders respond to a click at the point clicked', async ({ page }
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 30_000 });
 
   // Click the SFX track near its left end and read back what was persisted. The track spans
-  // 100 world units starting at cx - 30, at y 46 (settings-panel.ts: first row + ROW_PITCH).
-  // cx follows the live world width, which widens with the window in landscape.
-  const { scale, origin, trackLeft } = await page.evaluate(() => {
+  // 100 world units starting at cx - 30 (settings-panel.ts). Both centres follow the live world,
+  // which widens with the window in landscape and is a different world entirely in portrait —
+  // the row y is the same formula settings-layout.ts uses (panel top = cy - 266/2, row offset
+  // 22 + row * 19, SFX is row 1), so it can't be hardcoded to the landscape number.
+  const { scale, origin, trackLeft, sfxY } = await page.evaluate(() => {
     const r = document.querySelector('canvas')!.getBoundingClientRect();
     const v = window.__MEXE__.viewport();
-    return { scale: r.width / v.w, origin: { x: r.x, y: r.y }, trackLeft: v.w / 2 - 30 };
+    return {
+      scale: r.width / v.w,
+      origin: { x: r.x, y: r.y },
+      trackLeft: v.w / 2 - 30,
+      sfxY: v.h / 2 - 266 / 2 + 22 + 19,
+    };
   });
-  await page.mouse.click(origin.x + (trackLeft + 10) * scale, origin.y + 46 * scale);
+  await page.mouse.click(origin.x + (trackLeft + 10) * scale, origin.y + sfxY * scale);
 
   const vol = await page.evaluate(() => JSON.parse(localStorage.getItem('mexe-save') ?? '{}')?.settings?.sfxVolume);
   expect(vol).toBeGreaterThanOrEqual(0);

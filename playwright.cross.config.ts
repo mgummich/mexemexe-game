@@ -12,6 +12,11 @@ export default defineConfig({
     { name: 'safari', use: { ...devices['Desktop Safari'] } },
     { name: 'android chrome', use: { ...devices['Pixel 7 landscape'] } },
     { name: 'ios safari', use: { ...devices['iPhone 14 landscape'] } },
+    // Portrait is a real authored world (270x480), not a rotate-me placeholder, so it gets the
+    // same fit/centre/aspect gate as landscape. Tablet covers the 768-1199 band.
+    { name: 'android chrome portrait', use: { ...devices['Pixel 7'] } },
+    { name: 'ios safari portrait', use: { ...devices['iPhone 14'] } },
+    { name: 'ipad', use: { ...devices['iPad (gen 7)'] } },
   ],
   webServer: {
     command: 'npm run preview',

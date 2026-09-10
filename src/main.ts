@@ -87,7 +87,9 @@ game.events.on('step', () => {
 const portraitHint = document.createElement('div');
 portraitHint.textContent = t('a11y.rotateHint');
 portraitHint.style.cssText =
-  'position:fixed;left:50%;top:12px;transform:translateX(-50%);display:none;' +
+  // top offset adds the safe-area inset: installed as a PWA the status bar is translucent
+  // (apple-mobile-web-app-status-bar-style in index.html), so a bare 12px lands under the notch.
+  'position:fixed;left:50%;top:calc(12px + env(safe-area-inset-top));transform:translateX(-50%);display:none;' +
   'background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:6px 12px;' +
   'font:12px monospace;border-radius:4px;z-index:9998;opacity:0.95;pointer-events:none;';
 document.body.appendChild(portraitHint);
@@ -116,7 +118,7 @@ function showErrorToast(): void {
   const el = document.createElement('div');
   el.textContent = t('errors.recoverable');
   el.style.cssText =
-    'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);' +
+    'position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);' +
     'background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:8px 14px;' +
     'font:12px monospace;border-radius:4px;z-index:9999;opacity:0.95;pointer-events:none;';
   document.body.appendChild(el);

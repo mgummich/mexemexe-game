@@ -1620,6 +1620,32 @@ test.describe('portrait', () => {
   });
 });
 
+// The touch landscape layout (regions.ts `landscape()` with `touch: true`) moves gear / zoom /
+// reset / the Mexe toggle into a column of their own above the action cluster, on top of bare
+// table art — r.controlPanel is the opaque backdrop that keeps them readable there. Every other
+// mobile shot above sets a viewport but no touch flag, so none of them exercise that branch.
+test.describe('landscape touch', () => {
+  test.use({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
+
+  test('mobile-landscape-touch-game: the touch control column sits on its own backdrop', async ({ page }) => {
+    await capture(page, '/?seed=42&showcase=game', 'mobile-landscape-touch-game', async (p) => {
+      await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+    });
+    const v = await page.evaluate(() => window.__MEXE__.viewport());
+    expect(v).toMatchObject({ portrait: false, touch: true });
+
+    const r = gameRegions(v);
+    const cp = r.controlPanel!;
+    expect(cp).not.toBeNull();
+    // every control in the column is inside the backdrop, and the backdrop clears the action panel
+    for (const b of [r.gear, r.zoomIn, r.zoomOut, r.reset, r.mexeToggle]) {
+      expect(b.x - Math.max(b.w, 34) / 2).toBeGreaterThanOrEqual(cp.x - 2);
+      expect(b.y + Math.max(b.h, 31) / 2).toBeLessThanOrEqual(cp.y + cp.h);
+    }
+    expect(cp.y + cp.h).toBeLessThanOrEqual(r.actionPanel.y);
+  });
+});
+
 test.afterAll(() => {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   // Playwright starts a fresh worker process (its own empty `logs`) after any test failure, so
