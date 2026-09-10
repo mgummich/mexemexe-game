@@ -44,6 +44,9 @@ describe('gameRegions landscape desktop regression', () => {
       reset: { x: 460, y: 260, w: 22, h: 14, size: 8 },
       sort: { x: 30, y: 246, w: 16, h: 14, size: 8 },
       gear: { x: 462, y: 10, w: 16, h: 14, size: 8 },
+      mexeToggle: { x: 462, y: 10, w: 16, h: 14, size: 8 },
+      zoomIn: { x: 418, y: 55, w: 20, h: 17, size: 9 },
+      zoomOut: { x: 442, y: 55, w: 20, h: 17, size: 9 },
 
       reason: { x: 440, y: 191, wrap: 72, originY: 1, size: 9 },
       selectHint: { x: 190, y: 265 },
@@ -74,6 +77,19 @@ describe('gameRegions landscape touch', () => {
   });
 });
 
+describe('gameRegions landscape zoom buttons', () => {
+  const r = gameRegions(LANDSCAPE);
+
+  it('sit in the free strip above the table, right of the table area, clear of the gear button', () => {
+    for (const b of [r.zoomIn, r.zoomOut]) {
+      expect(b.x - b.w / 2).toBeGreaterThanOrEqual(r.tableLeft + r.tableAreaW);
+      expect(b.y - b.h / 2).toBeGreaterThanOrEqual(r.barH);
+      expect(b.y + b.h / 2).toBeLessThanOrEqual(r.tableTop);
+    }
+    expect(r.zoomIn.x + r.zoomIn.w / 2).toBeLessThanOrEqual(r.zoomOut.x - r.zoomOut.w / 2);
+  });
+});
+
 describe('gameRegions portrait', () => {
   const r = gameRegions(PORTRAIT);
 
@@ -83,7 +99,7 @@ describe('gameRegions portrait', () => {
   });
 
   it('every button lies fully inside the world', () => {
-    for (const b of [r.feito, r.comprar, r.undo, r.redo, r.reset, r.sort, r.gear]) {
+    for (const b of [r.feito, r.comprar, r.undo, r.redo, r.reset, r.sort, r.gear, r.mexeToggle, r.zoomIn, r.zoomOut]) {
       expect(b.x - b.w / 2).toBeGreaterThanOrEqual(0);
       expect(b.x + b.w / 2).toBeLessThanOrEqual(270);
       expect(b.y - b.h / 2).toBeGreaterThanOrEqual(0);
@@ -105,5 +121,15 @@ describe('gameRegions portrait', () => {
   it('hand sits above the action panel, table sits above the hand', () => {
     expect(r.handY + 16).toBeLessThanOrEqual(r.actionPanel.y);
     expect(r.tableBottom).toBeLessThan(r.handY - 16);
+  });
+
+  it('mexeToggle sits left of undo without overlapping it', () => {
+    expect(r.mexeToggle.x + r.mexeToggle.w / 2).toBeLessThanOrEqual(r.undo.x - r.undo.w / 2);
+  });
+
+  it('zoom buttons sit right of gear, stacked, without overlapping it or each other', () => {
+    expect(r.zoomIn.x - r.zoomIn.w / 2).toBeGreaterThanOrEqual(r.gear.x + r.gear.w / 2);
+    expect(r.zoomOut.x - r.zoomOut.w / 2).toBeGreaterThanOrEqual(r.gear.x + r.gear.w / 2);
+    expect(r.zoomIn.y + r.zoomIn.h / 2).toBeLessThanOrEqual(r.zoomOut.y - r.zoomOut.h / 2);
   });
 });

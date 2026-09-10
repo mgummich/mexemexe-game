@@ -1,4 +1,5 @@
-import { loadSave, SAVE_KEY, type Cosmetics, type Progress, type Save, type Settings } from './persistence';
+import { helperFlags as computeHelperFlags, type HelperFlags } from '../ui/helpers';
+import { loadSave, SAVE_KEY, type Cosmetics, type HelperMode, type Progress, type Save, type Settings } from './persistence';
 
 export type { Settings };
 
@@ -69,5 +70,12 @@ export const settings = {
   /** 1 normally, 1.25 when large text is on — multiply font sizes by this via fontStyle(). */
   fontScale(): number {
     return save.settings.largeText ? 1.25 : 1;
+  },
+  helperMode(): HelperMode {
+    return save.settings.helperMode;
+  },
+  /** Display-only UI flags for the current helper mode — never gates rule legality. */
+  helperFlags(): HelperFlags {
+    return computeHelperFlags(save.settings.helperMode);
   },
 };

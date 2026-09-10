@@ -86,7 +86,7 @@
     "portrait is a second authored layout, not a continuous responsive one: window sizes far from 16:9 or 9:16 still letterbox",
     "hover tooltips on a disabled button remain reachable with a mouse (desktop behaviour deliberately unchanged)"
   ],
-  "nextTask": "Phase 12 closed. Commit the branch; no blockers open.",
+  "nextTask": "Phase 14 complete and reviewed. Next: tap path for the joker 'stands for' tooltip.",
   "phase4Scores": {
     "launchStability": 9.5,
     "fullFlow": 9,
@@ -102,7 +102,7 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": 13,
+  "phase": 14,
   "phase6": {
     "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
     "blockers": [],
@@ -296,69 +296,84 @@
   },
   "passGate": "PASS: all >=8.5; 110/110 unit + 19/19 e2e + lint + build green; 0 console errors; 0 missing assets; AI confirms gated by canConfirmTurn (tested); no stuck flows (pause/quit/error-recovery/results all reachable and captured)",
   "metrics": {
-    "generatedAt": "2026-09-09T19:30:58.114Z",
+    "generatedAt": "2026-09-10T06:01:31.000Z",
     "perShotFps": {
       "menu": 60,
-      "game": 57,
-      "game4": 58,
-      "tutorial": 57,
-      "tutorial-step2": 57,
-      "setup": 58,
-      "settings": 55,
-      "win": 58,
-      "mexe-invalid": 57,
-      "comprar-flow": 57,
+      "game": 60,
+      "game4": 60,
+      "tutorial": 58,
+      "tutorial-step2": 58,
+      "setup": 60,
+      "settings": 58,
+      "win": 60,
+      "mexe-invalid": 58,
+      "comprar-flow": 58,
       "ai-showcase-mid": 58,
       "ai-showcase-after": 58,
-      "ai-cida": 58,
-      "ai-juninho": 57,
-      "ai-bia": 57,
-      "ai-ze": 57,
-      "pause": 57,
-      "help": 55,
-      "help-en": 56,
+      "ai-cida": 59,
+      "ai-juninho": 58,
+      "ai-bia": 51,
+      "ai-ze": 58,
+      "pause": 56,
+      "help": 54,
+      "help-en": 54,
       "menu-en": 60,
-      "game-en": 58,
-      "a11y-large-text": 58,
+      "game-en": 60,
+      "a11y-large-text": 60,
       "keyboard-comprar": 58,
       "stress-table": 58,
-      "game-1080p": 58,
+      "game-1080p": 60,
       "joker-in-hand": 58,
-      "joker-in-run": 57,
-      "joker-in-group": 49,
-      "mexe-invalid-two-jokers-run": 54,
-      "mexe-invalid-two-jokers-trinca-en": 56,
-      "mexe-valid-one-joker-each": 55,
-      "mexe-invalid-kA2": 57,
-      "repeated-suit-group": 57,
-      "snap-targets-legal": 57,
+      "joker-in-run": 58,
+      "joker-in-group": 58,
+      "mexe-invalid-two-jokers-run": 58,
+      "mexe-invalid-two-jokers-trinca-en": 58,
+      "mexe-valid-one-joker-each": 58,
+      "mexe-invalid-kA2": 58,
+      "repeated-suit-group": 58,
+      "snap-targets-legal": 58,
       "snap-target-illegal": 58,
       "snap-preview-valid": 58,
-      "snap-preview-invalid": 57,
-      "snap-preview-joker": 57,
-      "snap-reason-tapped": 57,
-      "snap-preview-en": 57,
-      "tutorial-trinca": 57,
-      "tutorial-joker": 57,
+      "snap-preview-invalid": 58,
+      "snap-preview-joker": 58,
+      "snap-reason-tapped": 58,
+      "snap-preview-en": 58,
+      "tutorial-trinca": 58,
+      "tutorial-joker": 58,
       "tutorial-complete": 59,
-      "feito-invalid-explained": 57,
-      "feito-invalid-explained-en": 57,
-      "game-theme-boteco": 58,
-      "game-theme-kitchen": 58,
-      "game-theme-quintal": 58,
-      "game-theme-feira": 58,
-      "cosmetics-panel": 55,
-      "a11y-reduced-motion": 57,
+      "feito-invalid-explained": 58,
+      "feito-invalid-explained-en": 58,
+      "game-theme-boteco": 60,
+      "game-theme-kitchen": 60,
+      "game-theme-quintal": 60,
+      "game-theme-feira": 60,
+      "cosmetics-panel": 58,
+      "a11y-reduced-motion": 58,
       "mobile-portrait-menu": 60,
       "mobile-portrait-game": 58,
       "mobile-landscape-game": 58,
-      "mobile-tap-select": 57,
-      "mobile-tap-move-valid": 57,
-      "mobile-tap-move-invalid": 57,
-      "mobile-feito-blocked": 57,
-      "mobile-badge-reason": 57,
-      "mobile-portrait-en": 57,
-      "tutorial-portrait": 55
+      "mobile-tap-select": 58,
+      "mobile-tap-move-valid": 58,
+      "mobile-tap-move-invalid": 58,
+      "mobile-feito-blocked": 58,
+      "mobile-badge-reason": 58,
+      "mobile-portrait-en": 60,
+      "helper-beginner-destinations": 58,
+      "helper-standard-feedback": 58,
+      "helper-expert-minimal": 58,
+      "invalid-reason-badge": 58,
+      "mobile-mexe-editor": 58,
+      "editor-move": 58,
+      "editor-invalid-draft": 58,
+      "editor-valid-final": 58,
+      "zoom-buttons": 56,
+      "table-zoomed": 52,
+      "pan-perf": 53,
+      "zoom-card-drag-precedence": 56,
+      "zoom-buttons-reachable": 57,
+      "meld-focus": 57,
+      "meld-focus-dismissed": 57,
+      "tutorial-portrait": 57
     },
     "viewports": [
       "1280x720",
@@ -367,7 +382,7 @@
       "844x390"
     ],
     "unitTests": "330/330 pass (22 files, incl. tests/snap.test.ts — 10 snap-target-model tests)",
-    "e2eScreenshots": 61
+    "e2eScreenshots": 76
   },
   "phase3Scores": {
     "fullFlow": 9,
@@ -1082,5 +1097,101 @@
     ],
     "nextTask": "Phase 13 closed; no blockers open. Commit the branch.",
     "notes": "One pre-existing flake seen once under parallel load: the 12-step tutorial e2e failed in a single run and passed in isolation and in the final green run. Not touched by this phase; worth watching."
+  },
+  "phase14": {
+    "auditSummary": "docs/PHASE14_AUDIT.md. Entry state re-measured, not assumed: 353/353 unit green, verify OK. Phase 12 already shipped the machinery Phase 14 needs - computeSnapTargets (joker + trinca aware), per-zone legal/incomplete/illegal painting, a non-mutating ghost preview and a tappable invalid badge - but all of it fired on dragstart only, so the Phase 13 tap/keyboard select-then-place path got zero visual feedback. Two reason codes were also over-broad: a mixed-suit run and a jokerless broken run both reported as notAMeld/jokerUnassignable.",
+    "blockers": [],
+    "priorityIssues": [
+      "joker 'stands for' table-card tooltip is still hover-only — pre-existing, documented in docs/PHASE14_AUDIT.md, out of Phase 14 scope"
+    ],
+    "waves": {
+      "A": "helper modes: HelperMode beginner/standard/expert, sanitized persistence fallback, pure helperFlags(), settings row, pt/en strings, tests. 353 -> 362 unit.",
+      "B": "selected-card legal destinations, multi-reason tappable badges, mode-gated ghost preview and FEITO reason, reason.runSuitMismatch + reason.runGap split. 362 -> 365 unit.",
+      "fix": "settings row geometry extracted to Phaser-free src/ui/settings-layout.ts and consumed by the e2e spec; verify-log.json now merged per run with a globalSetup that clears it once. 365 -> 369 unit, 70/70 e2e, verify: OK.",
+      "C": "focused portrait Mexe editor: src/table/editor-layout.ts (pure, tested), scrollable meld list, large workspace, hand strip, existing sticky action bar reused. Meld-list cards are tap-only so panning can never move a card. 369 -> 384 unit.",
+      "D": "table zoom (plus/minus buttons, no pinch) with a card-scale floor in computeMeldLayout, clamped vertical pan behind a mask, landscape meld focus view. 384 -> 395 unit.",
+      "E": "tutorial step9 tap wording, scrollable rules.uiHelp block covering every Phase 14 helper, pt/en parity, README/CHANGELOG/audit doc, zoom-drag mask fix.",
+      "review": "one Sonnet reviewer pass over the full diff. Two majors found and fixed: renderAll()/analyze() ran per pointer-move tick during pan and editor scroll, and the verify gate did not enforce every captured Phase 14 shot. Four minors and three nits also fixed."
+    },
+    "modelCavemanLog": [
+      {
+        "role": "audit inspection",
+        "model": "haiku",
+        "task": "Phase 13 state + helper/Mexe gaps, wrote docs/PHASE14_AUDIT.md",
+        "caveman": "available, invoked",
+        "run": "p14-audit"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "Wave A helper modes",
+        "caveman": "available, invoked",
+        "run": "p14-A"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "Wave B selection helpers, reason split, ghost/FEITO gating",
+        "caveman": "available, invoked",
+        "run": "p14-B"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "settings-row regression + verify-log merge fix",
+        "caveman": "available, invoked",
+        "run": "p14-fix"
+      },
+      {
+        "role": "implementation",
+        "model": "sonnet",
+        "task": "Wave C mobile Mexe editor",
+        "caveman": "available, invoked",
+        "run": "p14-C"
+      },
+      {
+        "role": "orchestration/UX strategy",
+        "model": "opus",
+        "task": "routing, editor + zoom design, regression root-cause",
+        "caveman": "session-level caveman active",
+        "run": "p14-lead"
+      }
+    ],
+    "extraAgentJustification": "One extra Sonnet agent beyond the default set, for the Wave A settings-panel row regression: 4 e2e cosmetic tests failed on the branch and passed on a stashed baseline, which also explained the phantom verify-gate 'missing screenshot' output. Input regression, so it was fixed in isolation before Wave C started.",
+    "nextTask": "Phase 14 complete. Remaining known gap: give the joker 'stands for' tooltip a tap path.",
+    "reviewFindings": {
+      "major_fixed": [
+        "pan/scroll pointermove called renderAll(), rerunning a full legality analysis per tick — now repositions existing geometry only and settles with one renderAll() on pointerup; table-zoomed fps 41 -> 52",
+        "scripts/check-verify.mjs EXPECTED_SHOTS was missing editor-move (and now pan-perf), so a vanished capture would still print verify: OK"
+      ],
+      "minor_fixed": [
+        "mexeEditorMeldId/mexeEditorScroll/mexeHandScroll survived an orientation flip",
+        "settings.helperModeHint.* were dead keys — deleted; rules.uiHelp already explains all three modes tap-reachably",
+        "rules-panel drag-to-scroll registered an unscoped global pointermove",
+        "settings-panel walked row positions manually — now consumes settingsRowOffset/cosmeticsRowOffset, so panel, unit tests and e2e share one formula"
+      ],
+      "nits_fixed": [
+        "restored the analyzeRun heuristic disclaimer, now honest that a lone unusable joker reports jokerUnassignable rather than runGap",
+        "tests/zoom.test.ts pins ZOOM_FLOORS to the promised SCALE_STEPS entries",
+        "tests/helpers.test.ts documents why its canConfirmTurn guard is deliberately tautological"
+      ],
+      "flake_fixed": "the tutorial 12-step e2e clicked NEXT without confirming the press registered; a click landing during a renderAll() rebuild was swallowed and the step never advanced. clickNext now re-presses until the step moves; waitStep still asserts the exact step.",
+      "verdicts": "11 review checks: 9 PASS at review time, 2 FAIL (performance, screenshot gate) — both fixed and re-verified."
+    },
+    "finalTests": {
+      "unit": "395/395 (29 files)",
+      "e2e": "81/81 via npm run verify, verify: OK, 0 console errors, 0 missing assets",
+      "multiplayer": "9/9, verify:multiplayer: OK, 18 captures",
+      "server": "72/72 (4 files)",
+      "lint": "clean (eslint + tsc --noEmit)",
+      "build": "clean"
+    },
+    "perf": {
+      "stress-table": "58 fps",
+      "table-zoomed": "52 fps GPU-backed, 27 fps on the GPU-less CI runner (41 before the pan-perf fix, 22 before the container-mask fix)",
+      "pan-perf": "53 fps, 0 analyze() calls across a 12-tick pan gesture"
+    },
+    "processNote": "An automated step in the Wave D agent committed, pushed and opened PR #7 mid-phase without being asked. Nothing was merged; main was untouched. PR #7 was closed at the user's instruction and reopened only after the phase was complete and reviewed.",
+    "perfNote": "The zoomed table is fill-rate bound: it draws the same ~57 cards at card scale 1.0 instead of stress-table's ~0.45, roughly 5x the pixels each. CI runs on a GPU-less container that rasterizes in software, so table-zoomed reads 27 fps there against 52 on a GPU-backed machine, while stress-table clears 50 on the same runner because its cards are small. One genuine inefficiency was found and fixed along the way - the table mask was applied per object (hundreds of stencil passes, sprite batching broken) and is now applied once to a container, worth +5 fps on CI. Off-screen row culling was added too, but measured as a no-op on the current fixture (content 136 units vs a 102-unit viewport, only 1.33x), so it is protection for larger tables rather than a fix for this number. The table-zoomed floor was then set from measurement at 20; stress-table keeps >=50 to guard the normal unzoomed path."
   }
 }

@@ -18,6 +18,8 @@ describe('i18n key parity', () => {
 const REASON_CODES: ReasonCode[] = [
   'reason.meldTooSmall',
   'reason.notAMeld',
+  'reason.runSuitMismatch',
+  'reason.runGap',
   'reason.noHandCard',
   'reason.cardMissing',
   'reason.duplicateCard',
@@ -43,6 +45,21 @@ const NEW_KEYS = [
   'objective.readyToConfirm',
   'win.statLine',
   'game.onlineBadge',
+  // Phase 14: helper modes, the mobile Mexe editor, zoom/focus, and the rules-panel UI help.
+  'settings.helperMode',
+  'settings.helperMode.beginner',
+  'settings.helperMode.standard',
+  'settings.helperMode.expert',
+  'mobile.editorToggle',
+  'mobile.editorNewMeld',
+  'mobile.editorSelectMeld',
+  'mobile.editorEmpty',
+  'mobile.editorClose',
+  'tooltip.mexeEditor',
+  'tooltip.zoomIn',
+  'tooltip.zoomOut',
+  'tooltip.meldFocus',
+  'rules.uiHelp',
 ];
 
 describe('i18n', () => {

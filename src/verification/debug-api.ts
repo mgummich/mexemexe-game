@@ -3,6 +3,7 @@ import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { ConnStatus } from '../net/client';
 import type { RoomPlayerSummary, SubmitTurnMeld } from '../net/protocol';
+import type { HelperMode } from '../ui/helpers';
 import { view, type ViewProfile } from '../ui/viewport';
 
 /** Online-alpha e2e surface — present from OnlineScene entry through the online match, null otherwise. */
@@ -71,6 +72,13 @@ export interface MexeDebugApi {
   lastAiThought: string | null;
   /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
   a11y: { invalidBadges: number };
+  /** Verification-only (Phase 14 perf fix): running count of DraftEditor.analyze() calls this
+   * session — used to prove a table pan / editor scroll never re-triggers a legality analysis
+   * mid-gesture (it should only grow on an actual content change or renderAll at gesture end). */
+  analyzeCount: number;
+  /** Verification-only: every reason string currently displayed for each invalid meld (Phase 14
+   * Wave B — a meld can carry more than one, e.g. an analysis reason plus reason.duplicateCard). */
+  invalidMeldReasons: () => { meldId: string; reasons: string[] }[];
   /** Active layout world + input mode (see src/ui/viewport.ts). Lets e2e map world coordinates
    * onto the canvas without assuming an orientation or a scale factor. */
   viewport: () => ViewProfile;
@@ -93,6 +101,33 @@ export interface MexeDebugApi {
     selection: () => string | null;
     /** Verification-only: snap-target readback for the given card — the same model the drag highlights use. */
     snapTargets: (cardId: string) => { meldId: string | null; status: string; reason: string | null }[];
+    /** Verification-only (Wave B): current helper mode. */
+    helperMode: () => HelperMode;
+    /** Verification-only (Wave B): the snap targets currently painted for the selected card —
+     * empty when nothing is selected or the mode doesn't highlight (legalDestinationsOnSelect off). */
+    selectionTargets: () => { meldId: string | null; status: string; reason: string | null }[];
+    /** Verification-only (Phase 14 Wave C): whether the focused Mexe editor (portrait) is open. */
+    editorOpen: () => boolean;
+    /** Verification-only: open/close the focused editor — a no-op outside a human's own turn. */
+    openEditor: () => void;
+    closeEditor: () => void;
+    /** Verification-only: the meld list row currently focused in the editor's workspace — an
+     * existing meld id, null for the "new meld" row, or null when nothing has been focused yet. */
+    editorMeldId: () => string | null;
+    /** Verification-only: the editor's meld-list vertical scroll offset. */
+    editorScroll: () => number;
+    /** Verification-only (Phase 14 Wave D): current table zoom level — index into ZOOM_FLOORS,
+     * 0 is "auto" (today's shrink-to-fit, no zoom applied). */
+    zoomLevel: () => number;
+    /** Verification-only (Phase 14 Wave D): current vertical pan offset into the zoomed table
+     * layout, already clamped to [0, content height - table area height]. */
+    panOffset: () => number;
+    /** Verification-only (Phase 14 Wave D): the meld id shown in the landscape meld-focus
+     * overlay, or null when it's closed. */
+    focusedMeldId: () => string | null;
+    /** Verification-only (Phase 14 Wave E): whether a table card sprite currently carries the
+     * zoomed-table geometry mask, or null if the card isn't on screen. */
+    cardMasked: (cardId: string) => boolean | null;
   } | null;
   online: MexeOnlineDebugApi | null;
   /** Results-screen summary — see MexeResultsSummary. Null outside WinScene. */
@@ -130,6 +165,8 @@ export const debugApi: MexeDebugApi = {
   tutorialStep: null,
   lastAiThought: null,
   a11y: { invalidBadges: 0 },
+  analyzeCount: 0,
+  invalidMeldReasons: () => [],
   viewport: () => view(),
   music: () => ({ track: '', playing: false, volume: 0, context: 'menu' }),
   mexe: null,
@@ -157,6 +194,10 @@ export function installDebugApi(): void {
   debugApi.showcase = params.get('showcase');
   const lang = params.get('lang');
   if (lang === 'en' || lang === 'pt') settings.update({ locale: lang });
+  // e2e hook — ?helper=beginner|standard|expert forces the helper mode before the scene loads,
+  // rather than clicking through the settings panel for every capture.
+  const helper = params.get('helper');
+  if (helper === 'beginner' || helper === 'standard' || helper === 'expert') settings.update({ helperMode: helper });
   // e2e hook mirroring ?lang= — ?textscale=125 flips the large-text setting on for a11y screenshot capture.
   if (params.get('textscale') === '125') settings.update({ largeText: true });
   // e2e hook — ?motion=0 flips reduced motion on for a11y screenshot capture.

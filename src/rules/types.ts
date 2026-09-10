@@ -74,6 +74,8 @@ export interface DraftState {
 export type ReasonCode =
   | 'reason.meldTooSmall'
   | 'reason.notAMeld'
+  | 'reason.runSuitMismatch'
+  | 'reason.runGap'
   | 'reason.noHandCard'
   | 'reason.cardMissing'
   | 'reason.duplicateCard'
