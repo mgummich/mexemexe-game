@@ -117,6 +117,37 @@ test('first online load registers the service worker and fills the cache', async
   await snap('online-menu');
 });
 
+async function cachedPaths(): Promise<string[]> {
+  return page.evaluate(async () => {
+    const names = await caches.keys();
+    const cache = await caches.open(names[0]);
+    const requests = await cache.keys();
+    return requests.map((r) => new URL(r.url).pathname);
+  });
+}
+
+test('runtime cache-first captured the full offline set from BootScene\'s first load, minus music', async () => {
+  // There is no eager precache list (see public/sw.js's comment on why): this asserts the
+  // actual claim the fetch handler makes instead — that BootScene's full-manifest preload on
+  // the one online load above already fills the cache with tables and cards, cache-first as
+  // each asset is fetched. Poll in case a few of those cache.put()s are still landing.
+  await page.waitForFunction(
+    async () => {
+      const names = await caches.keys();
+      const cache = await caches.open(names[0]);
+      const requests = await cache.keys();
+      const paths = requests.map((r) => new URL(r.url).pathname);
+      return paths.some((p) => p.includes('/assets/tables/')) && paths.some((p) => p.includes('/assets/cards/'));
+    },
+    undefined,
+    { timeout: 20_000 },
+  );
+  const cacheKeys = await cachedPaths();
+  expect(cacheKeys.some((p) => p.includes('/assets/tables/')), 'expected a precached tables asset').toBe(true);
+  expect(cacheKeys.some((p) => p.includes('/assets/cards/')), 'expected a precached cards asset').toBe(true);
+  expect(cacheKeys.some((p) => p.includes('/assets/audio/music/')), 'music must never be cached').toBe(false);
+});
+
 test('offline reload boots to the menu with cached assets', async () => {
   await context.setOffline(true);
   await boot('/?seed=42&showcase=menu');

@@ -57,6 +57,13 @@ describe('sw.js', () => {
     expect(source).toContain('name !== CACHE_NAME');
   });
 
+  // The vite.config.ts build plugin greps for this exact placeholder to stamp the release
+  // version in. If this drifts, the build's substitution silently no-ops (or the plugin's
+  // own guard throws) instead of keeping the cache key in lockstep with package.json.
+  it('keeps the version placeholder the build plugin substitutes', () => {
+    expect(source).toContain('__BUILD_VERSION__');
+  });
+
   // Load the service worker source against a stubbed `self` global. The
   // file only touches self.addEventListener and assigns self.__swInternals,
   // so this stub is enough to run it outside a browser/worker context.

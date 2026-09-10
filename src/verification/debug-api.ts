@@ -66,6 +66,9 @@ export interface MexeDebugApi {
   validation: { ok: boolean; reasons: string[] } | null;
   state: (() => GameState | null) | null;
   showcase: string | null;
+  /** Verification-only (Phase 16): ?crowd=N — minTableCards passed to buildShowcaseState for the
+   * 80+ card crowded-table stress test. Null when the param is absent (default path, unchanged). */
+  crowd: number | null;
   /** Current interactive-tutorial step index (0-based), or null outside tutorial mode. */
   tutorialStep: number | null;
   /** Explanation text of the most recent AI decision (`ai:thought`), or null before any AI turn. */
@@ -164,6 +167,7 @@ export const debugApi: MexeDebugApi = {
   validation: null,
   state: null,
   showcase: null,
+  crowd: null,
   tutorialStep: null,
   lastAiThought: null,
   a11y: { invalidBadges: 0 },
@@ -195,6 +199,8 @@ export function installDebugApi(): void {
   });
   const params = new URLSearchParams(location.search);
   debugApi.showcase = params.get('showcase');
+  const crowd = params.get('crowd');
+  debugApi.crowd = crowd ? Number(crowd) : null;
   const lang = params.get('lang');
   if (lang === 'en' || lang === 'pt') settings.update({ locale: lang });
   // e2e hook — ?helper=beginner|standard|expert forces the helper mode before the scene loads,
