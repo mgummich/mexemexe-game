@@ -216,7 +216,12 @@ export class RoomManager {
     if (room.state) return { ok: false, error: 'game_started' };
     if (seat !== 0) return { ok: false, error: 'not_host' };
     const occupied = room.seats.filter((s): s is Seat => s !== null);
-    if (occupied.length < MIN_PLAYERS || occupied.some((s) => !s.ready)) return { ok: false, error: 'not_ready' };
+    // A ready bit survives a transient socket close so a reconnect can resume a lobby, but it
+    // must not let the host start a game with an absent seat. That would immediately create a
+    // stalled turn and leave the disconnected player without the game_started message.
+    if (occupied.length < MIN_PLAYERS || occupied.some((s) => !s.ready || !s.connected)) {
+      return { ok: false, error: 'not_ready' };
+    }
     // GameState indexes players by turn seat. Never compact a lobby gap (e.g. seats 0 and 2),
     // because that would make socket seat 2 point at a nonexistent player after start.
     if (room.seats.slice(0, occupied.length).some((s) => s === null)) return { ok: false, error: 'seat_gap' };

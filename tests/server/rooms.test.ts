@@ -176,6 +176,18 @@ describe('room lifecycle', () => {
     expect(mgr.getRoom(code)?.state).toBeNull();
   });
 
+  it('does not start while a ready lobby player is disconnected', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    mgr.setReady(code, 0, true);
+    mgr.setReady(code, 1, true);
+    mgr.disconnect(code, 1);
+
+    expect(mgr.startGame(code, 0)).toMatchObject({ ok: false, error: 'not_ready' });
+    expect(mgr.getRoom(code)?.state).toBeNull();
+  });
+
   it('deals deterministically for three and four ready players and preserves clockwise turns', () => {
     for (const playerCount of [3, 4]) {
       const mgr = testManager(42);

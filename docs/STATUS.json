@@ -1194,6 +1194,31 @@
     "processNote": "An automated step in the Wave D agent committed, pushed and opened PR #7 mid-phase without being asked. Nothing was merged; main was untouched. PR #7 was closed at the user's instruction and reopened only after the phase was complete and reviewed.",
     "perfNote": "The zoomed table is fill-rate bound: it draws the same ~57 cards at card scale 1.0 instead of stress-table's ~0.45, roughly 5x the pixels each. CI runs on a GPU-less container that rasterizes in software, so table-zoomed reads 27 fps there against 52 on a GPU-backed machine, while stress-table clears 50 on the same runner because its cards are small. One genuine inefficiency was found and fixed along the way - the table mask was applied per object (hundreds of stencil passes, sprite batching broken) and is now applied once to a container, worth +5 fps on CI. Off-screen row culling was added too, but measured as a no-op on the current fixture (content 136 units vs a 102-unit viewport, only 1.33x), so it is protection for larger tables rather than a fix for this number. The table-zoomed floor was then set from measurement at 20; stress-table keeps >=50 to guard the normal unzoomed path."
   },
+  "bug_hunt": {
+    "status": "active",
+    "audit": "docs/BUG_HUNT_AUDIT.md; baseline test 408/408 and server 72/72 pass. No ISSUE_REGISTER.json.",
+    "selectedBug": "P1: starting a lobby with a ready but disconnected seat",
+    "discoveredBugs": [
+      {
+        "priority": "P1",
+        "status": "fixed",
+        "summary": "startGame accepted a disconnected ready seat, producing a match where that player missed game_started and the game later relied on stalled-turn recovery",
+        "files": ["server/rooms.ts", "tests/server/rooms.test.ts"],
+        "evidence": "new regression failed before patch (received {ok:true,started:true}) and passed after"
+      }
+    ],
+    "modelCavemanLog": [
+      {
+        "role": "Main implementation",
+        "model": "primary",
+        "task": "focused audit, reproduction, minimal server gate and regression test",
+        "caveman": "available; not applicable (no subagent spawned)",
+        "runLabel": "bug-hunt-2026-09-10"
+      }
+    ],
+    "verification": "PASS: npm run test 409/409; npm run test:server 73/73; lint; build; npm run verify (81 local screenshots, 0 errors/missing assets, 50-60 FPS); verify:multiplayer (9/9, 18 screenshots, 0 errors); verify:preview; verify:pwa (10/10).",
+    "nextTask": "Bug hunt pass complete; retained issues are the pre-existing tap path for the joker tooltip, online rematch, and per-connection rate limiting."
+  },
   "phase15": {
     "auditSummary": "docs/PHASE15_AUDIT.md. PWA + offline local/AI play added on top of an already offline-safe save system. New service worker (public/sw.js) precaches only the app shell and relies on BootScene's own asset fetch to fill the runtime cache; network-first navigations with the cached index.html as fallback keep a stale build from pinning the app.",
     "blockers": [],
