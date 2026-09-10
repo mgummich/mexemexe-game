@@ -36,7 +36,7 @@ import { ZOOM_FLOORS, zoomStepIn, zoomStepOut } from '../table/zoom';
 import { buildTutorialState } from '../tutorial/fixture';
 import { TutorialDirector, type TutorialAction } from '../tutorial/director';
 import { openPauseMenu } from '../ui/pause-menu';
-import { gameRegions, type GameRegions } from '../ui/regions';
+import { gameRegions, wideReason, type GameRegions } from '../ui/regions';
 import { openRulesPanel } from '../ui/rules-panel';
 import { view } from '../ui/viewport';
 import { coverBackground } from '../ui/menu-layout';
@@ -191,7 +191,8 @@ export class GameScene extends Phaser.Scene {
   private mexeEditorScroll = 0;
   /** Hand-strip horizontal scroll offset — separate axis/field from the meld list's. */
   private mexeHandScroll = 0;
-  private mexeToggleBtn!: PixelButton;
+  /** Absent in tutorial mode — the step panel owns that column (see buildStaticUi). */
+  private mexeToggleBtn?: PixelButton;
 
   // table zoom/pan (Phase 14 Wave D — crowded table legibility)
   /** Index into ZOOM_FLOORS; 0 is "auto", today's shrink-to-fit computeMeldLayout call. */
@@ -745,7 +746,13 @@ export class GameScene extends Phaser.Scene {
    */
   private regionsForMode(): GameRegions {
     const r = gameRegions(view());
-    if (!this.tutorialDirector || !r.portrait) return r;
+    if (!this.tutorialDirector) return r;
+    if (!r.portrait) {
+      // Landscape parks the step panel in the right column (y2-178), which is where the reason
+      // line is bottom-anchored at y191 — its upper lines drew through the panel. Same strip the
+      // touch layout already uses.
+      return { ...r, reason: wideReason(r.w) };
+    }
     const shift = r.tutorialPanel.y + r.tutorialPanel.h + 4 - r.tableTop;
     return { ...r, tableTop: r.tableTop + shift, tableAreaH: r.tableAreaH - shift };
   }
@@ -861,6 +868,7 @@ export class GameScene extends Phaser.Scene {
 
   private buildStaticUi(): void {
     this.staticUi = [];
+    this.mexeToggleBtn = undefined; // stale handle after a relayout destroys the previous build
     // opaque backdrop behind the whole FEITO/COMPRAR/undo cluster: table backgrounds bake props
     // (e.g. a cookie plate in the 4p kitchen) right under this column, and the disabled-reason
     // tooltip must stay readable regardless of what's drawn there.
@@ -877,6 +885,17 @@ export class GameScene extends Phaser.Scene {
       panel.fillRoundedRect(ap.x, ap.y, ap.w, ap.h, 4);
       panel.lineStyle(1, GOLD, 0.35);
       panel.strokeRoundedRect(ap.x, ap.y, ap.w, ap.h, 4);
+    }
+
+    // Same backdrop for the touch-landscape top cluster (gear / zoom / reset / Mexe toggle),
+    // which sits on bare table art. Skipped in tutorial mode: the step panel already owns that
+    // column there, and gear/zoom aren't built at all (see below).
+    const cp = this.r.controlPanel;
+    if (cp && !this.config.tutorial) {
+      panel.fillStyle(0x1a1410, 0.82);
+      panel.fillRoundedRect(cp.x, cp.y, cp.w, cp.h, 4);
+      panel.lineStyle(1, GOLD, 0.35);
+      panel.strokeRoundedRect(cp.x, cp.y, cp.w, cp.h, 4);
     }
 
     this.feitoBtn = new PixelButton(this, this.r.feito.x, this.r.feito.y, t('game.feito'), () => this.onFeito(), {
@@ -898,13 +917,16 @@ export class GameScene extends Phaser.Scene {
 
     this.staticUi.push(panel, this.feitoBtn, this.comprarBtn, undoBtn, redoBtn, resetBtn, sortBtn);
 
-    // Focused Mexe editor toggle (Phase 14 Wave C; landscape support added later) — both orientations.
-    this.mexeToggleBtn = new PixelButton(this, this.r.mexeToggle.x, this.r.mexeToggle.y, t('mobile.editorToggle'), () => this.toggleMexeEditor(), {
-      textureBase: 'btn-small', w: this.r.mexeToggle.w, h: this.r.mexeToggle.h, size: this.r.mexeToggle.size, color: 0x5e5646, tooltip: t('tooltip.mexeEditor'),
-    });
-    this.staticUi.push(this.mexeToggleBtn);
-
     if (!this.config.tutorial) {
+      // Focused Mexe editor toggle (Phase 14 Wave C; landscape support added later) — both
+      // orientations. Skipped in tutorial mode for the same reason as the gear and zoom buttons
+      // below: the step panel covers this strip (r.tutorialPanel spans y2-178), so the button
+      // would sit under it and be untappable.
+      this.mexeToggleBtn = new PixelButton(this, this.r.mexeToggle.x, this.r.mexeToggle.y, t('mobile.editorToggle'), () => this.toggleMexeEditor(), {
+        textureBase: 'btn-small', w: this.r.mexeToggle.w, h: this.r.mexeToggle.h, size: this.r.mexeToggle.size, color: 0x5e5646, tooltip: t('tooltip.mexeEditor'),
+      });
+      this.staticUi.push(this.mexeToggleBtn);
+
       // tutorial mode uses the whole right column for its step panel — no room for the gear there (Esc still opens pause)
       const gearBtn = new PixelButton(this, this.r.gear.x, this.r.gear.y, '⚙', () => this.togglePause(), {
         textureBase: 'btn-small', w: this.r.gear.w, h: this.r.gear.h, size: this.r.gear.size, color: 0x5e5646, tooltip: t('tooltip.settings'),
@@ -1357,7 +1379,7 @@ export class GameScene extends Phaser.Scene {
     }
     // Task 4 (Wave C carry-over): the portrait editor toggle looked live to an inactive online
     // player and silently no-op'd on tap. Drive it from the same gate comprarBtn already uses.
-    this.mexeToggleBtn.setEnabled(interactive);
+    this.mexeToggleBtn?.setEnabled(interactive);
     if (!this.config.tutorial) {
       this.zoomInBtn.setEnabled(!editorMode && this.zoomLevel < ZOOM_FLOORS.length - 1);
       this.zoomOutBtn.setEnabled(!editorMode && this.zoomLevel > 0);

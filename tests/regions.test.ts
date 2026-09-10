@@ -59,6 +59,7 @@ describe('gameRegions landscape desktop regression', () => {
       handZone: { x: 20, y: 216, w: 360, h: 48 },
 
       actionPanel: { x: 398, y: 140, w: 78, h: 130 },
+      controlPanel: null,
       feito: { x: 440, y: 210, w: 64, h: 22, size: 9 },
       comprar: { x: 440, y: 237, w: 64, h: 20, size: 8 },
       undo: { x: 414, y: 260, w: 16, h: 14, size: 8 },
@@ -222,6 +223,31 @@ describe('touch hit boxes: every orientation, no overlaps, desktop unchanged', (
       }
     });
   }
+
+  it('landscape touch: the control backdrop covers the top cluster and clears the action panel', () => {
+    const r = gameRegions({ w: 480, h: 270, portrait: false, touch: true });
+    const cp = r.controlPanel!;
+    expect(cp).not.toBeNull();
+    for (const b of [r.gear, r.zoomIn, r.zoomOut, r.reset, r.mexeToggle]) {
+      const box = hitBox(b, true);
+      expect(box.x - box.w / 2).toBeGreaterThanOrEqual(cp.x - 2);
+      expect(box.x + box.w / 2).toBeLessThanOrEqual(cp.x + cp.w + 2);
+      expect(box.y - box.h / 2).toBeGreaterThanOrEqual(cp.y - 1);
+      expect(box.y + box.h / 2).toBeLessThanOrEqual(cp.y + cp.h);
+    }
+    // the two backdrops must not overlap, or the 0.82 fills would double-darken a band
+    expect(cp.y + cp.h).toBeLessThanOrEqual(r.actionPanel.y);
+    expect(cp.x + cp.w).toBeLessThanOrEqual(r.w);
+    // and the reason text must not land in the column: it used to draw over reset + mexeToggle
+    expect(r.reason.x + r.reason.wrap / 2).toBeLessThanOrEqual(cp.x);
+    expect(r.reason.y).toBeGreaterThanOrEqual(r.tableBottom);
+    expect(r.reason.y).toBeLessThanOrEqual(r.handZone.y);
+  });
+
+  it('desktop and portrait have no control backdrop', () => {
+    expect(gameRegions(LANDSCAPE).controlPanel).toBeNull();
+    expect(gameRegions({ w: 270, h: 480, portrait: true, touch: true }).controlPanel).toBeNull();
+  });
 
   it('landscape desktop (touch=false) values are byte-identical to the pre-fix constants', () => {
     const r = gameRegions(LANDSCAPE);

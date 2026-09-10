@@ -35,7 +35,7 @@ export function onConnectivityChange(
 function makeBanner(bottom: number, pointerEvents: 'none' | 'auto'): HTMLDivElement {
   const el = document.createElement('div');
   el.style.cssText =
-    `position:fixed;left:50%;bottom:${bottom}px;transform:translateX(-50%);display:none;` +
+    `position:fixed;left:50%;bottom:calc(${bottom}px + env(safe-area-inset-bottom));transform:translateX(-50%);display:none;` +
     `background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:6px 12px;` +
     `font:12px monospace;border-radius:4px;z-index:9990;opacity:0.95;pointer-events:${pointerEvents};`;
   document.body.appendChild(el);
@@ -47,7 +47,8 @@ function setupOfflineBanner(): void {
   el.style.cssText =
     // top:44px, not 12px — clears src/main.ts's portraitHint box (top:12px, ~28px tall) so the
     // two don't stack during the hint's first 6s in portrait.
-    'position:fixed;left:50%;top:44px;transform:translateX(-50%);display:none;' +
+    // Both offsets add the safe-area inset — see the portrait hint in src/main.ts.
+    'position:fixed;left:50%;top:calc(44px + env(safe-area-inset-top));transform:translateX(-50%);display:none;' +
     'background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:6px 12px;' +
     'font:12px monospace;border-radius:4px;z-index:9990;opacity:0.95;pointer-events:none;';
   document.body.appendChild(el);
@@ -64,7 +65,11 @@ function showUpdateBanner(reg: ServiceWorkerRegistration): void {
   const el = makeBanner(100, 'auto');
   el.textContent = t('update.available');
   el.style.cursor = 'pointer';
-  el.style.display = 'block';
+  // It's a tap target, not a notice — clear the 44px floor (6px padding + 12px text is ~30px).
+  el.style.minHeight = '44px';
+  el.style.boxSizing = 'border-box';
+  el.style.display = 'flex';
+  el.style.alignItems = 'center';
   el.addEventListener('click', () => reg.waiting?.postMessage({ type: 'SKIP_WAITING' }));
 }
 

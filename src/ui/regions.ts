@@ -56,6 +56,13 @@ export interface GameRegions {
 
   /** Opaque backdrop behind the action cluster, rounded-rect. */
   actionPanel: Rect;
+  /**
+   * Second opaque backdrop, behind the upper right-hand control column (gear / zoom / reset /
+   * Mexe toggle). Only landscape-on-touch has one: that layout moves those four controls onto
+   * bare table art, which bakes props (the boteco mug, the kitchen plate) right under them.
+   * Desktop landscape and portrait keep their existing look, so both report `null`.
+   */
+  controlPanel: Rect | null;
   feito: ButtonSpec;
   comprar: ButtonSpec;
   undo: ButtonSpec;
@@ -89,6 +96,16 @@ export interface GameRegions {
  * right by all of it, the table and the hand grow into it, and centred text follows the new
  * centre. dx is 0 at 480, so the desktop grid is untouched.
  */
+/**
+ * The landscape reason line, laid out across the strip between the table bottom (188) and the
+ * hand zone (216) instead of inside the right-hand column. Used whenever that column is spoken
+ * for: on touch (gear/zoom/reset/mexeToggle fill it) and in tutorial mode (the step panel fills
+ * it) — in both cases the in-column version drew straight over what was already there.
+ */
+export function wideReason(w: number): GameRegions['reason'] {
+  return { x: (w - 82) / 2, y: 192, wrap: w - 110, originY: 0, size: 9 };
+}
+
 function landscape(p: ViewProfile): GameRegions {
   const t = p.touch;
   const w = Math.max(480, p.w);
@@ -128,6 +145,9 @@ function landscape(p: ViewProfile): GameRegions {
     // zoomIn/zoomOut, reset, feito, comprar, undo/redo — every hit box >=31 tall, none overlap.
     // Desktop values below are untouched (same numbers as before this fix).
     actionPanel: t ? { x: 400 + dx, y: 155, w: 80, h: 113 } : { x: 398 + dx, y: 140, w: 78, h: 130 },
+    // Spans the touch column's top cluster: gear (hit box 2.5-33.5), zoom pair (40.5-71.5),
+    // reset (78.5-109.5) and mexeToggle (112-140). Stops short of actionPanel's y155.
+    controlPanel: t ? { x: 400 + dx, y: 0, w: 80, h: 146 } : null,
     feito: t ? { x: 438 + dx, y: 176, w: 72, h: 34, size: 10 } : { x: 440 + dx, y: 210, w: 64, h: 22, size: 9 },
     comprar: t ? { x: 438 + dx, y: 214, w: 72, h: 32, size: 9 } : { x: 440 + dx, y: 237, w: 64, h: 20, size: 8 },
     undo: t ? { x: 419 + dx, y: 250, w: 36, h: 31, size: 8 } : { x: 414 + dx, y: 260, w: 16, h: 14, size: 8 },
@@ -141,7 +161,12 @@ function landscape(p: ViewProfile): GameRegions {
     zoomIn: t ? { x: 419 + dx, y: 56, w: 36, h: 31, size: 9 } : { x: 418 + dx, y: 55, w: 20, h: 17, size: 9 },
     zoomOut: t ? { x: 457 + dx, y: 56, w: 36, h: 31, size: 9 } : { x: 442 + dx, y: 55, w: 20, h: 17, size: 9 },
 
-    reason: t ? { x: 438 + dx, y: 135, wrap: 72, originY: 1, size: 9 } : { x: 440 + dx, y: 191, wrap: 72, originY: 1, size: 9 },
+    // Desktop keeps the reason inside the action column (it has 50 free units above FEITO there).
+    // The touch column does not: gear/zoom/reset/mexeToggle already fill y0-140 and the action
+    // cluster starts at y155, so a 72-wide reason wrapped to 3-4 lines drew straight over reset
+    // and the Mexe toggle. On touch it moves to the full-width strip between the table bottom
+    // (188) and the hand zone (216), where the same copy fits on one line.
+    reason: t ? wideReason(w) : { x: 440 + dx, y: 191, wrap: 72, originY: 1, size: 9 },
     selectHint: { x: 190 + half, y: 265 },
 
     tooltip: { maxW: 96, minX: 0, maxX: w - 92, maxY: 270 - 30 },
@@ -187,6 +212,7 @@ function portrait(p: ViewProfile): GameRegions {
     handZone: { x: 10, y: 344 - 24, w: 250, h: 48 },
 
     actionPanel: { x: 0, y: 360, w: 270, h: 120 },
+    controlPanel: null,
     feito: { x: 192, y: 452, w: 140, h: 40, size: 12 },
     comprar: { x: 66, y: 452, w: 104, h: 36, size: 9 },
     // One row, 8 controls, centres exactly 34 apart — 8 * 34 = 272 barely exceeds the 270-wide
