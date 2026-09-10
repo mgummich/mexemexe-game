@@ -13,7 +13,9 @@
 - Slice the rearranging AI search across event-loop turns so it no longer
   blocks a frame for up to 400ms.
 - Boot asset probes use GET instead of HEAD, so the service worker's HEAD
-  special-case is gone and probe responses prime the offline cache.
+  special-case is gone and probe responses prime the offline cache. The probe
+  drains the response body rather than cancelling it — cancelling raced the
+  service worker's own `cache.put` clone and broke asset loads in Firefox.
 
 All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.

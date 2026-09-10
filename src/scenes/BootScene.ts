@@ -24,10 +24,13 @@ export class BootScene extends Phaser.Scene {
     try {
       const res = await fetch(path);
       const type = res.headers.get('content-type') ?? '';
-      // Headers are enough for the probe; drop the body stream instead of buffering it.
-      // (With the service worker active its own clone still caches the full response.)
-      void res.body?.cancel();
-      return res.ok && !type.includes('html');
+      const found = res.ok && !type.includes('html');
+      // Drain a hit so the transfer completes and the HTTP/service-worker cache keeps it —
+      // the Phaser load right after is then a cache hit rather than a second download.
+      // A miss is the SPA fallback page we never want cached under an asset URL: drop it.
+      if (found) await res.arrayBuffer();
+      else void res.body?.cancel();
+      return found;
     } catch {
       return false;
     }
