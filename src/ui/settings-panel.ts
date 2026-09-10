@@ -59,9 +59,9 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     for (const o of objs) o.destroy();
     objs = [];
     const w = panelW(200);
-    // Fixed height: 13 rows at ROW_PITCH must fit inside the 270-unit world, so the panel frame
+    // Fixed height: 14 rows at ROW_PITCH must fit inside the 270-unit world, so the panel frame
     // and its title stay on screen. Large text scales the glyphs inside the rows, not the panel.
-    const h = SETTINGS_PANEL_H; // 13 rows at ROW_PITCH — see src/ui/settings-layout.ts
+    const h = SETTINGS_PANEL_H; // 14 rows at ROW_PITCH — see src/ui/settings-layout.ts
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
     const { cx, top } = base;
@@ -134,6 +134,20 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 },
     ).setDepth(510);
     objs.push(motionBtn);
+
+    y = rowY(SettingsRow.BatterySaver);
+    const batteryBtn = new PixelButton(
+      scene,
+      cx,
+      y,
+      `${t('settings.batterySaver')}: ${settings.get().batterySaver ? t('settings.on') : t('settings.off')}`,
+      () => {
+        settings.update({ batterySaver: !settings.get().batterySaver });
+        batteryBtn.setLabel(`${t('settings.batterySaver')}: ${settings.get().batterySaver ? t('settings.on') : t('settings.off')}`);
+      },
+      { textureBase: 'btn-comprar', w: 170, h: 16, size: 6, tooltip: t('settings.batterySaverHint') },
+    ).setDepth(510);
+    objs.push(batteryBtn);
 
     y = rowY(SettingsRow.LargeText);
     const largeTextBtn = new PixelButton(
@@ -370,10 +384,15 @@ function makeSlider(
   scene.input.on('pointermove', moveHandler);
   scene.input.on('pointerup', endDrag);
   scene.input.on('pointerupoutside', endDrag);
+  // OS/browser can steal a pointer mid-drag (system gesture, notification) — pointercancel fires
+  // then instead of pointerup. Phaser has no pointercancel input event (same gap GameScene's card
+  // drag hits), so listen on the raw canvas, same as GameScene's cancelDragOnPointerCancel.
+  scene.game.canvas.addEventListener('pointercancel', endDrag);
   track.on('destroy', () => {
     scene.input.off('pointermove', moveHandler);
     scene.input.off('pointerup', endDrag);
     scene.input.off('pointerupoutside', endDrag);
+    scene.game.canvas.removeEventListener('pointercancel', endDrag);
   });
 
   return [track, fill, handle];

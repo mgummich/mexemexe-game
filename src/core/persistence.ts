@@ -17,6 +17,8 @@ export interface Settings {
   /** +25% UI text size, for readability. */
   largeText: boolean;
   helperMode: HelperMode;
+  /** Trims non-essential decorative effects (on top of reducedMotion) for weaker/battery-limited devices. */
+  batterySaver: boolean;
 }
 
 export interface Progress {
@@ -37,7 +39,7 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard' };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
 export const DEFAULT_PROGRESS: Progress = { lastSeed: null, tutorialCompleted: false };
 export const DEFAULT_COSMETICS: Cosmetics = { tableTheme: DEFAULT_TABLE_THEME, cardBack: DEFAULT_CARD_BACK, avatar: DEFAULT_AVATAR };
@@ -56,7 +58,11 @@ function sanitizeCosmetics(partial: Partial<Cosmetics> | undefined): Cosmetics {
 /** Unknown/corrupt stored value falls back to 'standard' instead of surviving as garbage. */
 function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
   const merged = { ...DEFAULT_SETTINGS, ...(partial ?? {}) };
-  return { ...merged, helperMode: HELPER_MODES.includes(merged.helperMode) ? merged.helperMode : 'standard' };
+  return {
+    ...merged,
+    helperMode: HELPER_MODES.includes(merged.helperMode) ? merged.helperMode : 'standard',
+    batterySaver: typeof merged.batterySaver === 'boolean' ? merged.batterySaver : DEFAULT_SETTINGS.batterySaver,
+  };
 }
 
 export const SAVE_KEY = 'mexe-save';

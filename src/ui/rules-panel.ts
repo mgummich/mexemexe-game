@@ -12,11 +12,17 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void): () =>
   const w = panelW(260);
   const cx = centreX(); // matches buildOverlay's panel center — needed before buildOverlay runs
   let scrollMove: ((p: Phaser.Input.Pointer) => void) | null = null;
+  let scrollEndHandlers: { endDrag: () => void } | null = null;
   let maskGfx: Phaser.GameObjects.Graphics | null = null;
   const close = (): void => {
     for (const o of objs) o.destroy();
     maskGfx?.destroy();
     if (scrollMove) scene.input.off('pointermove', scrollMove);
+    if (scrollEndHandlers) {
+      scene.input.off('pointerup', scrollEndHandlers.endDrag);
+      scene.input.off('pointerupoutside', scrollEndHandlers.endDrag);
+      scene.game.canvas.removeEventListener('pointercancel', scrollEndHandlers.endDrag);
+    }
     onClosed();
   };
 
@@ -99,20 +105,31 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void): () =>
     objs.push(dragSurface);
     let dragStartY = 0;
     let dragStartScroll = 0;
+    let dragging = false;
     dragSurface.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      dragging = true;
       dragStartY = p.worldY;
       dragStartScroll = scroll;
     });
     const move = (p: Phaser.Input.Pointer): void => {
-      if (!p.isDown) return;
+      if (!dragging || !p.isDown) return;
       const next = clampScroll(dragStartScroll - (p.worldY - dragStartY), contentH, contentAreaH);
       if (next !== scroll) {
         scroll = next;
         layoutContent();
       }
     };
+    const endDrag = (): void => {
+      dragging = false;
+    };
     scene.input.on('pointermove', move);
+    scene.input.on('pointerup', endDrag);
+    scene.input.on('pointerupoutside', endDrag);
+    // Same OS-steals-the-pointer gap as the settings slider — Phaser has no pointercancel input
+    // event, so reset the drag flag off the raw canvas event instead.
+    scene.game.canvas.addEventListener('pointercancel', endDrag);
     scrollMove = move;
+    scrollEndHandlers = { endDrag };
   }
 
   objs.push(new PixelButton(scene, cx, top + h - closeH / 2 - 6, t('settings.close'), close, {

@@ -6,6 +6,7 @@ import { CARD_H, CARD_W } from '../assets/manifest';
 import { rankLabel, SUIT_CHAR } from '../assets/fallbacks';
 import { settings } from '../core/settings';
 import { bus } from '../core/events';
+import { onAppHidden, onAppVisible } from '../core/lifecycle';
 import { playlog } from '../core/playlog';
 import { createNewGame, GameStore } from '../game-state/store';
 import { buildShowcaseState } from '../demo/showcase';
@@ -322,6 +323,25 @@ export class GameScene extends Phaser.Scene {
         if (this.ambienceSound) this.ambienceSound.volume = settings.musicVolume();
       }),
       bus.on('viewport:changed', () => this.relayout()),
+      // App sleep/resume (phone lock, tab switch, app switch): a stranded mid-drag card or a
+      // stale selection must never survive to the resumed session, and a single relayout on
+      // resume covers whatever changed (orientation, safe-area insets) while backgrounded.
+      onAppHidden(() => {
+        this.cancelActiveDrag();
+        this.clearSelection();
+      }),
+      onAppVisible(() => {
+        this.relayout();
+        // Mobile browsers throttle/suspend sockets and timers while hidden — the C1 reconnect
+        // timer may never have fired, or the connection may look open but be dead. Reuse the
+        // existing reconnecting/resync path rather than inventing a new one: nudge a fresh state
+        // if the socket claims to still be open, or kick the existing connect()/reconnect flow
+        // (which drives onOnlineStatusChange's own notice text) if it isn't.
+        if (this.online) {
+          if (this.online.client.getStatus() === 'open') this.online.client.requestResync();
+          else this.online.client.connect();
+        }
+      }),
     );
     if (config.online) this.wireOnline(config.online.client);
     // Phaser's drag plugin has no pointercancel handling (only pointerup/pointerupoutside), so a

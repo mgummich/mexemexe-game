@@ -37,7 +37,7 @@ describe('parseSave', () => {
   it('round-trips a valid v1 save', () => {
     const save: Save = {
       version: 1,
-      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner' },
+      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner', batterySaver: true },
       progress: { lastSeed: 1234, tutorialCompleted: true },
       cosmetics: { tableTheme: 'quintal', cardBack: 'back-4', avatar: 'bia' },
     };
@@ -74,6 +74,24 @@ describe('parseSave', () => {
     const result = parseSave(JSON.stringify(partial));
     expect(result.cosmetics).toEqual({ ...DEFAULT_COSMETICS, tableTheme: 'quintal' });
   });
+
+  it('round-trips a stored batterySaver: true', () => {
+    const partial = { version: 1, settings: { batterySaver: true } };
+    const result = parseSave(JSON.stringify(partial));
+    expect(result.settings.batterySaver).toBe(true);
+  });
+
+  it('falls back to the default (false) for an invalid stored batterySaver', () => {
+    const partial = { version: 1, settings: { batterySaver: 'yes' } };
+    const result = parseSave(JSON.stringify(partial));
+    expect(result.settings.batterySaver).toBe(DEFAULT_SETTINGS.batterySaver);
+  });
+
+  it('defaults batterySaver when missing from a partial save', () => {
+    const partial = { version: 1, settings: { muted: true } };
+    const result = parseSave(JSON.stringify(partial));
+    expect(result.settings.batterySaver).toBe(DEFAULT_SETTINGS.batterySaver);
+  });
 });
 
 describe('loadSave', () => {
@@ -102,7 +120,7 @@ describe('loadSave', () => {
     const oldSettings = { muted: true, sfxVolume: 33, musicVolume: 44, reducedMotion: true, locale: 'en' };
     const storage = memoryStorage({ [OLD_SETTINGS_KEY]: JSON.stringify(oldSettings) });
     const result = loadSave(storage);
-    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: true, musicContextAware: true, largeText: false, helperMode: 'standard' }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
+    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: true, musicContextAware: true, largeText: false, helperMode: 'standard', batterySaver: false }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
     expect(storage.getItem(SAVE_KEY)).toBe(JSON.stringify(result));
     expect(storage.getItem(OLD_SETTINGS_KEY)).toBeNull();
   });

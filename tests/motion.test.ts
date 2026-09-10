@@ -30,4 +30,13 @@ describe('motionScale (reduced motion)', () => {
 
     settings.update({ reducedMotion: false }); // leave the singleton as other test files expect it
   });
+
+  it('is also 0 once batterySaver is on, independent of reducedMotion', async () => {
+    const { settings } = await import('../src/core/settings');
+    settings.update({ reducedMotion: false, batterySaver: true });
+    expect(settings.motionScale()).toBe(0);
+
+    settings.update({ batterySaver: false }); // leave the singleton as other test files expect it
+    expect(settings.motionScale()).toBe(1);
+  });
 });

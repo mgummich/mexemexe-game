@@ -63,9 +63,9 @@ export const settings = {
   musicVolume(): number {
     return save.settings.muted || !save.settings.musicEnabled ? 0 : save.settings.musicVolume / 100;
   },
-  /** 1 normally, 0 when reduced motion is on — multiply cosmetic tween durations by this to make them instant. */
+  /** 1 normally, 0 when reduced motion or battery saver is on — multiply cosmetic tween durations by this to make them instant. Battery saver reuses the same knob: it's a decorative-effects cut, not a separate quality system. */
   motionScale(): number {
-    return save.settings.reducedMotion ? 0 : 1;
+    return save.settings.reducedMotion || save.settings.batterySaver ? 0 : 1;
   },
   /** 1 normally, 1.25 when large text is on — multiply font sizes by this via fontStyle(). */
   fontScale(): number {
