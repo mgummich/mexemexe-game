@@ -208,11 +208,13 @@ export class GameScene extends Phaser.Scene {
    * layoutMelds() pass (only while zoomed; at the default zoom nothing is masked, so today's
    * landscape rendering is untouched), destroyed at the top of the next renderAll(). */
   private tableMaskGfx: Phaser.GameObjects.Graphics | null = null;
-  /** The mask itself (or null at default zoom), kept alongside tableMaskGfx so a dragged sprite
-   * can drop it for the gesture (Phase 14 Wave E fix) — without this, dragging a card out of the
-   * masked table area toward the hand clips it mid-drag even though the drop logic ignores the
-   * mask entirely. */
-  private tableMask: Phaser.Display.Masks.GeometryMask | null = null;
+  /** Holds every masked table object as one Container so the mask is applied once, not per
+   * object (CI perf fix: a crowded zoomed table used to setMask() hundreds of separate sprites,
+   * each forcing its own stencil pass — ~2.3x slower than the same table unmasked on a software
+   * renderer, enough to drop a CI run under the fps floor). Positioned at (0,0) with no scale, so
+   * every child keeps the exact same world coordinates layoutMelds() already computed for it —
+   * meldZones/hit-tests never had to change. Destroyed and recreated each layoutMelds() pass. */
+  private tableContainer: Phaser.GameObjects.Container | null = null;
   /** Pan-drag anchor (world Y + tablePan at pointerdown). Every pan tick calls renderAll(), which
    * destroys and recreates the pan surface (and would reset a same-pass local closure) — these
    * must survive across that recreation for the whole gesture, hence instance fields, not locals. */
@@ -705,7 +707,10 @@ export class GameScene extends Phaser.Scene {
       // lets e2e prove a dragged sprite drops the mask mid-drag instead of visually clipping.
       cardMasked: (cardId: string) => {
         const s = this.cardSprites.find((c) => c.getData('cardId') === cardId);
-        return s ? s.mask != null : null;
+        // Masking now lives on the shared tableContainer, not per-sprite (CI perf fix) — a card
+        // is effectively masked exactly when it's still a child of that container.
+        if (!s) return null;
+        return this.tableContainer != null && s.parentContainer === this.tableContainer;
       },
     };
   }
@@ -1556,7 +1561,8 @@ export class GameScene extends Phaser.Scene {
     this.meldGlowRects = [];
     this.tableMaskGfx?.destroy();
     this.tableMaskGfx = null;
-    this.tableMask = null;
+    this.tableContainer?.destroy();
+    this.tableContainer = null;
     this.tablePanTargets = [];
     const handCardIds = new Set(this.editor?.getDraft().handCardsPlayed ?? []);
     const inputs: MeldLayoutInput[] = melds.map((m) => ({ id: m.id, cardCount: m.cards.length }));
@@ -1570,11 +1576,12 @@ export class GameScene extends Phaser.Scene {
     // fits, so today's landscape rendering is untouched.
     this.tableContentH = positions.length > 0 ? Math.max(...positions.map((p) => p.y + p.height)) : 0;
     this.tablePan = floor ? clampScroll(this.tablePan, this.tableContentH, this.r.tableAreaH) : 0;
-    let tableMask: Phaser.Display.Masks.GeometryMask | undefined;
-    const applyMask = <T extends Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Mask & Phaser.GameObjects.Components.Transform>(
-      o: T,
-    ): T => {
-      if (tableMask) o.setMask(tableMask);
+    // Reuses one Container as the mask target instead of setMask() per object (see tableContainer
+    // doc comment) — `container` is only defined while zoomed, so applyMask degrades to a no-op
+    // exactly like the old per-object setMask() did at the default zoom.
+    let container: Phaser.GameObjects.Container | undefined;
+    const applyMask = <T extends Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Transform>(o: T): T => {
+      if (container) container.add(o);
       // Every masked object is exactly the set whose y is offset by tablePan (see layoutMelds'
       // `cy = ... - this.tablePan` below) — reuse that gate to track pan-follow targets too.
       if (floor) this.tablePanTargets.push(o);
@@ -1584,9 +1591,10 @@ export class GameScene extends Phaser.Scene {
       const maskGfx = this.make.graphics(undefined, false);
       maskGfx.fillStyle(0xffffff);
       maskGfx.fillRect(this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop);
-      tableMask = maskGfx.createGeometryMask();
+      const tableMask = maskGfx.createGeometryMask();
       this.tableMaskGfx = maskGfx;
-      this.tableMask = tableMask;
+      container = this.add.container(0, 0).setMask(tableMask);
+      this.tableContainer = container;
 
       // Pan surface: the empty table background, added first (lowest depth) so a card sitting on
       // top of it always wins the pointer hit-test — dragging a card can never start a pan, and
@@ -2165,10 +2173,15 @@ export class GameScene extends Phaser.Scene {
       sprite.setDepth(300);
       sprite.setAlpha(0.95);
       sprite.setDisplaySize(baseW * 1.15, baseH * 1.15);
-      // Zoomed table (Phase 14 Wave D) clips content to the table area via a geometry mask; a
-      // dragged card must escape it so dragging toward the hand doesn't visually clip mid-drag.
-      // Drop logic never consulted the mask, so this is purely cosmetic.
-      sprite.clearMask();
+      // Zoomed table (Phase 14 Wave D) clips content to the table area via the tableContainer's
+      // geometry mask; a dragged card must escape it so dragging toward the hand doesn't visually
+      // clip mid-drag. Drop logic never consulted the mask, so this is purely cosmetic. Lift the
+      // sprite out of the masked container back onto the scene's own display list — renderAll()
+      // fully rebuilds the table on drop/settle, so nothing needs to put it back afterward.
+      if (sprite.parentContainer) {
+        sprite.parentContainer.remove(sprite);
+        this.sys.displayList.add(sprite);
+      }
       this.dragShadow = this.add
         .ellipse(sprite.x + 2, sprite.y + 5, baseW * 1.05, baseH * 0.5, 0x000000, 0.35)
         .setDepth(299);
@@ -2190,8 +2203,12 @@ export class GameScene extends Phaser.Scene {
       this.clearDropZoneHighlights();
       this.onCardDropped(sprite);
       this.snapTargets = [];
-      if (this.tableMask) sprite.setMask(this.tableMask);
-      else sprite.clearMask();
+      // Restore container membership synchronously, mirroring the old per-object setMask()
+      // restore here. Most drop outcomes tween the sprite and call renderAll() on completion,
+      // which destroys this sprite and the whole container together anyway — but a
+      // tutorial-blocked drop only tweens the sprite back home without ever re-rendering, so it
+      // must be re-clipped, not left floating outside the table's mask.
+      if (this.tableContainer && sprite.active) this.tableContainer.add(sprite);
     });
   }
 
