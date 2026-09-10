@@ -5,9 +5,11 @@ import { composeCardFaces, loadPixelFont, setPixelFont } from '../assets/compose
 import { debugApi } from '../verification/debug-api';
 
 /**
- * Probes every asset with a HEAD request (vite serves index.html for missing
+ * Probes every asset with a GET request (vite serves index.html for missing
  * files, which would spam console errors), loads what exists, and generates
  * procedural fallback textures for the rest. Missing assets never crash.
+ * GET (not HEAD) so the service worker caches the probe response and serves
+ * the real load — and later offline boots — from cache with no special-casing.
  */
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -20,9 +22,15 @@ export class BootScene extends Phaser.Scene {
 
   private async probe(path: string): Promise<boolean> {
     try {
-      const res = await fetch(path, { method: 'HEAD' });
+      const res = await fetch(path);
       const type = res.headers.get('content-type') ?? '';
-      return res.ok && !type.includes('html');
+      const found = res.ok && !type.includes('html');
+      // Drain a hit so the transfer completes and the HTTP/service-worker cache keeps it —
+      // the Phaser load right after is then a cache hit rather than a second download.
+      // A miss is the SPA fallback page we never want cached under an asset URL: drop it.
+      if (found) await res.arrayBuffer();
+      else void res.body?.cancel();
+      return found;
     } catch {
       return false;
     }

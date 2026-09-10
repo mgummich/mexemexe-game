@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { startMusic } from './audio/music';
 import { bus } from './core/events';
+import { recoverToMenu } from './core/error-recovery';
 import { playlog } from './core/playlog';
 import { initPwa } from './core/pwa';
 import { t } from './localization/i18n';
@@ -121,8 +122,11 @@ function recoverFromError(): void {
   const now = Date.now();
   if (now - lastRecovery < 5000) return;
   lastRecovery = now;
-  const active = game.scene.getScenes(true)[0];
-  if (active && active.scene.key !== 'menu') game.scene.start('menu');
+  recoverToMenu({
+    getActiveScenes: () => game.scene.getScenes(true),
+    stop: (key) => game.scene.stop(key),
+    start: (key) => game.scene.start(key),
+  });
 }
 
 window.addEventListener('error', recoverFromError);

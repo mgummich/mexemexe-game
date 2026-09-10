@@ -30,6 +30,8 @@ rather than silently falling back to a default.
 | `MEXE_ENV` / `NODE_ENV`    | development | `production` enables production checks. `MEXE_ENV` wins.     |
 | `LOG_LEVEL`                | `info`      | `debug` \| `info` \| `error`. `debug` only when set explicitly. |
 | `MEXE_MAX_ROOMS`           | `500`       | Room capacity. Beyond it, room creation is refused cleanly.  |
+| `MEXE_MAX_CONNECTIONS`     | `2000`      | Global WebSocket admission cap. Beyond it, new sockets are closed with `capacity`. |
+| `MEXE_MAX_CONNECTIONS_PER_IP` | `20`     | Per-IP admission cap, same refusal.                          |
 | `MEXE_DISCONNECT_GRACE_MS` | `30000`     | How long a disconnected seat is held before the room closes. |
 | `MEXE_IDLE_TIMEOUT_MS`     | `600000`    | Idle room lifetime before the sweep reaps it.                |
 | `MEXE_TEST_SEED`           | unset       | Forces a deterministic deal. **Test-only.**                  |
@@ -242,8 +244,10 @@ console errors and zero server stderr lines.
   one instance, and a restart ends every match.
 - **Online alpha scope.** Private rooms by code only — no matchmaking, no accounts, no
   ranked play, no chat, no rematch online.
-- **The flood guard is per connection, not per IP.** It stops a looping client, not a
-  distributed abuser. There is no IP-level rate limiting.
+- **Rate limiting is admission caps plus per-connection guards, not per-IP throttling.**
+  Global and per-IP connection caps refuse new sockets at the door, the flood guard closes
+  a looping client, and ten failed room-code guesses close the guessing connection — but a
+  distributed abuser that stays under the per-IP admission cap is not throttled further.
 - **No online results summary.** The win screen's per-player stats are local-only; the
   client never observes the other seats' turn history online, so the line is hidden rather
   than faked. Fixing it needs a protocol change.

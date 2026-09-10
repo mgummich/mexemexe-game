@@ -115,6 +115,8 @@ export class GameScene extends Phaser.Scene {
   private bannerBg!: Phaser.GameObjects.Rectangle;
   private unsubs: (() => void)[] = [];
   private aiTimer: Phaser.Time.TimerEvent | null = null;
+  /** Set on shutdown so an in-flight sliced AI decision never acts on a dead scene. */
+  private sceneGone = false;
 
   // drag feel
   private dragShadow: Phaser.GameObjects.Ellipse | null = null;
@@ -322,6 +324,7 @@ export class GameScene extends Phaser.Scene {
     );
     if (config.online) this.wireOnline(config.online.client);
     this.events.once('shutdown', () => {
+      this.sceneGone = true;
       this.unsubs.forEach((u) => u());
       this.unsubs = [];
       this.aiTimer?.remove();
@@ -573,7 +576,7 @@ export class GameScene extends Phaser.Scene {
       });
     } else {
       const personality = this.personalities[state.activePlayerIndex]!;
-      this.aiTimer = this.time.delayedCall(this.aiThinkDelay(personality, state), () => this.runAiTurn(personality));
+      this.aiTimer = this.time.delayedCall(this.aiThinkDelay(personality, state), () => void this.runAiTurn(personality));
     }
   }
 
@@ -776,12 +779,16 @@ export class GameScene extends Phaser.Scene {
     this.lastMoveText?.setText('');
   }
 
-  private runAiTurn(personality: Personality): void {
+  private async runAiTurn(personality: Personality): Promise<void> {
     const state = this.store.get();
     const player = state.players[state.activePlayerIndex]!;
     const actingSeat = state.activePlayerIndex;
     try {
-      const decision = createAi(personality).decide(state);
+      const ai = createAi(personality);
+      // Sliced (frame-friendly) search where the engine offers it. The yields let other events
+      // run mid-search, so the guard below re-checks scene and store before acting.
+      const decision = ai.decideSliced ? await ai.decideSliced(state) : ai.decide(state);
+      if (this.sceneGone || this.store.get() !== state) return; // scene quit or state moved on mid-search
       bus.emit('ai:thought', { playerId: player.id, text: decision.explanation });
       debugApi.lastAiThought = decision.explanation;
       const style = PERSONALITY_STYLE[personality];
@@ -802,6 +809,7 @@ export class GameScene extends Phaser.Scene {
         this.store.drawEndTurn();
       }
     } catch (e) {
+      if (this.sceneGone) return;
       // AI must never break the game: fall back to draw.
       debugApi.errors.push(`ai fallback: ${String(e)}`);
       this.showEmote(state.activePlayerIndex, 'annoyed');

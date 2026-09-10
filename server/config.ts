@@ -15,6 +15,8 @@ export interface Config {
   readonly mode: Mode;
   readonly logLevel: LogLevel;
   readonly maxRooms: number;
+  readonly maxConnections: number;
+  readonly maxConnectionsPerIp: number;
   readonly disconnectGraceMs: number;
   readonly idleTimeoutMs: number;
   readonly testSeed: number | undefined;
@@ -25,6 +27,8 @@ const DEFAULT_HOST = '0.0.0.0';
 // Same defaults RoomManager already hardcodes (server/rooms.ts) — moved here so they're
 // configurable, not changed.
 const DEFAULT_MAX_ROOMS = 500;
+const DEFAULT_MAX_CONNECTIONS = 2_000;
+const DEFAULT_MAX_CONNECTIONS_PER_IP = 20;
 const DEFAULT_DISCONNECT_GRACE_MS = 30_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 
@@ -67,6 +71,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     mode,
     logLevel: parseLogLevel(env, mode),
     maxRooms: parsePositiveInt(env, 'MEXE_MAX_ROOMS', DEFAULT_MAX_ROOMS),
+    maxConnections: parsePositiveInt(env, 'MEXE_MAX_CONNECTIONS', DEFAULT_MAX_CONNECTIONS),
+    maxConnectionsPerIp: parsePositiveInt(env, 'MEXE_MAX_CONNECTIONS_PER_IP', DEFAULT_MAX_CONNECTIONS_PER_IP),
     disconnectGraceMs: parsePositiveInt(env, 'MEXE_DISCONNECT_GRACE_MS', DEFAULT_DISCONNECT_GRACE_MS),
     idleTimeoutMs: parsePositiveInt(env, 'MEXE_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS),
     testSeed,

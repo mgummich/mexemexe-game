@@ -746,3 +746,56 @@ describe('load: repeated room churn', () => {
     expect(mgr.roomCount()).toBe(0);
   });
 });
+
+describe('per-room isolation and crash policy', () => {
+  function startedRoom(mgr: RoomManager, code: string) {
+    mustCreate(mgr, 'Host');
+    mgr.joinRoom(code, 'B');
+    mgr.joinRoom(code, 'C');
+    for (const seat of [0, 1, 2]) mgr.setReady(code, seat, true);
+    mgr.startGame(code, 0);
+  }
+
+  it('a corrupt room is dropped without stopping other stalled rooms from advancing', () => {
+    const clock = { t: 1000 };
+    const mgr = testManager(1, { disconnectGraceMs: 100, now: () => clock.t });
+    startedRoom(mgr, 'CODE1');
+    startedRoom(mgr, 'CODE2');
+    // Break card conservation in CODE1 so its stalled-turn advance throws.
+    mgr.getRoom('CODE1')!.state!.drawPile.pop();
+    mgr.disconnect('CODE1', 0);
+    mgr.disconnect('CODE2', 0);
+    clock.t += 1000;
+    expect(mgr.advanceStalledTurns()).toEqual([
+      { code: 'CODE1', gameOver: false, crashed: true },
+      { code: 'CODE2', gameOver: false },
+    ]);
+    expect(mgr.getRoom('CODE1')).toBeNull();
+    expect(mgr.getRoom('CODE2')!.state!.activePlayerIndex).toBe(1);
+  });
+
+  it('deleteRoom drops a room outright', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Host');
+    mgr.deleteRoom(code);
+    expect(mgr.getRoom(code)).toBeNull();
+    expect(mgr.roomCount()).toBe(0);
+  });
+});
+
+describe('join_room code cap', () => {
+  it('rejects an oversized room code before it reaches the manager', () => {
+    const long = parseClientMessage(
+      JSON.stringify({ v: PROTOCOL_VERSION, type: 'join_room', reqId: 'r1', code: 'X'.repeat(17), name: 'A' }),
+    );
+    expect('error' in long).toBe(true);
+    const empty = parseClientMessage(
+      JSON.stringify({ v: PROTOCOL_VERSION, type: 'join_room', reqId: 'r1', code: '', name: 'A' }),
+    );
+    expect('error' in empty).toBe(true);
+    const ok = parseClientMessage(
+      JSON.stringify({ v: PROTOCOL_VERSION, type: 'join_room', reqId: 'r1', code: 'BCDFG', name: 'A' }),
+    );
+    expect('error' in ok).toBe(false);
+  });
+});

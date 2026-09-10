@@ -84,7 +84,8 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private rebuild(): void {
-    this.children.removeAll();
+    this.tweens.killAll();
+    this.children.removeAll(true);
     coverBackground(this, 'bg-menu');
     this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.35);
     // backdrop so controls read against the busy boteco scene

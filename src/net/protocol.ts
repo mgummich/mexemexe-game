@@ -331,7 +331,11 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
       return { v: PROTOCOL_VERSION, type: 'create_room', reqId, name: o.name };
     }
     case 'join_room': {
-      if (!isStr(o.code) || !isStr(o.name)) return { error: 'bad join_room payload' };
+      // Real codes are 5 chars (server/rooms.ts CODE_LENGTH); anything much longer is garbage
+      // or a probe and gets rejected before it reaches the room manager.
+      if (!isStr(o.code) || o.code.length === 0 || o.code.length > 16 || !isStr(o.name)) {
+        return { error: 'bad join_room payload' };
+      }
       return { v: PROTOCOL_VERSION, type: 'join_room', reqId, code: o.code, name: o.name };
     }
     case 'leave_room':

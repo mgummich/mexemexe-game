@@ -20,10 +20,18 @@ export interface ConnState {
   seat: number | null;
   msgCount: number;
   windowStart: number;
+  failedJoins: number;
 }
 
 export function newConnState(now: number): ConnState {
-  return { code: null, seat: null, msgCount: 0, windowStart: now };
+  return { code: null, seat: null, msgCount: 0, windowStart: now, failedJoins: 0 };
+}
+
+/** Room codes are short shared secrets; a connection that keeps guessing nonexistent codes is
+ * probing, not mistyping. Count each failed lookup and tell the caller when to close it. */
+export function hitJoinLimit(state: ConnState, maxFailures = 10): boolean {
+  state.failedJoins++;
+  return state.failedJoins > maxFailures;
 }
 
 export function attachSocket<S extends Sock>(sockets: Map<string, Map<number, S>>, code: string, seat: number, sock: S): void {
@@ -39,6 +47,20 @@ export function detachSocket<S extends Sock>(sockets: Map<string, Map<number, S>
   const bySeat = sockets.get(code);
   if (bySeat?.get(seat) === sock) bySeat.delete(seat);
   if (bySeat && bySeat.size === 0) sockets.delete(code);
+}
+
+/** Move a live socket between seats without leaving it reachable from its old room. */
+export function moveSocket<S extends Sock>(
+  sockets: Map<string, Map<number, S>>,
+  conn: ConnState,
+  code: string,
+  seat: number,
+  sock: S,
+): void {
+  if (conn.code !== null && conn.seat !== null) detachSocket(sockets, conn.code, conn.seat, sock);
+  conn.code = code;
+  conn.seat = seat;
+  attachSocket(sockets, code, seat, sock);
 }
 
 /** On a successful reconnect: evict whatever socket currently holds the seat (if it isn't

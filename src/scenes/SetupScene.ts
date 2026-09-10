@@ -38,7 +38,8 @@ export class SetupScene extends Phaser.Scene {
   }
 
   private rebuild(): void {
-    this.children.removeAll();
+    this.tweens.killAll();
+    this.children.removeAll(true);
     coverBackground(this, 'bg-menu');
     this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.4);
     this.add.rectangle(cx(), vy(145), panelW(260), vy(210), 0x1a0f0a, 0.68).setStrokeStyle(1, 0xc0a878, 0.6);

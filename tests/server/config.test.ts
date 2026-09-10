@@ -9,6 +9,8 @@ describe('loadConfig', () => {
     expect(cfg.mode).toBe('development');
     expect(cfg.logLevel).toBe('info');
     expect(cfg.maxRooms).toBe(500);
+    expect(cfg.maxConnections).toBe(2_000);
+    expect(cfg.maxConnectionsPerIp).toBe(20);
     expect(cfg.disconnectGraceMs).toBe(30_000);
     expect(cfg.idleTimeoutMs).toBe(10 * 60_000);
     expect(cfg.testSeed).toBeUndefined();
@@ -33,5 +35,11 @@ describe('loadConfig', () => {
 
   it('honors an explicit debug LOG_LEVEL', () => {
     expect(loadConfig({ LOG_LEVEL: 'debug' }).logLevel).toBe('debug');
+  });
+
+  it('reads connection caps from env', () => {
+    const cfg = loadConfig({ MEXE_MAX_CONNECTIONS: '50', MEXE_MAX_CONNECTIONS_PER_IP: '3' });
+    expect(cfg.maxConnections).toBe(50);
+    expect(cfg.maxConnectionsPerIp).toBe(3);
   });
 });
