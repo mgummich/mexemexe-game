@@ -1637,6 +1637,22 @@ export class GameScene extends Phaser.Scene {
       const zoneRect = new Phaser.Geom.Rectangle(cx, cy - pad, pos.width, pos.height);
       this.meldZones.push({ meldId: meld.id, rect: zoneRect });
 
+      // Cull rows scrolled fully outside the visible band (CI perf: fill rate, not draw-call
+      // count, is the dominant software-rasterizer cost at scale 1.0 — a crowded zoomed table's
+      // content is often several rows taller than the table area, so most rows are off-screen and
+      // skipping their sprite creation entirely is real pixels never drawn, not just hidden by the
+      // mask). meldZones above is pushed unconditionally and untouched by this: a real pointer can
+      // never land inside a rect that's outside the visible viewport anyway, so a culled row's zone
+      // sitting in the array is inert, never mis-targetable. The margin (one row's own height,
+      // constant across every row while zoomed — see computeMeldLayout's fixed `rowH`) keeps a
+      // partially-visible row rendered and absorbs the pan drift between pointermove ticks; the
+      // gesture's own pointerup already calls renderAll() once to resettle the rendered set for
+      // wherever panning ends up.
+      if (floor) {
+        const margin = pos.height;
+        if (zoneRect.bottom < this.r.tableTop - margin || zoneRect.y > this.r.tableBottom + margin) return;
+      }
+
       // Mexe UX: alternating neutral shading (independent of validity color) keeps crowded adjacent melds visually distinct.
       if (meldIndex % 2 === 1) {
         const shade = applyMask(
