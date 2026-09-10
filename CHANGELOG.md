@@ -3,6 +3,42 @@
 All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 
+## Unreleased — Phase 14 (helper modes, mobile Mexe editor, table zoom, tutorial/help)
+
+Phase 13 gave touch its own board shape; Phase 12 gave tap-select-then-place
+visual feedback on drag only. This phase closes both remaining gaps: the
+tap-select path now gets the same legality feedback a drag does, a crowded
+table gets a dedicated mobile editing surface and a zoom/focus view, and the
+tutorial and in-game help panel teach all of it. See `docs/PHASE14_AUDIT.md`.
+
+- **Three helper modes** (`src/ui/helpers.ts`, Settings → VISUAL HELP):
+  Beginner shows legal destinations, invalid-meld reasons and a ghost
+  preview; Standard shows only validity highlights and the FEITO reason;
+  Expert shows the least — the final check only. The mode changes what is
+  *shown*, never what is *legal*.
+- **Selection feedback for tap and keyboard** (`src/scenes/GameScene.ts`):
+  selecting a card highlights its legal destinations (Beginner), an invalid
+  meld's ✗ badge is tappable and can carry more than one reason, and a
+  non-mutating ghost preview shows the result of a held card before it's
+  dropped. Two invalid-run reasons were split out of the old generic
+  `reason.notAMeld` bucket: `reason.runSuitMismatch` and `reason.runGap`.
+- **A focused mobile Mexe editor** (`src/table/editor-layout.ts`): a
+  full-screen, scrollable meld-list view for a portrait phone, toggled by an
+  icon next to Undo — a bigger workspace than the normal cramped table for
+  rearranging melds by tap.
+- **Table zoom and meld focus** (`src/table/zoom.ts`): + / − buttons zoom a
+  crowded table (no pinch gesture) with clamped panning, and a magnifier icon
+  opens a large, read-only focus view of one meld. A dragged card now clears
+  the zoomed table's clipping mask for the gesture, so dragging it toward the
+  hand no longer clips it mid-drag.
+- **Tutorial and help panel updated**: the tutorial's invalid-meld step now
+  says to tap the ✗ instead of describing a hover-only gesture, and the
+  rules/help panel (`src/ui/rules-panel.ts`) gained a scrollable UI-help
+  section covering helper modes, selection highlights, the ghost preview, the
+  mobile editor, zoom/focus, and the online locked (not-your-turn) state.
+- **Full pt-BR/en-US coverage**: every string this phase added exists in both
+  locales with real, locale-specific copy, checked by `tests/i18n.test.ts`.
+
 ## Unreleased — Phase 13 (mobile layout, tap-first controls)
 
 The board was authored into one fixed 480x270 world and letterboxed to fit, so a

@@ -229,3 +229,65 @@ The validator returns these ReasonCodes when a meld fails:
 ## Out of scope (Phase 14)
 
 Full helper-mode auto-solver, best-move hints, per-density UI scaling (text/buttons), reduced-motion guard on ghost preview tweens, alt text for visual feedback, new art, new rules, ranked/accounts/chat, PWA/offline, native packaging.
+
+## What shipped
+
+All ten items above landed except #9 (settings slider touch target) and #10
+(safe-area inset), which were already covered by Phase 13, and item #4 (the
+joker "stands for" tooltip staying `pointerover`-only), which is still open —
+see Priority issues below.
+
+- **Wave A** — three helper modes (`src/ui/helpers.ts`): Beginner, Standard,
+  Expert. Persisted via `settings.helperMode()` with a sanitized fallback for
+  a corrupt/invalid stored value. A settings-panel row switches between them.
+  The mode only ever changes what is displayed; legality is unaffected.
+- **Wave B** — the tap/keyboard select-then-place path got the same
+  legality feedback drag already had: legal-destination highlights on
+  selection, a non-mutating ghost preview, and multi-reason tappable invalid
+  badges. `reason.notAMeld` was too broad for runs, so it was split into
+  `reason.runSuitMismatch` (mixed suits) and `reason.runGap` (a jokerless
+  hole); the FEITO reason shows live or only on attempt depending on mode.
+- **Wave C** — a focused mobile Mexe editor (`src/table/editor-layout.ts`):
+  a full-screen, scrollable meld-list view for portrait phones, toggled by an
+  icon left of Undo, with a larger workspace and the existing sticky action
+  bar underneath.
+- **Wave D** — table zoom (`src/table/zoom.ts`): +/- buttons step through
+  `ZOOM_FLOORS` (no pinch gesture), panning is clamped to content height, and
+  a magnifier icon opens a read-only, large meld-focus view in landscape.
+  `debugApi.mexe.zoomLevel/panOffset/focusedMeldId` back all of it for e2e.
+- **Wave E** (this pass):
+  - **Bug fix**: a card sprite kept the zoomed-table geometry mask through a
+    drag, so dragging it out of the masked table area (e.g. toward the hand)
+    visually clipped it mid-drag — drop logic was unaffected, this was purely
+    cosmetic. Fixed by clearing the mask on `dragstart` and restoring it on
+    `dragend` in `GameScene.wireDrag()`, guarded by a
+    `debugApi.mexe.cardMasked()` e2e assertion in the existing
+    `zoom-card-drag-precedence` test.
+  - **Tutorial/help**: the tutorial's invalid-meld step and the
+    `objective.invalidEdit` line no longer say "hover the ✗" (the latter was
+    already fixed pre-Wave-E); the step now says to tap it. The rules/help
+    panel (`src/ui/rules-panel.ts`) gained a third, scrollable content block
+    (`rules.uiHelp`) covering helper modes, selection highlights, the ghost
+    preview, the mobile editor, zoom/focus, and the online locked
+    (not-your-turn) state — scrolling reuses `clampScroll` from
+    `src/table/editor-layout.ts` rather than growing the panel past the
+    viewport, which the first draft of this content did (caught by
+    screenshotting `help`/`help-en` before shipping it).
+  - **Localization**: `tests/i18n.test.ts`'s `NEW_KEYS` smoke list was
+    extended with every Phase 14 key group (helper mode, mobile editor,
+    zoom/focus tooltips, `rules.uiHelp`) so a future locale gap fails loud,
+    not just the generic key-parity check.
+  - **Screenshots**: `zoom-buttons`, `zoom-buttons-reachable`,
+    `zoom-card-drag-precedence`, `meld-focus-dismissed` and `settings`
+    already existed as captures but weren't in `EXPECTED_SHOTS`; they're now
+    registered so the gate enforces them. The existing
+    `mp-mobile-waiting-waiting` multiplayer capture already covers "online
+    locked mobile" — no new capture was needed.
+
+## Still open after Phase 14
+
+- The joker "stands for" tooltip on a table card (`GameScene`, the
+  `pointerover`/`pointerout` pair near the meld-rendering loop) remains
+  hover-only; a touch user selecting a card never sees it. This was
+  item #4 in the top-10 list above and wasn't the bug this phase was asked to
+  fix, so it's carried forward rather than folded in as scope creep.

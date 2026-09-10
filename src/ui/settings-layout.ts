@@ -35,9 +35,15 @@ export function settingsPanelTop(): number {
   return cy() - SETTINGS_PANEL_H / 2;
 }
 
-/** y of a main-panel row (see SettingsRow), matching showMain's `y += ROW_PITCH` walk. */
+/** Row offset from the panel's own top edge. showMain() lays its rows out with this exact call,
+ * so the panel and `settingsRowY` below can never drift apart — there is only one formula. */
+export function settingsRowOffset(row: SettingsRow): number {
+  return 22 + row * ROW_PITCH;
+}
+
+/** y of a main-panel row (see SettingsRow), matching showMain's row walk. */
 export function settingsRowY(row: SettingsRow): number {
-  return settingsPanelTop() + 22 + row * ROW_PITCH;
+  return settingsPanelTop() + settingsRowOffset(row);
 }
 
 /** Vertical pitch between rows in the cosmetics sub-panel (table theme / card back / avatar). */
@@ -53,7 +59,13 @@ export function cosmeticsPanelTop(): number {
   return cy() - cosmeticsPanelH() / 2;
 }
 
+/** Cosmetics row offset from that sub-panel's own top edge — showCosmetics() uses this directly,
+ * same single-formula rule as settingsRowOffset. */
+export function cosmeticsRowOffset(index: number): number {
+  return 32 + index * COSMETICS_ROW_PITCH;
+}
+
 /** y of cosmetics sub-panel row `index` (0 = table theme, 1 = card back, 2 = avatar). */
 export function cosmeticsRowY(index: number): number {
-  return cosmeticsPanelTop() + 32 + index * COSMETICS_ROW_PITCH;
+  return cosmeticsPanelTop() + cosmeticsRowOffset(index);
 }

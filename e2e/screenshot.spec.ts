@@ -679,8 +679,21 @@ test('tutorial: first-run 12-step completion, including the trinca-limit and jok
   await page.waitForFunction(() => window.__MEXE__.tutorialStep === 0);
 
   const [nextX, nextY] = toScreen(438, 144); // tutorial NEXT button
+  // The tutorial panel is rebuilt wholesale by renderAll(), so a click landing in that window hits
+  // a destroyed button and is swallowed — the step then never advances and waitStep() times out.
+  // Press again until the step actually moves; waitStep() below still asserts the exact step, so
+  // this only removes the race, it never weakens the assertion.
   const clickNext = async (): Promise<void> => {
-    await page.mouse.click(nextX, nextY);
+    const before = await page.evaluate(() => window.__MEXE__.tutorialStep);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await page.mouse.click(nextX, nextY);
+      try {
+        await page.waitForFunction((s) => window.__MEXE__.tutorialStep !== s, before, { timeout: 2_500 });
+        return;
+      } catch {
+        // swallowed by a re-render — press again
+      }
+    }
   };
   const waitStep = async (step: number): Promise<void> => {
     await page.waitForFunction((s) => window.__MEXE__.tutorialStep === s, step, { timeout: 15_000 });
@@ -1327,6 +1340,39 @@ test('editor-valid-final: completing a valid draft inside the editor lets FEITO 
   });
 });
 
+test('editor state does not survive an orientation flip: scroll and focused meld reset (finding 3)', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await page.goto('/?seed=37&showcase=mexe');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await crowdTheTable(page); // enough melds to make the meld list actually scrollable
+  await page.evaluate(() => window.__MEXE__.mexe!.openEditor());
+  const meldId = await meldIdOf(page, 'clubs-10-d0');
+  await tapMeldListRow(page, meldId); // focus a meld
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.editorMeldId())).toBe(meldId);
+
+  // Drag the meld list upward to push its scroll offset off zero.
+  const zone = editorZones(PORTRAIT_REGIONS).meldList;
+  const [fx, fy] = await toCanvasPoint(page, zone.x + zone.w / 2, zone.y + zone.h - 4);
+  const [tx, ty] = await toCanvasPoint(page, zone.x + zone.w / 2, zone.y + 4);
+  await page.mouse.move(fx, fy);
+  await page.mouse.down();
+  await page.mouse.move(tx, ty, { steps: 8 });
+  await page.mouse.up();
+  const scrollBefore = await page.evaluate(() => window.__MEXE__.mexe!.editorScroll());
+  expect(scrollBefore).toBeGreaterThan(0);
+
+  // Flip to landscape (force-closes the editor, per renderAll) and back to portrait.
+  await page.setViewportSize(PHONE_LANDSCAPE);
+  await page.waitForFunction(() => window.__MEXE__.viewport().portrait === false, undefined, { timeout: 5000 });
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await page.waitForFunction(() => window.__MEXE__.viewport().portrait === true, undefined, { timeout: 5000 });
+
+  // Reopening after the flip must start from a clean slate, not the pre-flip scroll/focus.
+  await page.evaluate(() => window.__MEXE__.mexe!.openEditor());
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.editorMeldId())).toBeNull();
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.editorScroll())).toBe(0);
+});
+
 // ---------- Phase 14 Wave D: table zoom/pan + meld focus (landscape) ----------
 
 /** Icon logical position for a meld's 🔍 focus button — same layout math layoutMelds() uses
@@ -1442,6 +1488,39 @@ test('table-zoomed: a crowded table zoomed in holds fps, and panning the empty t
   });
 });
 
+test('pan-perf: a multi-tick pan gesture never re-runs the legality analysis mid-drag', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe', 'pan-perf', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await crowdTheTable(p);
+
+    const [inX, inY] = toScreen(DESKTOP_REGIONS.zoomIn.x, DESKTOP_REGIONS.zoomIn.y);
+    await p.mouse.click(inX, inY);
+    await p.waitForTimeout(80);
+    await p.mouse.click(inX, inY);
+    await p.waitForTimeout(80);
+
+    // Phase 14 review, finding 1: a pan is display-only, so DraftEditor.analyze() (a full legality
+    // pass over every meld) must not run per pointermove tick — only the single renderAll() that
+    // settles the gesture on pointerup. Before the fix each tick called renderAll(), so this count
+    // grew with STEPS; the assertion below fails outright if that regresses.
+    const STEPS = 12;
+    const gap = await emptyTableGapLogicalPos(p);
+    const [gx, gy] = toScreen(gap.x, gap.y);
+    await p.mouse.move(gx, gy);
+    await p.mouse.down();
+    const before = await p.evaluate(() => window.__MEXE__.analyzeCount);
+    await p.mouse.move(gx, gy - 40, { steps: STEPS });
+    const during = await p.evaluate(() => window.__MEXE__.analyzeCount);
+    await p.mouse.up();
+    await p.waitForTimeout(100);
+    const after = await p.evaluate(() => window.__MEXE__.analyzeCount);
+
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.panOffset())).toBeGreaterThan(0);
+    expect(during - before).toBe(0); // zero analyses across every tick of the gesture
+    expect(after - before).toBeLessThanOrEqual(2); // only the settling renderAll() on pointerup
+  });
+});
+
 test('pan-vs-drag precedence: dragging an actual card while zoomed still moves it, not the pan', async ({ page }) => {
   await capture(page, '/?seed=37&showcase=mexe', 'zoom-card-drag-precedence', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
@@ -1455,6 +1534,9 @@ test('pan-vs-drag precedence: dragging an actual card while zoomed still moves i
     const cardsBefore = await meldCardIds(p, meldId);
     const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
     await dragCardOnto(p, 'clubs-13-d0', meldPos!);
+    // Wave E fix: mid-drag the sprite must have dropped the zoomed-table geometry mask, or it
+    // would visually clip when dragged outside the masked table area (e.g. up toward the hand).
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.cardMasked('clubs-13-d0'))).toBe(false);
     await p.mouse.up();
     await p.waitForTimeout(100);
 

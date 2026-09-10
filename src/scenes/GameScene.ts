@@ -208,11 +208,26 @@ export class GameScene extends Phaser.Scene {
    * layoutMelds() pass (only while zoomed; at the default zoom nothing is masked, so today's
    * landscape rendering is untouched), destroyed at the top of the next renderAll(). */
   private tableMaskGfx: Phaser.GameObjects.Graphics | null = null;
+  /** The mask itself (or null at default zoom), kept alongside tableMaskGfx so a dragged sprite
+   * can drop it for the gesture (Phase 14 Wave E fix) — without this, dragging a card out of the
+   * masked table area toward the hand clips it mid-drag even though the drop logic ignores the
+   * mask entirely. */
+  private tableMask: Phaser.Display.Masks.GeometryMask | null = null;
   /** Pan-drag anchor (world Y + tablePan at pointerdown). Every pan tick calls renderAll(), which
    * destroys and recreates the pan surface (and would reset a same-pass local closure) — these
    * must survive across that recreation for the whole gesture, hence instance fields, not locals. */
   private panDragStartY = 0;
   private panDragStartPan = 0;
+  /** Objects whose y depends on tablePan (every masked table object layoutMelds() draws) — a pan
+   * tick shifts these directly instead of re-running renderAll()/analyze() per pointermove (see
+   * finding 1, Phase 14 review): nothing about the draft changes while panning, so nothing needs
+   * re-analyzing mid-gesture. Repopulated every layoutMelds() pass; the full renderAll() still runs
+   * once on pointerup to settle everything (clamping, meldZones, etc.) authoritatively. */
+  private tablePanTargets: Array<Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Transform> = [];
+  /** Same idea as tablePanTargets, for the portrait Mexe editor's meld-list vertical scroll. */
+  private mexeListPanTargets: Array<Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Transform> = [];
+  /** Same idea, for the portrait Mexe editor's hand-strip horizontal scroll. */
+  private mexeHandPanTargets: Array<Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Transform> = [];
 
   constructor() {
     super('game');
@@ -686,6 +701,12 @@ export class GameScene extends Phaser.Scene {
       zoomLevel: () => this.zoomLevel,
       panOffset: () => this.tablePan,
       focusedMeldId: () => this.focusedMeldId,
+      // Phase 14 Wave E: whether a card sprite currently carries the zoomed-table geometry mask —
+      // lets e2e prove a dragged sprite drops the mask mid-drag instead of visually clipping.
+      cardMasked: (cardId: string) => {
+        const s = this.cardSprites.find((c) => c.getData('cardId') === cardId);
+        return s ? s.mask != null : null;
+      },
     };
   }
 
@@ -915,6 +936,12 @@ export class GameScene extends Phaser.Scene {
     if (!this.scene.isActive()) return;
     this.r = this.regionsForMode();
     this.resetZoomPan();
+    // An orientation flip invalidates the portrait editor's scroll/focus state same as zoom/pan —
+    // leaving it stale let a reopen after the flip restore a scroll offset or focused meld from
+    // before it (finding 3, Phase 14 review).
+    this.mexeEditorMeldId = undefined;
+    this.mexeEditorScroll = 0;
+    this.mexeHandScroll = 0;
     const savedNotice = this.onlineNoticeText?.text ?? '';
     for (const o of this.staticUi) o.destroy();
     this.buildStaticUi();
@@ -1200,6 +1227,13 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- rendering ----------
 
+  /** Single choke point for DraftEditor.analyze() — instruments debugApi.analyzeCount so e2e can
+   * assert panning/scrolling never re-triggers it mid-gesture (finding 1, Phase 14 review). */
+  private analyzeDraft() {
+    debugApi.analyzeCount++;
+    return this.editor!.analyze();
+  }
+
   private renderAll(): void {
     if (this.tutorialDirector) this.checkTutorialProgress();
     this.clearGhostPreview();
@@ -1258,7 +1292,7 @@ export class GameScene extends Phaser.Scene {
     // table melds (draft when human editing, committed otherwise). One shared analysis pass —
     // invalid-badge display and the FEITO gate below both need it, and each walks every meld.
     const melds = this.editor ? this.editor.getDraft().melds : state.table;
-    const analysis = this.editor?.analyze() ?? null;
+    const analysis = this.editor ? this.analyzeDraft() : null;
     // A meld can carry more than one reason (e.g. the analysis reason plus reason.duplicateCard) —
     // collect all of them, not just the last one a Map key would keep.
     const invalidReasons = new Map<string, string[]>();
@@ -1342,7 +1376,7 @@ export class GameScene extends Phaser.Scene {
    * FEITO button's tap feedback, so the two can never disagree. */
   private blockingReasonText(): string {
     if (!this.editor) return '';
-    const analysis = this.editor.analyze();
+    const analysis = this.analyzeDraft();
     const check = analysis.check;
     // "what does the game want right now": ready-to-confirm / fix-the-invalid-meld / play-or-draw
     // cover almost every turn; the rare remainder (e.g. a returned table card) falls back to the
@@ -1522,6 +1556,8 @@ export class GameScene extends Phaser.Scene {
     this.meldGlowRects = [];
     this.tableMaskGfx?.destroy();
     this.tableMaskGfx = null;
+    this.tableMask = null;
+    this.tablePanTargets = [];
     const handCardIds = new Set(this.editor?.getDraft().handCardsPlayed ?? []);
     const inputs: MeldLayoutInput[] = melds.map((m) => ({ id: m.id, cardCount: m.cards.length }));
     const floor = ZOOM_FLOORS[this.zoomLevel];
@@ -1535,8 +1571,13 @@ export class GameScene extends Phaser.Scene {
     this.tableContentH = positions.length > 0 ? Math.max(...positions.map((p) => p.y + p.height)) : 0;
     this.tablePan = floor ? clampScroll(this.tablePan, this.tableContentH, this.r.tableAreaH) : 0;
     let tableMask: Phaser.Display.Masks.GeometryMask | undefined;
-    const applyMask = <T extends Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Mask>(o: T): T => {
+    const applyMask = <T extends Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Mask & Phaser.GameObjects.Components.Transform>(
+      o: T,
+    ): T => {
       if (tableMask) o.setMask(tableMask);
+      // Every masked object is exactly the set whose y is offset by tablePan (see layoutMelds'
+      // `cy = ... - this.tablePan` below) — reuse that gate to track pan-follow targets too.
+      if (floor) this.tablePanTargets.push(o);
       return o;
     };
     if (floor) {
@@ -1545,6 +1586,7 @@ export class GameScene extends Phaser.Scene {
       maskGfx.fillRect(this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop);
       tableMask = maskGfx.createGeometryMask();
       this.tableMaskGfx = maskGfx;
+      this.tableMask = tableMask;
 
       // Pan surface: the empty table background, added first (lowest depth) so a card sitting on
       // top of it always wins the pointer hit-test — dragging a card can never start a pan, and
@@ -1561,10 +1603,17 @@ export class GameScene extends Phaser.Scene {
         if (!p.isDown) return;
         const next = clampScroll(this.panDragStartPan - (p.worldY - this.panDragStartY), this.tableContentH, this.r.tableAreaH);
         if (next !== this.tablePan) {
+          // Reposition only — never renderAll()/analyze() mid-gesture (finding 1, Phase 14 review).
+          // The draft doesn't change while panning, so nothing needs re-analyzing per tick; a single
+          // renderAll() on pointerup settles everything (clamping, meldZones, mask) authoritatively.
+          const delta = next - this.tablePan;
           this.tablePan = next;
-          this.renderAll();
+          for (const o of this.tablePanTargets) o.y -= delta;
+          for (const z of this.meldZones) z.rect.y -= delta;
         }
       });
+      panBg.on('pointerup', () => this.renderAll());
+      panBg.on('pointerupoutside', () => this.renderAll());
       this.hud.push(panBg);
     }
 
@@ -1836,6 +1885,8 @@ export class GameScene extends Phaser.Scene {
     interactive: boolean,
     config: RulesConfig,
   ): void {
+    this.mexeListPanTargets = [];
+    this.mexeHandPanTargets = [];
     const zones = editorZones(this.r);
     const meldIds = melds.map((m) => m.id);
     const rows = meldListRows(meldIds);
@@ -1861,16 +1912,22 @@ export class GameScene extends Phaser.Scene {
         if (!p.isDown) return;
         const next = clampScroll(scrollStart - (p.worldY - dragStartY), contentH, zones.meldList.h);
         if (next !== this.mexeEditorScroll) {
+          // Reposition only — see the table-pan handler above for why (finding 1, Phase 14 review).
+          const delta = next - this.mexeEditorScroll;
           this.mexeEditorScroll = next;
-          this.renderAll();
+          for (const o of this.mexeListPanTargets) o.y -= delta;
         }
       });
       listBg.on('pointerup', (p: Phaser.Input.Pointer) => {
         // A tap (negligible vertical movement) selects the row under it; a drag only scrolled.
-        if (Math.abs(p.worldY - dragStartY) > 4) return;
+        if (Math.abs(p.worldY - dragStartY) > 4) {
+          this.renderAll();
+          return;
+        }
         const row = hitTestMeldListRow(rows, zones.meldList, this.mexeEditorScroll, p.worldX, p.worldY);
         if (row) this.onMeldListRowTapped(row);
       });
+      listBg.on('pointerupoutside', () => this.renderAll());
     }
     this.hud.push(listBg);
 
@@ -1884,8 +1941,11 @@ export class GameScene extends Phaser.Scene {
         .rectangle(zones.meldList.x + zones.meldList.w / 2, y + MELD_LIST_ROW_H / 2, zones.meldList.w - 2, MELD_LIST_ROW_H - 2, focused ? 0xf7d23e : 0xffffff, focused ? 0.14 : 0.04)
         .setDepth(1);
       this.hud.push(rowRect);
+      this.mexeListPanTargets.push(rowRect);
       if (row.meldId === null) {
-        this.hud.push(label(this, zones.meldList.x + 6, y + MELD_LIST_ROW_H / 2, t('mobile.editorNewMeld'), 7, '#d8c890').setOrigin(0, 0.5).setDepth(2));
+        const newMeldLabel = label(this, zones.meldList.x + 6, y + MELD_LIST_ROW_H / 2, t('mobile.editorNewMeld'), 7, '#d8c890').setOrigin(0, 0.5).setDepth(2);
+        this.hud.push(newMeldLabel);
+        this.mexeListPanTargets.push(newMeldLabel);
         continue;
       }
       const meld = melds.find((m) => m.id === row.meldId);
@@ -1896,13 +1956,14 @@ export class GameScene extends Phaser.Scene {
         const img = this.add.image(zones.meldList.x + 8 + cw / 2 + i * (cw * 0.7), y + MELD_LIST_ROW_H / 2, key).setDisplaySize(cw, ch).setDepth(2);
         this.hud.push(img);
         this.cardSprites.push(img);
+        this.mexeListPanTargets.push(img);
       });
       const isInvalid = invalidReasons.has(meld.id);
-      this.hud.push(
-        label(this, zones.meldList.x + zones.meldList.w - 12, y + MELD_LIST_ROW_H / 2, isInvalid ? '✗' : '✓', 8, isInvalid ? '#ff6b5e' : '#7ee0a0')
-          .setOrigin(0.5)
-          .setDepth(2),
-      );
+      const verdictLabel = label(this, zones.meldList.x + zones.meldList.w - 12, y + MELD_LIST_ROW_H / 2, isInvalid ? '✗' : '✓', 8, isInvalid ? '#ff6b5e' : '#7ee0a0')
+        .setOrigin(0.5)
+        .setDepth(2);
+      this.hud.push(verdictLabel);
+      this.mexeListPanTargets.push(verdictLabel);
     }
 
     // ---- workspace ----
@@ -1984,10 +2045,14 @@ export class GameScene extends Phaser.Scene {
         if (!p.isDown) return;
         const next = clampScroll(scrollStartX - (p.worldX - dragStartX), contentW, hsZone.w);
         if (next !== this.mexeHandScroll) {
+          // Reposition only — see the table-pan handler above for why (finding 1, Phase 14 review).
+          const delta = next - this.mexeHandScroll;
           this.mexeHandScroll = next;
-          this.renderAll();
+          for (const o of this.mexeHandPanTargets) o.x -= delta;
         }
       });
+      hsBg.on('pointerup', () => this.renderAll());
+      hsBg.on('pointerupoutside', () => this.renderAll());
     }
     this.hud.push(hsBg);
     const startHX = hsZone.x + CARD_W / 2 + 4 - hsScroll;
@@ -1997,6 +2062,7 @@ export class GameScene extends Phaser.Scene {
       const sprite = this.makeCardSprite(x, hsZone.y + hsZone.h / 2, card, interactive, 'hand', false, 1, false);
       sprite.setDepth(10 + i);
       this.cardSprites.push(sprite);
+      this.mexeHandPanTargets.push(sprite);
     });
 
     // Selected-card ring — the normal board draws this in renderSelectionLayer, which the editor
@@ -2099,6 +2165,10 @@ export class GameScene extends Phaser.Scene {
       sprite.setDepth(300);
       sprite.setAlpha(0.95);
       sprite.setDisplaySize(baseW * 1.15, baseH * 1.15);
+      // Zoomed table (Phase 14 Wave D) clips content to the table area via a geometry mask; a
+      // dragged card must escape it so dragging toward the hand doesn't visually clip mid-drag.
+      // Drop logic never consulted the mask, so this is purely cosmetic.
+      sprite.clearMask();
       this.dragShadow = this.add
         .ellipse(sprite.x + 2, sprite.y + 5, baseW * 1.05, baseH * 0.5, 0x000000, 0.35)
         .setDepth(299);
@@ -2120,6 +2190,8 @@ export class GameScene extends Phaser.Scene {
       this.clearDropZoneHighlights();
       this.onCardDropped(sprite);
       this.snapTargets = [];
+      if (this.tableMask) sprite.setMask(this.tableMask);
+      else sprite.clearMask();
     });
   }
 

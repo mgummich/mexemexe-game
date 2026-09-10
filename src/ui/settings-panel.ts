@@ -7,7 +7,7 @@ import { getLocale, setLocale, t } from '../localization/i18n';
 import { debugApi } from '../verification/debug-api';
 import { panelW } from './menu-layout';
 import { buildOverlay } from './overlay';
-import { cosmeticsPanelH, ROW_PITCH, SETTINGS_PANEL_H } from './settings-layout';
+import { cosmeticsPanelH, cosmeticsRowOffset, SETTINGS_PANEL_H, settingsRowOffset, SettingsRow } from './settings-layout';
 import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
 
 // Row y-coordinates (settingsRowY, cosmeticsRowY, SettingsRow, ...) live in ./settings-layout,
@@ -68,7 +68,10 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
 
     objs.push(label(scene, cx, top + 10, t('settings.title'), 9, '#f7d23e').setDepth(510));
 
-    let y = top + 22;
+    // Row positions come from settings-layout's SettingsRow enum, never a local walk: the e2e
+    // spec clicks these rows by the same formula, so adding a row can't silently shift them.
+    const rowY = (row: SettingsRow): number => top + settingsRowOffset(row);
+    let y = rowY(SettingsRow.Mute);
     const muteBtn = new PixelButton(
       scene,
       cx,
@@ -82,15 +85,15 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(muteBtn);
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.Sfx);
     objs.push(label(scene, cx - 84, y, t('settings.sfx'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
     objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().sfxVolume, (v) => settings.update({ sfxVolume: v })));
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.Music);
     objs.push(label(scene, cx - 84, y, t('settings.music'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
     objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().musicVolume, (v) => settings.update({ musicVolume: v })));
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.MusicEnabled);
     const musicBtn = new PixelButton(
       scene,
       cx,
@@ -104,7 +107,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(musicBtn);
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.MusicContext);
     const contextBtn = new PixelButton(
       scene,
       cx,
@@ -118,7 +121,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(contextBtn);
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.Motion);
     const motionBtn = new PixelButton(
       scene,
       cx,
@@ -132,7 +135,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(motionBtn);
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.LargeText);
     const largeTextBtn = new PixelButton(
       scene,
       cx,
@@ -146,7 +149,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ).setDepth(510);
     objs.push(largeTextBtn);
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.HelperMode);
     const helperModeLabel = (): string => `${t('settings.helperMode')}: ${t(`settings.helperMode.${settings.helperMode()}`)}`;
     const helperModeBtn = new PixelButton(scene, cx, y, helperModeLabel(), () => {
       settings.update({ helperMode: cycleHelperMode(settings.helperMode()) });
@@ -154,7 +157,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     }, { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 }).setDepth(510);
     objs.push(helperModeBtn);
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.Lang);
     const langBtn = new PixelButton(scene, cx, y, t('menu.language'), () => {
       const next = getLocale() === 'pt' ? 'en' : 'pt';
       setLocale(next);
@@ -163,7 +166,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     }, { textureBase: 'btn-comprar', w: 150, h: 16, size: 7 }).setDepth(510);
     objs.push(langBtn);
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.Export);
     const exportBtn = new PixelButton(scene, cx, y, t('settings.exportLog'), () => {
       copyPlaylog((ok) => {
         // Panel may have closed (or rebuilt for a settings change) before this callback runs —
@@ -175,21 +178,21 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     }, { textureBase: 'btn-comprar', w: 170, h: 16, size: 7 }).setDepth(510);
     objs.push(exportBtn);
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.Cosmetics);
     objs.push(
       new PixelButton(scene, cx, y, t('cosmetics.title'), showCosmetics, {
         textureBase: 'btn-comprar', w: 150, h: 16, size: 7,
       }).setDepth(510),
     );
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.ResetData);
     objs.push(
       new PixelButton(scene, cx, y, t('settings.resetData'), showResetConfirm, {
         textureBase: 'btn-comprar', w: 150, h: 16, size: 7, color: DANGER_TINT,
       }).setDepth(510),
     );
 
-    y += ROW_PITCH;
+    y = rowY(SettingsRow.Close);
     objs.push(
       new PixelButton(scene, cx, y, t('settings.close'), close, {
         textureBase: 'btn-comprar', w: 90, h: 16, size: 7,
@@ -275,7 +278,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       objs.push(btn);
     };
 
-    let y = top + 32;
+    let y = top + cosmeticsRowOffset(0);
     row(
       y,
       t('cosmetics.table'),
@@ -286,7 +289,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       (id) => settings.updateCosmetics({ tableTheme: id }),
     );
 
-    y += 30;
+    y = top + cosmeticsRowOffset(1);
     row(
       y,
       t('cosmetics.back'),
@@ -297,7 +300,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       (id) => settings.updateCosmetics({ cardBack: id }),
     );
 
-    y += 30;
+    y = top + cosmeticsRowOffset(2);
     row(
       y,
       t('cosmetics.avatar'),

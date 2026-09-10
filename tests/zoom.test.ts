@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { SCALE_STEPS } from '../src/table/layout';
 import { ZOOM_FLOORS, zoomStepIn, zoomStepOut } from '../src/table/zoom';
 
 describe('table zoom stepping', () => {
   it('index 0 is auto (no floor) — the default, unzoomed behaviour', () => {
     expect(ZOOM_FLOORS[0]).toBeUndefined();
+    // Pinned, not just monotonic: an index swap in zoom.ts would otherwise still pass.
+    expect(ZOOM_FLOORS[1]).toBe(SCALE_STEPS[2]);
+    expect(ZOOM_FLOORS[2]).toBe(SCALE_STEPS[0]);
   });
 
   it('every floor beyond auto actually zooms in (each bigger than the last)', () => {

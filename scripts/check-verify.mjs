@@ -67,9 +67,19 @@ const EXPECTED_SHOTS = [
   'mobile-mexe-editor',
   'editor-valid-final',
   'editor-invalid-draft',
+  'editor-move',
+  'pan-perf',
   // Phase 14 Wave D: table zoom/pan + meld focus.
   'table-zoomed',
   'meld-focus',
+  'meld-focus-dismissed',
+  'zoom-buttons',
+  'zoom-buttons-reachable',
+  'zoom-card-drag-precedence',
+  // Phase 14 Wave E: helper-mode settings row + tutorial/help coverage.
+  'settings',
+  // Phase 14 regression fix: tutorial step panel was rendering off-screen in portrait.
+  'tutorial-portrait',
 ];
 const shotNames = new Set(shots.map((s) => s.name));
 for (const name of EXPECTED_SHOTS) {

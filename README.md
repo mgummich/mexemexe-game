@@ -75,6 +75,13 @@ Full ruleset (authoritative): [`docs/RULES.md`](docs/RULES.md). Summary:
 - **Context-aware music** (menu / mexe-draft / game) and a rematch summary on
   the win screen (turns, cards played, draws, plus a winning-move line and a
   per-personality avatar reaction) — local play only, see Known issues.
+- **Three helper modes** (Settings → VISUAL HELP: Beginner/Standard/Expert)
+  control how much legality feedback is shown — selected-card destination
+  highlights, invalid-meld reasons, a ghost preview — without ever changing
+  what a move is allowed to do. On a portrait phone, an icon next to Undo
+  opens a full-screen Mexe editor for rearranging a crowded table by tap;
+  + / − buttons zoom the table and a magnifier opens a read-only focus view
+  of one meld.
 
 ## Run
 

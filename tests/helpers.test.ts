@@ -55,7 +55,14 @@ describe('helperFlags', () => {
   });
 });
 
-/** Regression guard: helper mode is display-only and must never be an input to rule legality. */
+/**
+ * Regression guard: helper mode is display-only and must never be an input to rule legality.
+ *
+ * This passes today by construction — src/rules/rules.ts imports neither `settings` nor
+ * `helpers`, so there is no coupling to break. That is the point: it is deliberately a guard
+ * against a future change that reaches for the helper mode from inside the validator, not a
+ * test of current behaviour. Do not delete it as tautological.
+ */
 describe('helper mode never affects canConfirmTurn', () => {
   function fixtureState(): GameState {
     return {

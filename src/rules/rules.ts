@@ -141,6 +141,11 @@ function analyzeRun(cards: readonly Card[], _config: RulesConfig): MeldAnalysis 
     return { valid: true, kind: 'run', assignments };
   }
 
+  // ponytail: still a heuristic reason pick, not a full wrap-vs-gap classifier. A natural ace is
+  // read as an attempted K-A-2 wrap; a jokerless failure is read as a gap; anything else is blamed
+  // on the joker. That last branch over-reports: a lone joker that simply can't bridge a real gap
+  // says jokerUnassignable when runGap would read better. Good enough for the reason banner —
+  // legality is decided above, never here. Revisit if a case surfaces where it misleads.
   const hasNaturalAce = naturals.some((c) => c.rank === 1);
   const reason: ReasonCode = hasNaturalAce
     ? 'reason.runWrap'

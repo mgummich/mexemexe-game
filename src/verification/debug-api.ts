@@ -72,6 +72,10 @@ export interface MexeDebugApi {
   lastAiThought: string | null;
   /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
   a11y: { invalidBadges: number };
+  /** Verification-only (Phase 14 perf fix): running count of DraftEditor.analyze() calls this
+   * session — used to prove a table pan / editor scroll never re-triggers a legality analysis
+   * mid-gesture (it should only grow on an actual content change or renderAll at gesture end). */
+  analyzeCount: number;
   /** Verification-only: every reason string currently displayed for each invalid meld (Phase 14
    * Wave B — a meld can carry more than one, e.g. an analysis reason plus reason.duplicateCard). */
   invalidMeldReasons: () => { meldId: string; reasons: string[] }[];
@@ -121,6 +125,9 @@ export interface MexeDebugApi {
     /** Verification-only (Phase 14 Wave D): the meld id shown in the landscape meld-focus
      * overlay, or null when it's closed. */
     focusedMeldId: () => string | null;
+    /** Verification-only (Phase 14 Wave E): whether a table card sprite currently carries the
+     * zoomed-table geometry mask, or null if the card isn't on screen. */
+    cardMasked: (cardId: string) => boolean | null;
   } | null;
   online: MexeOnlineDebugApi | null;
   /** Results-screen summary — see MexeResultsSummary. Null outside WinScene. */
@@ -158,6 +165,7 @@ export const debugApi: MexeDebugApi = {
   tutorialStep: null,
   lastAiThought: null,
   a11y: { invalidBadges: 0 },
+  analyzeCount: 0,
   invalidMeldReasons: () => [],
   viewport: () => view(),
   music: () => ({ track: '', playing: false, volume: 0, context: 'menu' }),
