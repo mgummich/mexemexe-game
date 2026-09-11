@@ -338,7 +338,7 @@ Balance knobs live in one place — `DEFAULT_RULES` in `src/rules/types.ts`, doc
 ## Contributing & license
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). CI runs lint,
-unit tests, build and the Playwright e2e suite on every push and PR; the
-`main` branch auto-deploys the game and docs to GitHub Pages.
+unit tests, build, the Playwright e2e suite and `verify:multiplayer` on every
+push and PR; the `main` branch auto-deploys the game and docs to GitHub Pages.
 
 Licensed under the [MIT License](LICENSE).

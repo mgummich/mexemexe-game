@@ -299,7 +299,12 @@ export type ServerMessage =
 const MAX_STR = 64;
 const MAX_MELDS = 60;
 const MAX_CARDS_PER_MELD = 60;
-const MAX_TOTAL_CARDS = 60;
+/** A proposal carries the whole draft table plus the hand cards being played, so it is bounded
+ * by the deck, not by a hand: DEFAULT_RULES deals 2 x (52 + 2) = 108 cards. A late-game
+ * rearrangement of a large table legitimately exceeds any smaller cap, and rejecting it here
+ * surfaces as a generic `bad_message` instead of a proposal result, so FEITO looks dead.
+ * Kept a round 120 — comfortably above every legal proposal, far below anything that hurts. */
+const MAX_TOTAL_CARDS = 120;
 
 function isStr(v: unknown, maxLen = MAX_STR): v is string {
   return typeof v === 'string' && v.length > 0 && v.length <= maxLen;

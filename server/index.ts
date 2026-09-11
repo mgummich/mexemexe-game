@@ -276,10 +276,26 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         sendError(ws, result.error, 'invalid or expired token', msg.reqId);
         return;
       }
+      // The seat this socket held before the hop, if any. `moveSocket` below detaches the socket
+      // from it, but only the room manager can mark the seat absent — without this the old seat
+      // stays `connected` with nothing attached, which makes its room invisible to
+      // advanceStalledTurns (active seat looks present), to the sweep (`anyConnected`) and to the
+      // idle backstop, i.e. stuck forever with its remaining players stranded.
+      const held =
+        conn.code !== null && conn.seat !== null && (conn.code !== result.code || conn.seat !== result.seat)
+          ? { code: conn.code, seat: conn.seat }
+          : null;
       // Exactly one connection may ever act for a seat: evict whatever socket previously
       // held it before attaching this one (S4).
       evictSeat(sockets, connections, result.code, result.seat, ws);
       moveSocket(sockets, conn, result.code, result.seat, ws);
+      if (held) {
+        rooms.disconnect(held.code, held.seat);
+        for (const sock of sockets.get(held.code)?.values() ?? []) {
+          send(sock, { v: PROTOCOL_VERSION, type: 'player_disconnected', seat: held.seat });
+        }
+        broadcastRoomState(held.code);
+      }
       // Always re-establish room context first (code/seat/players), then — if a match is already
       // running — the current view. A client that reconnected from a fresh page load has neither,
       // and needs both to resume instead of stranding itself in the lobby.
@@ -298,6 +314,9 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       for (const [seat, sock] of bySeat ?? []) {
         if (seat !== result.seat) send(sock, { v: PROTOCOL_VERSION, type: 'player_reconnected', seat: result.seat });
       }
+      // A lobby renders presence from `room_state`, not from player_reconnected — without this
+      // the other seats keep showing a stale "(disconnected)" marker for a seat that is back.
+      broadcastRoomState(result.code);
       return;
     }
     case 'resync': {
@@ -365,7 +384,9 @@ wss.on('connection', (ws: WebSocket, req) => {
       // allowed to exhaust the process. Not a real rate limiter.
       if (hitFlood(conn, Date.now())) {
         sendError(ws, 'rate_limited', 'too many messages, closing connection');
-        ws.close();
+        // 1008 (policy violation), matching the failed-join close — a plain close() is
+        // indistinguishable from a network drop on the client side.
+        ws.close(1008, 'rate limited');
         return;
       }
       const raw = typeof data === 'string' ? data : data.toString('utf8');
@@ -390,6 +411,8 @@ wss.on('connection', (ws: WebSocket, req) => {
       for (const sock of bySeat?.values() ?? []) {
         send(sock, { v: PROTOCOL_VERSION, type: 'player_disconnected', seat: conn.seat });
       }
+      // Same reason as the reconnect path: keep lobby presence in step with the seat's state.
+      broadcastRoomState(conn.code);
     }
     connections.delete(ws);
     const remaining = (connectionsByIp.get(ip) ?? 1) - 1;
@@ -442,6 +465,11 @@ const turnTickTimer = setInterval(() => {
 
 process.on('uncaughtException', (err) => {
   log.error('uncaught_exception', { message: String(err) });
+  // Every inbound message is already wrapped in its own try/catch, so reaching here means the
+  // process state is unknown, not that a client sent something hostile. Serving rooms from a
+  // half-applied state is worse than dropping them: exit and let the supervisor restart
+  // (docker-compose uses `restart: unless-stopped`). See docs/OPERATIONS.md.
+  process.exit(1);
 });
 process.on('unhandledRejection', (err) => {
   log.error('unhandled_rejection', { message: String(err) });

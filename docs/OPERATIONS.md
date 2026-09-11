@@ -155,6 +155,21 @@ settings are `localStorage` only; clearing site data resets them.
 Turn `LOG_LEVEL=debug` on to diagnose a live problem, and turn it back off — debug adds
 per-room lifecycle lines.
 
+### Crash policy
+
+Every inbound message is already wrapped in its own try/catch, so an `uncaughtException`
+means the process state is unknown rather than that a client sent something hostile. The
+server logs `uncaught_exception` to stderr and then **exits with status 1** — serving rooms
+out of a half-applied state is worse than dropping them, and both `docker-compose.yml`
+(`restart: unless-stopped`) and any normal supervisor restart it immediately. Clients get a
+socket close and the usual single reconnect attempt; in-memory rooms are lost, as they are on
+any restart. An `unhandledRejection` is logged but does not exit: no room-mutating path
+awaits anything, so a stray rejection cannot leave room state half-applied.
+
+A single corrupt room is handled one level down and never reaches this path: `advanceStalledTurns`
+catches a throw per room, drops that room, and tells its sockets (`room_closed`), leaving every
+other room running.
+
 ## Troubleshooting
 
 **ONLINE menu never connects, page served over HTTPS.** The classic one. A page on
@@ -246,8 +261,20 @@ console errors and zero server stderr lines.
   ranked play, no chat, no rematch online.
 - **Rate limiting is admission caps plus per-connection guards, not per-IP throttling.**
   Global and per-IP connection caps refuse new sockets at the door, the flood guard closes
-  a looping client, and ten failed room-code guesses close the guessing connection — but a
-  distributed abuser that stays under the per-IP admission cap is not throttled further.
+  a looping client (close code `1008`), and ten failed room-code guesses close the guessing
+  connection (also `1008`) — but a distributed abuser that stays under the per-IP admission
+  cap is not throttled further.
+- **`MEXE_MAX_CONNECTIONS_PER_IP` counts `req.socket.remoteAddress`, so it collapses behind
+  a reverse proxy.** Every client then shares the proxy's address and the per-IP cap becomes
+  a second global cap. The server deliberately does **not** trust `X-Forwarded-For` — that
+  header is client-settable, and trusting it by default would turn the cap into a no-op that
+  any abuser can spoof. Either terminate the WebSocket without a proxy hop, or raise
+  `MEXE_MAX_CONNECTIONS_PER_IP` to at least the global cap so it stops being the binding
+  limit and rely on `MEXE_MAX_CONNECTIONS` plus the per-connection guards.
+- **Room codes are 5 characters from a 28-symbol alphabet** (~17.2M combinations), throttled
+  to ten failed lookups per connection. Practical to brute-force only with a large, throttle-
+  resetting connection farm; a per-IP failed-join counter is the next step if that ever shows
+  up in practice.
 - **No online results summary.** The win screen's per-player stats are local-only; the
   client never observes the other seats' turn history online, so the line is hidden rather
   than faked. Fixing it needs a protocol change.

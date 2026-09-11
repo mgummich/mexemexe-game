@@ -106,12 +106,12 @@ function findSeedWithRepeatedSuitGroup(): { seed: number; cards: [Card, Card, Ca
 
 function startRoom(seed: number) {
   const mgr = testManager(seed);
-  const { code } = mustCreate(mgr, 'Alice');
+  const { code, token: token0 } = mustCreate(mgr, 'Alice');
   mgr.joinRoom(code, 'Bob');
   mgr.setReady(code, 0, true);
   mgr.setReady(code, 1, true);
   const result = mgr.startGame(code, 0);
-  return { mgr, code, started: result.ok && result.started };
+  return { mgr, code, token0, started: result.ok && result.started };
 }
 
 describe('room lifecycle', () => {
@@ -466,6 +466,22 @@ describe('disconnect / reconnect', () => {
     mustCreate(mgr, 'Alice');
     expect(mgr.reconnect('not-a-real-token')).toEqual({ ok: false, error: 'invalid_token' });
   });
+
+  it('a disconnect mid-turn discards only the client-side draft: the reconnected view is the last committed state', () => {
+    // The Mexe draft never leaves the client until FEITO, so there is nothing server-side to lose.
+    // This pins that: the view before and after a disconnect/reconnect of the *active* seat is
+    // byte-identical, and the seat's hand is untouched.
+    const { mgr, code, token0 } = startRoom(7);
+    const before = mgr.getView(code, 0);
+    mgr.disconnect(code, 0);
+    const result = mgr.reconnect(token0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.view).toEqual(before);
+    expect(result.view?.players[0]?.hand?.length).toBe(7);
+    // ...and the seat is still the active one, so the player resumes the same turn.
+    expect(result.view?.activeSeat).toBe(0);
+  });
 });
 
 describe('lifecycle and liveness (docs/PHASE5_SERVER_REVIEW.md S1-S5)', () => {
@@ -780,6 +796,36 @@ describe('per-room isolation and crash policy', () => {
     mgr.deleteRoom(code);
     expect(mgr.getRoom(code)).toBeNull();
     expect(mgr.roomCount()).toBe(0);
+  });
+});
+
+describe('submit_turn card-count cap', () => {
+  // A proposal carries the whole draft table plus the hand cards being played, so it is bounded by
+  // the 108-card deck, not by a hand. Capping it lower rejected a legal late-game rearrangement as
+  // a generic `bad_message` rather than a proposal result (Phase 18 finding 2).
+  const submitWith = (n: number) =>
+    parseClientMessage(
+      JSON.stringify({
+        v: PROTOCOL_VERSION,
+        type: 'submit_turn',
+        reqId: 'r1',
+        rev: 1,
+        melds: Array.from({ length: Math.ceil(n / 3) }, (_, m) => ({
+          id: `m${m}`,
+          cardIds: Array.from({ length: Math.min(3, n - m * 3) }, (_, i) => `clubs-${i + 2}-d0-${m}`),
+        })),
+      }),
+    );
+
+  it('accepts a proposal carrying every card in the deck', () => {
+    const parsed = submitWith(108);
+    expect('error' in parsed).toBe(false);
+    if ('error' in parsed) return;
+    expect(parsed.type === 'submit_turn' && parsed.melds.flatMap((m) => m.cardIds).length).toBe(108);
+  });
+
+  it('still rejects a proposal carrying more cards than any deck could hold', () => {
+    expect('error' in submitWith(123)).toBe(true);
   });
 });
 
