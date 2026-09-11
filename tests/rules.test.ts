@@ -80,6 +80,15 @@ describe('dealInitialHands', () => {
     expect(() => dealInitialHands(createDeck(), 1)).toThrow(RulesError);
     expect(() => dealInitialHands(createDeck(), 5)).toThrow(RulesError);
   });
+
+  it('card conservation after deal: hands + drawPile == 108 unique ids, no card lost or duplicated', () => {
+    const deck = createDeck();
+    const { hands, drawPile } = dealInitialHands(deck, 4);
+    const all = [...hands.flat(), ...drawPile];
+    expect(all).toHaveLength(108);
+    expect(new Set(all.map((c) => c.id)).size).toBe(108);
+    expect(all.map((c) => c.id).sort()).toEqual(deck.map((c) => c.id).sort());
+  });
 });
 
 describe('runs', () => {
@@ -412,6 +421,19 @@ describe('applyConfirmedTurn', () => {
     expect(next.phase).toBe('finished');
   });
 
+  it('card conservation: total cards across hands + table + drawPile is unchanged by a confirm', () => {
+    const state = fixtureState();
+    const countCards = (s: GameState): number =>
+      s.players.reduce((n, p) => n + p.hand.length, 0) + s.table.reduce((n, m) => n + m.cards.length, 0) + s.drawPile.length;
+    const before = countCards(state);
+    const draft: DraftState = {
+      melds: [state.table[0]!, { id: 'd1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] }],
+      handCardsPlayed: [],
+    };
+    const next = applyConfirmedTurn(state, draft);
+    expect(countCards(next)).toBe(before);
+  });
+
   it('never grows a hand: no draw happens at turn start', () => {
     const state = fixtureState();
     const before = state.players[0]!.hand.length;
@@ -618,6 +640,36 @@ describe('turn order cycling', () => {
     };
     const next = applyConfirmedTurn(state, validDraft);
     expect(next.activePlayerIndex).toBe(1);
+  });
+
+  it('applyConfirmedTurn cycles turn order 0->1->2->3->0 for 4 players', () => {
+    const fourPlayerState: GameState = {
+      seed: 1,
+      players: [
+        { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 9), n('spades', 9), n('clubs', 9)] },
+        { id: 'p1', name: 'B', isAi: false, hand: [n('hearts', 10), n('spades', 10), n('clubs', 10)] },
+        { id: 'p2', name: 'C', isAi: false, hand: [n('hearts', 11), n('spades', 11), n('clubs', 11)] },
+        { id: 'p3', name: 'D', isAi: false, hand: [n('hearts', 12), n('spades', 12), n('clubs', 12)] },
+      ],
+      activePlayerIndex: 0,
+      table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
+      drawPile: [],
+      turn: 1,
+      winnerId: null,
+      phase: 'playing',
+      config: DEFAULT_RULES,
+    };
+    let state = fourPlayerState;
+    for (let expected = 1; expected <= 3; expected++) {
+      const hand = state.players[state.activePlayerIndex]!.hand;
+      const draft: DraftState = {
+        melds: [...state.table, { id: `d${expected}`, cards: hand }],
+        handCardsPlayed: [],
+      };
+      expect(canConfirmTurn(state, draft)).toEqual({ ok: true });
+      state = applyConfirmedTurn(state, draft);
+      expect(state.activePlayerIndex).toBe(expected % 4);
+    }
   });
 
   it('4-player deck exhaustion tie: earliest seat wins', () => {
