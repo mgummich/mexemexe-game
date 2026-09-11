@@ -14,7 +14,7 @@
     "gen:cosmetics": "node scripts/gen-cosmetics.mjs",
     "gen:icons": "node scripts/gen-icons.mjs",
     "lint": "eslint src tests e2e e2e-cross e2e-multiplayer e2e-pwa server && tsc --noEmit",
-    "screenshot": "npm run build && playwright test e2e/screenshot.spec.ts --grep-invert @perf && MEXE_KEEP_VERIFY_LOG=1 MEXE_FPS_GATE=1 MEXE_NO_TRACE=1 playwright test e2e/screenshot.spec.ts --grep @perf --workers=1",
+    "screenshot": "npm run build && MEXE_NO_TRACE=1 playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0 && MEXE_KEEP_VERIFY_LOG=1 playwright test e2e/screenshot.spec.ts --grep-invert @perf",
     "verify": "npm run test && npm run lint && npm run screenshot && node scripts/check-verify.mjs",
     "verify:multiplayer": "npm run build && playwright test -c playwright.multiplayer.config.ts && node scripts/check-verify-multiplayer.mjs",
     "verify:cross": "npm run build && playwright test -c playwright.cross.config.ts",

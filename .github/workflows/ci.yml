@@ -96,13 +96,17 @@ jobs:
       # (the cross job covers that).
       - run: npx playwright install --with-deps chromium
       - run: npm run build
-      # fullyParallel (playwright.config.ts) spreads the 86 tests across workers; the three
-      # fps-asserting tests are tagged @perf and excluded here, then run alone below so parallel
-      # load never skews their measurement. Each pass writes its own shard under
+      # The three fps-asserting tests are tagged @perf and run first, serially, with retries
+      # disabled: a fps measurement retried into passing hides exactly the regression it exists
+      # to catch. Running perf first also means it measures a cold runner instead of one already
+      # hot from the ~4-minute fullyParallel (playwright.config.ts) pass below — that ordering
+      # was flipped after a run where fps read 42 against a floor of 50 for stress-table (and
+      # crowded-table-max, table-zoomed similarly low) measured after the parallel pass, on a run
+      # where a cold job read comfortably above every floor. Each pass writes its own shard under
       # docs/screenshots/verify-log-parts/ (see e2e/screenshot.spec.ts's afterAll) — the second
       # pass sets MEXE_KEEP_VERIFY_LOG so global-setup.ts doesn't wipe the first pass's shards.
-      - run: npx playwright test e2e/screenshot.spec.ts --grep-invert @perf
-      - run: MEXE_KEEP_VERIFY_LOG=1 MEXE_FPS_GATE=1 MEXE_NO_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1
+      - run: MEXE_NO_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0
+      - run: MEXE_KEEP_VERIFY_LOG=1 npx playwright test e2e/screenshot.spec.ts --grep-invert @perf
       # This gate (console/page errors, screenshot exists, fps floors, EXPECTED_SHOTS present)
       # never ran in CI before — only locally — so console errors or missing screenshots were
       # only ever caught by hand.

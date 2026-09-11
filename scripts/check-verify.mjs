@@ -36,17 +36,12 @@ for (const s of shots) {
     failed = true;
     console.error(`verify: missing screenshot ${s.screenshot}`);
   }
-  // fps under parallel workers measures runner load, not the game, so the floor is enforced
-  // only for shots captured by the serial @perf pass (fpsGated === true, which also holds the
-  // three explicit measured floors of 50/30/20 in e2e/screenshot.spec.ts); every other shot's
-  // fps is printed below for visibility but never gates the build.
-  const fpsNote = s.fpsGated ? `fps=${s.fps}` : `fps=${s.fps} (ungated)`;
-  if (s.scene === 'game' && s.fpsGated && s.fps < 30) {
-    failed = true;
-    console.error(`verify: ${s.name} fps too low: ${s.fps} (scene=game requires >= 30)`);
-  }
+  // fps is gated in e2e/screenshot.spec.ts itself, by the three @perf tests' own scene-appropriate,
+  // measured floors (50 unzoomed, 30 crowded-max on CI, 20 zoomed) — a second, coarser floor here
+  // over every shot could only disagree with those, and for non-perf shots the reading is
+  // load-dependent noise anyway. Printed below for visibility only; it never gates the build.
   const vp = s.viewport ? `${s.viewport.width}x${s.viewport.height}` : 'unknown';
-  console.log(`verify: ${s.name} scene=${s.scene} seed=${s.seed} ${fpsNote} viewport=${vp} missingAssets=${s.missingAssets.length}`);
+  console.log(`verify: ${s.name} scene=${s.scene} seed=${s.seed} fps=${s.fps} viewport=${vp} missingAssets=${s.missingAssets.length}`);
 }
 // Phase 8 Wave D: public-demo coverage must actually run, not just exist as source — fail loud
 // if any of these named captures never made it into the log (e.g. a test silently skipped).

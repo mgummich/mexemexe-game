@@ -18,7 +18,6 @@ interface ShotLog {
   seed: number;
   scene: string;
   fps: number;
-  fpsGated: boolean;
   viewport: { width: number; height: number } | null;
   consoleErrors: string[];
   pageErrors: string[];
@@ -61,7 +60,6 @@ async function snap(page: Page, name: string): Promise<void> {
     seed: api.seed,
     scene: api.scene,
     fps: api.fps,
-    fpsGated: process.env.MEXE_FPS_GATE === '1',
     viewport: page.viewportSize(),
     consoleErrors: trackConsoleErrors(page),
     pageErrors: api.errors,
@@ -1748,10 +1746,11 @@ test.afterAll(() => {
   // Each worker writes its own shard — no read-modify-write, so concurrent workers (fullyParallel)
   // can never race on the same file. scripts/check-verify.mjs merges every shard (by shot name,
   // later shard wins) into verify-log.json itself. `npm run screenshot`/CI run this file twice (a
-  // parallel pass, then a serial @perf pass with MEXE_KEEP_VERIFY_LOG=1 so the second pass's
-  // global-setup doesn't wipe the first pass's shards) — but Playwright numbers TEST_WORKER_INDEX
-  // from 0 in *every* invocation, so "worker 0" from the perf pass would otherwise overwrite
-  // "worker 0" from the parallel pass's shard file and silently drop its shots. process.pid is
+  // serial @perf pass first (cold runner, unretried, so it measures a real regression), then a
+  // parallel pass with MEXE_KEEP_VERIFY_LOG=1 so its global-setup doesn't wipe the first pass's
+  // shards) — but Playwright numbers TEST_WORKER_INDEX from 0 in *every* invocation, so "worker 0"
+  // from the second pass would otherwise overwrite "worker 0" from the first pass's shard file
+  // and silently drop its shots. process.pid is
   // unique per worker process, including across separate invocations, so folding it into the
   // filename (not just as a fallback) is what actually kills that clobber.
   const PARTS_DIR = path.join(OUT_DIR, 'verify-log-parts');

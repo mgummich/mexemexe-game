@@ -56,8 +56,8 @@ jobs:
       # retries once in CI (so trace: 'on-first-retry' has something to capture), which means a
       # first-attempt failure that passes on retry no longer fails the PR gate. This job is where
       # that first-attempt failure stays visible and honest, retry-free, every night.
-      - run: npx playwright test e2e/screenshot.spec.ts --grep-invert @perf --retries=0
-      - run: MEXE_KEEP_VERIFY_LOG=1 MEXE_FPS_GATE=1 MEXE_NO_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0
+      - run: MEXE_NO_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0
+      - run: MEXE_KEEP_VERIFY_LOG=1 npx playwright test e2e/screenshot.spec.ts --grep-invert @perf --retries=0
       - run: node scripts/check-verify.mjs
       - uses: actions/upload-artifact@v4
         if: failure()
