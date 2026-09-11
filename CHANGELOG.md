@@ -3,6 +3,16 @@
 All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 
+## Unreleased — Release container images
+
+- **Added: tagged releases publish Docker images to GitHub Container Registry.**
+  `.github/workflows/release.yml` gained an `images` job that builds both
+  `Dockerfile` targets and pushes them as `ghcr.io/<owner>/mexemexe-game-web`
+  and `-server`, tagged with the release tag and `latest`. Self-hosters can pull
+  instead of building; `SELF_HOSTING.md` documents that the published web image
+  bakes an empty `VITE_WS_URL`, so a client pointed at a different host still
+  needs a local build.
+
 ## 1.7.0 — 2026-09-11
 
 ### Phase 23 (PWA offline reliability)

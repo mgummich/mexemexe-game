@@ -34,3 +34,49 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --title "MEXE! ${GITHUB_REF_NAME}" --notes-file notes.md
+
+  images:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Lowercase the image prefix
+        id: prefix
+        run: echo "value=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # The static game. VITE_WS_URL is baked at build time and left empty here,
+      # so this image plays offline and talks to a same-host server; point it at
+      # your own wss:// endpoint by building locally (see SELF_HOSTING.md).
+      - name: Build and push the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: web
+          push: true
+          tags: |
+            ${{ steps.prefix.outputs.value }}-web:${{ github.ref_name }}
+            ${{ steps.prefix.outputs.value }}-web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push the server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: server
+          push: true
+          tags: |
+            ${{ steps.prefix.outputs.value }}-server:${{ github.ref_name }}
+            ${{ steps.prefix.outputs.value }}-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

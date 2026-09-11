@@ -35,6 +35,21 @@ Both are built from the same `Dockerfile` via build targets, sharing one
 - Server health check: `curl http://localhost:8787/health` →
   `{"ok":true,"uptimeSec":142,"rooms":3,"connections":7,"protocol":3}`.
 
+## Prebuilt images (GitHub Container Registry)
+
+Every tagged release publishes both targets to ghcr.io, so you can skip the
+local build:
+
+```bash
+docker pull ghcr.io/<owner>/mexemexe-game-web:v1.7.0
+docker pull ghcr.io/<owner>/mexemexe-game-server:v1.7.0
+```
+
+Both also carry a `latest` tag. Note that the published `-web` image is built
+with an empty `VITE_WS_URL`, so it falls back to the same host it is served
+from. If your server lives elsewhere (or behind HTTPS), build the web image
+yourself as described below — that value is baked in at build time.
+
 ## Pointing the client at the server
 
 The client resolves the WebSocket URL in this order:
