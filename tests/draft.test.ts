@@ -72,6 +72,45 @@ describe('DraftEditor', () => {
     expect(a.check).toEqual({ ok: true });
   });
 
+  it('moveTableCard rejects a card id that is not on the table', () => {
+    const ed = new DraftEditor(state());
+    expect(ed.moveTableCard('nonexistent-card-id', null)).toBe(false);
+    expect(ed.getDraft().melds).toHaveLength(1); // no history entry pushed
+  });
+
+  it('splitMeld rejects an unknown meld id', () => {
+    const ed = new DraftEditor(state());
+    expect(ed.splitMeld('nonexistent-meld-id', 1)).toBe(false);
+    expect(ed.getDraft().melds).toHaveLength(1);
+  });
+
+  it('splitMeld rejects an index outside the meld (0 or >= length)', () => {
+    const ed = new DraftEditor(state());
+    const id = ed.getDraft().melds[0]!.id; // 3-card meld
+    expect(ed.splitMeld(id, 0)).toBe(false);
+    expect(ed.splitMeld(id, 3)).toBe(false);
+    expect(ed.getDraft().melds).toHaveLength(1);
+  });
+
+  it('mergeMelds rejects merging a meld into itself', () => {
+    const ed = new DraftEditor(state());
+    const id = ed.getDraft().melds[0]!.id;
+    expect(ed.mergeMelds(id, id)).toBe(false);
+    expect(ed.getDraft().melds).toHaveLength(1);
+  });
+
+  it('undo on a fresh editor with no history to undo returns false', () => {
+    const ed = new DraftEditor(state());
+    expect(ed.undo()).toBe(false);
+    expect(ed.getDraft().melds).toHaveLength(1);
+  });
+
+  it('redo with no undone move to replay returns false', () => {
+    const ed = new DraftEditor(state());
+    ed.playHandCard('hearts-2-d0', 't1', 0);
+    expect(ed.redo()).toBe(false); // nothing was undone
+  });
+
   it('split and merge melds', () => {
     const ed = new DraftEditor(state());
     const id = ed.getDraft().melds[0]!.id;

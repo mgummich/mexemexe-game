@@ -623,6 +623,21 @@ describe('parseClientMessage boundary validation', () => {
     const result = parseClientMessage(JSON.stringify({ v: PROTOCOL_VERSION, type: 'ping', reqId: 'r1' }));
     expect(result).toEqual({ v: PROTOCOL_VERSION, type: 'ping', reqId: 'r1' });
   });
+
+  it('rejects a message with no type field at all', () => {
+    const result = parseClientMessage(JSON.stringify({ v: PROTOCOL_VERSION, reqId: 'r1' }));
+    expect(result).toEqual({ error: 'missing type' });
+  });
+
+  it('rejects a message with no reqId field at all', () => {
+    const result = parseClientMessage(JSON.stringify({ v: PROTOCOL_VERSION, type: 'ping' }));
+    expect(result).toEqual({ error: 'missing reqId' });
+  });
+
+  it('rejects create_room with a non-string name', () => {
+    const result = parseClientMessage(JSON.stringify({ v: PROTOCOL_VERSION, type: 'create_room', reqId: 'r1', name: 42 }));
+    expect(result).toEqual({ error: 'bad name' });
+  });
 });
 
 describe('protocol v3 additions', () => {
