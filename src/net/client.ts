@@ -6,7 +6,7 @@
 import { playlog } from '../core/playlog';
 import { resolveWsUrl } from '../config';
 import { PROTOCOL_VERSION } from './protocol';
-import type { ClientMessage, ServerMessage, SubmitTurnMeld } from './protocol';
+import type { ClientMessage, RoomSettings, ServerMessage, SubmitTurnMeld } from './protocol';
 
 export type ConnStatus = 'connecting' | 'open' | 'closed' | 'error' | 'reconnecting';
 
@@ -222,6 +222,18 @@ export class NetClient {
 
   setReady(ready: boolean): void {
     this.sendRaw({ v: PROTOCOL_VERSION, type: 'ready', reqId: this.nextReqId(), ready });
+  }
+
+  /** Host-only lobby proposal. The server normalizes, applies and broadcasts — nothing is
+   * applied locally, so a non-host or a mid-match send simply comes back as an error. */
+  setRoomSettings(settings: RoomSettings): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'set_room_settings', reqId: this.nextReqId(), settings });
+  }
+
+  /** Claim this turn's one-off Mexe extension. Safe to call more than once: the server grants it
+   * at most once per turn and answers a repeat with nothing. */
+  mexeStarted(): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'mexe_started', reqId: this.nextReqId() });
   }
 
   startGame(): void {

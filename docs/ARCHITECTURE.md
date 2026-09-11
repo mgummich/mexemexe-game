@@ -91,8 +91,9 @@ reason is an i18n key, so the FEITO button can render the exact translated
 cause.
 
 Other entry points: `createDeck`, `shuffleDeck`, `dealInitialHands`,
-`applyConfirmedTurn`, `drawAndEndTurn`, `timerExpireTurn` (implemented but not
-wired to any UI — see GAME_RULES.md), `checkWinner`, `fewestCardsWinner`,
+`applyConfirmedTurn`, `drawAndEndTurn`, `timerExpireTurn` (the server's online
+turn-timer expiry path — see MULTIPLAYER.md §7b; local play never starts a
+timer), `checkWinner`, `fewestCardsWinner`,
 `serializeGameState` / `deserializeGameState` (`GAME_STATE_VERSION = 2`).
 
 **Joker assignments** are derived on demand from the run/group search, never

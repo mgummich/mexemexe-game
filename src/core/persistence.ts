@@ -1,8 +1,15 @@
+import type { Difficulty } from '../ai/ai';
 import type { Locale } from '../localization/i18n';
 import { AVATARS, CARD_BACKS, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, resolveCosmeticId, TABLE_THEMES } from '../cosmetics';
 
 /** Display-only helper aggressiveness. See `src/ui/helpers.ts` — never gates rules. */
 export type HelperMode = 'beginner' | 'standard' | 'expert';
+
+/** Presentation-only pace of an AI's "thinking" pause. Never changes what the AI decides. */
+export type AiSpeed = 'instant' | 'fast' | 'normal' | 'slow';
+
+/** How much an AI move explains itself in the last-move line. */
+export type AiExplain = 'off' | 'simple' | 'detailed';
 
 export interface Settings {
   muted: boolean;
@@ -19,6 +26,15 @@ export interface Settings {
   helperMode: HelperMode;
   /** Trims non-essential decorative effects (on top of reducedMotion) for weaker/battery-limited devices. */
   batterySaver: boolean;
+  /** How deeply the AI opponents search. Fairness-neutral: it is a local-play setting and the
+   * AI never sees a hidden hand at any tier (see src/ai/ai.ts). */
+  aiDifficulty: Difficulty;
+  /** Presentation only — scales the pre-move "thinking" pause. */
+  aiSpeed: AiSpeed;
+  /** Whether an AI move is described in the last-move line, and how fully. */
+  aiExplain: AiExplain;
+  /** Ticking cue over the last seconds of an online turn timer. Mixed through the SFX volume. */
+  timerTickSound: boolean;
 }
 
 export interface Progress {
@@ -39,8 +55,17 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
+export const AI_DIFFICULTIES: readonly Difficulty[] = ['beginner', 'casual', 'smart', 'expert'];
+export const AI_SPEEDS: readonly AiSpeed[] = ['instant', 'fast', 'normal', 'slow'];
+export const AI_EXPLAIN_MODES: readonly AiExplain[] = ['off', 'simple', 'detailed'];
+
+/** An unknown stored value (older save, hand-edited storage) falls back to its default instead
+ * of surviving as garbage that later indexes a lookup table with `undefined`. */
+function oneOf<T extends string>(allowed: readonly T[], value: unknown, fallback: T): T {
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
 export const DEFAULT_PROGRESS: Progress = { lastSeed: null, tutorialCompleted: false };
 export const DEFAULT_COSMETICS: Cosmetics = { tableTheme: DEFAULT_TABLE_THEME, cardBack: DEFAULT_CARD_BACK, avatar: DEFAULT_AVATAR };
 const DEFAULT_SAVE: Save = { version: 1, settings: { ...DEFAULT_SETTINGS }, progress: { ...DEFAULT_PROGRESS }, cosmetics: { ...DEFAULT_COSMETICS } };
@@ -62,6 +87,10 @@ function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
     ...merged,
     helperMode: HELPER_MODES.includes(merged.helperMode) ? merged.helperMode : 'standard',
     batterySaver: typeof merged.batterySaver === 'boolean' ? merged.batterySaver : DEFAULT_SETTINGS.batterySaver,
+    aiDifficulty: oneOf(AI_DIFFICULTIES, merged.aiDifficulty, DEFAULT_SETTINGS.aiDifficulty),
+    aiSpeed: oneOf(AI_SPEEDS, merged.aiSpeed, DEFAULT_SETTINGS.aiSpeed),
+    aiExplain: oneOf(AI_EXPLAIN_MODES, merged.aiExplain, DEFAULT_SETTINGS.aiExplain),
+    timerTickSound: typeof merged.timerTickSound === 'boolean' ? merged.timerTickSound : DEFAULT_SETTINGS.timerTickSound,
   };
 }
 

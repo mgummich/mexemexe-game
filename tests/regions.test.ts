@@ -45,6 +45,7 @@ describe('gameRegions landscape desktop regression', () => {
       lastMove: { x: 240, y: 70, wrap: 300 },
       onlineNotice: { x: 240, y: 58, wrap: 300 },
       onlineDot: { x: 6, y: 264 },
+      onlineTimer: { x: 16, y: 253 },
 
       tableTop: 80,
       tableBottom: 188,

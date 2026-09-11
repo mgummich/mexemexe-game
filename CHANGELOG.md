@@ -4,6 +4,68 @@ All notable changes to MEXEMEXE!. See `docs/STATUS.json` for the current project
 status, and `docs/archive/STATUS-history.json` for the phase-by-phase log this
 summarizes.
 
+## Unreleased — improvement package: room settings, server turn timer, AI difficulty
+
+- **Added: a server-authoritative online turn timer.** The host picks Casual
+  (90s turn, +45s Mexe bonus, 10s warning, 60s reconnect grace), Fast (45s /
+  +20s / 10s / 30s) or Off in the lobby, and the choice freezes the moment the
+  match starts. The server owns the clock outright: a room stores a start
+  instant and a budget, the existing per-tick stalled-match check (now every
+  second instead of every five) compares them, and the client only ever renders
+  the `turnMsLeft` it was sent. A client countdown reaching zero does nothing.
+  There is no per-room `setTimeout`, so a deleted room leaves nothing to leak.
+- **Added: `timerExpireTurn` is finally wired.** An expiry — clock run out, or a
+  seat absent past the room's reconnect grace — draws one card and passes,
+  nothing else. It cannot confirm an illegal table, structurally rather than by
+  a check: a Mexe draft never leaves the client until FEITO, so the server's
+  turn-start state *is* the table it falls back to.
+- **Added: anti-stall.** Each seat carries a missed-turn counter; losing
+  `missedTurnLimit` turns in a row ends the match with a stated reason instead
+  of leaving the others on a board that only advances by draw. Any turn the seat
+  actually takes resets the streak. A reconnecting seat receives the *current*
+  remaining time, never a fresh budget, so a reconnect loop cannot hold a turn
+  open.
+- **Added: the Mexe bonus.** Opening the Mexe editor online claims a one-off
+  turn extension. Active seat only, once per turn, only while a clock is
+  running — re-opening the editor is a no-op.
+- **Added: a lobby room summary.** Every seat reads the terms it is playing
+  under (timer preset, turn length, Mexe bonus, reconnect grace); the host taps
+  the line to cycle presets. Nothing is applied locally — the tap sends a
+  proposal and the server's answer is what redraws the line, so host and guests
+  can never show different terms.
+- **Added: AI difficulty, pace and move explanations** (settings → ADVERSÁRIOS /
+  OPPONENTS). Difficulty is a search tier — Beginner plays one action per turn,
+  Casual lays down and extends, Smart is each personality's own engine, Expert
+  runs the rearrangement search for every personality with a wider candidate cap
+  and budget. Personality still picks the policy (joker holding, minimal play,
+  patience). `smart` reproduces the previously shipped behaviour exactly. No tier
+  sees a hidden hand, and every candidate still goes through `canConfirm`.
+- **Added: a turn-timer tick cue** over the warning window, on the player's own
+  turn only, mixed through the existing SFX volume and switchable under AUDIO.
+- **Changed: `PROTOCOL_VERSION` 3 → 4.** `GameView` gained `settings` and
+  `turnMsLeft`; `room_joined`/`room_state` gained `settings`/`hostSeat` (and
+  `room_state` a `locked` flag); the client gained `set_room_settings` and
+  `mexe_started`, the server a `turn_timeout` notice. `turnMsLeft` is
+  deliberately outside the state digest — a ticking clock is not a desync.
+- **Changed: settings gained an AI section** between Cosmetics and Advanced, and
+  an audio row for the timer tick. Row coordinates still come from
+  `src/ui/settings-layout.ts`, so the e2e suite follows the enum rather than a
+  snapshot.
+- **Changed: the in-game rules panel** explains the online clock (who sets it, what
+  the Mexe extension does, that a timeout draws one card and reverts the table
+  rather than confirming anything) and points at the AI settings, in both locales.
+- **Fixed: the `help` / `help-en` screenshots were photographing the settings
+  panel.** They clicked a hardcoded pause-menu row that had drifted onto
+  Settings, so the panel they are named for had no capture at all. They now click
+  REGRAS and wait on `debugApi.rulesOpen` instead of trusting a coordinate.
+- **Tests: 564 → 610.** New: `tests/net/room-settings.test.ts` (preset and
+  custom-bound normalization, wire parsing, digest stability),
+  `tests/server/timer.test.ts` (settings lock, expiry applies exactly once,
+  timeout leaves the table untouched, the bonus cannot be spammed, reconnect
+  resumes rather than restarts, missed-turn limit), AI difficulty legality and
+  determinism at every tier, and settings persistence/corruption fallbacks.
+  New e2e capture: `ai-settings`.
+
 ## Unreleased — UI/UX, usability and clarity pass
 
 - **Fixed: a greyed-out DONE now always says why.** The reason line next to

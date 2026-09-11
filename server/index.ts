@@ -4,8 +4,8 @@
  */
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
-import { RoomManager } from './rooms';
+import { DEFAULT_ROOM_SETTINGS, parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
+import { RoomManager, HOST_SEAT } from './rooms';
 import { config } from './config';
 import { createLogger } from './log';
 import {
@@ -26,8 +26,11 @@ const SWEEP_INTERVAL_MS = 30_000;
 /** Liveness probe. A half-open socket (lid closed, dead NAT entry) otherwise holds its seat
  * `connected` until TCP gives up, so the disconnect grace never starts (docs/archive/PHASE7_AUDIT.md #1). */
 const HEARTBEAT_INTERVAL_MS = 15_000;
-/** How often stalled matches are checked. Independent of the grace period itself. */
-const TURN_TICK_MS = 5_000;
+/** How often the server checks its own turn clocks and stalled matches. One second, because it
+ * is now also the resolution of the turn timer: a coarser tick would let a turn run measurably
+ * past its budget. The check itself is a per-room arithmetic comparison, not a per-room timer,
+ * so nothing to leak when a room is deleted — the room's deadline goes with it. */
+const TURN_TICK_MS = 1_000;
 /** Largest inbound frame accepted. The biggest legal message is a submit_turn with the whole
  * deck as card ids; 16 KiB is far above that and far below anything that hurts (#2). */
 const MAX_PAYLOAD_BYTES = 16 * 1024;
@@ -124,11 +127,26 @@ function closeFinishedRoom(code: string): void {
 
 function broadcastRoomState(code: string): void {
   const bySeat = sockets.get(code);
-  const players = rooms.getPlayers(code);
-  if (!bySeat || !players) return;
+  const info = rooms.getRoomInfo(code);
+  if (!bySeat || !info) return;
   for (const ws of bySeat.values()) {
-    send(ws, { v: PROTOCOL_VERSION, type: 'room_state', players });
+    send(ws, {
+      v: PROTOCOL_VERSION, type: 'room_state',
+      players: info.players, settings: info.settings, hostSeat: HOST_SEAT, locked: info.locked,
+    });
   }
+}
+
+/** The room_joined payload, built from the room manager rather than from the caller's own
+ * snapshot — create, join and reconnect all need the same four fields plus the settings. */
+function roomJoined(code: string, seat: number, token: string): ServerMessage {
+  const info = rooms.getRoomInfo(code);
+  return {
+    v: PROTOCOL_VERSION, type: 'room_joined', code, seat, token,
+    players: info?.players ?? [],
+    settings: info?.settings ?? DEFAULT_ROOM_SETTINGS,
+    hostSeat: HOST_SEAT,
+  };
 }
 
 function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void {
@@ -148,14 +166,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       conn.seat = seat;
       attachSocket(code, seat, ws);
       log.debug('room_created', { codeLength: code.length });
-      send(ws, {
-        v: PROTOCOL_VERSION,
-        type: 'room_joined',
-        code,
-        seat,
-        token,
-        players: rooms.getPlayers(code) ?? [],
-      });
+      send(ws, roomJoined(code, seat, token));
       return;
     }
     case 'join_room': {
@@ -177,14 +188,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       conn.code = msg.code;
       conn.seat = result.seat;
       attachSocket(msg.code, result.seat, ws);
-      send(ws, {
-        v: PROTOCOL_VERSION,
-        type: 'room_joined',
-        code: msg.code,
-        seat: result.seat,
-        token: result.token,
-        players: result.players,
-      });
+      send(ws, roomJoined(msg.code, result.seat, result.token));
       broadcastRoomState(msg.code);
       return;
     }
@@ -213,6 +217,30 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         return;
       }
       broadcastRoomState(conn.code);
+      return;
+    }
+    case 'set_room_settings': {
+      if (conn.code === null || conn.seat === null) {
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
+        return;
+      }
+      const result = rooms.setRoomSettings(conn.code, conn.seat, msg.settings);
+      if (!result.ok) {
+        sendError(ws, result.error, `cannot change room settings: ${result.error}`, msg.reqId);
+        return;
+      }
+      broadcastRoomState(conn.code);
+      return;
+    }
+    case 'mexe_started': {
+      if (conn.code === null || conn.seat === null) {
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
+        return;
+      }
+      // No reply on refusal: a repeat claim, or one from a seat that is not on the clock, is an
+      // ordinary no-op, not an error the player should see. The next state_sync carries the
+      // authoritative time left either way.
+      if (rooms.claimMexeBonus(conn.code, conn.seat).ok) broadcastStateSync(conn.code);
       return;
     }
     case 'start_game': {
@@ -299,14 +327,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       // Always re-establish room context first (code/seat/players), then — if a match is already
       // running — the current view. A client that reconnected from a fresh page load has neither,
       // and needs both to resume instead of stranding itself in the lobby.
-      send(ws, {
-        v: PROTOCOL_VERSION,
-        type: 'room_joined',
-        code: result.code,
-        seat: result.seat,
-        token: msg.token,
-        players: result.players,
-      });
+      send(ws, roomJoined(result.code, result.seat, msg.token));
       if (result.view) {
         send(ws, { v: PROTOCOL_VERSION, type: 'state_sync', view: result.view });
       }
@@ -326,8 +347,13 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         sendError(ws, 'no_room', 'not in a room', msg.reqId);
         return;
       }
-      const players = rooms.getPlayers(conn.code);
-      if (players) send(ws, { v: PROTOCOL_VERSION, type: 'room_state', players });
+      const info = rooms.getRoomInfo(conn.code);
+      if (info) {
+        send(ws, {
+          v: PROTOCOL_VERSION, type: 'room_state',
+          players: info.players, settings: info.settings, hostSeat: HOST_SEAT, locked: info.locked,
+        });
+      }
       const view = rooms.getView(conn.code, conn.seat);
       if (view) send(ws, { v: PROTOCOL_VERSION, type: 'state_sync', view });
       return;
@@ -449,13 +475,27 @@ const heartbeatTimer = setInterval(() => {
 }, HEARTBEAT_INTERVAL_MS).unref();
 
 const turnTickTimer = setInterval(() => {
-  for (const { code, gameOver, crashed } of rooms.advanceStalledTurns()) {
+  for (const { code, gameOver, crashed, closed, timedOut } of rooms.advanceStalledTurns()) {
     if (crashed) {
       // Crash policy: the manager already dropped the corrupt room — tell its sockets.
       closeRoom(code, 'internal error, match ended');
       continue;
     }
-    broadcastStateSync(code);
+    // Order matters: the state sync goes first because a client clears its connection notice
+    // when it applies one, so a notice sent before it would be wiped by the very update it
+    // explains. Closing the room comes last, after its survivors have both.
+    if (!closed) broadcastStateSync(code);
+    if (timedOut !== undefined) {
+      for (const sock of sockets.get(code)?.values() ?? []) {
+        send(sock, { v: PROTOCOL_VERSION, type: 'turn_timeout', seat: timedOut });
+      }
+    }
+    if (closed) {
+      // Missed-turn limit: the manager already dropped the room, so there is no state left to
+      // sync — the notice above is what tells the survivors why the match ended.
+      closeRoom(code, 'a player missed too many turns, match ended');
+      continue;
+    }
     if (gameOver) {
       broadcastGameOver(code);
       closeFinishedRoom(code);

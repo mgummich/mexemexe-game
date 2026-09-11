@@ -6,7 +6,7 @@ import { isOffline, onConnectivityChange } from '../core/pwa';
 import { t } from '../localization/i18n';
 import { NetClient, type ConnStatus } from '../net/client';
 import { errorMessage } from '../net/errors';
-import type { GameView, RoomPlayerSummary } from '../net/protocol';
+import { DEFAULT_ROOM_SETTINGS, TIMER_PRESETS, type GameView, type RoomPlayerSummary, type RoomSettings, type TimerMode } from '../net/protocol';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
@@ -14,6 +14,15 @@ import { debugApi } from '../verification/debug-api';
 
 /** Room codes are always this long — see server/rooms.ts CODE_LENGTH. */
 const CODE_LENGTH = 5;
+
+/** Lobby preset cycle. `custom` is a protocol capability (bounded values, validated server-side),
+ * not a lobby control — there is no screen space for six number pickers, and the three presets
+ * cover what a room of friends actually chooses between. */
+const PRESET_CYCLE = ['casual', 'fast', 'off'] as const;
+function nextTimerPreset(current: TimerMode): (typeof PRESET_CYCLE)[number] {
+  const i = PRESET_CYCLE.indexOf(current as (typeof PRESET_CYCLE)[number]);
+  return PRESET_CYCLE[(i + 1) % PRESET_CYCLE.length]!;
+}
 
 /**
  * Online lobby: idle (create/join) -> lobby (code + ready) -> GameScene (server drives the
@@ -29,6 +38,11 @@ export class OnlineScene extends Phaser.Scene {
   private code: string | null = null;
   private seat: number | null = null;
   private players: RoomPlayerSummary[] = [];
+  /** The room's settings as the server last reported them. Never edited locally: tapping the
+   * summary sends a proposal and the next `room_state` is what actually changes this. */
+  private roomSettings: RoomSettings = DEFAULT_ROOM_SETTINGS;
+  private hostSeat = 0;
+  private settingsLocked = false;
   private ready = false;
   private errorMsg: string | null = null;
   private status: ConnStatus = 'closed';
@@ -174,12 +188,17 @@ export class OnlineScene extends Phaser.Scene {
         this.code = msg.code;
         this.seat = msg.seat;
         this.players = msg.players;
+        this.roomSettings = msg.settings;
+        this.hostSeat = msg.hostSeat;
         this.phase = 'lobby';
         this.rebuild();
       }),
       this.client.on('room_state', (msg) => {
         this.inFlight.delete('ready');
         this.players = msg.players;
+        this.roomSettings = msg.settings;
+        this.hostSeat = msg.hostSeat;
+        this.settingsLocked = msg.locked;
         this.rebuild();
       }),
       this.client.on('game_started', (msg) => this.enterMatch(msg.view)),
@@ -228,6 +247,9 @@ export class OnlineScene extends Phaser.Scene {
         this.client.setReady(ready);
       },
       startGame: () => this.client.startGame(),
+      setRoomSettings: (s) => this.client.setRoomSettings(s),
+      roomSettings: () => this.roomSettings,
+      turnMsLeft: () => null,
       comprar: () => { /* no in-match action while still in the lobby */ },
       submitRaw: () => { /* not applicable in the lobby */ },
       forceDrop: () => this.client.forceDrop(),
@@ -398,6 +420,32 @@ export class OnlineScene extends Phaser.Scene {
     confirm.setEnabled(this.codeInput.length > 0 && this.canAct('join'));
   }
 
+  /**
+   * One line with everything the seats agreed to play under. The host taps it to cycle the timer
+   * preset; everyone else reads it. Nothing here applies a setting — the tap sends a proposal and
+   * the server's `room_state` answer is what redraws this line, so host and guests can never show
+   * different terms.
+   */
+  private renderRoomSummary(): void {
+    const s = this.roomSettings;
+    const text =
+      s.turnMs <= 0
+        ? t('online.summaryNoTimer', { grace: Math.round(s.reconnectGraceMs / 1000) })
+        : t('online.roomSummary', {
+            timer: t(`online.timer.${s.timerMode}`),
+            turn: Math.round(s.turnMs / 1000),
+            bonus: Math.round(s.mexeBonusMs / 1000),
+            grace: Math.round(s.reconnectGraceMs / 1000),
+          });
+    const isHost = this.seat === this.hostSeat && !this.settingsLocked;
+    const line = label(this, cx(), vy(112), text, 7, isHost ? '#f7d23e' : '#c0b8a8');
+    if (!isHost) return;
+    line.setInteractive({ useHandCursor: true }).on('pointerup', () => {
+      this.fireOnce('settings', 300, () => this.client.setRoomSettings({ ...TIMER_PRESETS[nextTimerPreset(this.roomSettings.timerMode)] }));
+    });
+    label(this, cx(), vy(121), t('online.timerTapHint'), 6, '#8a7f6e');
+  }
+
   private renderLobby(): void {
     label(this, cx(), vy(76), this.code ?? '', 20, '#f7f2e7');
     // room-code text and the copy button must stay comfortably tappable in portrait
@@ -406,7 +454,11 @@ export class OnlineScene extends Phaser.Scene {
       textureBase: 'btn-comprar', w: 90, h: copyH, size: 7,
     });
 
-    let y = vy(128);
+    this.renderRoomSummary();
+
+    // Player rows start below the summary line and its host hint, not at a fixed 128 — the two
+    // lines above would otherwise sit on top of the first seat.
+    let y = vy(136);
     for (const p of this.players) {
       const mark = p.ready ? t('online.playerReady') : t('online.playerWaiting');
       const offline = p.connected ? '' : ` (${t('online.status.closed')})`;

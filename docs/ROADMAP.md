@@ -30,6 +30,13 @@ they are missing the comforts listed in [MULTIPLAYER.md](MULTIPLAYER.md).
 - PWA: installable, offline local play, versioned cache, opt-in update handover.
 - Online alpha: private rooms, server-authoritative turns, hand privacy,
   reconnect, desync detection and resync.
+- Server-owned turn timer: Casual/Fast/Off lobby presets, a once-per-turn Mexe
+  bonus, a warning window, per-room reconnect grace and a missed-turn limit.
+  The client only ever renders `turnMsLeft`; the server decides every expiry.
+- Lobby room summary: the agreed timer terms are shown to every seat and the
+  host taps the line to cycle presets, frozen the moment the match starts.
+- AI difficulty (Beginner / Casual / Smart / Expert), pace and move-explanation
+  settings, on top of the four existing personalities.
 - Verification: unit + server + screenshot/perf + cross-browser + multiplayer +
   PWA suites, all gated in CI.
 
@@ -39,6 +46,9 @@ Nothing is mid-flight. The repository is at a released, green state.
 
 ## Planned next
 
+- **Custom timer UI** — `custom` timer values are validated end to end on the
+  wire but have no lobby control; three presets cover a room of friends.
+- **Online rematch** — still needs the protocol change noted under Deferred.
 - **Tutorial depth** — multi-turn steps: confirm a turn, then watch an opponent
   move.
 - **Rules panel sectioning** — the in-game help is one long panel; split it by
@@ -47,10 +57,6 @@ Nothing is mid-flight. The repository is at a released, green state.
   screens are unconfirmed rather than known good.
 - **Mobile usability polish** — quick-move helpers (send a card to its obvious
   destination), clearer drag affordances on crowded tables.
-- **Settings structure** — the overlay has grown flat; group it as it gains
-  options.
-- **Multiplayer status surface** — turn/connection status and, if the timer is
-  ever enabled, a visible clock.
 - **Playtest hardening** — act on the two flaky specs on record
   (`crowded-table-max` fps gate, `mobile-tap-move-valid` lost tap).
 
@@ -59,9 +65,6 @@ Nothing is mid-flight. The repository is at a released, green state.
 - **Online rematch and online result stats** — both need a protocol change
   (the client never observes per-turn state locally). Deliberately postponed
   rather than faked with zeros.
-- **Turn timer** — the rules hook and `timerExpireTurn` exist and are tested,
-  but nothing starts a timer and no UI shows one. Enabling it is a product
-  decision, not a missing implementation.
 - **Sprite pooling in the render loop** — measured at 59 fps with 21 sprites
   and 20 zones; revisit only if a lower-end target dips below 50.
 - **Continuous responsive layout** — portrait is a second authored layout, not
@@ -74,4 +77,4 @@ Nothing is mid-flight. The repository is at a released, green state.
 - Accounts, matchmaking, ranked play, chat, spectators.
 - Cosmetics synced across the network (they are strictly client-side).
 - Native app builds — the PWA is the install story.
-- AI difficulty sliders or new personalities beyond the existing four.
+- New AI personalities beyond the existing four (difficulty tiers now exist).

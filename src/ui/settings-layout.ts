@@ -5,7 +5,7 @@
  * imports Phaser at module scope, which crashes outside a browser/canvas context).
  *
  * The panel is a short main menu plus one sub-panel per section (Game / Audio / Accessibility /
- * Cosmetics / Advanced). The previous single 14-row list was the whole settings surface at once —
+ * Cosmetics / AI / Advanced). The previous single 14-row list was the whole settings surface at once —
  * audio sliders, accessibility toggles, a language switch and a COPY TEST LOG button stacked
  * together — which read as a debug screen and left no room for the panel to grow.
  */
@@ -30,8 +30,17 @@ export enum SettingsRow {
   Audio = 2,
   Access = 3,
   Cosmetics = 4,
-  Advanced = 5,
-  Close = 6,
+  Ai = 5,
+  Advanced = 6,
+  Close = 7,
+}
+
+/** Rows in the AI sub-panel (local/AI play only — no effect on an online match). */
+export enum AiRow {
+  Difficulty = 0,
+  Speed = 1,
+  Explain = 2,
+  Back = 3,
 }
 
 /** Rows in the Game sub-panel. */
@@ -47,7 +56,8 @@ export enum AudioRow {
   Music = 1,
   MusicEnabled = 2,
   MusicContext = 3,
-  Back = 4,
+  TimerTick = 4,
+  Back = 5,
 }
 
 /** Rows in the Accessibility sub-panel. */
@@ -97,6 +107,7 @@ export const MAIN_ROWS = SettingsRow.Close + 1;
 export const GAME_ROWS = GameRow.Back + 1;
 export const AUDIO_ROWS = AudioRow.Back + 1;
 export const ACCESS_ROWS = AccessRow.Back + 1;
+export const AI_ROWS = AiRow.Back + 1;
 export const ADVANCED_ROWS = AdvancedRow.Back + 1;
 
 /** Main settings panel height — see settings-panel.ts's showMain `h`. */
@@ -130,6 +141,11 @@ export function audioRowY(row: AudioRow): number {
 /** y of an Accessibility sub-panel row. */
 export function accessRowY(row: AccessRow): number {
   return subRowY(ACCESS_ROWS, row);
+}
+
+/** y of an AI sub-panel row. */
+export function aiRowY(row: AiRow): number {
+  return subRowY(AI_ROWS, row);
 }
 
 /** y of an Advanced sub-panel row. */

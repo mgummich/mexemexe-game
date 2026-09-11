@@ -717,7 +717,7 @@ describe('stalled-turn recovery', () => {
     const drawBefore = mgr.getRoom('STALL')!.state!.drawPile.length;
     mgr.disconnect('STALL', 0);
     clock.t += 6000;
-    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'STALL', gameOver: false }]);
+    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'STALL', gameOver: false, timedOut: 0 }]);
     const room = mgr.getRoom('STALL')!;
     expect(room.state!.activePlayerIndex).toBe(1);
     expect(room.rev).toBe(revBefore + 1);
@@ -799,7 +799,7 @@ describe('per-room isolation and crash policy', () => {
     clock.t += 1000;
     expect(mgr.advanceStalledTurns()).toEqual([
       { code: 'CODE1', gameOver: false, crashed: true },
-      { code: 'CODE2', gameOver: false },
+      { code: 'CODE2', gameOver: false, timedOut: 0 },
     ]);
     expect(mgr.getRoom('CODE1')).toBeNull();
     expect(mgr.getRoom('CODE2')!.state!.activePlayerIndex).toBe(1);

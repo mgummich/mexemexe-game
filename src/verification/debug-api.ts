@@ -2,7 +2,7 @@ import type { DraftState, GameState } from '../rules/types';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { ConnStatus } from '../net/client';
-import type { RoomPlayerSummary, SubmitTurnMeld } from '../net/protocol';
+import type { RoomPlayerSummary, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import type { HelperMode } from '../ui/helpers';
 import { view, type ViewProfile } from '../ui/viewport';
 
@@ -27,6 +27,14 @@ export interface MexeOnlineDebugApi {
   joinRoom: (code: string, name?: string) => void;
   setReady: (ready: boolean) => void;
   startGame: () => void;
+  /** Verification-only: host lobby proposal for the room's settings. Goes through the same
+   * `set_room_settings` message the UI sends — the server still normalizes and can refuse it. */
+  setRoomSettings: (settings: RoomSettings) => void;
+  /** Verification-only: the room settings as the server last reported them. */
+  roomSettings: () => RoomSettings | null;
+  /** Verification-only: ms left on the active seat's turn as of the last state_sync, or null in
+   * a room with no timer. Rendered, never authoritative. */
+  turnMsLeft: () => number | null;
   /** In-match draw-and-end-turn; a thin alias over the same action COMPRAR triggers. */
   comprar: () => void;
   /** Verification-only: submit a proposal straight to the server, bypassing the editor's
@@ -62,6 +70,10 @@ export interface MexeResultsSummary {
 /** Exposed on window.__MEXE__ for Playwright verification. */
 export interface MexeDebugApi {
   ready: boolean;
+  /** Verification-only: true while the rules panel is open. A screenshot that is *named* for a
+   * panel has to be able to prove that panel is the one on screen — the capture used to click a
+   * hardcoded row that had drifted onto Settings, and photographed Settings for a year. */
+  rulesOpen: boolean;
   seed: number;
   scene: string;
   fps: number;
@@ -166,6 +178,7 @@ declare global {
 export const debugApi: MexeDebugApi = {
   ready: false,
   seed: 0,
+  rulesOpen: false,
   scene: 'boot',
   fps: 0,
   errors: [],

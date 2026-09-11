@@ -13,9 +13,13 @@ helper logic live as pure modules under `src/table` and `src/ui`.
   assignment, the one-joker-per-meld limit, ace low/high and the no-wrap case,
   `canConfirmTurn`, win and draw-pile-exhaustion, serialization.
 - `tests/draft.test.ts` — Mexe Mode editing, undo/redo/reset, card conservation.
-- `tests/ai.test.ts` — legality, determinism, budgets, personalities.
+- `tests/ai.test.ts` — legality, determinism, budgets, personalities and the
+  four difficulty tiers.
 - `tests/tutorial.test.ts` — all 12 steps, the per-step allow-list, completion.
 - `tests/i18n.test.ts` — pt-BR and en-US key parity.
+- `tests/net/room-settings.test.ts` — timer presets, custom-value clamping,
+  `set_room_settings` on the wire, and that a ticking clock stays out of the
+  state digest.
 - `tests/layout.test.ts`, `snap.test.ts`, `zoom.test.ts`, `regions.test.ts`,
   `editor-layout.test.ts`, `menu-layout.test.ts`, `settings-layout.test.ts`,
   `viewport.test.ts`, `tap-destination.test.ts` — pure layout/interaction maths.
@@ -33,7 +37,9 @@ helper logic live as pure modules under `src/table` and `src/ui`.
 ## Server tests — `npm run test:server`
 
 `tests/server/` only: `rooms.test.ts` (room lifecycle, seat/ready/start, legal
-and rejected turns, reconnect, sweep), `connections.test.ts` (socket registry,
+and rejected turns, reconnect, sweep), `timer.test.ts` (room-settings lock, the
+server turn clock, timeout behaviour, the Mexe bonus, reconnect grace and the
+missed-turn limit), `connections.test.ts` (socket registry,
 flood guard, caps), `config.test.ts`, `log.test.ts` (redaction), and
 `index.integration.test.ts`, which spawns the real server process and drives raw
 `ws` clients — malformed and oversized frames, failed joins, connection caps,

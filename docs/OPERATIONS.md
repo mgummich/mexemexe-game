@@ -32,7 +32,7 @@ rather than silently falling back to a default.
 | `MEXE_MAX_ROOMS`           | `500`       | Room capacity. Beyond it, room creation is refused cleanly.  |
 | `MEXE_MAX_CONNECTIONS`     | `2000`      | Global WebSocket admission cap. Beyond it, new sockets are closed with `capacity`. |
 | `MEXE_MAX_CONNECTIONS_PER_IP` | `20`     | Per-IP admission cap, same refusal.                          |
-| `MEXE_DISCONNECT_GRACE_MS` | `30000`     | How long a disconnected seat is held before the room closes. |
+| `MEXE_DISCONNECT_GRACE_MS` | `30000`     | Seeds a new room's reconnect grace and bounds the room sweep. A lobby timer preset replaces the room's own value (Casual/Off 60s, Fast 30s). |
 | `MEXE_IDLE_TIMEOUT_MS`     | `600000`    | Idle room lifetime before the sweep reaps it.                |
 | `MEXE_TEST_SEED`           | unset       | Forces a deterministic deal. **Test-only.**                  |
 
@@ -191,8 +191,9 @@ leaked into the production environment. Unset it; do not switch off production m
 
 **Players dropped mid-match, server still up.** Check whether the process restarted
 (`uptimeSec` low). Rooms are in-memory, so a restart ends matches. If uptime is high, look
-for `room_closed` at debug level — a disconnected seat past `MEXE_DISCONNECT_GRACE_MS`
-closes the room for the survivor rather than stranding them on a dead board.
+for `room_closed` at debug level. A seat gone past the room's reconnect grace has its turn
+played for it (draw and pass), and losing `missedTurnLimit` turns in a row closes the room
+for the survivors rather than stranding them on a board that only advances by draw.
 
 **Room creation refused.** `rooms` in `/health` is at `MEXE_MAX_ROOMS`. Raise the limit or
 add capacity.
@@ -278,5 +279,8 @@ console errors and zero server stderr lines.
 - **No online results summary.** The win screen's per-player stats are local-only; the
   client never observes the other seats' turn history online, so the line is hidden rather
   than faked. Fixing it needs a protocol change.
-- **`turnTimerSeconds` is a declared, unimplemented, off-by-default hook.**
+- **`turnTimerSeconds` (the rules config) is still a declared, unimplemented, off-by-default
+  hook** — local play is never on a clock. The online turn timer is a separate, server-owned
+  room setting (`MEXE_DISCONNECT_GRACE_MS` seeds a new room's reconnect grace; the host picks
+  the preset in the lobby). See `docs/MULTIPLAYER.md` §7b.
 - **No persistence of any kind** — no accounts, no cloud saves, no server-side history.
