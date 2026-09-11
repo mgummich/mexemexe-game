@@ -45,7 +45,7 @@ jobs:
       # Spawns the real WS server and gates on server stderr, client console errors, accepted
       # illegal proposals and missing screenshots (scripts/check-verify-multiplayer.mjs).
       - run: npm run verify:multiplayer
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: multiplayer-artifacts
@@ -72,7 +72,7 @@ jobs:
       # (see src/core/pwa.ts). Covers offline reload, offline local/AI/tutorial play, the
       # online-rooms-disabled-offline path, first install, and the update handover.
       - run: npm run verify:pwa
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: pwa-artifacts
@@ -111,7 +111,7 @@ jobs:
       # never ran in CI before — only locally — so console errors or missing screenshots were
       # only ever caught by hand.
       - run: node scripts/check-verify.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: e2e-artifacts
@@ -136,7 +136,7 @@ jobs:
       - run: npm run build
       # layout gate: canvas fits/centres on Chrome, Firefox, Safari and phone viewports
       - run: npx playwright test -c playwright.cross.config.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: cross-browser-artifacts
