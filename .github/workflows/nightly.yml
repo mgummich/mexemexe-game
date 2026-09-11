@@ -38,6 +38,37 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  screenshot-suite-no-retry:
+    name: Screenshot suite (no retry)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Chromium only, same as CI's e2e job.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      # Same two-pass split as CI's e2e job, but with --retries=0: playwright.config.ts now
+      # retries once in CI (so trace: 'on-first-retry' has something to capture), which means a
+      # first-attempt failure that passes on retry no longer fails the PR gate. This job is where
+      # that first-attempt failure stays visible and honest, retry-free, every night.
+      - run: npx playwright test e2e/screenshot.spec.ts --grep-invert @perf --retries=0
+      - run: MEXE_KEEP_VERIFY_LOG=1 MEXE_FPS_GATE=1 MEXE_NO_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0
+      - run: node scripts/check-verify.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: screenshot-suite-no-retry-artifacts
+          path: |
+            test-results/
+            docs/screenshots/verify-log.json
+            docs/screenshots/verify-log-parts/
+          retention-days: 7
+
   cross-browser-matrix:
     name: Full cross-browser matrix
     runs-on: ubuntu-latest
