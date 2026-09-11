@@ -298,9 +298,20 @@ export class OnlineScene extends Phaser.Scene {
     this.client.joinRoom(this.codeInput, t('menu.you'));
   }
 
+  /** Transient "code copied" confirmation, tracked so a second press replaces it instead of stacking. */
+  private copiedLabel: Phaser.GameObjects.Text | null = null;
+
   private copyCode(): void {
     if (!this.code) return;
-    navigator.clipboard?.writeText(this.code).catch(() => {
+    navigator.clipboard?.writeText(this.code).then(() => {
+      // Mashing COPY would otherwise stack a new label on top of the last one every press.
+      if (this.copiedLabel?.active) this.copiedLabel.destroy();
+      const el = label(this, cx(), vy(112), t('online.copied'), 7, '#3ec06a');
+      this.copiedLabel = el;
+      this.time.delayedCall(1500, () => {
+        if (el.active) el.destroy(); // rebuild() may have already torn it down
+      });
+    }).catch(() => {
       // clipboard denied/unavailable — the code is already shown on screen, nothing else to do
     });
   }

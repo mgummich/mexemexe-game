@@ -548,6 +548,7 @@ export class GameScene extends Phaser.Scene {
     this.onlineStatusDot.setFillStyle(color);
     if (status === 'reconnecting') {
       this.setOnlineNotice(t('online.reconnecting'));
+      playSfx(this, 'sfx-invalid', 0.3);
       this.lastOnlineStatus = status;
       return;
     }
@@ -556,11 +557,13 @@ export class GameScene extends Phaser.Scene {
     // whether they're actually back in the room.
     if (status === 'open' && this.lastOnlineStatus === 'reconnecting') {
       this.setOnlineNotice(t('online.selfReconnected'));
+      playSfx(this, 'sfx-feito', 0.3);
       this.time.delayedCall(3000, () => this.setOnlineNotice(''));
     }
     this.lastOnlineStatus = status;
     if (status === 'closed' || status === 'error') {
       this.setOnlineNotice(t('online.connectionLost'));
+      playSfx(this, 'sfx-invalid', 0.5);
       this.time.delayedCall(2500, () => {
         if (!this.online) return; // scene already moved on
         this.online.client.disconnect();
@@ -601,6 +604,7 @@ export class GameScene extends Phaser.Scene {
       this.bindMexeHooks();
       this.renderAll();
       this.tweens.add({ targets: this.banner, scale: { from: 1, to: 1.22 }, yoyo: true, duration: Math.max(1, this.motion(160)) });
+      playSfx(this, 'sfx-deal', 0.35);
       return;
     }
 
@@ -635,6 +639,7 @@ export class GameScene extends Phaser.Scene {
    * so the playlog record lives in one place instead of five. */
   private onUndo(): void {
     if (this.editor?.undo()) {
+      playSfx(this, 'sfx-pickup', 0.35);
       playlog.record('undo');
       this.refreshDraft();
     }
@@ -642,6 +647,7 @@ export class GameScene extends Phaser.Scene {
 
   private onRedo(): void {
     if (this.editor?.redo()) {
+      playSfx(this, 'sfx-snap', 0.35);
       playlog.record('redo');
       this.refreshDraft();
     }
@@ -649,6 +655,7 @@ export class GameScene extends Phaser.Scene {
 
   private onReset(): void {
     if (!this.editor) return;
+    playSfx(this, 'sfx-drop', 0.4);
     this.editor.reset();
     playlog.record('reset');
     this.refreshDraft();

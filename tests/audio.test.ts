@@ -145,4 +145,14 @@ describe('SFX playback safety', () => {
     expect((scene.sound.play as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
     nowSpy.mockRestore();
   });
+
+  it('drops a same-key repeat inside the window but still lets a different key through immediately', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(9000);
+    const scene = fakeScene(true);
+    playSfx(scene, 'sfx-deal');
+    playSfx(scene, 'sfx-deal'); // same key, same instant — debounced
+    playSfx(scene, 'sfx-win'); // different key — not debounced
+    expect((scene.sound.play as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+    nowSpy.mockRestore();
+  });
 });
