@@ -4,7 +4,9 @@ All notable changes to MEXEMEXE!. See `docs/STATUS.json` for the current project
 status, and `docs/archive/STATUS-history.json` for the phase-by-phase log this
 summarizes.
 
-## Unreleased — privacy-first production monitoring
+## 1.8.0 — 2026-09-11
+
+### privacy-first production monitoring
 
 - **Added: nginx access logging is off.** The static-game image now ships its own
   `nginx.conf` with `access_log off;`. The stock configuration persisted a client
@@ -59,7 +61,7 @@ summarizes.
   processed in memory for the per-IP connection cap, because claiming the
   application processes no personal data would not be true.
 
-## Unreleased — improvement package: room settings, server turn timer, AI difficulty
+### improvement package: room settings, server turn timer, AI difficulty
 
 - **Added: a server-authoritative online turn timer.** The host picks Casual
   (90s turn, +45s Mexe bonus, 10s warning, 60s reconnect grace), Fast (45s /
@@ -121,7 +123,7 @@ summarizes.
   determinism at every tier, and settings persistence/corruption fallbacks.
   New e2e capture: `ai-settings`.
 
-## Unreleased — UI/UX, usability and clarity pass
+### UI/UX, usability and clarity pass
 
 - **Fixed: a greyed-out DONE now always says why.** The reason line next to
   FEITO/DONE used to go blank outside beginner/standard helper mode, and the
@@ -161,7 +163,7 @@ summarizes.
   timers, AI difficulty settings, the toolbar relabel), in
   `docs/UI_UX_USABILITY_DESIGN_AUDIT.md`.
 
-## Unreleased — Documentation cleanup
+### Documentation cleanup
 
 - **Changed: the documentation was restructured around one source of truth per
   topic.** The root now holds only README, CHANGELOG, CONTRIBUTING and LICENSE;
@@ -184,7 +186,7 @@ summarizes.
   byte-identical to the shipped tracks in `public/assets/audio/music/`. No
   shipped asset changed, and no gameplay code was touched in this pass.
 
-## Unreleased — Release container images
+### Release container images
 
 - **Added: tagged releases publish Docker images to GitHub Container Registry.**
   `.github/workflows/release.yml` gained an `images` job that builds both
