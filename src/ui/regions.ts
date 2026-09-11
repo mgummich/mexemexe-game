@@ -39,6 +39,10 @@ export interface GameRegions {
   lastMove: { x: number; y: number; wrap: number };
   onlineNotice: { x: number; y: number; wrap: number };
   onlineDot: { x: number; y: number };
+  /** Online turn clock. Deliberately its own point rather than an offset off `onlineDot`: the
+   * badge sits at the bottom edge in landscape and near the top in portrait, so a fixed offset
+   * pushes the clock off screen in one of them. */
+  onlineTimer: { x: number; y: number };
 
   tableTop: number;
   tableBottom: number;
@@ -128,6 +132,7 @@ function landscape(p: ViewProfile): GameRegions {
     lastMove: { x: w / 2, y: 70, wrap: 300 + dx },
     onlineNotice: { x: w / 2, y: 58, wrap: 300 + dx },
     onlineDot: { x: 6, y: 264 },
+    onlineTimer: { x: 16, y: 253 },
 
     tableTop: 80,
     tableBottom: 188,
@@ -204,6 +209,7 @@ function portrait(p: ViewProfile): GameRegions {
     lastMove: { x: 135, y: 66, wrap: 250 },
     onlineNotice: { x: 135, y: 78, wrap: 250 },
     onlineDot: { x: 8, y: 40 },
+    onlineTimer: { x: 18, y: 50 },
 
     tableTop: 88,
     tableBottom: 320,

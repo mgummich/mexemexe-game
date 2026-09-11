@@ -121,8 +121,10 @@ These are known and in scope for a later phase. Reporting them again is not usef
 - No accounts, matchmaking, chat, or spectating.
 - No online rematch — an online match ends at the menu.
 - Rooms are private and code-only, and vanish when everyone leaves.
-- The optional turn timer is **off** and unimplemented; `turnTimerSeconds` is a documented hook.
-- The four AI opponents are personalities, not difficulty levels — there is no Easy/Hard setting.
+- The turn timer is online-only and off in local play; online, the host picks Casual / Fast / Off
+  in the lobby, and `custom` values are validated on the wire but have no lobby control.
+- The four AI opponents are personalities; difficulty (Beginner / Casual / Smart / Expert), pace
+  and move explanations are separate settings under ADVERSÁRIOS / OPPONENTS.
 - Rate limiting is per connection, not per IP.
 - Pointer-drag is verified in tests through editor hooks rather than synthetic pointer drags.
 - Cosmetic issues already logged under **Known limitations** in `README.md`.

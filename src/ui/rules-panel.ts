@@ -5,9 +5,11 @@ import { cx as centreX, panelW } from './menu-layout';
 import { buildOverlay } from './overlay';
 import { view } from './viewport';
 import { fontStyle, label, PixelButton } from './widgets';
+import { debugApi } from '../verification/debug-api';
 
 /** Opens a compact rules-summary overlay. Returns a close() fn. */
 export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void): () => void {
+  debugApi.rulesOpen = true;
   const objs: Phaser.GameObjects.GameObject[] = [];
   const w = panelW(260);
   const cx = centreX(); // matches buildOverlay's panel center — needed before buildOverlay runs
@@ -15,6 +17,7 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void): () =>
   let scrollEndHandlers: { endDrag: () => void } | null = null;
   let maskGfx: Phaser.GameObjects.Graphics | null = null;
   const close = (): void => {
+    debugApi.rulesOpen = false;
     for (const o of objs) o.destroy();
     maskGfx?.destroy();
     if (scrollMove) scene.input.off('pointermove', scrollMove);

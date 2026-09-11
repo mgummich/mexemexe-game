@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES, type CosmeticOption } from '../cosmetics';
-import type { HelperMode } from '../core/persistence';
+import { AI_DIFFICULTIES, AI_EXPLAIN_MODES, AI_SPEEDS, type HelperMode } from '../core/persistence';
 import { playlog } from '../core/playlog';
 import { settings } from '../core/settings';
 import { getLocale, setLocale, t } from '../localization/i18n';
@@ -8,7 +8,7 @@ import { debugApi } from '../verification/debug-api';
 import { panelW } from './menu-layout';
 import { buildOverlay } from './overlay';
 import {
-  AccessRow, ACCESS_ROWS, AdvancedRow, ADVANCED_ROWS, AudioRow, AUDIO_ROWS,
+  AccessRow, ACCESS_ROWS, AdvancedRow, ADVANCED_ROWS, AiRow, AI_ROWS, AudioRow, AUDIO_ROWS,
   cosmeticsPanelH, cosmeticsRowOffset, GameRow, GAME_ROWS, MAIN_ROWS,
   panelHForRows, rowOffset, SettingsRow,
 } from './settings-layout';
@@ -22,6 +22,12 @@ import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
 function cycleCosmeticId(list: readonly CosmeticOption[], currentId: string): string {
   const idx = list.findIndex((o) => o.id === currentId);
   return list[(idx + 1) % list.length]!.id;
+}
+
+/** Next entry in a fixed option list, wrapping around. One helper for every tap-to-cycle
+ * settings row, so a new row is a list plus a label key rather than another bespoke cycler. */
+function cycleOption<T extends string>(list: readonly T[], current: T): T {
+  return list[(list.indexOf(current) + 1) % list.length]!;
 }
 
 /** beginner -> standard -> expert -> beginner, same wrap-around cycling as cycleCosmeticId. */
@@ -122,6 +128,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     rowBtn(cx, rowY(SettingsRow.Audio), t('settings.section.audio'), showAudio, { w: 150, size: 7 });
     rowBtn(cx, rowY(SettingsRow.Access), t('settings.section.access'), showAccess, { w: 150, size: 7 });
     rowBtn(cx, rowY(SettingsRow.Cosmetics), t('cosmetics.title'), showCosmetics, { w: 150, size: 7 });
+    rowBtn(cx, rowY(SettingsRow.Ai), t('settings.section.ai'), showAi, { w: 150, size: 7 });
     // Replay seed, test-log export and the destructive reset all sit behind this one row: they
     // are testing affordances, and mixing them into the player-facing list made the whole screen
     // look like a debug menu.
@@ -148,6 +155,35 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     rowBtn(cx, rowY(GameRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
   };
 
+  /**
+   * AI sub-panel. Difficulty is a search-depth tier and speed is a presentation pause — neither
+   * lets an opponent see a hidden hand or play an illegal meld (src/ai/ai.ts), and none of it
+   * applies to an online match, where every seat is a person.
+   */
+  const showAi = (): void => {
+    const { cx, rowY } = openPanel(AI_ROWS, t('settings.section.ai'));
+
+    const diffCaption = (): string => `${t('settings.aiDifficulty')}: ${t(`settings.aiDifficulty.${settings.get().aiDifficulty}`)}`;
+    const diffBtn = rowBtn(cx, rowY(AiRow.Difficulty), diffCaption(), () => {
+      settings.update({ aiDifficulty: cycleOption(AI_DIFFICULTIES, settings.get().aiDifficulty) });
+      diffBtn.setLabel(diffCaption());
+    });
+
+    const speedCaption = (): string => `${t('settings.aiSpeed')}: ${t(`settings.aiSpeed.${settings.get().aiSpeed}`)}`;
+    const speedBtn = rowBtn(cx, rowY(AiRow.Speed), speedCaption(), () => {
+      settings.update({ aiSpeed: cycleOption(AI_SPEEDS, settings.get().aiSpeed) });
+      speedBtn.setLabel(speedCaption());
+    });
+
+    const explainCaption = (): string => `${t('settings.aiExplain')}: ${t(`settings.aiExplain.${settings.get().aiExplain}`)}`;
+    const explainBtn = rowBtn(cx, rowY(AiRow.Explain), explainCaption(), () => {
+      settings.update({ aiExplain: cycleOption(AI_EXPLAIN_MODES, settings.get().aiExplain) });
+      explainBtn.setLabel(explainCaption());
+    });
+
+    rowBtn(cx, rowY(AiRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
+  };
+
   const showAudio = (): void => {
     const { cx, rowY } = openPanel(AUDIO_ROWS, t('settings.section.audio'));
 
@@ -163,6 +199,9 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       () => settings.get().musicEnabled, (v) => settings.update({ musicEnabled: v }));
     toggleBtn(cx, rowY(AudioRow.MusicContext), 'settings.musicContext',
       () => settings.get().musicContextAware, (v) => settings.update({ musicContextAware: v }));
+    toggleBtn(cx, rowY(AudioRow.TimerTick), 'settings.timerTick',
+      () => settings.get().timerTickSound, (v) => settings.update({ timerTickSound: v }),
+      { tooltip: t('settings.timerTickHint') });
 
     rowBtn(cx, rowY(AudioRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
   };

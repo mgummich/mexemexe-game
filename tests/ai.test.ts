@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createAi, RearrangerAi, SimpleAi } from '../src/ai/ai';
+import { aiReasonKeySuffix, AI_SPEED_SCALE, createAi, DIFFICULTIES, RearrangerAi, SimpleAi } from '../src/ai/ai';
+import { t } from '../src/localization/i18n';
 import { applyConfirmedTurn, canConfirmTurn, cardId, drawAndEndTurn, jokerId } from '../src/rules/rules';
 import type { Card, GameState, Rank, Suit } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
@@ -631,5 +632,103 @@ describe('personality expression (Phase 9)', () => {
     for (const p of personalities) {
       expect(moveSeq(p)).toEqual(moveSeq(p));
     }
+  });
+});
+
+describe('AI difficulty', () => {
+  const personalities = ['cida', 'juninho', 'bia', 'ze'] as const;
+
+  it("'smart' is the tier every personality had before difficulty existed", () => {
+    // The default argument must reproduce the shipped behaviour exactly, or every existing
+    // personality expectation above silently becomes a test of something else.
+    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), c('hearts', 6), c('hearts', 7), c('hearts', 8)];
+    for (const p of personalities) {
+      expect(createAi(p, 'smart').decide(base(hand))).toEqual(createAi(p).decide(base(hand)));
+    }
+  });
+
+  it('never proposes an illegal confirm, at any tier or personality', () => {
+    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), j(0, 1), c('hearts', 6), c('hearts', 7)];
+    const table = [{ id: 'm1', cards: [c('diamonds', 9), c('diamonds', 10), c('diamonds', 11), c('diamonds', 12)] }];
+    for (const difficulty of DIFFICULTIES) {
+      for (const p of personalities) {
+        const state = base(hand, table);
+        const d = createAi(p, difficulty).decide(state);
+        if (d.kind === 'confirm') expect(canConfirmTurn(state, d.draft).ok).toBe(true);
+      }
+    }
+  });
+
+  it('is deterministic at every tier: the same state gives the same decision', () => {
+    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), c('hearts', 6), c('hearts', 7), c('hearts', 8)];
+    for (const difficulty of DIFFICULTIES) {
+      for (const p of personalities) {
+        const first = createAi(p, difficulty).decide(base(hand));
+        const second = createAi(p, difficulty).decide(base(hand));
+        expect(second).toEqual(first);
+      }
+    }
+  });
+
+  it('a full seeded match stays legal and terminates at every tier', () => {
+    for (const difficulty of DIFFICULTIES) {
+      let state: GameState = createNewGame(31, [
+        { name: 'A', isAi: true },
+        { name: 'B', isAi: true },
+      ]);
+      const ais = [createAi('bia', difficulty), createAi('juninho', difficulty)];
+      let turns = 0;
+      while (state.phase === 'playing' && turns < 400) {
+        const d = ais[state.activePlayerIndex]!.decide(state);
+        if (d.kind === 'confirm') {
+          expect(canConfirmTurn(state, d.draft).ok).toBe(true);
+          state = applyConfirmedTurn(state, d.draft);
+        } else {
+          state = drawAndEndTurn(state);
+        }
+        turns++;
+      }
+      expect(turns).toBeLessThan(400);
+    }
+  });
+
+  it('beginner takes at most one action per turn where smart takes several', () => {
+    // Two independent melds in hand: the minimal tier lays one, the full tiers lay both.
+    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), c('hearts', 9), c('hearts', 10), c('hearts', 11)];
+    const beginner = createAi('juninho', 'beginner').decide(base(hand));
+    const smart = createAi('juninho', 'smart').decide(base(hand));
+    if (beginner.kind !== 'confirm' || smart.kind !== 'confirm') throw new Error('expected plays');
+    expect(beginner.draft.handCardsPlayed.length).toBeLessThan(smart.draft.handCardsPlayed.length);
+  });
+
+  it('expert rearranges the shared table even for a personality that never would', () => {
+    // cida is the minimal personality: at 'smart' it cannot reach the 6 by stealing an edge card.
+    const table = [{ id: 'm1', cards: [c('diamonds', 9), c('diamonds', 10), c('diamonds', 11), c('diamonds', 12)] }];
+    const hand = [c('spades', 9), c('clubs', 9)];
+    const smart = createAi('cida', 'smart').decide(base(hand, table));
+    const expert = createAi('cida', 'expert').decide(base(hand, table));
+    expect(smart.kind).toBe('draw');
+    expect(expert.kind).toBe('confirm');
+  });
+
+  it('the reason suffix of every decision is a real ai.why.* key', () => {
+    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), c('hearts', 6), c('hearts', 7)];
+    for (const difficulty of DIFFICULTIES) {
+      for (const p of personalities) {
+        const suffix = aiReasonKeySuffix(createAi(p, difficulty).decide(base(hand)).explanation);
+        expect(t(`ai.why.${suffix}`)).not.toBe(`ai.why.${suffix}`); // a missing key renders as the key
+      }
+    }
+  });
+
+  it('an untagged explanation degrades to the generic draw reason instead of a raw key', () => {
+    expect(aiReasonKeySuffix('something unexpected')).toBe('draw');
+    expect(aiReasonKeySuffix('bia:not-a-real-class: text')).toBe('draw');
+  });
+
+  it('the speed scale is presentation only and instant really is zero', () => {
+    expect(AI_SPEED_SCALE.instant).toBe(0);
+    expect(AI_SPEED_SCALE.fast).toBeLessThan(AI_SPEED_SCALE.normal);
+    expect(AI_SPEED_SCALE.slow).toBeGreaterThan(AI_SPEED_SCALE.normal);
   });
 });

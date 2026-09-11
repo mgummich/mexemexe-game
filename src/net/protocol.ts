@@ -5,7 +5,82 @@
  */
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
+
+// ---------------------------------------------------------------------------
+// Room settings (docs/MULTIPLAYER.md §7)
+// ---------------------------------------------------------------------------
+
+export type TimerMode = 'off' | 'casual' | 'fast' | 'custom';
+
+/**
+ * Fairness-affecting room configuration. Chosen by the host in the lobby and frozen the moment
+ * the match starts — every value here changes what a turn is worth, so a mid-match change would
+ * be a change to the rules one seat is playing under.
+ *
+ * The server owns every one of these. A client renders them and proposes new ones in the lobby;
+ * it never applies a value itself, and no client message can extend a running timer.
+ */
+export interface RoomSettings {
+  timerMode: TimerMode;
+  /** Turn budget in ms. 0 means no timer at all (`timerMode: 'off'`). */
+  turnMs: number;
+  /** One-off extension granted when the active seat opens Mexe Mode, once per turn. */
+  mexeBonusMs: number;
+  /** How long before expiry the client shows its warning state. */
+  warnMs: number;
+  /** How long a disconnected seat's turn is held before the server plays it for them. */
+  reconnectGraceMs: number;
+  /** Consecutive turns a seat may lose to the timer before the match is ended. */
+  missedTurnLimit: number;
+}
+
+export const TIMER_PRESETS: Record<'off' | 'casual' | 'fast', RoomSettings> = {
+  off: { timerMode: 'off', turnMs: 0, mexeBonusMs: 0, warnMs: 0, reconnectGraceMs: 60_000, missedTurnLimit: 2 },
+  casual: { timerMode: 'casual', turnMs: 90_000, mexeBonusMs: 45_000, warnMs: 10_000, reconnectGraceMs: 60_000, missedTurnLimit: 2 },
+  fast: { timerMode: 'fast', turnMs: 45_000, mexeBonusMs: 20_000, warnMs: 10_000, reconnectGraceMs: 30_000, missedTurnLimit: 2 },
+};
+
+export const DEFAULT_ROOM_SETTINGS: RoomSettings = TIMER_PRESETS.casual;
+
+/** Inclusive bounds for a `custom` timer. A value outside its range is clamped, not rejected —
+ * a hostile payload must not be able to create a 1 ms turn or a room that never times out. */
+const CUSTOM_BOUNDS = {
+  turnMs: [15_000, 600_000],
+  mexeBonusMs: [0, 300_000],
+  warnMs: [0, 60_000],
+  reconnectGraceMs: [10_000, 300_000],
+  missedTurnLimit: [1, 10],
+} as const;
+
+function clampInt(value: unknown, [lo, hi]: readonly [number, number], fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(hi, Math.max(lo, Math.round(value)));
+}
+
+/**
+ * The only way untrusted input becomes a `RoomSettings`. A named preset ignores whatever else
+ * the payload carried; `custom` is clamped field by field. Anything unrecognizable falls back to
+ * the default preset rather than throwing, so a bad lobby payload cannot break a room.
+ */
+export function normalizeRoomSettings(raw: unknown): RoomSettings {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_ROOM_SETTINGS };
+  const o = raw as Record<string, unknown>;
+  const mode = o.timerMode;
+  if (mode === 'off' || mode === 'casual' || mode === 'fast') return { ...TIMER_PRESETS[mode] };
+  if (mode !== 'custom') return { ...DEFAULT_ROOM_SETTINGS };
+  const turnMs = clampInt(o.turnMs, CUSTOM_BOUNDS.turnMs, DEFAULT_ROOM_SETTINGS.turnMs);
+  return {
+    timerMode: 'custom',
+    turnMs,
+    mexeBonusMs: clampInt(o.mexeBonusMs, CUSTOM_BOUNDS.mexeBonusMs, DEFAULT_ROOM_SETTINGS.mexeBonusMs),
+    // A warning longer than the turn itself would render the turn as "warning" from its first
+    // frame, so it is capped by the budget it warns about as well as by its own bound.
+    warnMs: Math.min(turnMs, clampInt(o.warnMs, CUSTOM_BOUNDS.warnMs, DEFAULT_ROOM_SETTINGS.warnMs)),
+    reconnectGraceMs: clampInt(o.reconnectGraceMs, CUSTOM_BOUNDS.reconnectGraceMs, DEFAULT_ROOM_SETTINGS.reconnectGraceMs),
+    missedTurnLimit: clampInt(o.missedTurnLimit, CUSTOM_BOUNDS.missedTurnLimit, DEFAULT_ROOM_SETTINGS.missedTurnLimit),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Redacted view (docs/MULTIPLAYER.md §2)
@@ -33,6 +108,13 @@ export interface GameView {
   phase: 'playing' | 'finished';
   winnerId: string | null;
   config: RulesConfig;
+  /** The room's frozen settings, so a client can render the clock and the warning threshold
+   * without a separate request (and a reconnecting client gets them with its first view). */
+  settings: RoomSettings;
+  /** Milliseconds left on the active seat's turn when this view was built, or null when the room
+   * has no timer. Display only: the client counts down from it, and the server alone decides
+   * when a turn has actually expired. A client's own countdown reaching zero changes nothing. */
+  turnMsLeft: number | null;
   /** Digest of the parts of the authoritative state every seat can see. A client recomputes it
    * from its own reconstruction and asks for a resync on mismatch (docs/archive/PHASE7_AUDIT.md #3). */
   hash: string;
@@ -99,7 +181,13 @@ export function digestOfState(state: GameState, rev: number): StateDigestInput {
 }
 
 /** Pure: build the redacted view for `seat` from the authoritative state at revision `rev`. */
-export function buildView(state: GameState, seat: number, rev: number): GameView {
+export function buildView(
+  state: GameState,
+  seat: number,
+  rev: number,
+  settings: RoomSettings = DEFAULT_ROOM_SETTINGS,
+  turnMsLeft: number | null = null,
+): GameView {
   const view: GameView = {
     seat,
     players: state.players.map((p, i) => ({
@@ -117,6 +205,8 @@ export function buildView(state: GameState, seat: number, rev: number): GameView
     phase: state.phase,
     winnerId: state.winnerId,
     config: state.config,
+    settings,
+    turnMsLeft,
     hash: '',
   };
   view.hash = stateHash(digestOfView(view));
@@ -155,6 +245,21 @@ export interface ReadyMsg {
 export interface StartGameMsg {
   v: number;
   type: 'start_game';
+  reqId: string;
+}
+/** Host-only, lobby-only proposal for the room's settings. The server normalizes and applies —
+ * it never echoes the payload back unvalidated. */
+export interface SetRoomSettingsMsg {
+  v: number;
+  type: 'set_room_settings';
+  reqId: string;
+  settings: RoomSettings;
+}
+/** "I opened Mexe Mode": claims the one-off turn extension. Honoured at most once per turn, for
+ * the active seat only, so it cannot be spammed to hold a turn open. */
+export interface MexeStartedMsg {
+  v: number;
+  type: 'mexe_started';
   reqId: string;
 }
 export interface SubmitTurnMeld {
@@ -198,6 +303,8 @@ export type ClientMessage =
   | JoinRoomMsg
   | LeaveRoomMsg
   | ReadyMsg
+  | SetRoomSettingsMsg
+  | MexeStartedMsg
   | StartGameMsg
   | SubmitTurnMsg
   | DrawEndTurnMsg
@@ -223,11 +330,18 @@ export interface RoomJoinedMsg {
   seat: number;
   token: string;
   players: RoomPlayerSummary[];
+  settings: RoomSettings;
+  /** Seat 0 is the host: the only seat whose settings proposals and start are accepted. */
+  hostSeat: number;
 }
 export interface RoomStateMsg {
   v: number;
   type: 'room_state';
   players: RoomPlayerSummary[];
+  settings: RoomSettings;
+  hostSeat: number;
+  /** True once the match has started — settings are frozen from this point. */
+  locked: boolean;
 }
 /** Match start. Deliberately carries no shuffle seed: the seed reproduces both hands and the
  * whole draw pile through the shared deal functions, so it must never leave the server. */
@@ -246,6 +360,13 @@ export interface ProposalRejectedMsg {
   type: 'proposal_rejected';
   reqId: string;
   reasons: ReasonCode[];
+}
+/** The server ended `seat`'s turn for them: the clock ran out, or they were gone past the
+ * reconnect grace. Purely a notice — the authoritative result already arrived as a state_sync. */
+export interface TurnTimeoutMsg {
+  v: number;
+  type: 'turn_timeout';
+  seat: number;
 }
 export interface PlayerDisconnectedMsg {
   v: number;
@@ -284,6 +405,7 @@ export type ServerMessage =
   | GameStartedMsg
   | StateSyncMsg
   | ProposalRejectedMsg
+  | TurnTimeoutMsg
   | PlayerDisconnectedMsg
   | PlayerReconnectedMsg
   | GameOverMsg
@@ -349,6 +471,12 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
       if (typeof o.ready !== 'boolean') return { error: 'bad ready payload' };
       return { v: PROTOCOL_VERSION, type: 'ready', reqId, ready: o.ready };
     }
+    case 'set_room_settings':
+      // Normalizing here means the room manager can never be handed an out-of-range value, and
+      // an omitted/garbage payload becomes the default preset instead of a parse failure.
+      return { v: PROTOCOL_VERSION, type: 'set_room_settings', reqId, settings: normalizeRoomSettings(o.settings) };
+    case 'mexe_started':
+      return { v: PROTOCOL_VERSION, type: 'mexe_started', reqId };
     case 'start_game':
       return { v: PROTOCOL_VERSION, type: 'start_game', reqId };
     case 'submit_turn': {

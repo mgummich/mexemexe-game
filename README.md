@@ -64,10 +64,11 @@ Full setup, URL parameters, env vars and troubleshooting:
 
 - **Local play**: 2–4 seats, hot-seat or against AI, with a setup screen for
   picking seats and opponent personalities.
-- **Four AI opponents** over two skill levels — Dona Cida and Juninho
-  (`SimpleAi`), Bia and Seu Zé (`RearrangerAi`, which rearranges the table to
-  unlock a play). Deterministic, budgeted, and unable to confirm an illegal
-  table.
+- **Four AI opponents** — Dona Cida, Juninho, Bia and Seu Zé — across four
+  difficulty tiers (Beginner / Casual / Smart / Expert), with a pace setting and
+  optional move explanations. Personality picks the policy, difficulty picks how
+  deep it searches; every tier is deterministic, budgeted, blind to hidden hands,
+  and unable to confirm an illegal table.
 - **Interactive tutorial**: 12 teach-by-doing steps over a scripted table,
   fully localized.
 - **Three helper modes** (Beginner / Standard / Expert) control how much
@@ -77,6 +78,10 @@ Full setup, URL parameters, env vars and troubleshooting:
 - **Cosmetics**: 4 table themes, 5 card backs, 9 avatars. Purely client-side.
 - **Audio**: context-aware music (menu / mexe / game) plus procedural SFX, with
   separate volume sliders and a reduced-motion option.
+- **Online turn timer**: Casual / Fast / Off presets chosen by the host in the
+  lobby and frozen at match start, with a once-per-turn Mexe extension, a
+  warning window, reconnect grace and a missed-turn limit. The server owns the
+  clock end to end; the client only renders it.
 - **Installable PWA** that works fully offline — see
   [`docs/PWA_OFFLINE.md`](docs/PWA_OFFLINE.md).
 - **Online rooms (alpha)**: 2–4-player private rooms over WebSocket,
@@ -125,8 +130,9 @@ docs/           documentation (see below); docs/archive holds historical audits
 - Online rooms are alpha: no accounts, no matchmaking, no chat, no online
   rematch, and no rematch stats on the win screen. Per-connection rate limiting
   only. Full list in [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md).
-- The turn timer (`turnTimerSeconds`) is a declared rules hook, off by default
-  and **not wired into play**.
+- The turn timer is **online only** — a local hot-seat or AI match is never on a
+  clock. Custom timer values are validated on the wire but have no lobby control;
+  the three presets are what a host can pick.
 - Background music is streamed, never cached, so it stays silent offline.
 - Pointer-drag drops are verified in e2e through editor hooks, not raw
   synthetic pointer drags.

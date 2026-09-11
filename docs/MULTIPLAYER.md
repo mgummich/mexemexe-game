@@ -22,9 +22,12 @@ ranking, chat, or cosmetics sync. The game labels the entry point
   there is no avatar to show.
 - **Rate limiting is per connection, not per IP** — enough to stop a looping
   client, not a determined attacker opening many sockets.
-- **A seat disconnected past the 30s grace is played for you**: the server
-  draws and ends that seat's turn so the match keeps moving. It never melds on
-  your behalf.
+- **A seat disconnected past the room's reconnect grace is played for you**:
+  the server draws and ends that seat's turn so the match keeps moving. It never
+  melds on your behalf. Losing `missedTurnLimit` turns in a row ends the match.
+- **The turn timer has three lobby presets** (Casual / Fast / Off). `custom` is a
+  protocol capability with validated bounds, not a lobby control — there is no
+  screen for six number pickers.
 - **Reconnect is a single bounded retry**, not a persistent loop; if it fails
   the client returns you to the local menu with a message.
 
@@ -83,8 +86,11 @@ cannot leak an opponent's hand in an online match.
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 3` — bumped from 2 in 1.2.0: `GameView` gained
-a `hash` digest and the client gained `resync`; v2 bumped from 1 for the rules
+version (`PROTOCOL_VERSION = 4` — bumped from 3 for room settings and the
+server turn timer: `GameView` gained `settings` and `turnMsLeft`, `room_joined`
+and `room_state` gained `settings`/`hostSeat`, and the client gained
+`set_room_settings` and `mexe_started`; v3 bumped from 2 in 1.2.0, when
+`GameView` gained a `hash` digest and the client gained `resync`; v2 bumped from 1 for the rules
 adaptation, when `GameView` gained `config` and card ids changed shape with the
 two-deck/joker model); a mismatch is refused at connect with a clear reason rather than
 producing subtle desyncs. Client-to-server messages carry a client-chosen
@@ -99,6 +105,8 @@ submission that caused it.
 | `join_room` | `code`, `name` | replies `room_joined` or `error`; codes over 16 chars are rejected at parse, and 10 nonexistent-code guesses close the connection |
 | `leave_room` | — | explicit, distinct from a dropped socket |
 | `ready` | `ready: boolean` | idempotent |
+| `set_room_settings` | `settings` | seat-0 host only, lobby only; normalized at the parser *and* again in the room manager, so an out-of-range value is clamped rather than applied |
+| `mexe_started` | — | claims this turn's one-off Mexe extension; active seat only, granted at most once per turn |
 | `start_game` | — | seat-0 host only; requires every occupied 2–4P seat ready |
 | `submit_turn` | `rev`, `melds: [{ id, cardIds[] }]` | card **ids only** |
 | `draw_end_turn` | `rev` | |
@@ -110,11 +118,12 @@ submission that caused it.
 
 | type | payload | notes |
 |---|---|---|
-| `room_joined` | `code`, `seat`, `token`, `players` | token is the reconnect key |
-| `room_state` | `players` (each entry carries its own `ready`/`connected`) | lobby updates |
+| `room_joined` | `code`, `seat`, `token`, `players`, `settings`, `hostSeat` | token is the reconnect key |
+| `room_state` | `players` (each entry carries its own `ready`/`connected`), `settings`, `hostSeat`, `locked` | lobby updates; `locked` is true once the match started and the settings are frozen |
 | `game_started` | `view` | broadcast per seat after host `start_game`; the server never sends shuffle seed, and `rev` lives inside `view.rev` |
 | `state_sync` | `view` (redacted, `rev` and `hash` inside it) | the only source of truth on the client |
 | `proposal_rejected` | `reqId`, `reasons: ReasonCode[]` | codes, not prose |
+| `turn_timeout` | `seat` | the server ended that seat's turn (clock expired, or absent past the reconnect grace); the authoritative result already arrived as a `state_sync` |
 | `player_disconnected` | `seat` | opponent notice |
 | `player_reconnected` | `seat` | |
 | `game_over` | `winnerId`, `stalemate`, `view` | `view` carries the final redacted state so both clients render the same closing board |
@@ -261,6 +270,52 @@ least one other seat is still connected, the server plays that seat's only
 always-legal move — draw and end turn — so the remaining players are not stuck
 on a board that can never advance. It never melds on a player's behalf. A room
 with nobody connected is left to the sweep instead.
+
+## 7b. Room settings and the turn timer
+
+**What is configurable.** `RoomSettings` (`src/net/protocol.ts`) is the whole
+fairness surface: `timerMode`, `turnMs`, `mexeBonusMs`, `warnMs`,
+`reconnectGraceMs`, `missedTurnLimit`. Presets:
+
+| preset | turn | Mexe bonus | warning | reconnect grace | missed-turn limit |
+|---|---|---|---|---|---|
+| Off | — | — | — | 60s | 2 |
+| Casual (default) | 90s | +45s | 10s | 60s | 2 |
+| Fast | 45s | +20s | 10s | 30s | 2 |
+
+A brand-new room starts on Casual, except that its reconnect grace comes from
+the deployment's `MEXE_DISCONNECT_GRACE_MS` until a preset is picked.
+
+**Who owns them.** The seat-0 host proposes, in the lobby only. The server
+normalizes (`normalizeRoomSettings` — a named preset ignores every other field;
+`custom` is clamped field by field; anything unrecognizable becomes the default
+preset) and broadcasts. Nothing is ever applied client-side. `startGame` freezes
+them: `set_room_settings` after that returns `game_started`.
+
+**Who owns the clock.** The server, entirely. A room stores `turnStartedAt` and
+`turnBudgetMs` as plain numbers, and `advanceStalledTurns()` — already the
+per-tick stalled-match check, now running every second — compares them against
+its own clock. There is no per-room `setTimeout`, so a deleted room leaves
+nothing to leak. The client receives `turnMsLeft` inside each `GameView`,
+re-anchors a local countdown from it, and renders. A client countdown reaching
+zero does nothing at all.
+
+**What a timeout does.** Exactly `timerExpireTurn(state)`: draw one card, pass.
+It cannot confirm an illegal table, and this is structural rather than a check —
+a Mexe draft never leaves the client until FEITO, so the server's turn-start
+state *is* the table it falls back to. There is no half-finished rearrangement
+for a timeout to commit. The same path serves an expired clock and a seat absent
+past the grace; both increment that seat's `missedTurns`, and any turn the seat
+actually takes resets it to zero.
+
+**The Mexe bonus.** Opening the Mexe editor sends `mexe_started`. The server
+grants `mexeBonusMs` once per turn, to the active seat only, and only while a
+clock is running — so re-opening the editor cannot hold a turn open. A
+reconnecting seat is sent the *current* remaining time, never a fresh budget,
+which is what stops a reconnect loop from extending a turn indefinitely.
+
+`turnMsLeft` is deliberately outside the state digest: a ticking clock is not a
+divergence, and hashing it would make every second look like a desync.
 
 ## 8. Error handling
 

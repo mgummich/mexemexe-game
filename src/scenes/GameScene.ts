@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { createAi, PERSONALITY_STYLE, type EmoteKey, type Personality } from '../ai/ai';
+import { aiReasonKeySuffix, AI_SPEED_SCALE, createAi, PERSONALITY_STYLE, type EmoteKey, type Personality } from '../ai/ai';
 import { playSfx } from '../audio/sfx';
 import { setMusicContext } from '../audio/music';
 import { CARD_H, CARD_W } from '../assets/manifest';
@@ -17,7 +17,7 @@ import { t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
 import { digestOfState, stateHash } from '../net/protocol';
-import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
+import type { ErrorMsg, GameOverMsg, GameView, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
@@ -165,6 +165,15 @@ export class GameScene extends Phaser.Scene {
   private lastRejections: string[] = [];
   private onlineStatusDot: Phaser.GameObjects.Arc | null = null;
   private onlineNoticeText: Phaser.GameObjects.Text | null = null;
+  private onlineTimerText: Phaser.GameObjects.Text | null = null;
+  /** Local wall-clock instant the server's remaining time maps to, re-anchored on every
+   * state_sync. Display only — the client counting to zero does nothing; the server decides. */
+  private turnDeadlineAt: number | null = null;
+  private turnWarnMs = 0;
+  /** The room's frozen settings, as the last state_sync reported them. */
+  private onlineSettings: RoomSettings | null = null;
+  /** Last whole second already ticked, so the warning cue fires once per second, not per frame. */
+  private lastTickSecond = -1;
   /** Last status seen by onOnlineStatusChange — only used to detect the reconnecting -> open
    * edge, so a self-reconnect gets the same "you're back" notice the opponent's already gets. */
   private lastOnlineStatus: ConnStatus | null = null;
@@ -177,6 +186,9 @@ export class GameScene extends Phaser.Scene {
    * results-screen "winning move" line. Cleared on a draw, since a stalemate win has no meld play
    * to describe. Set right before store.confirmTurn(), since game:won fires synchronously inside it. */
   private lastConfirmedMoveText: string | null = null;
+  /** Reason tag of the move the AI just made (`ai.why.*` suffix), or null when the last move was
+   * a person's. Drives the `aiExplain` setting — a human opponent's move is never suppressed. */
+  private lastAiReason: string | null = null;
 
   // select-then-place — the drag-free way to play (keyboard and touch both route through it)
   private selectedCardId: string | null = null;
@@ -273,6 +285,11 @@ export class GameScene extends Phaser.Scene {
       // see src/net/viewToState.ts for why opponent hand/draw-pile are placeholders here.
       this.personalities = [];
       this.store = new GameStore(viewToState(config.online.view));
+      // Anchor the clock off the view the match started with — waiting for the next state_sync
+      // would leave the first turn showing nothing.
+      this.onlineSettings = config.online.view.settings;
+      this.turnWarnMs = config.online.view.settings.warnMs;
+      this.turnDeadlineAt = config.online.view.turnMsLeft === null ? null : Date.now() + config.online.view.turnMsLeft;
     } else {
       this.personalities = config.players.map((p) => (p.isAi ? (p.personality ?? 'juninho') : null));
       const playerCfgs = config.players.map((p) => ({
@@ -385,6 +402,7 @@ export class GameScene extends Phaser.Scene {
       client.on('state_sync', (msg) => this.onOnlineStateSync(msg.view)),
       client.on('proposal_rejected', (msg) => this.onOnlineRejected(msg.reasons)),
       client.on('game_over', (msg) => this.onOnlineGameOver(msg)),
+      client.on('turn_timeout', (msg) => this.onOnlineTurnTimeout(msg.seat)),
       client.on('player_disconnected', (msg) => this.onOnlineOpponentEvent(msg.seat, true)),
       client.on('player_reconnected', (msg) => this.onOnlineOpponentEvent(msg.seat, false)),
       client.on('error', (msg) => this.onOnlineTerminalError(msg)),
@@ -404,6 +422,9 @@ export class GameScene extends Phaser.Scene {
       joinRoom: () => { /* not applicable mid-match */ },
       setReady: () => { /* not applicable mid-match */ },
       startGame: () => { /* not applicable mid-match */ },
+      setRoomSettings: () => { /* fairness settings are frozen once the match starts */ },
+      roomSettings: () => this.onlineSettings,
+      turnMsLeft: () => (this.turnDeadlineAt === null ? null : Math.max(0, this.turnDeadlineAt - Date.now())),
       comprar: () => this.onComprar(),
       /** Verification-only: submit a raw (possibly illegal) proposal straight to the server,
        * bypassing the editor's client-side gate — the UI itself never constructs an illegal
@@ -447,6 +468,11 @@ export class GameScene extends Phaser.Scene {
     const before = this.store.get();
     const actingSeat = before.activePlayerIndex;
     this.store = new GameStore(viewToState(view));
+    this.lastAiReason = null; // every online seat is a person
+    this.turnDeadlineAt = view.turnMsLeft === null ? null : Date.now() + view.turnMsLeft;
+    this.onlineSettings = view.settings;
+    this.turnWarnMs = view.settings.warnMs;
+    this.lastTickSecond = -1;
     if (actingSeat === this.localSeat) this.clearLastMove();
     else this.noteOpponentMove(before, this.store.get(), actingSeat);
     debugApi.state = () => this.store.get();
@@ -631,7 +657,7 @@ export class GameScene extends Phaser.Scene {
   private aiThinkDelay(personality: Personality, state: GameState): number {
     const style = PERSONALITY_STYLE[personality];
     const complexityBonus = personality === 'bia' ? Math.min(400, state.table.length * 60) : 0;
-    return Math.round(this.motion(style.thinkMs + complexityBonus));
+    return Math.round(this.motion((style.thinkMs + complexityBonus) * AI_SPEED_SCALE[settings.get().aiSpeed]));
   }
 
   /** Draft undo/redo/reset — shared by the toolbar buttons, keyboard shortcuts and the e2e hook,
@@ -689,6 +715,11 @@ export class GameScene extends Phaser.Scene {
   private toggleMexeEditor(): void {
     if (!this.editor) return;
     this.mexeEditorOpen = !this.mexeEditorOpen;
+    // Claim the room's one-off Mexe extension. The server grants it at most once per turn and to
+    // the active seat only, so re-opening the editor cannot be used to hold a turn open.
+    if (this.mexeEditorOpen && this.online && this.store.get().activePlayerIndex === this.localSeat) {
+      this.online.client.mexeStarted();
+    }
     this.selectedCardId = null;
     playSfx(this, 'sfx-snap', 0.3);
     playlog.record(this.mexeEditorOpen ? 'mexe:editorOpen' : 'mexe:editorClose');
@@ -823,8 +854,17 @@ export class GameScene extends Phaser.Scene {
     const name = after.players[seat]?.name ?? '';
     const played = (before.players[seat]?.hand.length ?? 0) - (after.players[seat]?.hand.length ?? 0);
     const moved = Math.max(0, changed.size - Math.max(0, played));
+    const explain = settings.get().aiExplain;
+    // 'off' hides only AI narration — a hot-seat or online opponent's move still gets its line,
+    // because there the text is the only record of what the other person did.
+    if (this.lastAiReason !== null && explain === 'off') {
+      this.lastMoveText?.setText('');
+      return;
+    }
     const key = played <= 0 ? 'game.lastMove.drew' : moved > 0 ? 'game.lastMove.mexeu' : 'game.lastMove.played';
-    this.lastMoveText?.setText(t(key, { name, n: Math.max(0, played), m: moved }));
+    let text = t(key, { name, n: Math.max(0, played), m: moved });
+    if (this.lastAiReason !== null && explain === 'detailed') text += ` ${t(`ai.why.${this.lastAiReason}`)}`;
+    this.lastMoveText?.setText(text);
   }
 
   private clearLastMove(): void {
@@ -838,13 +878,14 @@ export class GameScene extends Phaser.Scene {
     const player = state.players[state.activePlayerIndex]!;
     const actingSeat = state.activePlayerIndex;
     try {
-      const ai = createAi(personality);
+      const ai = createAi(personality, settings.get().aiDifficulty);
       // Sliced (frame-friendly) search where the engine offers it. The yields let other events
       // run mid-search, so the guard below re-checks scene and store before acting.
       const decision = ai.decideSliced ? await ai.decideSliced(state) : ai.decide(state);
       if (this.sceneGone || this.store.get() !== state) return; // scene quit or state moved on mid-search
       bus.emit('ai:thought', { playerId: player.id, text: decision.explanation });
       debugApi.lastAiThought = decision.explanation;
+      this.lastAiReason = aiReasonKeySuffix(decision.explanation);
       const style = PERSONALITY_STYLE[personality];
       if (decision.kind === 'confirm') {
         const played = decision.draft.handCardsPlayed.length;
@@ -1002,6 +1043,16 @@ export class GameScene extends Phaser.Scene {
       // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
       // presence — not just its color — is the "you are online" tell (task: never ambiguous).
       const onlineLabel = label(this, this.r.onlineDot.x + 10, this.r.onlineDot.y, t('game.onlineBadge'), 6, '#8a7f68').setOrigin(0, 0.5).setDepth(600);
+      // Turn clock under the online badge. Hidden outright in a no-timer room rather than showing
+      // a dash, so an untimed match looks exactly like it did before timers existed.
+      this.onlineTimerText = label(this, this.r.onlineTimer.x, this.r.onlineTimer.y, '', 8, '#c0b8a8')
+        .setOrigin(0, 0.5)
+        .setDepth(600)
+        .setVisible(false);
+      this.staticUi.push(this.onlineTimerText);
+      // 250 ms, not a per-frame update: the readout has one-second resolution, and a timer event
+      // stops with the scene instead of outliving it the way a bare setInterval would.
+      this.time.addEvent({ delay: 250, loop: true, callback: () => this.updateTurnTimer() });
       // Backing strip, not bare text: the notice sits over baked-in table props (napkin, mug) and
       // the longer connection sentences were unreadable against them. Hidden entirely while empty,
       // so the strip never shows as a stray blob (see setOnlineNotice).
@@ -1022,6 +1073,46 @@ export class GameScene extends Phaser.Scene {
 
   /** Single set point for the online notice: an empty message hides the whole object, so its
    * backing strip never lingers as an empty box over the table. */
+  /**
+   * The server ended someone's turn for them. The authoritative result already arrived as a
+   * state_sync (which threw away whatever draft this client had), so this is only the sentence
+   * that explains it — a different one when the local player still had a draft on screen, because
+   * from their side the table visibly snapped back.
+   */
+  private onOnlineTurnTimeout(seat: number): void {
+    if (!this.online) return;
+    if (seat === this.localSeat) {
+      const hadDraft = (this.editor?.getDraft().handCardsPlayed.length ?? 0) > 0 || this.mexeEditorOpen;
+      this.setOnlineNotice(t(hadDraft ? 'online.timeout.selfReset' : 'online.timeout.self'));
+    } else {
+      const name = this.store.get().players[seat]?.name ?? '';
+      this.setOnlineNotice(t('online.timeout.other', { name }));
+    }
+    this.time.delayedCall(4000, () => this.setOnlineNotice(''));
+  }
+
+  /** One-second-resolution readout of the server's clock. Never authoritative: it renders
+   * `turnDeadlineAt`, which only a server state_sync can move, and reaching zero here does
+   * nothing but show 0s until the server's own tick lands. */
+  private updateTurnTimer(): void {
+    if (!this.onlineTimerText) return;
+    if (this.turnDeadlineAt === null) {
+      this.onlineTimerText.setVisible(false);
+      return;
+    }
+    const msLeft = Math.max(0, this.turnDeadlineAt - Date.now());
+    const secs = Math.ceil(msLeft / 1000);
+    const warning = this.turnWarnMs > 0 && msLeft <= this.turnWarnMs;
+    this.onlineTimerText.setVisible(true).setText(t('online.turnTimeLeft', { secs })).setColor(warning ? '#ff6b5e' : '#c0b8a8');
+    if (warning && secs !== this.lastTickSecond && secs > 0) {
+      this.lastTickSecond = secs;
+      // Own turn only: a cue for someone else's clock is noise, and the setting is off by choice.
+      if (settings.get().timerTickSound && this.store.get().activePlayerIndex === this.localSeat) {
+        playSfx(this, 'sfx-snap', 0.2);
+      }
+    }
+  }
+
   private setOnlineNotice(message: string): void {
     this.onlineNoticeText?.setText(message).setVisible(message !== '');
   }
@@ -1250,6 +1341,7 @@ export class GameScene extends Phaser.Scene {
     const beforeState = this.store.get();
     const activePlayer = beforeState.players[beforeState.activePlayerIndex]!;
     const { key, params } = summarizeMoveKey(beforeState.table, draft.melds, draft.handCardsPlayed.length);
+    this.lastAiReason = null; // a local player's own confirmed turn, not an AI move
     this.lastConfirmedMoveText = t(key, { name: activePlayer.name, ...params });
     this.editor = null;
     this.store.confirmTurn(draft);

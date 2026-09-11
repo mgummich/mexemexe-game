@@ -37,7 +37,7 @@ describe('parseSave', () => {
   it('round-trips a valid v1 save', () => {
     const save: Save = {
       version: 1,
-      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner', batterySaver: true },
+      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner', batterySaver: true, aiDifficulty: 'expert', aiSpeed: 'slow', aiExplain: 'detailed', timerTickSound: false },
       progress: { lastSeed: 1234, tutorialCompleted: true },
       cosmetics: { tableTheme: 'quintal', cardBack: 'back-4', avatar: 'bia' },
     };
@@ -120,7 +120,7 @@ describe('loadSave', () => {
     const oldSettings = { muted: true, sfxVolume: 33, musicVolume: 44, reducedMotion: true, locale: 'en' };
     const storage = memoryStorage({ [OLD_SETTINGS_KEY]: JSON.stringify(oldSettings) });
     const result = loadSave(storage);
-    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: true, musicContextAware: true, largeText: false, helperMode: 'standard', batterySaver: false }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
+    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: true, musicContextAware: true, largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
     expect(storage.getItem(SAVE_KEY)).toBe(JSON.stringify(result));
     expect(storage.getItem(OLD_SETTINGS_KEY)).toBeNull();
   });
@@ -157,5 +157,38 @@ describe('loadSave', () => {
     } as Storage;
     expect(() => loadSave(storage)).not.toThrow();
     expect(loadSave(storage)).toEqual({ version: 1, settings: DEFAULT_SETTINGS, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
+  });
+});
+
+describe('AI and timer settings', () => {
+  it('ship with the documented defaults', () => {
+    expect(DEFAULT_SETTINGS.aiDifficulty).toBe('smart');
+    expect(DEFAULT_SETTINGS.aiSpeed).toBe('normal');
+    expect(DEFAULT_SETTINGS.aiExplain).toBe('simple');
+    expect(DEFAULT_SETTINGS.timerTickSound).toBe(true);
+  });
+
+  it('round-trip a valid stored choice', () => {
+    const raw = JSON.stringify({ version: 1, settings: { aiDifficulty: 'expert', aiSpeed: 'instant', aiExplain: 'off', timerTickSound: false } });
+    const out = parseSave(raw).settings;
+    expect(out.aiDifficulty).toBe('expert');
+    expect(out.aiSpeed).toBe('instant');
+    expect(out.aiExplain).toBe('off');
+    expect(out.timerTickSound).toBe(false);
+  });
+
+  it('an unknown or wrongly-typed stored value falls back per field, never surviving as garbage', () => {
+    const raw = JSON.stringify({ version: 1, settings: { aiDifficulty: 'godlike', aiSpeed: 7, aiExplain: null, timerTickSound: 'yes' } });
+    const out = parseSave(raw).settings;
+    expect(out.aiDifficulty).toBe(DEFAULT_SETTINGS.aiDifficulty);
+    expect(out.aiSpeed).toBe(DEFAULT_SETTINGS.aiSpeed);
+    expect(out.aiExplain).toBe(DEFAULT_SETTINGS.aiExplain);
+    expect(out.timerTickSound).toBe(DEFAULT_SETTINGS.timerTickSound);
+  });
+
+  it('a save written before these settings existed gains the defaults', () => {
+    const out = parseSave(JSON.stringify({ version: 1, settings: { muted: true } })).settings;
+    expect(out.aiDifficulty).toBe(DEFAULT_SETTINGS.aiDifficulty);
+    expect(out.timerTickSound).toBe(DEFAULT_SETTINGS.timerTickSound);
   });
 });

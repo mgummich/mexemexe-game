@@ -19,7 +19,11 @@ import {
 } from '../src/rules/rules';
 import type { Card, DraftState, GameState, Meld, PlayerState, ReasonCode } from '../src/rules/types';
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
-import { buildView, type GameView, type RoomPlayerSummary, type SubmitTurnMeld } from '../src/net/protocol';
+import { timerExpireTurn } from '../src/rules/rules';
+import {
+  buildView, DEFAULT_ROOM_SETTINGS, normalizeRoomSettings,
+  type GameView, type RoomPlayerSummary, type RoomSettings, type SubmitTurnMeld,
+} from '../src/net/protocol';
 
 // No vowels, no 0/O/1/I/L — unambiguous when read aloud or typed.
 const CODE_ALPHABET = 'BCDFGHJKMNPQRSTVWXYZ23456789';
@@ -29,6 +33,8 @@ const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_ROOMS = 500;
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 4;
+/** The only seat allowed to change room settings or start the match. Seats never move. */
+export const HOST_SEAT = 0;
 
 export interface RoomManagerDeps {
   /** Injectable clock, for deterministic tests. */
@@ -62,6 +68,9 @@ interface Seat {
   ready: boolean;
   connected: boolean;
   disconnectedAt: number | null;
+  /** Consecutive turns this seat has lost to the timer or to being absent. Reset by any turn the
+   * seat actually takes; `settings.missedTurnLimit` of them ends the match. */
+  missedTurns: number;
 }
 
 interface RoomInternal {
@@ -76,6 +85,14 @@ interface RoomInternal {
   processing: boolean;
   createdAt: number;
   lastActivityAt: number;
+  /** Host-chosen, frozen at `startGame`. The server is the only writer. */
+  settings: RoomSettings;
+  /** When the current turn's clock started. null while the room has no running turn. */
+  turnStartedAt: number | null;
+  /** The current turn's budget: `settings.turnMs`, plus the Mexe bonus once claimed. */
+  turnBudgetMs: number;
+  /** Whether this turn's one-off Mexe extension has already been granted. */
+  mexeBonusClaimed: boolean;
 }
 
 export type CreateRoomResult =
@@ -97,6 +114,10 @@ export type ReadyResult =
 export type StartResult =
   | { ok: true; started: true; players: RoomPlayerSummary[] }
   | { ok: false; error: 'room_not_found' | 'not_host' | 'not_ready' | 'seat_gap' | 'game_started' };
+
+export type RoomSettingsResult =
+  | { ok: true; settings: RoomSettings }
+  | { ok: false; error: 'room_not_found' | 'not_host' | 'game_started' };
 
 export type TurnResult =
   | { ok: true; gameOver: boolean }
@@ -148,6 +169,7 @@ export class RoomManager {
       ready: false,
       connected: true,
       disconnectedAt: null,
+      missedTurns: 0,
     };
     const room: RoomInternal = {
       code,
@@ -157,6 +179,12 @@ export class RoomManager {
       processing: false,
       createdAt: this.now(),
       lastActivityAt: this.now(),
+      // Reconnect grace starts at the deployment's configured value; picking a timer preset in
+      // the lobby replaces it with that preset's own grace.
+      settings: { ...DEFAULT_ROOM_SETTINGS, reconnectGraceMs: this.disconnectGraceMs },
+      turnStartedAt: null,
+      turnBudgetMs: 0,
+      mexeBonusClaimed: false,
     };
     this.rooms.set(code, room);
     return { ok: true, code, seat: 0, token };
@@ -177,6 +205,7 @@ export class RoomManager {
       ready: false,
       connected: true,
       disconnectedAt: null,
+      missedTurns: 0,
     };
     room.lastActivityAt = this.now();
     return { ok: true, seat: freeSeat, token, players: this.summarize(room) };
@@ -209,12 +238,63 @@ export class RoomManager {
     return { ok: true, started: false, players: this.summarize(room) };
   }
 
+  /**
+   * Host-only, lobby-only. Once `room.state` exists the settings are frozen: they are the terms
+   * every seat agreed to when they pressed Ready, so a mid-match change is refused outright
+   * rather than applied to the turn in progress.
+   */
+  setRoomSettings(code: string, seat: number, proposed: RoomSettings): RoomSettingsResult {
+    const room = this.rooms.get(code);
+    if (!room) return { ok: false, error: 'room_not_found' };
+    if (room.state) return { ok: false, error: 'game_started' };
+    if (seat !== HOST_SEAT) return { ok: false, error: 'not_host' };
+    // Normalized again here: `setRoomSettings` is a public manager entry point, not only the
+    // socket path, so it must not depend on the caller having gone through the wire parser.
+    room.settings = normalizeRoomSettings(proposed);
+    room.lastActivityAt = this.now();
+    return { ok: true, settings: room.settings };
+  }
+
+  /** Start (or restart) the active seat's clock. A turn with no timer keeps a null start. */
+  private startTurnClock(room: RoomInternal): void {
+    room.mexeBonusClaimed = false;
+    if (room.settings.turnMs <= 0) {
+      room.turnStartedAt = null;
+      room.turnBudgetMs = 0;
+      return;
+    }
+    room.turnStartedAt = this.now();
+    room.turnBudgetMs = room.settings.turnMs;
+  }
+
+  /** ms left on the active seat's turn, or null when this room has no timer. Never negative. */
+  private msLeft(room: RoomInternal): number | null {
+    if (room.turnStartedAt === null) return null;
+    return Math.max(0, room.turnStartedAt + room.turnBudgetMs - this.now());
+  }
+
+  /**
+   * Grant this turn's one-off Mexe extension. Active seat only, once per turn, and only while a
+   * timer is actually running — so a client cannot hold its turn open by re-sending the claim,
+   * and a seat that is not on the clock gains nothing by sending it at all.
+   */
+  claimMexeBonus(code: string, seat: number): { ok: boolean; msLeft: number | null } {
+    const room = this.rooms.get(code);
+    if (!room || !room.state || room.state.activePlayerIndex !== seat) return { ok: false, msLeft: null };
+    if (room.turnStartedAt === null || room.mexeBonusClaimed || room.settings.mexeBonusMs <= 0) {
+      return { ok: false, msLeft: this.msLeft(room) };
+    }
+    room.mexeBonusClaimed = true;
+    room.turnBudgetMs += room.settings.mexeBonusMs;
+    return { ok: true, msLeft: this.msLeft(room) };
+  }
+
   /** Seat 0 starts only a full-ready 2–4P lobby. Seats never move, so turn order is stable. */
   startGame(code: string, seat: number): StartResult {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: 'room_not_found' };
     if (room.state) return { ok: false, error: 'game_started' };
-    if (seat !== 0) return { ok: false, error: 'not_host' };
+    if (seat !== HOST_SEAT) return { ok: false, error: 'not_host' };
     const occupied = room.seats.filter((s): s is Seat => s !== null);
     // A ready bit survives a transient socket close so a reconnect can resume a lobby, but it
     // must not let the host start a game with an absent seat. That would immediately create a
@@ -239,6 +319,8 @@ export class RoomManager {
     };
     room.rev = 1;
     room.lastActivityAt = this.now();
+    for (const s of occupied) s.missedTurns = 0;
+    this.startTurnClock(room);
     return { ok: true, started: true, players: this.summarize(room) };
   }
 
@@ -285,6 +367,10 @@ export class RoomManager {
       room.state = next;
       room.rev += 1;
       room.lastActivityAt = this.now();
+      // A turn actually taken clears the seat's missed-turn streak, so the limit only ever fires
+      // on *consecutive* misses rather than accumulating over a long match.
+      room.seats[seat]!.missedTurns = 0;
+      this.startTurnClock(room);
       return { ok: true, gameOver: next.phase === 'finished' };
     } finally {
       room.processing = false;
@@ -307,38 +393,63 @@ export class RoomManager {
       room.state = next;
       room.rev += 1;
       room.lastActivityAt = this.now();
+      room.seats[seat]!.missedTurns = 0;
+      this.startTurnClock(room);
       return { ok: true, gameOver: next.phase === 'finished' };
     } finally {
       room.processing = false;
     }
   }
 
-  /** Keep a match moving when the seat whose turn it is has been gone past the disconnect grace:
-   * the server plays that seat's always-legal move (draw and end turn) so the survivors are not
-   * stuck on a board that can never advance (docs/archive/PHASE7_AUDIT.md #4). Only fires while at least
-   * one other seat is still connected — an empty room is the sweep's job, not this one. Returns
-   * the rooms whose state advanced. */
-  advanceStalledTurns(): { code: string; gameOver: boolean; crashed?: boolean }[] {
+  /**
+   * The server's turn clock, driven by the caller on an interval. Two things end a turn the
+   * active seat did not: the room's turn timer running out, and the seat having been gone past
+   * the room's reconnect grace (docs/archive/PHASE7_AUDIT.md #4). Both resolve to the same
+   * always-legal move — `timerExpireTurn`, i.e. discard whatever draft the client had, draw one
+   * card and pass.
+   *
+   * That is the whole reason a timeout can never confirm an illegal table: a draft never leaves
+   * the client until FEITO, so the server's turn-start state *is* the table it falls back to.
+   * There is nothing here that could commit a half-finished rearrangement.
+   *
+   * Neither path fires while the room has nobody else connected — an empty room is the sweep's
+   * job. A seat that loses `settings.missedTurnLimit` turns in a row ends the match, so a player
+   * who has walked away cannot keep the others on a board that only ever advances by draw.
+   */
+  advanceStalledTurns(): { code: string; gameOver: boolean; crashed?: boolean; closed?: boolean; timedOut?: number }[] {
     const t = this.now();
-    const advanced: { code: string; gameOver: boolean; crashed?: boolean }[] = [];
+    const advanced: { code: string; gameOver: boolean; crashed?: boolean; closed?: boolean; timedOut?: number }[] = [];
     for (const [code, room] of this.rooms) {
       const state = room.state;
       if (!state || state.phase !== 'playing') continue;
       const active = room.seats[state.activePlayerIndex];
-      if (!active || active.connected || active.disconnectedAt === null) continue;
-      if (t - active.disconnectedAt <= this.disconnectGraceMs) continue;
+      if (!active) continue;
       if (!room.seats.some((s) => s !== null && s.connected)) continue;
+
+      const absentTooLong =
+        !active.connected && active.disconnectedAt !== null && t - active.disconnectedAt > room.settings.reconnectGraceMs;
+      const timedOut = room.turnStartedAt !== null && t - room.turnStartedAt >= room.turnBudgetMs;
+      if (!absentTooLong && !timedOut) continue;
+
       // Per-room isolation: one room whose state can no longer advance legally must not stop
       // every other stalled room from advancing, or throw out of the caller's interval forever.
       // Crash policy: such a room is corrupt — drop it and report it so the caller can notify
       // its sockets, instead of retrying the same throw every tick.
       try {
-        const next = drawAndEndTurn(state);
+        const next = timerExpireTurn(state);
         assertConservation(next);
         room.state = next;
         room.rev += 1;
         room.lastActivityAt = t;
-        advanced.push({ code, gameOver: next.phase === 'finished' });
+        active.missedTurns += 1;
+        this.startTurnClock(room);
+        const seat = active.seat;
+        if (active.missedTurns >= room.settings.missedTurnLimit) {
+          this.rooms.delete(code);
+          advanced.push({ code, gameOver: false, closed: true, timedOut: seat });
+          continue;
+        }
+        advanced.push({ code, gameOver: next.phase === 'finished', timedOut: seat });
       } catch {
         this.rooms.delete(code);
         advanced.push({ code, gameOver: false, crashed: true });
@@ -362,7 +473,10 @@ export class RoomManager {
         seat.connected = true;
         seat.disconnectedAt = null;
         room.lastActivityAt = this.now();
-        const view = room.state ? buildView(room.state, seat.seat, room.rev) : null;
+        // A reconnecting seat receives the *current* remaining time, not a fresh budget: the
+        // clock kept running while it was away, which is what stops a reconnect loop from
+        // extending a turn indefinitely.
+        const view = room.state ? buildView(room.state, seat.seat, room.rev, room.settings, this.msLeft(room)) : null;
         return { ok: true, code: room.code, seat: seat.seat, view, players: this.summarize(room) };
       }
     }
@@ -372,12 +486,19 @@ export class RoomManager {
   getView(code: string, seat: number): GameView | null {
     const room = this.rooms.get(code);
     if (!room || !room.state) return null;
-    return buildView(room.state, seat, room.rev);
+    return buildView(room.state, seat, room.rev, room.settings, this.msLeft(room));
   }
 
   getPlayers(code: string): RoomPlayerSummary[] | null {
     const room = this.rooms.get(code);
     return room ? this.summarize(room) : null;
+  }
+
+  /** Everything a lobby renders: who is in, the agreed settings, and whether they are frozen. */
+  getRoomInfo(code: string): { players: RoomPlayerSummary[]; settings: RoomSettings; locked: boolean } | null {
+    const room = this.rooms.get(code);
+    if (!room) return null;
+    return { players: this.summarize(room), settings: room.settings, locked: room.state !== null };
   }
 
   /** Drop a room outright (finished match, corrupt state). The caller detaches its sockets. */

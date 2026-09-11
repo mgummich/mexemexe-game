@@ -1,5 +1,6 @@
 import { DraftEditor } from '../mexe-mode/draft';
 import { isValidMeld, isValidRun } from '../rules/rules';
+import type { AiSpeed } from '../core/persistence';
 import type { Card, DraftState, GameState } from '../rules/types';
 
 export type AiDecision =
@@ -222,6 +223,11 @@ interface Candidate {
 }
 
 const MAX_CANDIDATES = 20;
+/** Expert widens the same deterministic search: more candidates kept, longer wall-clock budget.
+ * It never unlocks a move a lower tier could not also make legally — only how many it weighs. */
+const EXPERT_MAX_CANDIDATES = 48;
+const SEARCH_BUDGET_MS = 400;
+const EXPERT_SEARCH_BUDGET_MS = 900;
 const INTER_MELD_TRIPLE_CAP = 300;
 
 function timeUp(deadline: number): boolean {
@@ -263,22 +269,22 @@ function tryStealForm(
 }
 
 /** 1a. Steal an edge card from any 4+ meld, forming a new meld with 2 or 3 hand cards. */
-function searchEdgeSteal(state: GameState, hand: Card[], candidates: Candidate[], deadline: number): void {
+function searchEdgeSteal(state: GameState, hand: Card[], candidates: Candidate[], deadline: number, cap: number): void {
   for (const meld of state.table) {
-    if (candidates.length >= MAX_CANDIDATES || timeUp(deadline)) return;
+    if (candidates.length >= cap || timeUp(deadline)) return;
     if (meld.cards.length < 4) continue;
     for (const steal of [meld.cards[0]!, meld.cards.at(-1)!]) {
       for (let i = 0; i < hand.length; i++) {
         for (let j = i + 1; j < hand.length; j++) {
           tryStealForm(state, steal, meld.id, [hand[i]!, hand[j]!], candidates);
-          if (candidates.length >= MAX_CANDIDATES) return;
+          if (candidates.length >= cap) return;
         }
       }
       for (let i = 0; i < hand.length; i++) {
         for (let j = i + 1; j < hand.length; j++) {
           for (let k = j + 1; k < hand.length; k++) {
             tryStealForm(state, steal, meld.id, [hand[i]!, hand[j]!, hand[k]!], candidates);
-            if (candidates.length >= MAX_CANDIDATES) return;
+            if (candidates.length >= cap) return;
           }
         }
       }
@@ -290,12 +296,12 @@ function searchEdgeSteal(state: GameState, hand: Card[], candidates: Candidate[]
 /** 1b. Split a 6+ run at each valid midpoint, then either extend a part directly or
  *  steal the newly-exposed interior boundary card (if its side stays 3+) to form a
  *  new meld with 2 hand cards. */
-function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[], deadline: number): void {
+function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[], deadline: number, cap: number): void {
   for (const meld of state.table) {
-    if (candidates.length >= MAX_CANDIDATES || timeUp(deadline)) return;
+    if (candidates.length >= cap || timeUp(deadline)) return;
     if (meld.cards.length < 6 || !isValidRun(meld.cards)) continue;
     for (let splitIdx = 3; splitIdx <= meld.cards.length - 3; splitIdx++) {
-      if (candidates.length >= MAX_CANDIDATES || timeUp(deadline)) return;
+      if (candidates.length >= cap || timeUp(deadline)) return;
       const partA = meld.cards.slice(0, splitIdx);
       const partB = meld.cards.slice(splitIdx);
 
@@ -306,7 +312,7 @@ function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[],
           addCandidate(candidates, ed.getDraft(), `split ${meld.id} at ${splitIdx}, extended with ${played.join(',')}`);
         }
       }
-      if (candidates.length >= MAX_CANDIDATES || timeUp(deadline)) return;
+      if (candidates.length >= cap || timeUp(deadline)) return;
 
       const boundarySteals: Card[] = [];
       if (partA.length >= 4) boundarySteals.push(partA[partA.length - 1]!);
@@ -330,7 +336,7 @@ function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[],
                 `split ${meld.id} at ${splitIdx}, took ${steal.id}, formed meld with ${hand[i]!.id}+${hand[j]!.id}`,
               );
             }
-            if (candidates.length >= MAX_CANDIDATES) return;
+            if (candidates.length >= cap) return;
           }
         }
       }
@@ -340,16 +346,16 @@ function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[],
 
 /** 1c. Move one edge card from a 4+ meld onto another meld (run extension or 4th set card),
  *  then try to play a hand card into whatever the move opened up. */
-function searchInterMeldMove(state: GameState, hand: Card[], candidates: Candidate[], deadline: number): void {
+function searchInterMeldMove(state: GameState, hand: Card[], candidates: Candidate[], deadline: number, cap: number): void {
   const melds = state.table;
   let tripleCount = 0;
   for (const source of melds) {
-    if (candidates.length >= MAX_CANDIDATES || timeUp(deadline)) return;
+    if (candidates.length >= cap || timeUp(deadline)) return;
     if (source.cards.length < 4) continue;
     for (const steal of [source.cards[0]!, source.cards.at(-1)!]) {
       for (const target of melds) {
         if (target.id === source.id) continue;
-        if (++tripleCount > INTER_MELD_TRIPLE_CAP || candidates.length >= MAX_CANDIDATES || timeUp(deadline)) return;
+        if (++tripleCount > INTER_MELD_TRIPLE_CAP || candidates.length >= cap || timeUp(deadline)) return;
 
         const back = [...target.cards, steal];
         const front = [steal, ...target.cards];
@@ -395,13 +401,22 @@ function compareCandidates(a: Candidate, b: Candidate): number {
  */
 export class RearrangerAi implements AiPlayer {
   private simple: SimpleAi;
+  private readonly cap: number;
+  private readonly budgetMs: number;
 
-  constructor(private readonly holdJokers = false) {
+  /** `wide` is the Expert tier: the same searches, more candidates kept and a longer budget. */
+  constructor(
+    private readonly holdJokers = false,
+    wide = false,
+  ) {
     this.simple = new SimpleAi(false, holdJokers);
+    this.cap = wide ? EXPERT_MAX_CANDIDATES : MAX_CANDIDATES;
+    this.budgetMs = wide ? EXPERT_SEARCH_BUDGET_MS : SEARCH_BUDGET_MS;
   }
 
   decide(state: GameState): AiDecision {
-    const deadline = performance.now() + 400;
+    const cap = this.cap;
+    const deadline = performance.now() + this.budgetMs;
     const candidates: Candidate[] = [];
     const hand = sortCards(state.players[state.activePlayerIndex]!.hand);
 
@@ -411,16 +426,18 @@ export class RearrangerAi implements AiPlayer {
     }
 
     for (const search of REARRANGE_SEARCHES) {
-      if (candidates.length >= MAX_CANDIDATES || timeUp(deadline)) break;
-      search(state, hand, candidates, deadline);
+      if (candidates.length >= cap || timeUp(deadline)) break;
+      search(state, hand, candidates, deadline, cap);
     }
     return pickBest(candidates);
   }
 
   /** The same search, sliced: each phase gets its own bounded slice of the budget and the
    * event loop runs between phases, so frames render while the AI "thinks" (#8). Total
-   * search budget stays ~400ms like decide(). */
-  async decideSliced(state: GameState, sliceMs = 100): Promise<AiDecision> {
+   * search budget stays the tier's budget, split across the phases — Expert searches deeper
+   * without ever holding the main thread for more than one slice. */
+  async decideSliced(state: GameState, sliceMs = this.budgetMs / REARRANGE_SEARCHES.length): Promise<AiDecision> {
+    const cap = this.cap;
     const candidates: Candidate[] = [];
     const hand = sortCards(state.players[state.activePlayerIndex]!.hand);
 
@@ -430,9 +447,9 @@ export class RearrangerAi implements AiPlayer {
     }
 
     for (const search of REARRANGE_SEARCHES) {
-      if (candidates.length >= MAX_CANDIDATES) break;
+      if (candidates.length >= cap) break;
       await new Promise<void>((r) => setTimeout(r, 0));
-      search(state, hand, candidates, performance.now() + sliceMs);
+      search(state, hand, candidates, performance.now() + sliceMs, cap);
     }
     return pickBest(candidates);
   }
@@ -464,6 +481,27 @@ export const PERSONALITY_STYLE: Record<
   ze: { thinkMs: 700, emoteBig: 'confident', emoteSmall: 'happy', emoteDraw: 'sleepy' },
 };
 
+/** Presentation-only multiplier on an AI's pre-move "thinking" pause. Never touches the search
+ * budget: a faster pace shows the same decision sooner, it does not make the AI weaker. */
+export const AI_SPEED_SCALE: Record<AiSpeed, number> = { instant: 0, fast: 0.5, normal: 1, slow: 1.8 };
+
+/**
+ * Strip the personality prefix off a tagged explanation (`bia:rearrange-extend: ...`) and return
+ * just the reason class, which is the `ai.why.<suffix>` localization key. Returns `'draw'` for
+ * anything unrecognized, so an untagged explanation degrades to the generic line rather than
+ * rendering a raw key on screen.
+ */
+export function aiReasonKeySuffix(explanation: string): string {
+  const tag = explanation.split(':', 2)[1];
+  return tag !== undefined && AI_REASON_KEYS.includes(tag) ? tag : 'draw';
+}
+
+const AI_REASON_KEYS: readonly string[] = [
+  'minimal-extend', 'minimal-meld', 'dump-all', 'dump',
+  'rearrange-extend', 'simple-best', 'big-rearrange', 'big-play',
+  'hold-for-bigger', 'draw',
+];
+
 /** Classify *why* a personality made this move, for debug/e2e (`ai:reason` tag prepended to
  * `explanation`) — not used for any behavioural decision. */
 function classifyReason(personality: Personality, d: AiDecision): string {
@@ -489,25 +527,50 @@ function tagReason(personality: Personality, d: AiDecision): AiDecision {
   return { ...d, explanation: `${classifyReason(personality, d)}: ${d.explanation}` } as AiDecision;
 }
 
+/** How hard the opponents play. Difficulty picks the *search tier*; personality picks the
+ * *policy* (joker holding, minimal vs. full play, patience). Both are orthogonal, and neither
+ * can produce an illegal meld: every candidate still goes through `DraftEditor.canConfirm`. */
+export type Difficulty = 'beginner' | 'casual' | 'smart' | 'expert';
+
+export const DIFFICULTIES: readonly Difficulty[] = ['beginner', 'casual', 'smart', 'expert'];
+
+/** Per-personality policy. `smart` (the default tier) reproduces exactly the engine each
+ * personality had before difficulty existed, so existing behaviour and tests are unchanged. */
+const PERSONALITY_TRAITS: Record<Personality, { holdJokers: boolean; minimal: boolean; rearrange: boolean; patient: boolean }> = {
+  cida: { holdJokers: true, minimal: true, rearrange: false, patient: false },
+  juninho: { holdJokers: false, minimal: false, rearrange: false, patient: false },
+  bia: { holdJokers: true, minimal: false, rearrange: true, patient: false },
+  ze: { holdJokers: true, minimal: false, rearrange: true, patient: true },
+};
+
 /**
  * Personality wrapper.
  * cida (conservative): minimal SimpleAi. juninho (aggressive): full SimpleAi.
  * bia (puzzle-minded): RearrangerAi. ze (patient): RearrangerAi but draws
  * while hand > 5 early game unless it can dump 3+ cards.
+ *
+ * `difficulty` scales the search only:
+ * - beginner: one action per turn, jokers held — plays legally but misses combinations
+ * - casual: full lay-down + extensions, never rearranges the shared table
+ * - smart (default): the personality's own engine
+ * - expert: the rearrangement search for every personality, widened
+ * Patience (ze) applies at every tier above beginner.
  */
-export function createAi(personality: Personality): AiPlayer {
-  const engine: AiPlayer = (() => {
-    switch (personality) {
-      case 'cida':
-        return new SimpleAi(true, true);
-      case 'juninho':
-        return new SimpleAi(false); // aggressive: spends jokers early
-      case 'bia':
-        return new RearrangerAi(true);
-      case 'ze':
-        return new PatientAi();
+export function createAi(personality: Personality, difficulty: Difficulty = 'smart'): AiPlayer {
+  const traits = PERSONALITY_TRAITS[personality];
+  const base: AiPlayer = (() => {
+    switch (difficulty) {
+      case 'beginner':
+        return new SimpleAi(true, traits.holdJokers);
+      case 'casual':
+        return new SimpleAi(traits.minimal, traits.holdJokers);
+      case 'smart':
+        return traits.rearrange ? new RearrangerAi(traits.holdJokers) : new SimpleAi(traits.minimal, traits.holdJokers);
+      case 'expert':
+        return new RearrangerAi(traits.holdJokers, true);
     }
   })();
+  const engine = traits.patient && difficulty !== 'beginner' ? new PatientAi(base) : base;
   return {
     decide: (state) => tagReason(personality, engine.decide(state)),
     ...(engine.decideSliced
@@ -517,12 +580,13 @@ export function createAi(personality: Personality): AiPlayer {
 }
 
 class PatientAi implements AiPlayer {
-  private inner = new RearrangerAi(true);
+  constructor(private readonly inner: AiPlayer) {}
   decide(state: GameState): AiDecision {
     return this.applyPatience(state, this.inner.decide(state));
   }
   async decideSliced(state: GameState): Promise<AiDecision> {
-    return this.applyPatience(state, await this.inner.decideSliced(state));
+    const d = this.inner.decideSliced ? await this.inner.decideSliced(state) : this.inner.decide(state);
+    return this.applyPatience(state, d);
   }
   private applyPatience(state: GameState, d: AiDecision): AiDecision {
     if (d.kind === 'confirm') {

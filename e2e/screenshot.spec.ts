@@ -7,7 +7,7 @@ import { editorZones, meldListRows, meldListRowY, MELD_LIST_ROW_H } from '../src
 import { computeMeldLayout } from '../src/table/layout';
 import { ZOOM_FLOORS } from '../src/table/zoom';
 import { gameRegions, type GameRegions } from '../src/ui/regions';
-import { advancedRowY, AdvancedRow, audioRowY, AudioRow, cosmeticsRowY, settingsRowY, SettingsRow } from '../src/ui/settings-layout';
+import { advancedRowY, AdvancedRow, aiRowY, AiRow, audioRowY, AudioRow, cosmeticsRowY, settingsRowY, SettingsRow } from '../src/ui/settings-layout';
 import { pickProfile } from '../src/ui/viewport';
 
 const OUT_DIR = 'docs/screenshots';
@@ -320,10 +320,14 @@ test('help: rules panel opened from the pause menu', async ({ page }) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game');
     await p.keyboard.press('Escape');
     await p.waitForTimeout(150);
-    // pause menu: Continue/Settings/Help/Quit stacked at logical (240, 95/119/143/167) — Help is the 3rd row
-    const [hx, hy] = toScreen(240, 143);
+    // Pause menu rows (src/ui/pause-menu.ts, desktop btnH 18 / pitch 24, panel h 160 centred on
+    // 135): Continue 113, Settings 137, REGRAS 161, Quit 185. 143 used to be clicked here, which
+    // is inside Settings' 18-unit box — this capture was photographing the settings panel, not
+    // the rules panel it is named for.
+    const [hx, hy] = toScreen(240, 161);
     await p.mouse.click(hx, hy);
     await p.waitForTimeout(150);
+    await p.waitForFunction(() => window.__MEXE__.rulesOpen === true, undefined, { timeout: 5_000 });
   });
 });
 
@@ -332,9 +336,10 @@ test('help-en: rules panel (English) opened from the pause menu', async ({ page 
     await p.waitForFunction(() => window.__MEXE__.scene === 'game');
     await p.keyboard.press('Escape');
     await p.waitForTimeout(150);
-    const [hx, hy] = toScreen(240, 143);
+    const [hx, hy] = toScreen(240, 161); // REGRAS row — see the note in the pt capture above
     await p.mouse.click(hx, hy);
     await p.waitForTimeout(150);
+    await p.waitForFunction(() => window.__MEXE__.rulesOpen === true, undefined, { timeout: 5_000 });
   });
 });
 
@@ -1066,13 +1071,13 @@ async function setTableTheme(p: Page, clicks: number): Promise<void> {
 /** Reads the mexe-save JSON, or the shipped defaults if nothing was ever written yet
  * (fresh profile, no setting changed from default — see src/core/persistence.ts DEFAULT_SAVE). */
 async function readSave(p: Page): Promise<{
-  settings: { musicContextAware: boolean; reducedMotion: boolean };
+  settings: { musicContextAware: boolean; reducedMotion: boolean; aiDifficulty: string; aiSpeed: string; aiExplain: string };
   cosmetics: { tableTheme: string; cardBack: string; avatar: string };
 }> {
   const raw = await p.evaluate(() => localStorage.getItem('mexe-save'));
   if (raw) return JSON.parse(raw);
   return {
-    settings: { musicContextAware: true, reducedMotion: false },
+    settings: { musicContextAware: true, reducedMotion: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple' },
     cosmetics: { tableTheme: 'boteco', cardBack: 'back-0', avatar: 'player' },
   };
 }
@@ -1164,6 +1169,29 @@ test('music: "music by context" toggle switches the track pool selection mode', 
   await page.mouse.click(bx, by);
   const after = (await readSave(page)).settings.musicContextAware;
   expect(after).toBe(false);
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
+test('ai-settings: the AI sub-panel cycles difficulty, pace and explanation, and persists them', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=1&showcase=settings');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const before = (await readSave(page)).settings;
+  expect(before.aiDifficulty).toBe('smart');
+
+  const [sx, sy] = toScreen(240, settingsRowY(SettingsRow.Ai));
+  await page.mouse.click(sx, sy);
+  await page.waitForTimeout(150);
+  await snap(page, 'ai-settings');
+
+  // smart -> expert (the cycle wraps beginner -> casual -> smart -> expert).
+  const [dx, dy] = toScreen(240, aiRowY(AiRow.Difficulty));
+  await page.mouse.click(dx, dy);
+  const [ex, ey] = toScreen(240, aiRowY(AiRow.Explain));
+  await page.mouse.click(ex, ey);
+  const after = (await readSave(page)).settings;
+  expect(after.aiDifficulty).toBe('expert');
+  expect(after.aiExplain).toBe('detailed');
   expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
 });
 

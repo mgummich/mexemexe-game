@@ -88,6 +88,10 @@ missing was clarity, not capability.
     piecemeal labels.
 
 ### Not attempted, and why
+> Superseded: the two items below shipped in the improvement package that followed this pass —
+> see `docs/IMPROVEMENT_PACKAGE_AUDIT.md` and the `improvement_package` block in
+> `docs/STATUS.json`.
+
 - **Server-owned turn timers, presets, reconnect grace, timeout behaviour.** `docs/STATUS.json`
   records the turn timer as an unwired hook; this is a server feature plus a protocol change, not
   a UI pass. Building it half-way would ship a client-side timer, which the rules forbid.

@@ -76,10 +76,13 @@ On your turn:
 **Draw only happens when you pass, cannot play, or will not play.** There is no draw at the start
 of a turn.
 
-**Turn timer — not in play.** `turnTimerSeconds` defaults to 0 (off) and nothing in the client
-or the server starts a timer. The rules function exists (`timerExpireTurn`: revert the table to
-the start of the turn, draw one card, end the turn) and is unit-tested, but it is an unused hook,
-not a feature.
+**Turn timer — online only.** A local hot-seat or AI match is never on a clock, and
+`turnTimerSeconds` still defaults to 0. Online, the *server* owns the timer (Casual / Fast / Off
+presets picked by the host and frozen at match start — see
+[MULTIPLAYER.md](MULTIPLAYER.md) §7b). Expiry runs `timerExpireTurn`: discard whatever draft was
+in progress, draw one card, end the turn. Because a Mexe draft never leaves the client until
+FEITO, the table it reverts to is the server's own turn-start table — a timeout can never confirm
+a half-finished rearrangement.
 
 ## Worked examples
 
@@ -126,7 +129,7 @@ The engine carries hooks for these variants; none is enabled in a standard game:
 | `groupUniqueSuits` | true | fixed: natural group suits are all different |
 | `allowAllJokerGroups` | false | fixed: every group needs a natural card |
 | `firstMeldMinPoints` | 0 (off) | minimum points for a player's first meld |
-| `turnTimerSeconds` | 0 (off) | timed turns — hook only, not wired into play |
+| `turnTimerSeconds` | 0 (off) | a local-play hook, still unwired. The online clock is a **room** setting owned by the server, not a rules config — see [MULTIPLAYER.md](MULTIPLAYER.md) §7b |
 | `handSize` | 7 | different deal size |
 
 ## Rejected variants

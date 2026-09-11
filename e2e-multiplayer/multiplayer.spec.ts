@@ -299,6 +299,97 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
   await pageB.context().close();
 });
 
+test('room timer: the host sets it in the lobby, it locks at start, and the server times a turn out', async ({
+  browser,
+}) => {
+  const screenshots: string[] = [];
+  const pageA = await newClient(browser);
+  const pageB = await newClient(browser);
+
+  await pageA.evaluate(() => window.__MEXE__.online!.createRoom('A'));
+  await pageA.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = await pageA.evaluate(() => window.__MEXE__.online!.code());
+  await pageB.evaluate((c) => window.__MEXE__.online!.joinRoom(c!, 'B'), code);
+  await pageB.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+
+  // Host picks the shortest turn the protocol allows (15s — the custom lower bound), so the
+  // expiry is observable inside an e2e run without weakening the bounds themselves.
+  const CUSTOM = {
+    timerMode: 'custom' as const, turnMs: 15_000, mexeBonusMs: 5_000, warnMs: 10_000,
+    reconnectGraceMs: 30_000, missedTurnLimit: 5,
+  };
+  await pageA.evaluate((s) => window.__MEXE__.online!.setRoomSettings(s), CUSTOM);
+  // Both seats must see the same terms — the guest renders the host's choice, never its own.
+  for (const p of [pageA, pageB]) {
+    await p.waitForFunction(() => window.__MEXE__.online!.roomSettings()?.turnMs === 15_000, undefined, { timeout: 10_000 });
+  }
+  await shot({ a: pageA, b: pageB }, 'room-settings', screenshots);
+
+  // A non-host proposal is refused: the guest's send changes nothing for anyone.
+  await pageB.evaluate(() => window.__MEXE__.online!.setRoomSettings({
+    timerMode: 'off', turnMs: 0, mexeBonusMs: 0, warnMs: 0, reconnectGraceMs: 60_000, missedTurnLimit: 2,
+  }));
+  await pageB.waitForTimeout(400);
+  expect(await pageA.evaluate(() => window.__MEXE__.online!.roomSettings()?.turnMs)).toBe(15_000);
+
+  await pageA.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await pageB.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await pageA.waitForFunction(
+    () => window.__MEXE__.online!.players().length === 2 && window.__MEXE__.online!.players().every((p) => p.ready),
+    undefined,
+    { timeout: 10_000 },
+  );
+  await pageA.evaluate(() => window.__MEXE__.online!.startGame());
+  for (const p of [pageA, pageB]) {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 10_000 });
+  }
+
+  // The clock is live on both clients from the very first turn, and it is counting down.
+  const firstRead = await pageA.evaluate(() => window.__MEXE__.online!.turnMsLeft());
+  expect(firstRead).not.toBeNull();
+  expect(firstRead!).toBeLessThanOrEqual(15_000);
+  await pageA.waitForTimeout(1500);
+  const secondRead = await pageA.evaluate(() => window.__MEXE__.online!.turnMsLeft());
+  expect(secondRead!).toBeLessThan(firstRead!);
+  await shot({ active: pageA, waiting: pageB }, 'turn-timer', screenshots);
+
+  const revBefore = await pageA.evaluate(() => window.__MEXE__.online!.rev());
+  const tableBefore = await pageA.evaluate(() => window.__MEXE__.state!()!.table.map((m) => m.cards.map((c) => c.id)));
+  const handBefore = await pageA.evaluate(() => window.__MEXE__.state!()!.players[0]!.hand.length);
+
+  // Seat 0 does nothing at all. The server — not this client — ends the turn.
+  await pageA.waitForFunction(
+    (prev) => (window.__MEXE__.state!()?.activePlayerIndex ?? prev) !== prev,
+    0,
+    { timeout: 25_000 },
+  );
+  await shot({ a: pageA }, 'turn-timeout', screenshots);
+
+  const after = await pageA.evaluate(() => ({
+    active: window.__MEXE__.state!()!.activePlayerIndex,
+    hand: window.__MEXE__.state!()!.players[0]!.hand.length,
+    table: window.__MEXE__.state!()!.table.map((m) => m.cards.map((c) => c.id)),
+    rev: window.__MEXE__.online!.rev(),
+    notice: window.__MEXE__.online!.notice(),
+    left: window.__MEXE__.online!.turnMsLeft(),
+  }));
+  expect(after.active).toBe(1);
+  // Exactly the timeout move: one card drawn, the table untouched.
+  expect(after.hand).toBe(handBefore + 1);
+  expect(after.table).toEqual(tableBefore);
+  expect(after.rev).toBeGreaterThan(revBefore!);
+  expect(after.notice).not.toBe('');
+  // The next seat's clock started fresh rather than inheriting the expired one.
+  expect(after.left!).toBeGreaterThan(10_000);
+
+  expect(consoleErrorsByPage.get(pageA) ?? []).toEqual([]);
+  expect(consoleErrorsByPage.get(pageB) ?? []).toEqual([]);
+  expect(screenshots.length).toBeGreaterThan(0);
+
+  await pageA.context().close();
+  await pageB.context().close();
+});
+
 test('three and four clients: host starts ready room and turns rotate through every stable seat', async ({ browser }) => {
   const playerCountRuns: Record<number, { seats: number[]; screenshot: string }> = {};
   for (const playerCount of [3, 4]) {
