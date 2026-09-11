@@ -89,3 +89,29 @@ jobs:
           name: cross-browser-matrix-artifacts
           path: test-results/
           retention-days: 7
+
+  multiplayer-traced:
+    name: Multiplayer, traced (race stress)
+    runs-on: ubuntu-latest
+    # Tracing slows frame processing enough to lose races a fast machine always wins — that is
+    # how the double-click create_room duplicate was found (5/5 reproduction under tracing, 0/5
+    # without). It costs wall clock (verify:multiplayer 2m14 -> 5m02), so it lives here instead
+    # of on every PR, and it doubles as the traced-diagnostics run for this suite.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: MEXE_TRACE=1 npm run verify:multiplayer
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: multiplayer-traced-artifacts
+          path: |
+            test-results/
+            docs/screenshots/verify-multiplayer-log.json
+          retention-days: 7

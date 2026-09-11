@@ -13,7 +13,13 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:4173',
     viewport: { width: 1280, height: 720 },
-    trace: process.env.CI ? 'retain-on-failure' : 'off',
+    // Tracing this suite costs real wall clock — measured on ubuntu-latest, `verify:multiplayer`
+    // went 2m14 -> 5m02 with it on — so the PR run stays untraced and leans on what this suite
+    // already captures on failure: server stderr, client console/page errors, 19 screenshots and
+    // verify-multiplayer-log.json. The nightly run sets MEXE_TRACE=1 instead, where the tracer's
+    // slowdown is a feature: it is what exposed the double-click create_room race (the guard was
+    // cleared by room_joined landing between two clicks) that no fast machine ever reproduced.
+    trace: process.env.MEXE_TRACE ? 'retain-on-failure' : 'off',
     screenshot: 'only-on-failure',
   },
   webServer: {
