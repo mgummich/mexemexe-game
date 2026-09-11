@@ -27,3 +27,9 @@ export function resolveWsUrl(loc: LocationLike = location): string {
   if (loc.protocol === 'https:') return `wss://${loc.host}/ws`;
   return `ws://${loc.hostname}:8787`;
 }
+
+/** Build version, substituted from package.json by vite's `define` (see vite.config.ts). */
+declare global {
+  const __APP_VERSION__: string;
+}
+export {};

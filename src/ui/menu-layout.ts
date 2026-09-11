@@ -36,6 +36,22 @@ export function panelW(w: number): number {
   return Math.min(w, view().w - 12);
 }
 
+/**
+ * The warm wooden backdrop every menu-family screen puts its control stack on. A near-transparent
+ * rectangle with a hairline stroke (what this replaced) read as a debug overlay in playtests:
+ * opaque fill, rounded corners, a tan edge and a darker inner line give it a real frame.
+ */
+export function woodPanel(scene: Phaser.Scene, x: number, y: number, w: number, h: number): Phaser.GameObjects.Graphics {
+  const g = scene.add.graphics();
+  g.fillStyle(0x2a1a10, 0.93);
+  g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 5);
+  g.lineStyle(2, 0xc0a878, 0.95);
+  g.strokeRoundedRect(x - w / 2, y - h / 2, w, h, 5);
+  g.lineStyle(1, 0x6b4a2f, 0.9);
+  g.strokeRoundedRect(x - w / 2 + 2, y - h / 2 + 2, w - 4, h - 4, 4);
+  return g;
+}
+
 const LANDSCAPE_BG_W = 480;
 const LANDSCAPE_BG_H = 270;
 const PORTRAIT_BG_W = 224;

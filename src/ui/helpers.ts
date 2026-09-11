@@ -15,15 +15,15 @@ export interface HelperFlags {
   autoShowInvalidReason: boolean;
   /** When the non-mutating ghost preview appears. */
   ghostPreview: 'selectAndHover' | 'hover' | 'off';
-  /** Whether the blocking FEITO reason is shown live, or only after the player presses FEITO. */
-  feitoReason: 'live' | 'onAttempt';
+  /** Show the three-line DONE checklist under the reason line, not just the top blocking reason. */
+  doneChecklist: boolean;
 }
 
 const STANDARD_FLAGS: HelperFlags = {
   legalDestinationsOnSelect: false,
   autoShowInvalidReason: false,
   ghostPreview: 'hover',
-  feitoReason: 'live',
+  doneChecklist: false,
 };
 
 const FLAGS_BY_MODE: Record<HelperMode, HelperFlags> = {
@@ -31,14 +31,14 @@ const FLAGS_BY_MODE: Record<HelperMode, HelperFlags> = {
     legalDestinationsOnSelect: true,
     autoShowInvalidReason: true,
     ghostPreview: 'selectAndHover',
-    feitoReason: 'live',
+    doneChecklist: true,
   },
   standard: STANDARD_FLAGS,
   expert: {
     legalDestinationsOnSelect: false,
     autoShowInvalidReason: false,
     ghostPreview: 'off',
-    feitoReason: 'onAttempt',
+    doneChecklist: false,
   },
 };
 

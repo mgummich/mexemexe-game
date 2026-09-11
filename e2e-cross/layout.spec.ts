@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  AUDIO_ROWS, AudioRow, MAIN_ROWS, panelHForRows, rowOffset, SettingsRow,
+} from '../src/ui/settings-layout';
 
 /**
  * Cross-browser layout gate: the game is one fixed-height world scaled with Phaser's FIT mode,
@@ -63,30 +66,41 @@ test('settings sliders respond to a click at the point clicked', async ({ page }
   await page.goto('/?seed=42&showcase=settings');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 30_000 });
 
-  // Click the SFX track near its left end and read back what was persisted. The track spans
-  // 100 world units starting at cx - 30 (settings-panel.ts). Both centres follow the live world,
-  // which widens with the window in landscape and is a different world entirely in portrait —
-  // the row y is the same formula settings-layout.ts uses (panel top = cy - SETTINGS_PANEL_H/2,
-  // row offset 22 + row * ROW_PITCH, SFX is row 1), so it can't be hardcoded to the landscape
-  // number. The constants are repeated rather than imported: settings-layout.ts pulls in
-  // menu-layout.ts, which imports Phaser at module scope and cannot load in the spec's context.
-  const { scale, origin, trackLeft, sfxY } = await page.evaluate(() => {
+  // The SFX slider lives one level down, in the AUDIO sub-panel: open that first, then click the
+  // track near its left end and read back what was persisted. The track spans 100 world units
+  // starting at cx - 30 (settings-panel.ts). Every centre follows the live world, which widens
+  // with the window in landscape and is a different world entirely in portrait, so nothing here
+  // can be hardcoded to the landscape numbers. The row offsets come straight from
+  // settings-layout.ts — hand-copied constants are exactly how this spec last drifted out of
+  // sync with the panel.
+  const geom = {
+    audioRowOffset: rowOffset(SettingsRow.Audio),
+    mainPanelH: panelHForRows(MAIN_ROWS),
+    sfxRowOffset: rowOffset(AudioRow.Sfx),
+    audioPanelH: panelHForRows(AUDIO_ROWS),
+  };
+  const { scale, origin, trackLeft, audioRowY, sfxY } = await page.evaluate((g) => {
     const r = document.querySelector('canvas')!.getBoundingClientRect();
     const v = window.__MEXE__.viewport();
     return {
       scale: r.width / v.w,
       origin: { x: r.x, y: r.y },
       trackLeft: v.w / 2 - 30,
-      sfxY: v.h / 2 - 259 / 2 + 22 + 17, // SETTINGS_PANEL_H, ROW_PITCH — src/ui/settings-layout.ts
+      audioRowY: v.h / 2 - g.mainPanelH / 2 + g.audioRowOffset,
+      sfxY: v.h / 2 - g.audioPanelH / 2 + g.sfxRowOffset,
     };
-  });
-  const px = origin.x + (trackLeft + 10) * scale;
-  const py = origin.y + sfxY * scale;
+  }, geom);
+  const cx = origin.x + (await page.evaluate(() => window.__MEXE__.viewport().w / 2)) * scale;
   // A touch-emulating context (every phone/tablet project here) never delivers `mouse` events to
-  // the page, so the click silently did nothing and the assertion read an empty save. Tap those,
-  // click the desktop ones — the slider itself handles both, as the real-device pass confirmed.
-  if (test.info().project.use.hasTouch) await page.touchscreen.tap(px, py);
-  else await page.mouse.click(px, py);
+  // the page, so a click silently did nothing and the assertion read an empty save. Tap those,
+  // click the desktop ones — the panel handles both, as the real-device pass confirmed.
+  const press = async (x: number, y: number): Promise<void> => {
+    if (test.info().project.use.hasTouch) await page.touchscreen.tap(x, y);
+    else await page.mouse.click(x, y);
+  };
+  await press(cx, origin.y + audioRowY * scale);
+  await page.waitForTimeout(200); // the panel is destroyed and rebuilt on section change
+  await press(origin.x + (trackLeft + 10) * scale, origin.y + sfxY * scale);
 
   const vol = await page.evaluate(() => JSON.parse(localStorage.getItem('mexe-save') ?? '{}')?.settings?.sfxVolume);
   expect(vol).toBeGreaterThanOrEqual(0);

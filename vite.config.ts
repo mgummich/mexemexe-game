@@ -27,8 +27,15 @@ function swVersionPlugin(): Plugin {
   };
 }
 
+const pkgVersion = (
+  JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')) as { version: string }
+).version;
+
 export default defineConfig({
   base: './',
+  // Single source for the build string shown in Settings > Advanced — package.json, never a
+  // hand-maintained constant that drifts from the released version.
+  define: { __APP_VERSION__: JSON.stringify(pkgVersion) },
   plugins: [swVersionPlugin()],
   build: {
     target: 'es2022',

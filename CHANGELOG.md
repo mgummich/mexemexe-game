@@ -4,6 +4,46 @@ All notable changes to MEXEMEXE!. See `docs/STATUS.json` for the current project
 status, and `docs/archive/STATUS-history.json` for the phase-by-phase log this
 summarizes.
 
+## Unreleased — UI/UX, usability and clarity pass
+
+- **Fixed: a greyed-out DONE now always says why.** The reason line next to
+  FEITO/DONE used to go blank outside beginner/standard helper mode, and the
+  disabled button wore a `✕ ` prefix that playtesters read as "press this to
+  cancel". The label is now always plain FEITO/DONE, the blocking reason is live
+  in every mode, and beginner adds a three-line ✓/✕ checklist — played a hand
+  card, all melds valid, nothing returned to hand — restated from
+  `canConfirmTurn`'s own result, never decided independently.
+- **Changed: the "what do I do now" copy is state-aware.** `objectivePhase` gained
+  a card-selected phase and a played-but-not-confirmable phase, so the line reads
+  "Sua vez — jogue cartas ou compre 1", "Carta selecionada — toque no lugar onde
+  ela vai", "Mesa inválida — corrija as combinações para tocar FEITO" and so on,
+  instead of one generic sentence.
+- **Fixed: the table no longer looks abandoned.** `computeMeldLayout` centres each
+  packed row horizontally and centres the whole block vertically when it fits, so
+  a one-meld table sits in the middle instead of the top-left corner. An
+  overflowing (zoomed) table still starts at y0 so nothing is pushed off-screen.
+- **Changed: menu and setup share one real wooden panel.** The translucent
+  rectangle with a hairline stroke read as a debug overlay; `woodPanel` draws an
+  opaque frame both scenes now use. `ONLINE (ALFA)` became `SALA ONLINE` /
+  `ONLINE ROOM` with a small "Teste alpha" line, and setup gained a match summary
+  ("2 jogadores · Você vs Juninho · Partida local") while the replay-seed button
+  moved behind an ADVANCED toggle.
+- **Changed: settings is a section menu, not a debug screen.** One flat 14-row
+  list became Mute / Game / Audio / Accessibility / Cosmetics / Advanced / Close,
+  each section its own sub-panel. COPY TEST LOG, RESET DATA and the build version
+  live under Advanced.
+- **Fixed: the rotate banner no longer tells phone players portrait is wrong.**
+  Portrait has a hand-authored layout; the hint now reads "Retrato funciona.
+  Paisagem dá mais espaço." and only appears during a match.
+- **Fixed: the per-meld magnifier was a ~7-unit tap target** — a click a pixel off
+  its corner selected the card underneath. It now has an enlarged hit rect, the
+  same fix the invalid badge already carried.
+- **Changed: pause menu** gained "Jogo pausado. Seu progresso está seguro." and
+  consistent uppercase captions.
+- Full audit, including what was deliberately not attempted (server-owned turn
+  timers, AI difficulty settings, the toolbar relabel), in
+  `docs/UI_UX_USABILITY_DESIGN_AUDIT.md`.
+
 ## Unreleased — Documentation cleanup
 
 - **Changed: the documentation was restructured around one source of truth per

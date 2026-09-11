@@ -10,7 +10,7 @@ import { onAppHidden, onAppVisible } from '../core/lifecycle';
 import { playlog } from '../core/playlog';
 import { createNewGame, GameStore } from '../game-state/store';
 import { buildShowcaseState } from '../demo/showcase';
-import { objectiveKey, objectivePhase } from '../core/objective';
+import { doneChecklist, formatChecklist, objectiveKey, objectivePhase } from '../core/objective';
 import { playerStats, summarizeMoveKey } from '../core/results-summary';
 import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES } from '../cosmetics';
 import { t } from '../localization/i18n';
@@ -76,8 +76,6 @@ const CONFIRM_GUARD_MS = 250;
  * under this. If neither state_sync nor proposal_rejected arrives in time (dropped/ignored
  * proposal, no socket close), the lock releases itself and a resync is requested. */
 const ONLINE_PENDING_TIMEOUT_MS = 10000;
-/** Prefix shown on the FEITO label whenever it's disabled — a text cue beyond the tint, for colorblind/low-contrast users. */
-const FEITO_DISABLED_PREFIX = '✕ ';
 
 interface MeldZone {
   meldId: string;
@@ -1431,15 +1429,18 @@ export class GameScene extends Phaser.Scene {
       this.lastValidOk = check.ok;
       this.setFeitoEnabled(check.ok && this.tutorialAllows({ type: 'feito' }));
       this.comprarBtn.setEnabled(this.tutorialAllows({ type: 'comprar' }));
-      // 'onAttempt' (expert): the live line stays empty — the reason only appears once the player
-      // actually presses the blocked FEITO (onFeitoBlocked). The gate itself never weakens: it's
-      // still canConfirmTurn via check.ok either way.
-      this.reasonText.setText(settings.helperFlags().feitoReason === 'live' ? this.blockingReasonText() : '');
+      // Always live, in every helper mode: "why is DONE greyed out" is the single question the
+      // old expert mode left unanswered, and the button no longer carries a ✕ of its own. Expert
+      // still gets less than the others — no legal-target glow, no auto-opened badge tooltip, no
+      // checklist. The gate itself never changes with the mode: it's canConfirmTurn via check.ok.
+      this.reasonText.setText(this.reasonLineText(check.ok));
+      debugApi.reasonLine = this.reasonText.text;
       debugApi.validation = { ok: check.ok, reasons: check.ok ? [] : check.reasons };
     } else {
       this.setFeitoEnabled(false);
       this.comprarBtn.setEnabled(false);
       this.reasonText.setText(human && this.onlinePending ? t('game.pending') : '');
+      debugApi.reasonLine = this.reasonText.text;
       debugApi.validation = null;
       this.validSince = null;
       this.lastValidOk = false;
@@ -1489,10 +1490,38 @@ export class GameScene extends Phaser.Scene {
     // "what does the game want right now": ready-to-confirm / fix-the-invalid-meld / play-or-draw
     // cover almost every turn; the rare remainder (e.g. a returned table card) falls back to the
     // specific canConfirm() reason, same text as before.
-    const phase = objectivePhase(check.ok, analysis.invalidMelds.length > 0, this.editor.getDraft().handCardsPlayed.length > 0);
+    const phase = objectivePhase(
+      check.ok,
+      analysis.invalidMelds.length > 0,
+      this.editor.getDraft().handCardsPlayed.length > 0,
+      this.selectedCardId !== null,
+    );
     // The exact top reason beats the generic "fix the invalid meld" phase text whenever one exists.
     const topInvalidReason = analysis.invalidMelds[0]?.reason ?? null;
     return topInvalidReason ? t(topInvalidReason) : phase ? t(objectiveKey(phase)) : check.ok ? '' : t(check.reasons[0] ?? '');
+  }
+
+  /**
+   * The reason line under/next to FEITO: the top blocking reason, plus (beginner mode, and only
+   * where the line has room to wrap) the three-condition DONE checklist. The checklist is a
+   * restatement of what canConfirmTurn already reported — see doneChecklist — never its own
+   * legality judgement.
+   */
+  private reasonLineText(ok: boolean): string {
+    const reason = this.blockingReasonText();
+    if (ok || !this.editor) return reason;
+    if (!settings.helperFlags().doneChecklist) return reason;
+    // The desktop landscape reason lives in a 72-unit-wide column (see regions.ts) where three
+    // checklist lines wrap into an unreadable stack. Portrait and the touch-landscape wide strip
+    // both have room.
+    if (this.r.reason.wrap < 150) return reason;
+    const analysis = this.analyzeDraft();
+    const reasons = analysis.check.ok ? [] : analysis.check.reasons;
+    const checklist = formatChecklist(
+      doneChecklist(this.editor.getDraft().handCardsPlayed.length, analysis.invalidMelds.length, reasons),
+      t,
+    );
+    return `${reason}\n${checklist}`;
   }
 
   /** Tap on a disabled FEITO: silently ignoring the press hides the reason it's blocked, so surface
@@ -1503,10 +1532,15 @@ export class GameScene extends Phaser.Scene {
     playSfx(this, 'sfx-invalid', 0.15);
   }
 
-  /** FEITO enabled state: beyond the tint, prefix the label with ✕ when disabled so it's not a color-only cue. */
+  /**
+   * FEITO enabled state. The label stays plain FEITO/DONE in both states: the old "✕ FEITO"
+   * prefix mixed a cancel glyph into a confirm button and playtesters read it as "press this to
+   * cancel". The non-color cue for "blocked" is the reason line right next to the button, which
+   * `renderAll` now keeps filled in every helper mode, plus the ✕/✓ checklist in beginner mode.
+   */
   private setFeitoEnabled(on: boolean): void {
     this.feitoBtn.setEnabled(on);
-    this.feitoBtn.setLabel(on ? t('game.feito') : `${FEITO_DISABLED_PREFIX}${t('game.feito')}`);
+    this.feitoBtn.setLabel(t('game.feito'));
   }
 
   // ---------- tutorial mode ----------
@@ -1847,9 +1881,18 @@ export class GameScene extends Phaser.Scene {
           label(this, zoneRect.x + zoneRect.width - 3, zoneRect.y + 2, '🔍', 7, '#d8c890')
             .setOrigin(1, 0)
             .setAlpha(0.55)
-            .setDepth(50)
-            .setInteractive({ useHandCursor: true }),
+            .setDepth(50),
         );
+        // The glyph itself is ~7 units — under any usable tap target. Grow the hit rect past the
+        // art (same fix the invalid badge already carries), so a finger, or a click a pixel off
+        // the corner, opens the focus view instead of selecting the card underneath.
+        const focusPad = 4;
+        focusIcon
+          .setInteractive(
+            new Phaser.Geom.Rectangle(-focusPad, -focusPad, focusIcon.width + focusPad * 2, focusIcon.height + focusPad * 2),
+            Phaser.Geom.Rectangle.Contains,
+          );
+        if (focusIcon.input) focusIcon.input.cursor = 'pointer';
         focusIcon.on('pointerup', () => {
           this.focusedMeldId = meld.id;
           this.renderAll();

@@ -28,7 +28,7 @@ describe('helperFlags', () => {
       legalDestinationsOnSelect: true,
       autoShowInvalidReason: true,
       ghostPreview: 'selectAndHover',
-      feitoReason: 'live',
+      doneChecklist: true,
     });
   });
 
@@ -37,7 +37,7 @@ describe('helperFlags', () => {
       legalDestinationsOnSelect: false,
       autoShowInvalidReason: false,
       ghostPreview: 'hover',
-      feitoReason: 'live',
+      doneChecklist: false,
     });
   });
 
@@ -46,7 +46,7 @@ describe('helperFlags', () => {
       legalDestinationsOnSelect: false,
       autoShowInvalidReason: false,
       ghostPreview: 'off',
-      feitoReason: 'onAttempt',
+      doneChecklist: false,
     });
   });
 
