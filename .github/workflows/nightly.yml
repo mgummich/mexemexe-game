@@ -1,0 +1,142 @@
+name: Nightly
+
+on:
+  schedule:
+    # 04:00 UTC daily
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+
+jobs:
+  flake-detection:
+    name: WebKit touch flake detection
+    runs-on: ubuntu-latest
+    # ~35s install + 5 repeats x 2 projects of a suite measured at 2m04 for all 8 projects combined
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps webkit
+      - run: npm run build
+      # Repeated, retry-free run of the two historically flaky WebKit touch profiles. A single
+      # flaky drop is expected occasionally; a *repeated* failure across 5 runs is a real signal,
+      # so retries stay at 0 here (unlike the CI cross-browser gate, which retries once).
+      - run: MEXE_TRACE=1 npx playwright test -c playwright.cross.config.ts --project="ios safari" --project="ipad" --repeat-each=5 --retries=0
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: flake-detection-artifacts
+          path: test-results/
+          retention-days: 7
+
+  screenshot-suite-no-retry:
+    name: Screenshot suite (no retry)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Chromium only, same as CI's e2e job.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      # Same two-pass split as CI's e2e job, but traced (MEXE_TRACE=1): tracing is off by default
+      # on the PR path (see playwright.config.ts) because it's expensive and it skews the fps
+      # gates, so this nightly run is where the suite gets a traced pass instead.
+      - run: MEXE_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0
+      - run: MEXE_TRACE=1 MEXE_KEEP_VERIFY_LOG=1 npx playwright test e2e/screenshot.spec.ts --grep-invert @perf --retries=0
+      - run: node scripts/check-verify.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: screenshot-suite-no-retry-artifacts
+          path: |
+            test-results/
+            docs/screenshots/verify-log.json
+            docs/screenshots/verify-log-parts/
+          retention-days: 7
+
+  cross-browser-matrix:
+    name: Full cross-browser matrix
+    runs-on: ubuntu-latest
+    # measured verify:cross runtime 2m04 plus ~52s browser install
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run verify:cross
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cross-browser-matrix-artifacts
+          path: test-results/
+          retention-days: 7
+
+  fps-drift:
+    name: fps drift (untraced, repeated)
+    runs-on: ubuntu-latest
+    # ~35s install + 5 repeats of the 3 @perf tests, untraced — this is the trend line for
+    # table-zoomed/stress-table/crowded-table-max instead of a single cold-runner sample.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0 --repeat-each=5
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fps-drift-artifacts
+          path: |
+            test-results/
+            docs/screenshots/verify-log.json
+            docs/screenshots/verify-log-parts/
+          retention-days: 7
+
+  multiplayer-traced:
+    name: Multiplayer, traced (race stress)
+    runs-on: ubuntu-latest
+    # Tracing slows frame processing enough to lose races a fast machine always wins — that is
+    # how the double-click create_room duplicate was found (5/5 reproduction under tracing, 0/5
+    # without). It costs wall clock (verify:multiplayer 2m14 -> 5m02), so it lives here instead
+    # of on every PR, and it doubles as the traced-diagnostics run for this suite.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: MEXE_TRACE=1 npm run verify:multiplayer
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: multiplayer-traced-artifacts
+          path: |
+            test-results/
+            docs/screenshots/verify-multiplayer-log.json
+          retention-days: 7

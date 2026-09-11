@@ -482,7 +482,9 @@ test('impatient tester: double-clicking CREATE and JOIN sends exactly one reques
   await pageA.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
   const code = (await pageA.evaluate(() => window.__MEXE__.online!.code()))!;
   const traceA = await pageA.evaluate(() => window.__MEXE__.online!.trace());
-  expect(traceA.filter((m) => m.dir === 'out' && m.type === 'create_room')).toHaveLength(1);
+  // Full ordered trace in the message: a second create_room only escapes the guard on a
+  // particular interleaving, and knowing where room_joined landed is the whole diagnosis.
+  expect(traceA.filter((m) => m.dir === 'out' && m.type === 'create_room'), JSON.stringify(traceA)).toHaveLength(1);
 
   const pageB = await newClient(browser);
   const [jx, jy] = toScreen(240, 145); // OnlineScene idle JOIN button -> opens the code screen
@@ -494,7 +496,7 @@ test('impatient tester: double-clicking CREATE and JOIN sends exactly one reques
   await pageB.mouse.click(confirmX, confirmY); // second click, same cooldown window
   await pageB.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
   const traceB = await pageB.evaluate(() => window.__MEXE__.online!.trace());
-  expect(traceB.filter((m) => m.dir === 'out' && m.type === 'join_room')).toHaveLength(1);
+  expect(traceB.filter((m) => m.dir === 'out' && m.type === 'join_room'), JSON.stringify(traceB)).toHaveLength(1);
 
   const errors = [
     ...(await pageA.evaluate(() => window.__MEXE__.errors)),

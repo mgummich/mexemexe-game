@@ -2,7 +2,9 @@ node_modules/
 dist/
 test-results/
 playwright-report/
+coverage/
 verify-log.json
+verify-log-parts/
 *.log
 .DS_Store
 .playwright-mcp/

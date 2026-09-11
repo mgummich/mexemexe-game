@@ -49,5 +49,43 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov', 'json-summary'],
+      // Only the modules the vitest suites actually import (see grep across tests/**).
+      // src/scenes, src/ui, src/assets and main.ts are Phaser/browser glue exercised by
+      // the Playwright suites instead; net/client.ts needs a real WebSocket/sessionStorage
+      // and isn't imported by any vitest spec either.
+      include: [
+        'src/ai/**',
+        'src/audio/**',
+        'src/config.ts',
+        'src/core/**',
+        'src/cosmetics/**',
+        'src/demo/**',
+        'src/game-state/**',
+        'src/localization/**',
+        'src/mexe-mode/**',
+        'src/net/errors.ts',
+        'src/net/protocol.ts',
+        'src/net/viewToState.ts',
+        'src/rules/**',
+        'src/table/**',
+        'src/tutorial/**',
+        'src/verification/**',
+        'server/**',
+      ],
+      exclude: ['**/*.d.ts', 'server/index.ts'],
+      // Global floor set a few points below the measured baseline (lines 91.93,
+      // branches 91.68, funcs 83.27, stmts 91.93 as of 2026-09-11) so an unrelated
+      // PR doesn't fail the gate; branches gets the tightest margin since it's the
+      // metric this gate is meant to protect.
+      thresholds: {
+        statements: 88,
+        lines: 88,
+        branches: 88,
+        functions: 78,
+      },
+    },
   },
 });

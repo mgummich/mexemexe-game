@@ -12,7 +12,12 @@ export default defineConfig({
   // that event loss; a genuine regression fails both attempts. Locally retries stay at 0 so a
   // flake is visible while developing, not silently absorbed.
   retries: process.env.CI ? 1 : 0,
-  use: { baseURL: 'http://localhost:4173' },
+  reporter: process.env.CI ? [['github'], ['list']] : 'list',
+  use: {
+    baseURL: 'http://localhost:4173',
+    trace: process.env.MEXE_TRACE ? 'retain-on-failure' : 'off',
+    screenshot: 'only-on-failure',
+  },
   projects: [
     { name: 'chrome', use: { ...devices['Desktop Chrome'] } },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
@@ -28,7 +33,7 @@ export default defineConfig({
   webServer: {
     command: 'npm run preview',
     url: 'http://localhost:4173',
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
 });

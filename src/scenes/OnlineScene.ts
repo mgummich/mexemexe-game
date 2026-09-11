@@ -35,7 +35,10 @@ export class OnlineScene extends Phaser.Scene {
   private unsubs: (() => void)[] = [];
   /** Lobby actions currently "in flight" — a button whose key is here stays disabled so a
    * double-click can't send a second create_room/join_room/start_game before the server (or a
-   * cooldown) resolves the first. */
+   * cooldown) resolves the first. Released by fireOnce's cooldown timer or by the 'error'
+   * handler's clear() — never by a success answer (e.g. room_joined): the answer can land between
+   * a double-click's two clicks, and clearing the guard right then would let the second click
+   * through to fire a duplicate request. */
   private inFlight = new Set<string>();
   /** True while the current 'error' phase was entered because the device is offline (not a real
    * server rejection) — lets a regained connection drop back to 'idle' instead of staying stuck
@@ -162,8 +165,12 @@ export class OnlineScene extends Phaser.Scene {
         this.rebuild();
       }),
       this.client.on('room_joined', (msg) => {
-        this.inFlight.delete('create');
-        this.inFlight.delete('join');
+        // Do NOT clear 'create'/'join' here: this handler can fire between a double-click's two
+        // clicks (fast on localhost, or whenever frames are slow — e.g. under Playwright
+        // tracing), and clearing the guard right then reopens the window for the second click to
+        // fire a duplicate create_room/join_room. Neither button exists once phase is 'lobby', so
+        // the early clear bought nothing anyway — the 3s cooldown in fireOnce (or the 'error'
+        // handler's clear() below, for a rejection) is what releases the guard.
         this.code = msg.code;
         this.seat = msg.seat;
         this.players = msg.players;

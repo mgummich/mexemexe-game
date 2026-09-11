@@ -81,6 +81,11 @@ describe('dealInitialHands', () => {
     expect(() => dealInitialHands(createDeck(), 5)).toThrow(RulesError);
   });
 
+  it('rejects a deck too small to deal', () => {
+    const tinyDeck = createDeck().slice(0, 4); // 4 players * 7 handSize needs way more than this
+    expect(() => dealInitialHands(tinyDeck, 4)).toThrow(RulesError);
+  });
+
   it('card conservation after deal: hands + drawPile == 108 unique ids, no card lost or duplicated', () => {
     const deck = createDeck();
     const { hands, drawPile } = dealInitialHands(deck, 4);
@@ -407,6 +412,13 @@ describe('applyConfirmedTurn', () => {
   it('throws on illegal draft', () => {
     const state = fixtureState();
     expect(() => applyConfirmedTurn(state, { melds: [], handCardsPlayed: [] })).toThrow(RulesError);
+  });
+
+  it('invariant: a rejected confirm leaves the authoritative state byte-identical (no partial mutation)', () => {
+    const state = fixtureState();
+    const before = JSON.stringify(state);
+    expect(() => applyConfirmedTurn(state, { melds: [], handCardsPlayed: [] })).toThrow(RulesError);
+    expect(JSON.stringify(state)).toBe(before);
   });
 
   it('detects win when hand empties', () => {
@@ -781,6 +793,22 @@ describe('serialize/deserialize', () => {
     expect(() => deserializeGameState(JSON.stringify(missing))).toThrow(RulesError);
     const duped = { ...state, drawPile: [state.drawPile[0]!, ...state.drawPile] };
     expect(() => deserializeGameState(JSON.stringify(duped))).toThrow(RulesError);
+  });
+
+  it('rejects a save whose table holds an invalid meld (card count conserved but table is illegal)', () => {
+    const state = createNewGame(123, [
+      { name: 'A', isAi: false },
+      { name: 'B', isAi: true },
+    ]);
+    // Move two of p0's hand cards onto the table as a too-small "meld" — total card count is
+    // untouched, but the table itself is illegal (validateTable must catch it).
+    const [moved0, moved1, ...restHand] = state.players[0]!.hand;
+    const corrupt: GameState = {
+      ...state,
+      table: [{ id: 'bad', cards: [moved0!, moved1!] }],
+      players: state.players.map((p, i) => (i === 0 ? { ...p, hand: restHand } : p)),
+    };
+    expect(() => deserializeGameState(JSON.stringify(corrupt))).toThrow(RulesError);
   });
 
   it('expected total derives from config: a valid single-deck 52-card state deserializes fine', () => {
