@@ -123,6 +123,7 @@ docs/           documentation (see below); docs/archive holds historical audits
 | [`docs/ASSETS.md`](docs/ASSETS.md) | Every generated asset, its path and how to replace it |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Done / in progress / planned / deferred |
 | [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) · [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Deploying and running the server |
+| [`docs/OBSERVABILITY_PRIVACY.md`](docs/OBSERVABILITY_PRIVACY.md) | What is monitored, what is never collected |
 | [`docs/PLAYTEST_GUIDE.md`](docs/PLAYTEST_GUIDE.md) | Running a playtest session |
 
 ## Known limitations

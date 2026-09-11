@@ -9,3 +9,8 @@ verify-log-parts/
 .DS_Store
 .playwright-mcp/
 test/
+
+# Metrics bearer token, created by the operator (see docs/OBSERVABILITY_PRIVACY.md).
+monitoring/metrics_token
+monitoring/grafana_password
+.env

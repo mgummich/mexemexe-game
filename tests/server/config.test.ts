@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from '../../server/config';
+import { ConfigError, loadConfig } from '../../server/config';
 
 describe('loadConfig', () => {
   it('defaults with an empty env', () => {
@@ -41,5 +41,20 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ MEXE_MAX_CONNECTIONS: '50', MEXE_MAX_CONNECTIONS_PER_IP: '3' });
     expect(cfg.maxConnections).toBe(50);
     expect(cfg.maxConnectionsPerIp).toBe(3);
+  });
+});
+
+describe('MEXE_METRICS_TOKEN', () => {
+  it('is undefined when unset or empty, which keeps /metrics closed in production', () => {
+    expect(loadConfig({}).metricsToken).toBeUndefined();
+    expect(loadConfig({ MEXE_METRICS_TOKEN: '' }).metricsToken).toBeUndefined();
+  });
+
+  it('rejects a token short enough to guess rather than pretending it protects anything', () => {
+    expect(() => loadConfig({ MEXE_METRICS_TOKEN: 'short' })).toThrow(ConfigError);
+  });
+
+  it('accepts a token of a usable length', () => {
+    expect(loadConfig({ MEXE_METRICS_TOKEN: 'x'.repeat(16) }).metricsToken).toBe('x'.repeat(16));
   });
 });

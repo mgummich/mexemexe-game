@@ -1,0 +1,72 @@
+# Actionable alerts only — each one means "a human should look now". Nothing here watches an
+# individual player: every expression is an aggregate over the whole process.
+groups:
+  - name: mexemexe-server
+    rules:
+      - alert: ServerDown
+        expr: up{job="mexemexe-server"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Game server is not being scraped — /metrics unreachable for 2 minutes."
+
+      - alert: ServerRestarting
+        # Uptime falling means the process restarted. Repeated restarts are a crash loop; rooms
+        # are in-memory, so every restart ends every match in progress.
+        expr: mexemexe_uptime_seconds < 300 and changes(mexemexe_uptime_seconds[30m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Game server restarted recently and uptime keeps resetting — likely crash-looping."
+
+      - alert: MessageHandlerErrors
+        expr: rate(mexemexe_message_handler_errors_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Inbound message handler is throwing — check stderr for the errorType."
+
+      - alert: SocketErrors
+        expr: rate(mexemexe_socket_errors_total[5m]) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Socket-level errors elevated — network path or client build problem."
+
+      - alert: DisconnectStorm
+        # Far more disconnects than connections means sessions are being dropped, not ended.
+        expr: rate(mexemexe_disconnects_total[5m]) > 1 and rate(mexemexe_disconnects_total[5m]) > 2 * rate(mexemexe_connections_total[5m])
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disconnect rate far above connect rate — players are being dropped mid-session."
+
+      - alert: ConnectionsRejected
+        expr: rate(mexemexe_connections_rejected_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connections are being refused by an admission cap ({{ $labels.reason }}) — raise the cap or add capacity."
+
+      - alert: CapacityNearLimit
+        expr: mexemexe_connections_capacity_ratio > 0.8 or mexemexe_rooms_capacity_ratio > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connection or room capacity above 80% — refusals start at 100%."
+
+      - alert: MemoryGrowth
+        # State is in memory and bounded by the room cap, so a steady climb over hours is a leak.
+        expr: deriv(mexemexe_heap_used_bytes[1h]) > 1e6
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Heap growing ~1 MB/s sustained over hours — suspected leak."

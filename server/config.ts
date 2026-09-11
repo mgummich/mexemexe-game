@@ -20,6 +20,7 @@ export interface Config {
   readonly disconnectGraceMs: number;
   readonly idleTimeoutMs: number;
   readonly testSeed: number | undefined;
+  readonly metricsToken: string | undefined;
 }
 
 const DEFAULT_PORT = 8787;
@@ -65,6 +66,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (mode === 'production' && testSeed !== undefined) {
     throw new ConfigError('MEXE_TEST_SEED must not be set when MEXE_ENV/NODE_ENV=production');
   }
+  // A guessable metrics token is worse than none: it reads as protection while not being any.
+  const metricsToken = env.MEXE_METRICS_TOKEN;
+  if (metricsToken !== undefined && metricsToken !== '' && metricsToken.length < 16) {
+    throw new ConfigError('MEXE_METRICS_TOKEN must be at least 16 characters');
+  }
   return {
     port: parsePositiveInt(env, 'PORT', DEFAULT_PORT),
     host: env.HOST || DEFAULT_HOST,
@@ -76,6 +82,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     disconnectGraceMs: parsePositiveInt(env, 'MEXE_DISCONNECT_GRACE_MS', DEFAULT_DISCONNECT_GRACE_MS),
     idleTimeoutMs: parsePositiveInt(env, 'MEXE_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS),
     testSeed,
+    metricsToken: metricsToken || undefined,
   };
 }
 

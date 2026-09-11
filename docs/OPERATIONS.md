@@ -34,6 +34,7 @@ rather than silently falling back to a default.
 | `MEXE_MAX_CONNECTIONS_PER_IP` | `20`     | Per-IP admission cap, same refusal.                          |
 | `MEXE_DISCONNECT_GRACE_MS` | `30000`     | Seeds a new room's reconnect grace and bounds the room sweep. A lobby timer preset replaces the room's own value (Casual/Off 60s, Fast 30s). |
 | `MEXE_IDLE_TIMEOUT_MS`     | `600000`    | Idle room lifetime before the sweep reaps it.                |
+| `MEXE_METRICS_TOKEN`       | unset       | Bearer token for `/metrics`. Minimum 16 characters. Unset in production means `/metrics` returns 404. |
 | `MEXE_TEST_SEED`           | unset       | Forces a deterministic deal. **Test-only.**                  |
 
 `MEXE_TEST_SEED` exists solely for `verify:multiplayer`. Setting it with
@@ -113,7 +114,7 @@ Or via Docker, which is the supported path (`docker compose up -d --build`, see
 
 ```bash
 curl http://localhost:8787/health
-{"ok":true,"uptimeSec":142,"rooms":3,"connections":7,"protocol":3}
+{"ok":true,"uptimeSec":142,"rooms":3,"connections":7,"protocol":4}
 ```
 
 Any other path returns 404. The response deliberately contains **no room codes and no
@@ -125,6 +126,23 @@ the client build's protocol version or clients will be rejected on connect.
 
 The Docker healthcheck already polls this every 30s (`docker-compose.yml`).
 
+## Metrics
+
+```bash
+curl http://localhost:8787/metrics
+```
+
+Prometheus text format, aggregate counters and gauges only — connections, rooms, capacity
+ratios, uptime, memory, and lifecycle/error counters. No per-room, per-player or per-request
+series exists, and the only label in the whole exposition is a fixed-set `reason` on the
+rejection counter.
+
+In production the endpoint is closed unless `MEXE_METRICS_TOKEN` is set, and then requires
+`Authorization: Bearer <token>`; an unauthorized request gets a 404. Development is open. The
+full metric list, the label policy and the optional
+`docker compose --profile monitoring up -d` Prometheus/Grafana stack are in
+[OBSERVABILITY_PRIVACY.md](OBSERVABILITY_PRIVACY.md).
+
 ## Logs and privacy
 
 The server logs one JSON object per line: `{ts, level, event, ...fields}`. **stdout carries
@@ -135,8 +153,10 @@ writes anything to stderr on a clean run.
 Privacy is enforced inside the logger (`server/log.ts`), not left to call sites:
 
 - Any string field whose key looks sensitive — it contains `name`, `token`, `ip`,
-  `useragent`, `secret`, `password`, `auth` or `code`, case-insensitively — is replaced
-  with `[redacted]`. Numbers pass through, which is why room codes are logged as
+  `address`, `remote`, `agent`, `secret`, `password`, `auth`, `code`, `email`, `session`
+  or `fingerprint`, case-insensitively — is replaced with `[redacted]`. So is any field
+  named exactly `message`, `error`, `stack`, `payload` or similar free-form text (see
+  `docs/OBSERVABILITY_PRIVACY.md`). Numbers pass through, which is why room codes are logged as
   `codeLength`. Surviving strings are length-capped so an unexpected payload cannot be
   dumped into a log line.
 - Any array or object field is collapsed to its length/key-count. Hands, melds and card
@@ -144,8 +164,16 @@ Privacy is enforced inside the logger (`server/log.ts`), not left to call sites:
 - Room codes are logged only as `codeLength`, never as the code itself.
 - Room create/close are `debug`-level, so they are off by default in production.
 
+- Caught exceptions are logged as `errorFields(err, config.mode)` — an `errorType` naming the
+  error class (validated as a source identifier), and in production never the message. An exception message is player- and attacker-influenced free text, so it
+  is not persisted; reproduce off production with `LOG_LEVEL=debug` to see the stack.
+
 What the server does **not** do: no persistent logs, no log shipping, no analytics, no
-telemetry, no cookies, no personal-data storage of any kind. Nothing is written to disk.
+telemetry, no cookies, no personal-data storage. Nothing is written to disk. It *does* hold
+client IP addresses in memory while their sockets are open, because the per-IP connection cap
+needs them — never logged, never exported, never stored. Container logs are bounded by
+`docker-compose.yml` (10 MB × 3 per service) and nginx access logging is off entirely,
+with error logging kept at `crit` so a 404 cannot persist a client IP (`nginx.conf`). Full detail: [OBSERVABILITY_PRIVACY.md](OBSERVABILITY_PRIVACY.md).
 
 Client-side, the in-session play log (`src/core/playlog.ts`) is memory-only, capped at 2000
 entries, timestamped with `performance.now()` rather than a wall clock, and strips
@@ -188,6 +216,10 @@ you did not intend. Same for the other numeric variables.
 
 **`MEXE_TEST_SEED must not be set when MEXE_ENV/NODE_ENV=production`.** A test variable
 leaked into the production environment. Unset it; do not switch off production mode.
+
+**`/metrics` returns 404 in production.** Expected unless `MEXE_METRICS_TOKEN` is set — and
+then the request needs `Authorization: Bearer <token>`. A wrong token gets the same 404, on
+purpose.
 
 **Players dropped mid-match, server still up.** Check whether the process restarted
 (`uptimeSec` low). Rooms are in-memory, so a restart ends matches. If uptime is high, look

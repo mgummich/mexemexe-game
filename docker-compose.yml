@@ -9,6 +9,14 @@ services:
     ports:
       - "8080:80"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        # Bounded on purpose: container logs are the only place server output lands, and an
+        # unbounded json-file grows until the disk does. ~7 days of normal traffic fits well
+        # inside 30 MB; see docs/OBSERVABILITY_PRIVACY.md.
+        max-size: "10m"
+        max-file: "3"
 
   # Online alpha only. Local play never contacts this service.
   mexe-server:
@@ -19,6 +27,9 @@ services:
       # Production mode also makes the server refuse to start if MEXE_TEST_SEED
       # ever leaks into the environment (see docs/OPERATIONS.md).
       MEXE_ENV: production
+      # Unset by default, which leaves /metrics returning 404 in production. Set it (>=16 chars)
+      # to enable scraping; the monitoring profile needs it. See docs/OBSERVABILITY_PRIVACY.md.
+      MEXE_METRICS_TOKEN: ${MEXE_METRICS_TOKEN:-}
     ports:
       - "8787:8787"
     restart: unless-stopped
@@ -27,3 +38,66 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        # Same bound as the web container — see above.
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional metrics stack: `docker compose --profile monitoring up -d`. Off by default, because
+  # a single-host deployment can read /metrics and /health directly and needs neither container.
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      # 30 days: long enough to compare this week against last month, short enough that nothing
+      # accumulates without a reason to keep it.
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # The metrics bearer token, same value as MEXE_METRICS_TOKEN. Git-ignored; see
+      # docs/OBSERVABILITY_PRIVACY.md for the one command that creates both.
+      - ./monitoring/metrics_token:/etc/prometheus/metrics_token:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.5.1
+    environment:
+      # Anonymous viewing is off; set a real password before exposing this beyond localhost.
+      # Read from a git-ignored file rather than an env default, so there is no `admin`
+      # fallback to forget about — and no interpolation that would make the main stack depend on
+      # a monitoring-only variable. Grafana refuses to start if the file is absent.
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./monitoring/grafana_password:/run/secrets/grafana_password:ro
+      - ./monitoring/grafana:/etc/grafana/provisioning:ro
+      - ./monitoring/dashboard.json:/var/lib/grafana/dashboards/mexemexe.json:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  prometheus-data:
+  grafana-data:

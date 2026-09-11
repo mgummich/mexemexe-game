@@ -1,0 +1,21 @@
+# Scrapes the game server's aggregate /metrics endpoint. Nothing else is collected: there is no
+# node exporter, no cAdvisor and no log pipeline here, because none of them answer a question
+# this deployment currently has.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: mexemexe-server
+    metrics_path: /metrics
+    # /metrics is closed in production unless a token is presented. The file holds the same
+    # value as the server's MEXE_METRICS_TOKEN; prometheus.yml cannot read env vars, which is
+    # why this is a file rather than an interpolated string.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics_token
+    static_configs:
+      - targets: ["mexe-server:8787"]

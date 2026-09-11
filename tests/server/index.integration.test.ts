@@ -19,6 +19,9 @@ interface Server {
   proc: ChildProcessWithoutNullStreams;
   port: number;
   stderr: string[];
+  /** Captured too, not just stderr: the privacy canaries below have to hold for *every* line the
+   * process emits, and info/debug lines go to stdout. */
+  stdout: string[];
 }
 
 async function startServer(port: number, env: Record<string, string> = {}): Promise<Server> {
@@ -31,12 +34,14 @@ async function startServer(port: number, env: Record<string, string> = {}): Prom
     env: { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined, PORT: String(port), ...env },
   });
   const stderr: string[] = [];
+  const stdout: string[] = [];
   proc.stderr.on('data', (d) => stderr.push(String(d)));
+  proc.stdout.on('data', (d) => stdout.push(String(d)));
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`http://localhost:${port}/health`);
-      if (res.ok) return { proc, port, stderr };
+      if (res.ok) return { proc, port, stderr, stdout };
     } catch {
       // not up yet
     }
@@ -373,4 +378,163 @@ describe('server/index.ts connection caps (Phase 18)', () => {
     a.close();
     b.close();
   }, 20_000);
+});
+
+// Fake secrets: if any of these ever turns up in a log line, a metric or /health, the redaction
+// they are standing in for has stopped working.
+const CANARY_NAME = 'SECRET_PLAYER_NAME_123';
+const CANARY_TOKEN_MARKER = 'SECRET_RECONNECT_TOKEN_789';
+const METRICS_TOKEN = 'metrics-token-for-tests-0123456789';
+
+function metrics(port: number, token: string | null = METRICS_TOKEN): Promise<Response> {
+  return fetch(`http://localhost:${port}/metrics`, token === null ? {} : { headers: { authorization: `Bearer ${token}` } });
+}
+
+describe('server observability is privacy-safe (/metrics, /health, logs)', () => {
+  const PORT = 8797;
+  let server: Server;
+
+  beforeAll(async () => {
+    // Production mode with debug logging on — the noisiest configuration that can ship, so the
+    // canary assertions below cover every line a real deployment could emit.
+    server = await startServer(PORT, { MEXE_ENV: 'production', LOG_LEVEL: 'debug', MEXE_METRICS_TOKEN: METRICS_TOKEN });
+  }, 30_000);
+
+  afterAll(() => {
+    stopServer(server);
+  });
+
+  it('/metrics exposes the aggregate counters and gauges in Prometheus text format', async () => {
+    const res = await metrics(PORT);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/plain');
+    const body = await res.text();
+    for (const name of [
+      'mexemexe_connections_current',
+      'mexemexe_rooms_current',
+      'mexemexe_connections_total',
+      'mexemexe_connections_rejected_total',
+      'mexemexe_rooms_created_total',
+      'mexemexe_games_started_total',
+      'mexemexe_games_finished_total',
+      'mexemexe_reconnects_total',
+      'mexemexe_disconnects_total',
+      'mexemexe_message_handler_errors_total',
+      'mexemexe_socket_errors_total',
+      'mexemexe_uptime_seconds',
+      'mexemexe_heap_used_bytes',
+      'mexemexe_connections_capacity_ratio',
+      'mexemexe_rooms_capacity_ratio',
+    ]) {
+      expect(body).toContain(`# TYPE ${name} `);
+    }
+  });
+
+  it('/metrics counts real activity without ever labelling it by player or room', async () => {
+    const host = await Client.open(PORT);
+    host.send({ type: 'create_room', name: CANARY_NAME });
+    const joined = await host.next('room_joined');
+    const code = joined.type === 'room_joined' ? joined.code : '';
+    const token = joined.type === 'room_joined' ? joined.token : '';
+
+    const guest = await Client.open(PORT);
+    guest.send({ type: 'join_room', code, name: CANARY_NAME });
+    await guest.next('room_joined');
+
+    const body = await (await metrics(PORT)).text();
+    expect(body).toContain('mexemexe_rooms_created_total 1');
+    expect(body).toContain('mexemexe_connections_current 2');
+    expect(body).toContain('mexemexe_rooms_current 1');
+
+    // Nothing player- or room-derived may appear, as a value or as a label.
+    expect(body).not.toContain(CANARY_NAME);
+    expect(body).not.toContain(code);
+    expect(body).not.toContain(token);
+    // The only label in the whole exposition is the fixed-set rejection reason.
+    const labels = [...body.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]);
+    for (const label of labels) expect(label).toMatch(/^reason="(global_cap|ip_cap)"$/);
+
+    host.close();
+    guest.close();
+  }, 20_000);
+
+  it('/health stays a fixed set of aggregate fields', async () => {
+    const body = (await (await fetch(`http://localhost:${PORT}/health`)).json()) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(['connections', 'ok', 'protocol', 'rooms', 'uptimeSec']);
+    for (const value of Object.values(body)) expect(typeof value === 'number' || typeof value === 'boolean').toBe(true);
+  });
+
+  it('refuses /metrics without the right bearer token, and says nothing by refusing', async () => {
+    // 404 rather than 401: an unauthenticated caller learns nothing about whether it exists.
+    expect((await metrics(PORT, null)).status).toBe(404);
+    expect((await metrics(PORT, 'wrong-token-of-the-same-len')).status).toBe(404);
+    expect((await metrics(PORT, `${METRICS_TOKEN}x`)).status).toBe(404);
+    expect((await metrics(PORT)).status).toBe(200);
+  });
+
+  it('404s every other path rather than exposing anything else', async () => {
+    for (const path of ['/', '/debug', '/config', '/rooms']) {
+      expect((await fetch(`http://localhost:${PORT}${path}`)).status).toBe(404);
+    }
+  });
+
+  it('no canary — name, room code or reconnect token — reaches stdout or stderr', async () => {
+    const c = await Client.open(PORT);
+    c.send({ type: 'create_room', name: CANARY_NAME });
+    const joined = await c.next('room_joined');
+    const code = joined.type === 'room_joined' ? joined.code : '';
+    const token = joined.type === 'room_joined' ? joined.token : '';
+    // Drive the paths that log: a failed join, a flood close, a reconnect, a malformed frame.
+    c.sendRaw('{not json');
+    c.send({ type: 'join_room', code: 'ZZZZ', name: CANARY_NAME });
+    const other = await Client.open(PORT);
+    other.send({ type: 'reconnect', token: CANARY_TOKEN_MARKER });
+    c.close();
+    other.close();
+    await new Promise((r) => setTimeout(r, 300));
+
+    const logged = [...server.stdout, ...server.stderr].join('');
+    expect(logged).not.toContain(CANARY_NAME);
+    expect(logged).not.toContain(CANARY_TOKEN_MARKER);
+    expect(logged).not.toContain(code);
+    expect(logged).not.toContain(token);
+    expect(logged).not.toContain('127.0.0.1');
+    expect(logged).not.toContain('::1');
+  }, 20_000);
+
+  it('an exception in the message handler is logged as a type, never as its text', async () => {
+    // Nothing here should throw today; the assertion is about the shape of the line if it ever
+    // does — an errorType field and no free-form message.
+    const lines = [...server.stdout, ...server.stderr]
+      .join('')
+      .split('\n')
+      .filter((l) => l.trim().startsWith('{'))
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line).not.toHaveProperty('stack');
+      if ('message' in line) expect(line.message).toBe('[redacted]');
+    }
+  });
+});
+
+describe('/metrics is closed by default in production', () => {
+  const PORT = 8798;
+  let server: Server;
+
+  beforeAll(async () => {
+    // Production, no MEXE_METRICS_TOKEN — the shape a careless deployment actually has.
+    server = await startServer(PORT, { MEXE_ENV: 'production' });
+  }, 30_000);
+
+  afterAll(() => {
+    stopServer(server);
+  });
+
+  it('does not expose /metrics at all when no token is configured', async () => {
+    expect((await fetch(`http://localhost:${PORT}/metrics`)).status).toBe(404);
+    expect((await fetch(`http://localhost:${PORT}/metrics`, { headers: { authorization: 'Bearer anything' } })).status).toBe(404);
+    // /health stays open — load balancers and the Docker healthcheck depend on it.
+    expect((await fetch(`http://localhost:${PORT}/health`)).status).toBe(200);
+  });
 });
