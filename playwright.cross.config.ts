@@ -5,6 +5,13 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: 'e2e-cross',
   timeout: 60_000,
+  // The mobile-gameplay specs drive real taps through WebKit's touch emulation, which drops
+  // an occasional pointer event on a loaded CI runner: three consecutive runs each lost a tap
+  // in a *different* spec (ios safari select/deselect, then ipad tap-to-table), while every
+  // run passed locally and each failing spec passed on isolated rerun. One retry in CI covers
+  // that event loss; a genuine regression fails both attempts. Locally retries stay at 0 so a
+  // flake is visible while developing, not silently absorbed.
+  retries: process.env.CI ? 1 : 0,
   use: { baseURL: 'http://localhost:4173' },
   projects: [
     { name: 'chrome', use: { ...devices['Desktop Chrome'] } },
