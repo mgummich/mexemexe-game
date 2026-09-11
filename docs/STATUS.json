@@ -13,7 +13,8 @@
     "fixesSelected": [
       "GameScene.ts onCardTapped hand-to-hand switch: tapping a second hand card while one is held now calls selectCard (switch) instead of falling through to placeSelected('hand', null) which silently failed via returnHandCard on a card never played this turn. Decision extracted to src/table/tap-destination.ts:resolveCardTapDestination (pure, no Phaser import) so it is unit-testable in the node vitest environment (importing GameScene.ts directly throws ReferenceError: window is not defined via Phaser's OS device detection).",
       "GameScene.ts meld-reason badge touch hit pad: strong/touch pad dropped from 9 to 2 (desktop's pad of 5 left untouched) so the badge's interactive rect stops covering the card art underneath and stealing tap/drag from the card. Badge itself remains tappable (confirmed tooltip still opens).",
-      "main.ts locale bootstrap: setLocale(settings.get().locale) now runs at startup (before any DOM overlay reads copy) and the portrait/rotate hint re-reads t('a11y.rotateHint') on every show. Before this, the hint was built at module scope while MenuScene applied the saved locale later, so an en-US player saw a pt-BR hint over an en-US menu on every launch."
+      "main.ts locale bootstrap: setLocale(settings.get().locale) now runs at startup (before any DOM overlay reads copy) and the portrait/rotate hint re-reads t('a11y.rotateHint') on every show. Before this, the hint was built at module scope while MenuScene applied the saved locale later, so an en-US player saw a pt-BR hint over an en-US menu on every launch.",
+      "e2e-cross/layout.spec.ts settings-slider gate: the spec drove the slider with page.mouse.click, which a touch-emulating Playwright context never delivers to the page, so all five phone/tablet projects read an empty save and failed. Pre-existing on main (same five failures in run 34529425960), not caused by this pass. Now taps on hasTouch projects and clicks on the desktop ones, and the stale panel constants (266/19) were corrected to SETTINGS_PANEL_H 259 / ROW_PITCH 17."
     ],
     "modelCavemanLog": [
       {
@@ -35,7 +36,7 @@
         "caveman": "available (skill invoked, level full)"
       }
     ],
-    "evidence": "2026-09-11: npm run test 467/467, npm run lint clean, npm run build clean, all after the three fixes. Simulator evidence in docs/screenshots/ios-baseline/ and docs/screenshots/ios-fixed/.",
+    "evidence": "2026-09-11: npm run test 467/467, npm run lint clean, npm run build clean, all after the three fixes. Simulator evidence in docs/screenshots/ios-baseline/ and docs/screenshots/ios-fixed/. verify:cross now 48/48 locally after the slider-gate repair.",
     "next": "small-iPhone (SE/mini) runtime pass once available; standalone/home-screen PWA touch pass (this audit used Mobile Safari tabs only)",
     "independentReverification": {
       "device": "iPhone 17 Pro, iOS 26.4, erased to first-launch state before the run",

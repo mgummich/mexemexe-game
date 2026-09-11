@@ -66,8 +66,10 @@ test('settings sliders respond to a click at the point clicked', async ({ page }
   // Click the SFX track near its left end and read back what was persisted. The track spans
   // 100 world units starting at cx - 30 (settings-panel.ts). Both centres follow the live world,
   // which widens with the window in landscape and is a different world entirely in portrait —
-  // the row y is the same formula settings-layout.ts uses (panel top = cy - 266/2, row offset
-  // 22 + row * 19, SFX is row 1), so it can't be hardcoded to the landscape number.
+  // the row y is the same formula settings-layout.ts uses (panel top = cy - SETTINGS_PANEL_H/2,
+  // row offset 22 + row * ROW_PITCH, SFX is row 1), so it can't be hardcoded to the landscape
+  // number. The constants are repeated rather than imported: settings-layout.ts pulls in
+  // menu-layout.ts, which imports Phaser at module scope and cannot load in the spec's context.
   const { scale, origin, trackLeft, sfxY } = await page.evaluate(() => {
     const r = document.querySelector('canvas')!.getBoundingClientRect();
     const v = window.__MEXE__.viewport();
@@ -75,10 +77,16 @@ test('settings sliders respond to a click at the point clicked', async ({ page }
       scale: r.width / v.w,
       origin: { x: r.x, y: r.y },
       trackLeft: v.w / 2 - 30,
-      sfxY: v.h / 2 - 266 / 2 + 22 + 19,
+      sfxY: v.h / 2 - 259 / 2 + 22 + 17, // SETTINGS_PANEL_H, ROW_PITCH — src/ui/settings-layout.ts
     };
   });
-  await page.mouse.click(origin.x + (trackLeft + 10) * scale, origin.y + sfxY * scale);
+  const px = origin.x + (trackLeft + 10) * scale;
+  const py = origin.y + sfxY * scale;
+  // A touch-emulating context (every phone/tablet project here) never delivers `mouse` events to
+  // the page, so the click silently did nothing and the assertion read an empty save. Tap those,
+  // click the desktop ones — the slider itself handles both, as the real-device pass confirmed.
+  if (test.info().project.use.hasTouch) await page.touchscreen.tap(px, py);
+  else await page.mouse.click(px, py);
 
   const vol = await page.evaluate(() => JSON.parse(localStorage.getItem('mexe-save') ?? '{}')?.settings?.sfxVolume);
   expect(vol).toBeGreaterThanOrEqual(0);
