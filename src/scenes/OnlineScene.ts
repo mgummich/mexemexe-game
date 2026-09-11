@@ -213,6 +213,7 @@ export class OnlineScene extends Phaser.Scene {
       notice: () => '',
       lastRejections: () => [],
       trace: () => this.client.trace,
+      statusTrace: () => this.client.statusTrace,
       createRoom: (name) => this.client.createRoom(name ?? t('menu.you')),
       joinRoom: (code, name) => this.client.joinRoom(code, name ?? t('menu.you')),
       setReady: (ready) => {

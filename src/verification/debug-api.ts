@@ -19,6 +19,10 @@ export interface MexeOnlineDebugApi {
   notice: () => string;
   lastRejections: () => string[];
   trace: () => { dir: 'out' | 'in'; type: string }[];
+  /** Verification-only: every connection status this client has passed through, newest last.
+   * `status()` samples the present; this proves a transient state (notably 'reconnecting')
+   * actually happened even if the sample arrives after it ended. See NetClient.statusTrace. */
+  statusTrace: () => ConnStatus[];
   createRoom: (name?: string) => void;
   joinRoom: (code: string, name?: string) => void;
   setReady: (ready: boolean) => void;

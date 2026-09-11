@@ -13,6 +13,7 @@ export type ConnStatus = 'connecting' | 'open' | 'closed' | 'error' | 'reconnect
 const TOKEN_KEY = 'mexe.online.token';
 const PING_INTERVAL_MS = 20_000;
 const TRACE_CAP = 80;
+const STATUS_TRACE_CAP = 40;
 /** C1: single bounded retry — one reconnect attempt this long after an unexpected close. */
 const RECONNECT_DELAY_MS = 800;
 
@@ -60,6 +61,13 @@ export class NetClient {
 
   /** Bounded trace of every message sent/received, newest last — for e2e/debug-api. */
   trace: { dir: 'out' | 'in'; type: string }[] = [];
+  /** Bounded history of every status this client has been in, newest last — for e2e/debug-api.
+   * `status()` alone cannot prove a *transient* state happened: 'reconnecting' only lasts
+   * RECONNECT_DELAY_MS plus one connect round-trip, so a verification step that samples it after
+   * any other unbounded await (a screenshot, a wait on the other client) can arrive once it is
+   * already back to 'open'. That raced on CI. Asserting against this history instead is
+   * order-independent. */
+  statusTrace: ConnStatus[] = [];
 
   getStatus(): ConnStatus {
     return this.status;
@@ -277,6 +285,8 @@ export class NetClient {
 
   private setStatus(s: ConnStatus, message?: string): void {
     this.status = s;
+    this.statusTrace.push(s);
+    if (this.statusTrace.length > STATUS_TRACE_CAP) this.statusTrace.shift();
     this.lastStatusMessage = message;
     for (const cb of this.statusListeners) cb(s, message);
   }

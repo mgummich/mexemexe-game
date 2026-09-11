@@ -192,7 +192,15 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
   expect(disconnectNotice.length).toBeGreaterThan(0);
   await shot({ a: pageA }, 'opponent-disconnected', screenshots);
 
-  await pageB.waitForFunction(() => window.__MEXE__.online!.status() === 'reconnecting', undefined, { timeout: 5000 });
+  // Against the status *history*, not status(): 'reconnecting' lasts RECONNECT_DELAY_MS plus one
+  // connect (~1s), and this step runs after the pageA notice wait and screenshot above. On a
+  // loaded CI runner those took longer than the window, so a live sample could only ever find
+  // 'open' — no timeout would have helped. This is order-independent.
+  await pageB.waitForFunction(
+    () => window.__MEXE__.online!.statusTrace().includes('reconnecting'),
+    undefined,
+    { timeout: 10_000 },
+  );
   await shot({ b: pageB }, 'reconnecting', screenshots);
 
   // reconnected once status flips back to 'open' AND a real state_sync frame arrived after the
