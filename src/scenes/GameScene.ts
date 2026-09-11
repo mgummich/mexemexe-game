@@ -167,6 +167,9 @@ export class GameScene extends Phaser.Scene {
   private lastRejections: string[] = [];
   private onlineStatusDot: Phaser.GameObjects.Arc | null = null;
   private onlineNoticeText: Phaser.GameObjects.Text | null = null;
+  /** Last status seen by onOnlineStatusChange — only used to detect the reconnecting -> open
+   * edge, so a self-reconnect gets the same "you're back" notice the opponent's already gets. */
+  private lastOnlineStatus: ConnStatus | null = null;
 
   // last opponent action: which table cards it touched, plus a one-line summary. A rearranging
   // opponent changes the puzzle's structure, so the new position needs to be readable, not guessed.
@@ -545,8 +548,17 @@ export class GameScene extends Phaser.Scene {
     this.onlineStatusDot.setFillStyle(color);
     if (status === 'reconnecting') {
       this.setOnlineNotice(t('online.reconnecting'));
+      this.lastOnlineStatus = status;
       return;
     }
+    // Only the opponent's reconnect is announced elsewhere (onOnlineOpponentEvent) — this own
+    // socket coming back from a reconnect attempt was silent, leaving the player to guess
+    // whether they're actually back in the room.
+    if (status === 'open' && this.lastOnlineStatus === 'reconnecting') {
+      this.setOnlineNotice(t('online.selfReconnected'));
+      this.time.delayedCall(3000, () => this.setOnlineNotice(''));
+    }
+    this.lastOnlineStatus = status;
     if (status === 'closed' || status === 'error') {
       this.setOnlineNotice(t('online.connectionLost'));
       this.time.delayedCall(2500, () => {

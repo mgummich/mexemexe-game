@@ -654,3 +654,58 @@ test('mobile: an unreachable server is a readable, recoverable state in portrait
   appendLog({ screenshots: [shot] });
   await ctx.close();
 });
+
+test('mobile: a touch player can type a room code and join (soft-keyboard input path)', async ({ browser }) => {
+  const screenshots: string[] = [];
+  const host = await newClient(browser);
+  // A phone has no hardware keyboard, so OnlineScene's global keydown handler can never receive a
+  // code — the join screen has to focus a real DOM input, which is what makes the OS open its
+  // keyboard. This test drives that element, not the canvas handler.
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const guest = await ctx.newPage();
+  trackConsoleErrors(guest);
+  await guest.goto(`/?ws=${encodeURIComponent(WS_URL)}&showcase=menu`);
+  await guest.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Host'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+
+  // logical coords -> this portrait viewport (Scale.FIT over the 270-tall world)
+  const at = (ly: number) => guest.evaluate((y: number) => {
+    const c = document.querySelector('canvas')!.getBoundingClientRect();
+    return { x: c.left + 0.5 * c.width, y: c.top + (y / 270) * c.height };
+  }, ly);
+
+  const online = await at(258); // MenuScene ONLINE
+  await guest.touchscreen.tap(online.x, online.y);
+  await guest.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
+  await guest.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 10_000 });
+
+  const joinBtn = await at(145); // OnlineScene JOIN
+  await guest.touchscreen.tap(joinBtn.x, joinBtn.y);
+  // Entering the join phase must focus the DOM input — that focus IS the soft keyboard.
+  await guest.waitForFunction(() => document.activeElement?.tagName === 'INPUT', undefined, { timeout: 5_000 });
+
+  // Keystrokes land on the focused input, exactly as a soft keyboard delivers them. Lowercase on
+  // purpose: the input sanitizes/upper-cases before mirroring into the scene.
+  await guest.keyboard.type(code.toLowerCase(), { delay: 40 });
+  await guest.waitForTimeout(200);
+  const shot = path.join(OUT_DIR, 'mp-mobile-join-input.png');
+  await guest.screenshot({ path: shot });
+  screenshots.push(shot);
+  expect(await guest.evaluate(() => (document.activeElement as HTMLInputElement).value)).toBe(code);
+
+  await guest.keyboard.press('Enter');
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+
+  // Leaving the join phase must take the input back out of the DOM — a stray focused input would
+  // keep the keyboard up over the lobby.
+  await guest.waitForFunction(() => document.querySelectorAll('input').length === 0, undefined, { timeout: 5_000 });
+
+  expect(await guest.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  expect(trackConsoleErrors(guest)).toEqual([]);
+  appendLog({ mobileTouchJoin: { code, screenshot: shot }, screenshots });
+  await host.context().close();
+  await ctx.close();
+});

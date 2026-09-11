@@ -109,6 +109,9 @@ export class MenuScene extends Phaser.Scene {
     new PixelButton(this, cx(), vy(207), t('menu.tutorial'), () => gotoScene(this, 'tutorial'), {
       textureBase: 'btn-comprar', w: 90, h: 20, size: 9,
     });
+    if (!settings.progress().tutorialCompleted) {
+      label(this, cx(), vy(222), t('menu.firstRunHint'), 6, '#c0b8a8');
+    }
 
     new PixelButton(this, cx() + (182 - 240), vy(237), t('menu.rules'), () => openRulesPanel(this, () => { /* noop */ }), {
       textureBase: 'btn-comprar', w: 72, h: 18, size: 6,
