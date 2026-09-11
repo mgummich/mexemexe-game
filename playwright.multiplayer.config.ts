@@ -9,14 +9,17 @@ export default defineConfig({
   // (was ~38 pre-adaptation) — give the single spec more room than the default 60s.
   timeout: 180_000,
   workers: 1, // single spec, single shared WS server on a fixed test port
+  reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
     baseURL: 'http://localhost:4173',
     viewport: { width: 1280, height: 720 },
+    trace: process.env.CI ? 'retain-on-failure' : 'off',
+    screenshot: 'only-on-failure',
   },
   webServer: {
     command: 'npm run preview',
     url: 'http://localhost:4173',
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
 });

@@ -1,0 +1,60 @@
+name: Nightly
+
+on:
+  schedule:
+    # 04:00 UTC daily
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+
+jobs:
+  flake-detection:
+    name: WebKit touch flake detection
+    runs-on: ubuntu-latest
+    # ~35s install + 5 repeats x 2 projects of a suite measured at 2m04 for all 8 projects combined
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps webkit
+      - run: npm run build
+      # Repeated, retry-free run of the two historically flaky WebKit touch profiles. A single
+      # flaky drop is expected occasionally; a *repeated* failure across 5 runs is a real signal,
+      # so retries stay at 0 here (unlike the CI cross-browser gate, which retries once).
+      - run: npx playwright test -c playwright.cross.config.ts --project="ios safari" --project="ipad" --repeat-each=5 --retries=0
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: flake-detection-artifacts
+          path: test-results/
+          retention-days: 7
+
+  cross-browser-matrix:
+    name: Full cross-browser matrix
+    runs-on: ubuntu-latest
+    # measured verify:cross runtime 2m04 plus ~52s browser install
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run verify:cross
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cross-browser-matrix-artifacts
+          path: test-results/
+          retention-days: 7

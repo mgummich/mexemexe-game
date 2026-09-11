@@ -5,10 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Lint, unit tests & build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,6 +31,7 @@ jobs:
   multiplayer:
     name: Multiplayer verification
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -48,6 +57,7 @@ jobs:
   pwa:
     name: PWA offline verification
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -74,6 +84,43 @@ jobs:
   e2e:
     name: Playwright e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Chromium only: screenshot.spec.ts drives rendering/gameplay, not cross-engine layout
+      # (the cross job covers that).
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      # fullyParallel (playwright.config.ts) spreads the 86 tests across workers; the three
+      # fps-asserting tests are tagged @perf and excluded here, then run alone below so parallel
+      # load never skews their measurement. Each pass writes its own shard under
+      # docs/screenshots/verify-log-parts/ (see e2e/screenshot.spec.ts's afterAll) — the second
+      # pass sets MEXE_KEEP_VERIFY_LOG so global-setup.ts doesn't wipe the first pass's shards.
+      - run: npx playwright test e2e/screenshot.spec.ts --grep-invert @perf
+      - run: MEXE_KEEP_VERIFY_LOG=1 MEXE_FPS_GATE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1
+      # This gate (console/page errors, screenshot exists, fps floors, EXPECTED_SHOTS present)
+      # never ran in CI before — only locally — so console errors or missing screenshots were
+      # only ever caught by hand.
+      - run: node scripts/check-verify.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-artifacts
+          path: |
+            test-results/
+            docs/screenshots/verify-log.json
+            docs/screenshots/verify-log-parts/
+          retention-days: 7
+
+  cross:
+    name: Cross-browser layout
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -83,14 +130,12 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run build
-      - run: npx playwright test e2e/screenshot.spec.ts
       # layout gate: canvas fits/centres on Chrome, Firefox, Safari and phone viewports
       - run: npx playwright test -c playwright.cross.config.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: e2e-artifacts
+          name: cross-browser-artifacts
           path: |
             test-results/
-            docs/screenshots/verify-log.json
           retention-days: 7

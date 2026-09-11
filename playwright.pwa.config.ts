@@ -15,15 +15,18 @@ export default defineConfig({
   timeout: 60_000,
   workers: 1,
   fullyParallel: false,
+  reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
     baseURL: 'http://localhost:4173',
     viewport: { width: 1280, height: 720 },
+    trace: process.env.CI ? 'retain-on-failure' : 'off',
+    screenshot: 'only-on-failure',
   },
   webServer: {
     // build runs as its own step in `npm run verify:pwa` — this only serves dist/.
     command: 'npm run preview',
     url: 'http://localhost:4173',
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
 });
