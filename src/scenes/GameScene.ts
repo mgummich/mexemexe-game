@@ -401,6 +401,7 @@ export class GameScene extends Phaser.Scene {
       notice: () => this.onlineNoticeText?.text ?? '',
       lastRejections: () => this.lastRejections,
       trace: () => client.trace,
+      statusTrace: () => client.statusTrace,
       createRoom: () => { /* not applicable mid-match */ },
       joinRoom: () => { /* not applicable mid-match */ },
       setReady: () => { /* not applicable mid-match */ },

@@ -45,6 +45,32 @@ jobs:
             docs/screenshots/verify-multiplayer-log.json
           retention-days: 7
 
+  pwa:
+    name: PWA offline verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Chromium only: this suite drives the service worker lifecycle and the offline cache,
+      # not rendering across engines.
+      - run: npx playwright install --with-deps chromium
+      # Builds, then serves dist/ — the service worker only registers in a production build
+      # (see src/core/pwa.ts). Covers offline reload, offline local/AI/tutorial play, the
+      # online-rooms-disabled-offline path, first install, and the update handover.
+      - run: npm run verify:pwa
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: pwa-artifacts
+          path: |
+            test-results/
+            docs/screenshots/pwa/pwa-log.json
+          retention-days: 7
+
   e2e:
     name: Playwright e2e
     runs-on: ubuntu-latest

@@ -34,6 +34,17 @@ defects there, all client-side, no game rules touched. See
   `dist/sw.js`'s cache key, then asserts the banner appears with no reload, the
   old cache still serves, and the tap produces exactly one reload plus eviction
   of the old cache.
+- **Added: the PWA suite now runs in CI** (`PWA offline verification` job,
+  Chromium only). It previously only ran locally.
+- **Fixed: two flaky CI gates.** `verify:multiplayer` asserted the transient
+  `'reconnecting'` status with a live `status()` sample taken *after* an unbounded
+  screenshot step, so on a loaded runner it could only ever observe `'open'` — no
+  timeout would have helped. `NetClient` now keeps a bounded status history
+  (`statusTrace`, exposed on the debug API next to `trace`) and the spec asserts
+  the transition was recorded, which is order-independent. Separately,
+  `crowded-table-max`'s fps floor is now `process.env.CI ? 30 : 45`: the GPU-less
+  runner measured 40 and had been squeaking past a single 45 bar, so that bar was
+  gating on runner load rather than on a regression.
 - **Docs: `SELF_HOSTING.md` gained "Service worker cache and deploys"** —
   `public/assets/**` is unhashed and served cache-first, so a deploy that changes
   art or SFX needs a `package.json` version bump to reach players who already
