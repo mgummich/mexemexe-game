@@ -41,6 +41,9 @@ export class OnlineScene extends Phaser.Scene {
    * server rejection) — lets a regained connection drop back to 'idle' instead of staying stuck
    * on a stale error. */
   private offlineError = false;
+  /** Offscreen DOM input that opens the soft keyboard on touch devices — see ensureJoinInput().
+   * The keyboard-only handler below (wireCodeEntry) stays as the desktop path. */
+  private joinInputEl: HTMLInputElement | null = null;
 
   constructor() {
     super('online');
@@ -104,7 +107,45 @@ export class OnlineScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.unsubs.forEach((u) => u());
       this.unsubs = [];
+      this.destroyJoinInput();
     });
+  }
+
+  /** Mobile JOIN fix: OnlineScene's keyboard handler never opens a soft keyboard, so a touch
+   * player had no way to type a room code. A visually hidden real `<input>` does — focusing it
+   * is what makes the OS show the keyboard — and its sanitized value mirrors into `codeInput`,
+   * same as every keystroke the desktop path already produces. Idempotent: safe to call on
+   * every rebuild(). */
+  private ensureJoinInput(): void {
+    if (this.joinInputEl) return;
+    const el = document.createElement('input');
+    el.type = 'text';
+    el.inputMode = 'text';
+    el.autocapitalize = 'characters';
+    el.autocomplete = 'off';
+    el.spellcheck = false;
+    el.maxLength = CODE_LENGTH;
+    el.value = this.codeInput;
+    // 1px, off-canvas but still focusable/tappable — a display:none input never opens a
+    // soft keyboard on iOS/Android.
+    el.style.cssText = 'position:fixed;left:-1px;top:-1px;width:1px;height:1px;opacity:0;border:0;padding:0;';
+    el.addEventListener('input', () => {
+      const sanitized = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH);
+      if (el.value !== sanitized) el.value = sanitized;
+      this.codeInput = sanitized;
+      this.rebuild();
+    });
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') this.fireOnce('join', 3000, () => this.submitJoin());
+    });
+    document.body.appendChild(el);
+    this.joinInputEl = el;
+    el.focus();
+  }
+
+  private destroyJoinInput(): void {
+    this.joinInputEl?.remove();
+    this.joinInputEl = null;
   }
 
   private wireClient(): void {
@@ -198,6 +239,10 @@ export class OnlineScene extends Phaser.Scene {
   private wireCodeEntry(): void {
     const onKey = (ev: KeyboardEvent): void => {
       if (this.phase !== 'join') return;
+      // The DOM join input (see ensureJoinInput) owns its own value edits and Enter handling
+      // while focused — this global path is desktop-only and would otherwise double-process
+      // every keystroke a touch player types into it.
+      if (this.joinInputEl && document.activeElement === this.joinInputEl) return;
       if (ev.key === 'Enter') {
         this.fireOnce('join', 3000, () => this.submitJoin());
         return;
@@ -263,6 +308,8 @@ export class OnlineScene extends Phaser.Scene {
   private rebuild(): void {
     this.tweens.killAll();
     this.children.removeAll(true);
+    if (this.phase === 'join' && view().touch) this.ensureJoinInput();
+    else this.destroyJoinInput();
     coverBackground(this, 'bg-menu');
     this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.45);
     // backdrop panel so lobby text reads against the busy boteco scene, same treatment MenuScene
@@ -278,6 +325,17 @@ export class OnlineScene extends Phaser.Scene {
       this.add
         .text(cx(), vy(120), this.errorMsg ?? '', { ...fontStyle(9, '#ff6b5e'), align: 'center', wordWrap: { width: panelW(320) } })
         .setOrigin(0.5);
+      // Only VOLTAR used to be offered here — a near dead end for a rejoinable failure (e.g. a
+      // dropped connection). Retrying re-runs the same connect() path a fresh visit to this
+      // scene would use; offline stays a flash, same reason as CRIAR SALA/ENTRAR above.
+      new PixelButton(this, cx(), vy(155), t('online.retry'), () => {
+        if (isOffline()) { this.flashOfflineReason(); return; }
+        this.errorMsg = null;
+        this.offlineError = false;
+        this.phase = 'idle';
+        this.client.connect();
+        this.rebuild();
+      }, { textureBase: 'btn-comprar', w: 140, h: 20, size: 8 });
     } else if (this.phase === 'join') {
       this.renderJoin();
     } else if (this.phase === 'lobby' && this.code !== null) {
@@ -309,8 +367,12 @@ export class OnlineScene extends Phaser.Scene {
   private renderJoin(): void {
     label(this, cx(), vy(86), t('online.enterCodePrompt'), 9, '#f7f2e7');
     const shown = this.codeInput.padEnd(CODE_LENGTH, '_');
-    label(this, cx(), vy(118), shown, 20, this.codeInput ? '#f7d23e' : '#8a7f6e');
-    label(this, cx(), vy(148), t('online.codeHint'), 7, '#c0b8a8');
+    // tappable so a touch player who blurred the soft keyboard can bring it back
+    label(this, cx(), vy(118), shown, 20, this.codeInput ? '#f7d23e' : '#8a7f6e')
+      .setInteractive({ useHandCursor: true })
+      .on('pointerup', () => this.joinInputEl?.focus());
+    // A phone has no ENTER key on screen — point at the tappable code/JOIN path instead.
+    label(this, cx(), vy(148), t(view().touch ? 'online.codeHintTouch' : 'online.codeHint'), 7, '#c0b8a8');
     const confirm = new PixelButton(this, cx(), vy(180), t('online.join'), () => this.fireOnce('join', 3000, () => this.submitJoin()), {
       textureBase: 'btn-feito', w: 120, h: 22, size: 8, onBlocked: () => this.flashOfflineReason(),
     });

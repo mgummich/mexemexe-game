@@ -4,6 +4,7 @@ import { settings } from '../core/settings';
 import { bus } from '../core/events';
 import { t } from '../localization/i18n';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
+import { openSettingsPanel } from '../ui/settings-panel';
 import { view } from '../ui/viewport';
 import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
@@ -67,13 +68,23 @@ export class SetupScene extends Phaser.Scene {
         const p = this.aiPersonalities[seat - 1]!;
         const entry = AI_LINEUP.find((a) => a.personality === p)!;
         const avatarKey = `avatar-${p}`;
-        const av = this.add.image(avatarX, y, avatarKey).setDisplaySize(20, 20).setInteractive({ useHandCursor: true });
+        const av = this.add.image(avatarX, y, avatarKey).setName(`avatar-seat-${seat}`).setDisplaySize(20, 20).setInteractive({ useHandCursor: true });
         const nameLabel = label(this, nameX, y, entry.name, 8, '#f7f2e7').setOrigin(0, 0.5);
         label(this, nameX, y + 10, t('setup.tapToChange'), 8, '#a89e8c').setOrigin(0, 0.5);
         const cycle = (): void => {
           const idx = CYCLE.indexOf(this.aiPersonalities[seat - 1]!);
           this.aiPersonalities[seat - 1] = CYCLE[(idx + 1) % CYCLE.length]!;
           this.rebuild();
+          // Rebuild already redrew the avatar at its normal (setDisplaySize) scale — grab it and
+          // pop it in from smaller, so a cycle doesn't happen silently. Instant under reduced
+          // motion (motionScale() floors the duration at 1ms, same pattern as every other tween
+          // in this codebase).
+          const fresh = this.children.getByName(`avatar-seat-${seat}`) as Phaser.GameObjects.Image | undefined;
+          if (fresh) {
+            const [toX, toY] = [fresh.scaleX, fresh.scaleY];
+            fresh.setScale(toX * 0.6, toY * 0.6);
+            this.tweens.add({ targets: fresh, scaleX: toX, scaleY: toY, duration: Math.max(1, 180 * settings.motionScale()), ease: 'Back.out' });
+          }
         };
         av.on('pointerup', cycle);
         nameLabel.setInteractive({ useHandCursor: true }).on('pointerup', cycle);
@@ -92,6 +103,12 @@ export class SetupScene extends Phaser.Scene {
     });
     new PixelButton(this, cx() + (300 - 240), vy(240), t('menu.play'), () => this.startGame(), {
       textureBase: 'btn-feito', w: 100, h: 24, size: 9,
+    });
+
+    // Same corner MenuScene uses — language/settings are reachable here too, without backing
+    // out to the menu and losing the seat/personality picks made on this screen.
+    new PixelButton(this, view().w - 18, 10, '⚙', () => openSettingsPanel(this, () => { /* noop */ }), {
+      textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.settings'),
     });
   }
 

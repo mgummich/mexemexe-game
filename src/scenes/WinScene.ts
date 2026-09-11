@@ -73,7 +73,7 @@ export class WinScene extends Phaser.Scene {
       duration: 300,
       ease: 'Back.out',
     });
-    label(this, cx(), vy(88), t('win.title'), 24, '#f7d23e');
+    label(this, cx(), vy(88), t(data.stalemate ? 'win.titleStalemate' : 'win.title'), 24, '#f7d23e');
     label(
       this,
       cx(),
