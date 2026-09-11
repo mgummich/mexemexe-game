@@ -289,10 +289,14 @@ test('reset-data: settings APAGAR DADOS + confirm clears the versioned save and 
   // "APAGAR DADOS" button
   const [dx, dy] = toScreen(240, settingsRowY(SettingsRow.ResetData));
   await page.mouse.click(dx, dy);
-  await page.waitForTimeout(150);
-  // confirm dialog "Sim" button, logical (200, 160)
-  const [yx, yy] = toScreen(200, 160);
-  await page.mouse.click(yx, yy);
+  // showResetConfirm() destroys and rebuilds the whole panel into a Yes/No dialog — the same
+  // rebuild-mid-click race as the cosmetics test below, so retry the "Sim" click until its effect
+  // (the save actually cleared) shows up, rather than trusting one blindly-timed click.
+  const [yx, yy] = toScreen(200, 160); // confirm dialog "Sim" button, logical (200, 160)
+  await expect.poll(async () => {
+    await page.mouse.click(yx, yy);
+    return page.evaluate(() => localStorage.getItem('mexe-save')).catch(() => null);
+  }, { timeout: 5000 }).toBeNull();
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   const savedAfter = await page.evaluate(() => localStorage.getItem('mexe-save'));
   expect(savedAfter).toBeNull();
@@ -1010,6 +1014,24 @@ test('english pass: rule-reason and server-error copy are translated, not bare k
 const TABLE_THEME_ROW_Y = cosmeticsRowY(0); // src/ui/settings-layout.ts: table theme is row 0
 const CYCLE_BTN = toScreen(286, TABLE_THEME_ROW_Y); // row's cycle button, cx(240)+46
 
+/** Every click on a cosmetics cycle button fully rebuilds the panel's rows (showCosmetics()
+ * destroys and recreates every row's button) — polling the persisted save for the actual effect,
+ * rather than sleeping a fixed guess, is what makes a follow-up click on that panel reliable. */
+async function waitForCosmetic(p: Page, field: 'tableTheme' | 'cardBack' | 'avatar', expected: string): Promise<void> {
+  await p.waitForFunction(
+    ({ field, expected }) => {
+      const raw = localStorage.getItem('mexe-save');
+      if (!raw) return false;
+      const save = JSON.parse(raw) as { cosmetics?: Record<string, string> };
+      return save.cosmetics?.[field] === expected;
+    },
+    { field, expected },
+    { timeout: 5000 },
+  );
+}
+
+const THEMES = ['boteco', 'kitchen', 'quintal', 'feira'];
+
 /** Opens Settings → Cosmetics from the menu and cycles the table-theme row `clicks` times. */
 async function setTableTheme(p: Page, clicks: number): Promise<void> {
   await p.goto('/?seed=1&showcase=settings');
@@ -1019,11 +1041,9 @@ async function setTableTheme(p: Page, clicks: number): Promise<void> {
   await p.waitForTimeout(150);
   for (let i = 0; i < clicks; i++) {
     await p.mouse.click(CYCLE_BTN[0], CYCLE_BTN[1]);
-    await p.waitForTimeout(100);
+    await waitForCosmetic(p, 'tableTheme', THEMES[i + 1]!);
   }
 }
-
-const THEMES = ['boteco', 'kitchen', 'quintal', 'feira'];
 /** Reads the mexe-save JSON, or the shipped defaults if nothing was ever written yet
  * (fresh profile, no setting changed from default — see src/core/persistence.ts DEFAULT_SAVE). */
 async function readSave(p: Page): Promise<{
@@ -1057,12 +1077,15 @@ test('cosmetics: avatar/card-back selection persists across a reload', async ({ 
   await page.mouse.click(cx, cy);
   await page.waitForTimeout(150);
   await snap(page, 'cosmetics-panel');
-  // card back row (index 1) and avatar row (index 2) cycle buttons, same x as the table row
+  // card back row (index 1) and avatar row (index 2) cycle buttons, same x as the table row.
+  // Each click rebuilds every row's button (showCosmetics()), so the avatar click must wait for
+  // the card-back click's persisted effect first, or it can land mid-rebuild and hit nothing.
   const [backX, backY] = toScreen(286, cosmeticsRowY(1));
   await page.mouse.click(backX, backY); // back-0 -> back-1
+  await waitForCosmetic(page, 'cardBack', 'back-1');
   const [avatarX, avatarY] = toScreen(286, cosmeticsRowY(2));
   await page.mouse.click(avatarX, avatarY); // player -> cida
-  await page.waitForTimeout(150);
+  await waitForCosmetic(page, 'avatar', 'cida');
   const beforeReload = JSON.parse((await page.evaluate(() => localStorage.getItem('mexe-save')))!) as {
     cosmetics: { cardBack: string; avatar: string };
   };
