@@ -1,12 +1,30 @@
-// Final verify gate: inspects the Playwright JSON log for errors.
+// Final verify gate: merges e2e/screenshot.spec.ts's per-worker shards, writes the merged result
+// back to verify-log.json (so the CI artifact upload and doc consumers keep finding it there),
+// then inspects it for errors.
 import fs from 'node:fs';
+import path from 'node:path';
 
 const LOG = 'docs/screenshots/verify-log.json';
-if (!fs.existsSync(LOG)) {
-  console.error('verify: missing', LOG);
+const PARTS_DIR = 'docs/screenshots/verify-log-parts';
+if (!fs.existsSync(PARTS_DIR)) {
+  console.error('verify: missing', PARTS_DIR);
   process.exit(1);
 }
-const { shots } = JSON.parse(fs.readFileSync(LOG, 'utf8'));
+const partFiles = fs.readdirSync(PARTS_DIR).filter((f) => f.endsWith('.json')).sort();
+if (partFiles.length === 0) {
+  console.error('verify: no shards in', PARTS_DIR);
+  process.exit(1);
+}
+// Later shard wins for a duplicate shot name — sorted filenames give a stable, arbitrary-but-
+// deterministic order; nothing here depends on which shard "wins" for a given name in practice
+// (each test name is only ever captured by one worker per pass).
+const merged = new Map();
+for (const f of partFiles) {
+  const part = JSON.parse(fs.readFileSync(path.join(PARTS_DIR, f), 'utf8'));
+  for (const s of part.shots) merged.set(s.name, s);
+}
+const shots = [...merged.values()];
+fs.writeFileSync(LOG, JSON.stringify({ generatedAt: new Date().toISOString(), shots }, null, 2) + '\n');
 let failed = false;
 for (const s of shots) {
   const errs = [...s.consoleErrors, ...s.pageErrors];
@@ -18,12 +36,17 @@ for (const s of shots) {
     failed = true;
     console.error(`verify: missing screenshot ${s.screenshot}`);
   }
-  if (s.scene === 'game' && s.fps < 30) {
+  // fps under parallel workers measures runner load, not the game, so the floor is enforced
+  // only for shots captured by the serial @perf pass (fpsGated === true, which also holds the
+  // three explicit measured floors of 50/30/20 in e2e/screenshot.spec.ts); every other shot's
+  // fps is printed below for visibility but never gates the build.
+  const fpsNote = s.fpsGated ? `fps=${s.fps}` : `fps=${s.fps} (ungated)`;
+  if (s.scene === 'game' && s.fpsGated && s.fps < 30) {
     failed = true;
     console.error(`verify: ${s.name} fps too low: ${s.fps} (scene=game requires >= 30)`);
   }
   const vp = s.viewport ? `${s.viewport.width}x${s.viewport.height}` : 'unknown';
-  console.log(`verify: ${s.name} scene=${s.scene} seed=${s.seed} fps=${s.fps} viewport=${vp} missingAssets=${s.missingAssets.length}`);
+  console.log(`verify: ${s.name} scene=${s.scene} seed=${s.seed} ${fpsNote} viewport=${vp} missingAssets=${s.missingAssets.length}`);
 }
 // Phase 8 Wave D: public-demo coverage must actually run, not just exist as source — fail loud
 // if any of these named captures never made it into the log (e.g. a test silently skipped).

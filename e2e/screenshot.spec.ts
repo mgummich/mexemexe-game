@@ -11,7 +11,6 @@ import { cosmeticsRowY, settingsRowY, SettingsRow } from '../src/ui/settings-lay
 import { pickProfile } from '../src/ui/viewport';
 
 const OUT_DIR = 'docs/screenshots';
-const LOG_PATH = path.join(OUT_DIR, 'verify-log.json');
 
 interface ShotLog {
   name: string;
@@ -19,6 +18,7 @@ interface ShotLog {
   seed: number;
   scene: string;
   fps: number;
+  fpsGated: boolean;
   viewport: { width: number; height: number } | null;
   consoleErrors: string[];
   pageErrors: string[];
@@ -61,6 +61,7 @@ async function snap(page: Page, name: string): Promise<void> {
     seed: api.seed,
     scene: api.scene,
     fps: api.fps,
+    fpsGated: process.env.MEXE_FPS_GATE === '1',
     viewport: page.viewportSize(),
     consoleErrors: trackConsoleErrors(page),
     pageErrors: api.errors,
@@ -364,7 +365,7 @@ test('keyboard: pressing C (comprar) advances the turn, same as clicking', async
   });
 });
 
-test('stress-table: many melds on the table still hold fps >= 50', async ({ page }) => {
+test('stress-table: many melds on the table still hold fps >= 50 @perf', async ({ page }) => {
   await capture(page, '/?seed=77&showcase=mexe', 'stress-table', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
     // maximize sprite count: play every hand card to its own new meld (renderAll
@@ -395,7 +396,7 @@ test('stress-table: many melds on the table still hold fps >= 50', async ({ page
 // cards (44 committed table + 61 from the human's hand, now drafted onto the table + 2 in the AI's
 // hand — see GameScene.ts:1310, the opponent hand renders as a single "xN" count label, not
 // per-card sprites, so it's counted here by card count rather than sprite count) at 49 fps.
-test('crowded-table-max: highest reachable committed table (44) plus a full hand-to-draft dump clears 80 visible cards', async ({ page }) => {
+test('crowded-table-max: highest reachable committed table (44) plus a full hand-to-draft dump clears 80 visible cards @perf', async ({ page }) => {
   await capture(page, '/?seed=12460&showcase=mexe&crowd=44', 'crowded-table-max', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
     const tableCount = await p.evaluate(
@@ -1552,7 +1553,7 @@ test('zoom-buttons: step in and out, clamped at both ends', async ({ page }) => 
   });
 });
 
-test('table-zoomed: a crowded table zoomed in holds fps, and panning the empty table never moves a card', async ({ page }) => {
+test('table-zoomed: a crowded table zoomed in holds fps, and panning the empty table never moves a card @perf', async ({ page }) => {
   await capture(page, '/?seed=77&showcase=mexe', 'table-zoomed', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
     await crowdTheTable(p);
@@ -1744,24 +1745,20 @@ test.describe('landscape touch', () => {
 });
 
 test.afterAll(() => {
-  fs.mkdirSync(OUT_DIR, { recursive: true });
-  // Playwright starts a fresh worker process (its own empty `logs`) after any test failure, so
-  // overwriting here would let the last worker's afterAll erase every shot earlier workers
-  // already logged. Merge by name instead — this worker's own shots win for the names it has.
-  // e2e/global-setup.ts deletes the file once at the start of the whole run, so merging can only
-  // ever combine shots from *this* run, never leak a stale entry from a previous invocation.
-  // ponytail: read-modify-write is not synchronized across concurrently-finishing workers — fine
-  // at this shot count/worker count; add a lockfile if workers start clobbering each other's merge.
-  let existing: ShotLog[] = [];
-  try {
-    existing = (JSON.parse(fs.readFileSync(LOG_PATH, 'utf8')).shots ?? []) as ShotLog[];
-  } catch {
-    // no log yet from another worker in this run
-  }
-  const merged = new Map(existing.map((s) => [s.name, s]));
-  for (const s of logs) merged.set(s.name, s);
+  // Each worker writes its own shard — no read-modify-write, so concurrent workers (fullyParallel)
+  // can never race on the same file. scripts/check-verify.mjs merges every shard (by shot name,
+  // later shard wins) into verify-log.json itself. `npm run screenshot`/CI run this file twice (a
+  // parallel pass, then a serial @perf pass with MEXE_KEEP_VERIFY_LOG=1 so the second pass's
+  // global-setup doesn't wipe the first pass's shards) — but Playwright numbers TEST_WORKER_INDEX
+  // from 0 in *every* invocation, so "worker 0" from the perf pass would otherwise overwrite
+  // "worker 0" from the parallel pass's shard file and silently drop its shots. process.pid is
+  // unique per worker process, including across separate invocations, so folding it into the
+  // filename (not just as a fallback) is what actually kills that clobber.
+  const PARTS_DIR = path.join(OUT_DIR, 'verify-log-parts');
+  fs.mkdirSync(PARTS_DIR, { recursive: true });
+  const shard = `${process.env.TEST_WORKER_INDEX ?? process.pid}-${process.pid}`;
   fs.writeFileSync(
-    LOG_PATH,
-    JSON.stringify({ generatedAt: new Date().toISOString(), shots: [...merged.values()] }, null, 2),
+    path.join(PARTS_DIR, `${shard}.json`),
+    JSON.stringify({ generatedAt: new Date().toISOString(), shots: logs }, null, 2),
   );
 });
