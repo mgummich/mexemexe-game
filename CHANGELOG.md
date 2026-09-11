@@ -4,6 +4,61 @@ All notable changes to MEXEMEXE!. See `docs/STATUS.json` for the current project
 status, and `docs/archive/STATUS-history.json` for the phase-by-phase log this
 summarizes.
 
+## Unreleased — privacy-first production monitoring
+
+- **Added: nginx access logging is off.** The static-game image now ships its own
+  `nginx.conf` with `access_log off;`. The stock configuration persisted a client
+  IP, user agent, referrer and full request URL for every asset fetch. Error
+  logging stays on but at `crit` rather than the default `error`, because nginx
+  writes the client IP and the request line into *every* error entry and a
+  missing favicon counts as one — the default would have kept logging an IP per
+  404 through the back door.
+- **Changed: exceptions are logged as a type, never as text.** The five
+  `String(err)` call sites in `server/index.ts` became `errorFields(err,
+  config.mode)`, which yields `{errorType}` in production. An exception message
+  is player- and attacker-influenced free text; a name, a room code or a whole
+  payload can end up inside one. `errorType` is validated as a source identifier
+  (`Error.prototype.name` is writable, so an unvalidated name could smuggle the
+  text straight back), and development keeps the message so local debugging is
+  not blinded by a production rule.
+- **Changed: the logger redacts more, centrally.** `address`, `remote`, `agent`,
+  `email`, `session` and `fingerprint` joined the sensitive-substring list — a
+  canary test caught `remoteAddress` passing through untouched. Free-form keys
+  (`message`, `error`, `stack`, `payload`, …) are now redacted by *exact* match,
+  so a bounded field like `messageType` still survives.
+- **Added: a `/metrics` endpoint.** Sixteen aggregate Prometheus series:
+  connections, rooms, capacity ratios, uptime, memory, and lifecycle/error
+  counters. There is no per-room, per-player, per-socket or per-request series,
+  because one time series per player is a tracking system however it is
+  labelled. The only label in the whole exposition is a fixed-set
+  `reason="global_cap"|"ip_cap"`, and a test asserts exactly that by matching
+  every rendered label against the set.
+- **Added: `/metrics` is closed by default in production.** It exists only when
+  `MEXE_METRICS_TOKEN` is set (minimum 16 characters, enforced at startup), and
+  then only for a caller presenting it as a bearer token, compared in constant
+  time. An unauthorized request gets a 404, not a 401, so it learns nothing
+  about whether the endpoint is there. `/health` stays open and unchanged — five
+  aggregate numbers that the Docker healthcheck depends on.
+- **Added: bounded log retention and an optional monitoring stack.** Both
+  containers cap their json-file logs at 10 MB × 3. `docker compose --profile
+  monitoring up -d` brings up Prometheus (30-day retention, eight actionable
+  alerts) and Grafana with one aggregate dashboard; it is off by default, since
+  a single-host deployment can read `/health` and `/metrics` directly. Grafana
+  reads its admin password from a git-ignored file rather than an env default,
+  so there is no `admin` fallback to forget about.
+- **Added: privacy regression tests.** Fake canaries (`SECRET_PLAYER_NAME_123`,
+  `SECRET_ROOM_CODE_456`, `SECRET_RECONNECT_TOKEN_789`, `203.0.113.42`) are
+  asserted absent from every emitted line, from `/metrics` and from `/health`,
+  against a real server running in production mode with debug logging on — the
+  noisiest configuration that can ship. `tests/no-telemetry.test.ts` fails the
+  build if an analytics vendor, a `sendBeacon` or a persistent diagnostic
+  identifier ever appears in the client.
+- **Documented:** `docs/OBSERVABILITY_PRIVACY.md` — what is logged, what is
+  never logged, every metric and the label policy, client diagnostics, retention
+  and the debugging workflow. It states plainly that client IP addresses *are*
+  processed in memory for the per-IP connection cap, because claiming the
+  application processes no personal data would not be true.
+
 ## Unreleased — improvement package: room settings, server turn timer, AI difficulty
 
 - **Added: a server-authoritative online turn timer.** The host picks Casual

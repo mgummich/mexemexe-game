@@ -22,5 +22,7 @@ RUN npm run build
 
 # Default target: the static game.
 FROM nginx:alpine AS web
+# Access logging off, error logging kept — see nginx.conf and docs/OBSERVABILITY_PRIVACY.md.
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80

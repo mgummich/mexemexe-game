@@ -2,12 +2,15 @@
  * MEXEMEXE! online alpha WebSocket server. Plain Node + `ws`, run via `tsx`.
  * See docs/MULTIPLAYER.md for protocol and validation order.
  */
+import { timingSafeEqual } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { DEFAULT_ROOM_SETTINGS, parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { RoomManager, HOST_SEAT } from './rooms';
 import { config } from './config';
-import { createLogger } from './log';
+import { createLogger, errorFields } from './log';
+import { counters, renderMetrics } from './metrics';
 import {
   attachSocket as attach,
   closeRoomSockets,
@@ -58,7 +61,7 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   try {
     ws.send(JSON.stringify(msg));
   } catch (err) {
-    log.error('send_failed', { message: String(err) });
+    log.error('send_failed', errorFields(err, config.mode));
   }
 }
 
@@ -116,6 +119,7 @@ function broadcastGameOver(code: string): void {
  * game_over broadcast, with an explicit close notice, instead of leaving the room pinned
  * until its players leave or the idle sweep reaps it (#6). */
 function closeFinishedRoom(code: string): void {
+  counters.gamesFinishedTotal++;
   rooms.deleteRoom(code);
   closeRoomSockets(sockets, connections, code, {
     v: PROTOCOL_VERSION,
@@ -165,6 +169,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       conn.code = code;
       conn.seat = seat;
       attachSocket(code, seat, ws);
+      counters.roomsCreatedTotal++;
       log.debug('room_created', { codeLength: code.length });
       send(ws, roomJoined(code, seat, token));
       return;
@@ -253,6 +258,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         sendError(ws, result.error, `cannot start room: ${result.error}`, msg.reqId);
         return;
       }
+      counters.gamesStartedTotal++;
       const bySeat = sockets.get(conn.code);
       if (bySeat) {
         for (const [seat, sock] of bySeat) {
@@ -304,6 +310,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         sendError(ws, result.error, 'invalid or expired token', msg.reqId);
         return;
       }
+      counters.reconnectsTotal++;
       // The seat this socket held before the hop, if any. `moveSocket` below detaches the socket
       // from it, but only the room manager can mark the seat absent — without this the old seat
       // stays `connected` with nothing attached, which makes its room invisible to
@@ -366,6 +373,24 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
 
 const startedAt = Date.now();
 
+/**
+ * Metrics are aggregate and carry no identifiers, but they do reveal load, so the endpoint is
+ * not open to the internet by default: in production it exists only when `MEXE_METRICS_TOKEN`
+ * is set, and then only for a caller presenting it. Development stays open so `curl /metrics`
+ * works with no setup. A refusal is a 404, not a 401 — an unauthenticated caller learns nothing
+ * about whether the endpoint is there at all.
+ */
+function metricsAllowed(req: IncomingMessage): boolean {
+  const token = config.metricsToken;
+  if (token === undefined) return config.mode !== 'production';
+  const header = req.headers.authorization;
+  if (typeof header !== 'string') return false;
+  const expected = Buffer.from(`Bearer ${token}`);
+  const got = Buffer.from(header);
+  // timingSafeEqual throws on a length mismatch, and the length itself is not a secret.
+  return got.length === expected.length && timingSafeEqual(got, expected);
+}
+
 const server = createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -376,6 +401,27 @@ const server = createServer((req, res) => {
         rooms: rooms.roomCount(),
         connections: connections.size,
         protocol: PROTOCOL_VERSION,
+      }),
+    );
+    return;
+  }
+  if (req.url === '/metrics') {
+    if (!metricsAllowed(req)) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    const mem = process.memoryUsage();
+    res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
+    res.end(
+      renderMetrics({
+        connections: connections.size,
+        rooms: rooms.roomCount(),
+        maxConnections: config.maxConnections,
+        maxRooms: config.maxRooms,
+        uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
+        heapUsedBytes: mem.heapUsed,
+        residentBytes: mem.rss,
       }),
     );
     return;
@@ -394,10 +440,14 @@ wss.on('connection', (ws: WebSocket, req) => {
   const ip = req.socket.remoteAddress ?? 'unknown';
   const ipCount = connectionsByIp.get(ip) ?? 0;
   if (connections.size >= config.maxConnections || ipCount >= config.maxConnectionsPerIp) {
-    log.info('connection_rejected', { reason: connections.size >= config.maxConnections ? 'global_cap' : 'ip_cap' });
+    const reason = connections.size >= config.maxConnections ? 'global_cap' : 'ip_cap';
+    if (reason === 'global_cap') counters.connectionsRejectedGlobalCap++;
+    else counters.connectionsRejectedIpCap++;
+    log.info('connection_rejected', { reason });
     ws.close(1013, 'capacity');
     return;
   }
+  counters.connectionsTotal++;
   const conn: ConnState = newConnState(Date.now());
   connections.set(ws, conn);
   connectionsByIp.set(ip, ipCount + 1);
@@ -424,12 +474,14 @@ wss.on('connection', (ws: WebSocket, req) => {
       handleMessage(ws, conn, parsed);
     } catch (err) {
       // A handler must never crash the process on malformed/hostile input.
-      log.error('message_handler_error', { message: String(err) });
+      counters.messageHandlerErrorsTotal++;
+      log.error('message_handler_error', errorFields(err, config.mode));
       sendError(ws, 'internal_error', 'internal error');
     }
   });
 
   ws.on('close', () => {
+    counters.disconnectsTotal++;
     if (conn.code !== null && conn.seat !== null) {
       detachSocket(conn.code, conn.seat, ws);
       rooms.disconnect(conn.code, conn.seat);
@@ -448,7 +500,8 @@ wss.on('connection', (ws: WebSocket, req) => {
   });
 
   ws.on('error', (err) => {
-    log.error('socket_error', { message: String(err) });
+    counters.socketErrorsTotal++;
+    log.error('socket_error', errorFields(err, config.mode));
   });
 });
 
@@ -504,7 +557,7 @@ const turnTickTimer = setInterval(() => {
 }, TURN_TICK_MS).unref();
 
 process.on('uncaughtException', (err) => {
-  log.error('uncaught_exception', { message: String(err) });
+  log.error('uncaught_exception', errorFields(err, config.mode));
   // Every inbound message is already wrapped in its own try/catch, so reaching here means the
   // process state is unknown, not that a client sent something hostile. Serving rooms from a
   // half-applied state is worse than dropping them: exit and let the supervisor restart
@@ -512,7 +565,7 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 process.on('unhandledRejection', (err) => {
-  log.error('unhandled_rejection', { message: String(err) });
+  log.error('unhandled_rejection', errorFields(err, config.mode));
 });
 
 let shuttingDown = false;
