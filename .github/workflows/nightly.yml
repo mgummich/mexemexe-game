@@ -30,7 +30,7 @@ jobs:
       # Repeated, retry-free run of the two historically flaky WebKit touch profiles. A single
       # flaky drop is expected occasionally; a *repeated* failure across 5 runs is a real signal,
       # so retries stay at 0 here (unlike the CI cross-browser gate, which retries once).
-      - run: npx playwright test -c playwright.cross.config.ts --project="ios safari" --project="ipad" --repeat-each=5 --retries=0
+      - run: MEXE_TRACE=1 npx playwright test -c playwright.cross.config.ts --project="ios safari" --project="ipad" --repeat-each=5 --retries=0
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -52,12 +52,11 @@ jobs:
       # Chromium only, same as CI's e2e job.
       - run: npx playwright install --with-deps chromium
       - run: npm run build
-      # Same two-pass split as CI's e2e job, but with --retries=0: playwright.config.ts now
-      # retries once in CI (so trace: 'on-first-retry' has something to capture), which means a
-      # first-attempt failure that passes on retry no longer fails the PR gate. This job is where
-      # that first-attempt failure stays visible and honest, retry-free, every night.
-      - run: MEXE_NO_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0
-      - run: MEXE_KEEP_VERIFY_LOG=1 npx playwright test e2e/screenshot.spec.ts --grep-invert @perf --retries=0
+      # Same two-pass split as CI's e2e job, but traced (MEXE_TRACE=1): tracing is off by default
+      # on the PR path (see playwright.config.ts) because it's expensive and it skews the fps
+      # gates, so this nightly run is where the suite gets a traced pass instead.
+      - run: MEXE_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0
+      - run: MEXE_TRACE=1 MEXE_KEEP_VERIFY_LOG=1 npx playwright test e2e/screenshot.spec.ts --grep-invert @perf --retries=0
       - run: node scripts/check-verify.mjs
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -88,6 +87,32 @@ jobs:
         with:
           name: cross-browser-matrix-artifacts
           path: test-results/
+          retention-days: 7
+
+  fps-drift:
+    name: fps drift (untraced, repeated)
+    runs-on: ubuntu-latest
+    # ~35s install + 5 repeats of the 3 @perf tests, untraced — this is the trend line for
+    # table-zoomed/stress-table/crowded-table-max instead of a single cold-runner sample.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0 --repeat-each=5
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fps-drift-artifacts
+          path: |
+            test-results/
+            docs/screenshots/verify-log.json
+            docs/screenshots/verify-log-parts/
           retention-days: 7
 
   multiplayer-traced:

@@ -15,7 +15,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
     baseURL: 'http://localhost:4173',
-    trace: process.env.CI ? 'retain-on-failure' : 'off',
+    trace: process.env.MEXE_TRACE ? 'retain-on-failure' : 'off',
     screenshot: 'only-on-failure',
   },
   projects: [

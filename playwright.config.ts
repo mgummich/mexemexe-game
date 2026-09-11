@@ -7,21 +7,19 @@ export default defineConfig({
   fullyParallel: true,
   timeout: 60_000,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
-  // Measured on ubuntu-latest for this 83-test suite: serial+trace 7m49, serial no-trace 5m16,
-  // parallel no-trace 4m40. Tracing costs ~48% wall clock on every green run, and it was the
-  // difference between the fps gates passing and failing (42 vs 50, 16 vs 20 — the tracer's own
-  // overhead was eating the frame budget those tests measure). 'on-first-retry' costs nothing
-  // when the suite is green and still captures a full trace the moment something actually
-  // failed once — which needs a retry to exist at all, hence retries below. Note: a test that
-  // fails once and passes on retry still shows up as flaky in the report, so this doesn't hide
-  // the signal that made part 1's race diagnosable.
-  retries: process.env.CI ? 1 : 0,
+  // Measured on ubuntu-latest for this 83-test suite: serial+trace 7m49, serial no-trace 5m16
+  // (+48% wall clock). Tracing is also behaviour-changing, not just slow: the tracer's own
+  // overhead ate into the frame budget the fps gates measure (table-zoomed read 42 vs a floor
+  // of 50 while traced). So tracing is off here by default; set MEXE_TRACE=1 to get
+  // 'retain-on-failure' locally when you need a trace to debug something. Nightly runs with
+  // MEXE_TRACE=1 for the same suite instead. retries is 0 unconditionally: the CI retry used
+  // to exist only to feed 'on-first-retry' tracing, which is gone now, so a first-attempt
+  // failure in this suite should stay a failure.
+  retries: 0,
   use: {
     baseURL: 'http://localhost:4173',
     viewport: { width: 1280, height: 720 },
-    // MEXE_NO_TRACE disables tracing for the serial @perf pass: the tracer's own overhead
-    // shows up in the fps the game reports, which is exactly what those tests measure.
-    trace: process.env.MEXE_NO_TRACE ? 'off' : 'on-first-retry',
+    trace: process.env.MEXE_TRACE ? 'retain-on-failure' : 'off',
     screenshot: 'only-on-failure',
   },
   webServer: {

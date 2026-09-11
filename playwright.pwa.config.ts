@@ -9,6 +9,10 @@ import { defineConfig } from '@playwright/test';
  * Serial, single worker: every test in the offline file shares one browser context so the
  * first (online) load is what populates the service worker cache the later offline tests
  * read from.
+ *
+ * Unlike playwright.config.ts and playwright.cross.config.ts, this suite keeps CI tracing on
+ * unconditionally: the measured cost here is small (~10s added to a 35s suite) and its
+ * service-worker traces are worth having on every failure, not just nightly.
  */
 export default defineConfig({
   testDir: 'e2e-pwa',
