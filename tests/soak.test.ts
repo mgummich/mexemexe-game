@@ -30,6 +30,8 @@ function playFullGame(seed: number): { turns: number; winnerId: string | null } 
 }
 
 describe('perf soak: 20 AI-vs-AI games', () => {
+  // 15s runner timeout > the 10s wall-time budget asserted below, so a slow run fails on
+  // the explicit assertion (with its number) instead of vitest's 5s default cutting it off.
   it('every game terminates (win or stalemate), total wall time < 10s, heap stays bounded', () => {
     const start = performance.now();
     const results: { turns: number; winnerId: string | null }[] = [];
@@ -47,5 +49,5 @@ describe('perf soak: 20 AI-vs-AI games', () => {
     // ponytail: single post-run heap sample as a regression tripwire, not a leak detector.
     const heapMb = process.memoryUsage().heapUsed / (1024 * 1024);
     expect(heapMb).toBeLessThan(150);
-  });
+  }, 15_000);
 });
