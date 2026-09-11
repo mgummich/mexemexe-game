@@ -30,7 +30,7 @@ the game's own reconnect session tokens, which the play log already strips.
 WebSocket URL is `ws://<hostname>:8787` (`src/net/client.ts:23`). A page served over
 `https://` is forbidden by the browser from opening a plain `ws://` socket, so every TLS
 deployment that forgets to set `VITE_WS_URL` at build time gets a silently dead ONLINE
-menu. `SELF_HOSTING.md` documents this as "the most common first-deployment surprise" —
+menu. `docs/SELF_HOSTING.md` documents this as "the most common first-deployment surprise" —
 which is an admission that the default is wrong, not a mitigation. The fallback must be
 protocol-aware.
 
@@ -41,7 +41,7 @@ see an unexplained drop instead of a clean message. Rooms are in-memory and lost
 way — that is by design — but the players deserve to be told.
 
 **B3 — No production config validation.** `MEXE_TEST_SEED` forces a deterministic deal.
-It exists only for `verify:multiplayer`, and `SELF_HOSTING.md` warns "never set it in a
+It exists only for `verify:multiplayer`, and `docs/SELF_HOSTING.md` warns "never set it in a
 real deployment" — but nothing enforces that. A stray environment variable ships a game
 where every match deals identical hands, and nothing in the logs would say so.
 
@@ -151,8 +151,8 @@ What neither gate covers:
 
 ## 9. Ops docs gaps
 
-`README.md` (302 lines), `SELF_HOSTING.md`, `ARCHITECTURE.md`, `CHANGELOG.md` (270) and
-`docs/RELEASE_NOTES.md` (203) are all current and accurate. `SELF_HOSTING.md` in
+`README.md` (302 lines), `docs/SELF_HOSTING.md`, `docs/ARCHITECTURE.md`, `CHANGELOG.md` (270) and
+`docs/RELEASE_NOTES.md` (203) are all current and accurate. `docs/SELF_HOSTING.md` in
 particular already covers Docker, reverse-proxy TLS and the `VITE_WS_URL` build argument.
 
 There is no `docs/OPERATIONS.md`: nothing documents the environment-variable reference,

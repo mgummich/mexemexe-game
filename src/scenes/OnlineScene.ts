@@ -18,7 +18,7 @@ const CODE_LENGTH = 5;
 /**
  * Online lobby: idle (create/join) -> lobby (code + ready) -> GameScene (server drives the
  * auto-start on `game_started`). VOLTAR works in every state and always leaves the room and
- * closes the socket. See docs/PHASE5_CLIENT_PLAN.md section A.
+ * closes the socket. See docs/archive/PHASE5_CLIENT_PLAN.md section A.
  */
 export class OnlineScene extends Phaser.Scene {
   private client!: NetClient;

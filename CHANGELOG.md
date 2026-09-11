@@ -1,7 +1,31 @@
 # Changelog
 
-All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
-wave-by-wave log this summarizes.
+All notable changes to MEXEMEXE!. See `docs/STATUS.json` for the current project
+status, and `docs/archive/STATUS-history.json` for the phase-by-phase log this
+summarizes.
+
+## Unreleased — Documentation cleanup
+
+- **Changed: the documentation was restructured around one source of truth per
+  topic.** The root now holds only README, CHANGELOG, CONTRIBUTING and LICENSE;
+  everything else lives in `docs/`, with 37 phase audits, plans and the stale
+  `RELEASE_NOTES.md` moved to `docs/archive/`. `RULES.md`, `MULTIPLAYER_ARCHITECTURE.md`
+  and `PIXELLAB_ASSETS.md` were renamed to `GAME_RULES.md`, `MULTIPLAYER.md` and
+  `ASSETS.md`; `DEVELOPMENT.md`, `TESTING.md`, `PWA_OFFLINE.md` and `ROADMAP.md`
+  are new. The README dropped from 344 to 142 lines. Full account in
+  `docs/CLEANUP_REPORT.md`.
+- **Fixed: docs that disagreed with the build.** Online play is alpha everywhere
+  (the UI always said `ONLINE (ALPHA)`), the "no composed music track" note is
+  gone (five tracks ship), the turn timer is marked an unwired hook rather than
+  an optional rule, and `ARCHITECTURE.md`'s module map matches the actual tree.
+  `GAME_RULES.md` gained ten worked examples, each verified against
+  `analyzeMeld`.
+- **Changed: `docs/STATUS.json` is a 137-line status file** instead of a 176 KB
+  accumulation of every phase since wave 1; the history moved to
+  `docs/archive/STATUS-history.json`.
+- **Removed: 7.7 MB of duplicate audio masters** — three `music/*.mp3` files
+  byte-identical to the shipped tracks in `public/assets/audio/music/`. No
+  shipped asset changed, and no gameplay code was touched in this pass.
 
 ## Unreleased — Release container images
 
@@ -9,7 +33,7 @@ wave-by-wave log this summarizes.
   `.github/workflows/release.yml` gained an `images` job that builds both
   `Dockerfile` targets and pushes them as `ghcr.io/<owner>/mexemexe-game-web`
   and `-server`, tagged with the release tag and `latest`. Self-hosters can pull
-  instead of building; `SELF_HOSTING.md` documents that the published web image
+  instead of building; `docs/SELF_HOSTING.md` documents that the published web image
   bakes an empty `VITE_WS_URL`, so a client pointed at a different host still
   needs a local build.
 
@@ -21,7 +45,7 @@ Service worker lifecycle pass. Offline play, the versioned cache and the offline
 online-room gating were already built and tested (Phases 16, 18 and 20); what had
 no coverage was what happens on the *first* install and on an *update*. Five
 defects there, all client-side, no game rules touched. See
-`docs/PHASE23_PWA_OFFLINE_AUDIT.md`.
+`docs/archive/PHASE23_PWA_OFFLINE_AUDIT.md`.
 
 - **Fixed: the first install reloaded the page mid-boot.** `sw.js`'s `activate`
   calls `clients.claim()`, so a first-ever visit fires `controllerchange` — and
@@ -68,7 +92,7 @@ defects there, all client-side, no game rules touched. See
   state — a deselect that arrived before its own select landed, or a place tap
   with nothing yet held. New `tapCardAndSettle` helper polls for the selection
   to flip before returning, and the drop is polled for the same reason.
-- **Docs: `SELF_HOSTING.md` gained "Service worker cache and deploys"** —
+- **Docs: `docs/SELF_HOSTING.md` gained "Service worker cache and deploys"** —
   `public/assets/**` is unhashed and served cache-first, so a deploy that changes
   art or SFX needs a `package.json` version bump to reach players who already
   loaded the game.
@@ -78,7 +102,7 @@ defects there, all client-side, no game rules touched. See
 An active hunt for gameplay, rules, AI, local/online parity and mobile bugs. No
 bug was reproducible, so no game code changed — the outcome of this phase is
 test coverage over the two areas that had none. See
-`docs/PHASE19_GAMEPLAY_BUG_AUDIT.md`.
+`docs/archive/PHASE19_GAMEPLAY_BUG_AUDIT.md`.
 
 - **Added: seeded whole-game invariant probes (`tests/probes.test.ts`, 45 tests).**
   `tests/soak.test.ts` only asserted that games terminate. These probes run 40
@@ -114,7 +138,7 @@ test coverage over the two areas that had none. See
 
 Online hardening pass over reconnect, seat ownership, protocol bounds, room
 cleanup and the client's online UX. No game-rule changes. See
-`docs/PHASE18_MULTIPLAYER_AUDIT.md`.
+`docs/archive/PHASE18_MULTIPLAYER_AUDIT.md`.
 
 - **Fixed: reconnecting onto another room no longer leaves the old room stuck.**
   `reconnect` detached the socket from its previous seat but never told the room
@@ -172,7 +196,7 @@ cleanup and the client's online UX. No game-rule changes. See
 ### Phase 15 (PWA + offline local/AI play)
 
 The game is now installable and works fully offline once loaded once. See
-`docs/PHASE15_AUDIT.md`.
+`docs/archive/PHASE15_AUDIT.md`.
 
 - **Installable PWA**: `public/manifest.webmanifest` (name MEXE!, standalone
   display) and three generated icons (`scripts/gen-icons.mjs`,
@@ -203,7 +227,7 @@ Phase 13 gave touch its own board shape; Phase 12 gave tap-select-then-place
 visual feedback on drag only. This phase closes both remaining gaps: the
 tap-select path now gets the same legality feedback a drag does, a crowded
 table gets a dedicated mobile editing surface and a zoom/focus view, and the
-tutorial and in-game help panel teach all of it. See `docs/PHASE14_AUDIT.md`.
+tutorial and in-game help panel teach all of it. See `docs/archive/PHASE14_AUDIT.md`.
 
 - **Three helper modes** (`src/ui/helpers.ts`, Settings → VISUAL HELP):
   Beginner shows legal destinations, invalid-meld reasons and a ghost
@@ -239,7 +263,7 @@ The board was authored into one fixed 480x270 world and letterboxed to fit, so a
 portrait phone got a 390x219 board and a permanent "turn your phone sideways"
 banner. Touch input was already fine — Phase 12 shipped select-then-place, a
 tappable invalid badge and padded card hit areas — so this phase gave the board a
-second shape rather than a second input model. See `docs/PHASE13_AUDIT.md`.
+second shape rather than a second input model. See `docs/archive/PHASE13_AUDIT.md`.
 
 Desktop is unchanged by construction: the landscape half of the region table is
 the old constants, and `tests/regions.test.ts` fails if any of them moves.
@@ -278,7 +302,7 @@ No scene implements `update()`, nothing allocates per frame, rendering is driven
 by interactions rather than by the frame loop, and the crowded-table capture
 already held 58 fps. The real defects were three ways the game could fail to
 start or silently stop working, and one online path that could lock input
-forever. See `docs/PHASE11_AUDIT.md`, including the perf items that were
+forever. See `docs/archive/PHASE11_AUDIT.md`, including the perf items that were
 investigated and deliberately left alone.
 
 - **The game boots on a browser with storage blocked** (`src/core/persistence.ts`).
@@ -339,7 +363,7 @@ change, no gameplay change: local and online play behave exactly as in 1.3.0.
 
 - **HTTPS deployments work by default** (`src/config.ts`): the WebSocket URL
   fallback is now protocol-aware — `wss://<host>/ws` over https (matching the
-  reverse-proxy layout documented in `SELF_HOSTING.md`), `ws://<hostname>:8787`
+  reverse-proxy layout documented in `docs/SELF_HOSTING.md`), `ws://<hostname>:8787`
   over http. Previously the https case fell back to a plain `ws://` URL that
   browsers block outright, so any TLS deployment that forgot `VITE_WS_URL` got a
   silently dead ONLINE menu. `?ws=` and `VITE_WS_URL` still take precedence, in
@@ -376,7 +400,7 @@ change, no gameplay change: local and online play behave exactly as in 1.3.0.
 - **Operations documentation** (`docs/OPERATIONS.md`): environment reference,
   build and run, health-check reading, log format and privacy guarantees,
   troubleshooting, rollback, verify commands, known limits. Plus
-  `docs/PHASE10_AUDIT.md`, and `SELF_HOSTING.md`/`docker-compose.yml` updated
+  `docs/archive/PHASE10_AUDIT.md`, and `docs/SELF_HOSTING.md`/`docker-compose.yml` updated
   for the new defaults (`mexe-server` now runs with `MEXE_ENV=production`).
 
 ## 1.3.0 — Phase 9 (content-rich beta)
@@ -455,15 +479,15 @@ change, no rules change.
   are debounced, so a double-click cannot put two `create_room` frames on the
   wire.
 - Balance knobs stay in one place (`DEFAULT_RULES`, documented in
-  `docs/RULES.md`); the turn timer remains a declared, unimplemented, off-by-
+  `docs/GAME_RULES.md`); the turn timer remains a declared, unimplemented, off-by-
   default hook and is now documented as such rather than implied.
 - New: `docs/PLAYTEST_GUIDE.md` (how to run, what to test, how to report, and
-  what the log does and does not contain) and `docs/PHASE8_AUDIT.md`.
+  what the log does and does not contain) and `docs/archive/PHASE8_AUDIT.md`.
 
 ### Phase 7 — online beta
 
 Protocol **v3**. The online mode moves from alpha to beta: the remaining
-stability, recovery and safety gaps from `docs/PHASE7_AUDIT.md` are closed.
+stability, recovery and safety gaps from `docs/archive/PHASE7_AUDIT.md` are closed.
 
 - **Socket liveness**: the server pings every connection every 15s and
   terminates one that misses a probe, so a half-open socket releases its seat
@@ -498,7 +522,7 @@ stability, recovery and safety gaps from `docs/PHASE7_AUDIT.md` are closed.
   safety, reconnect/resync, and the safe reconnect-to-local-menu fallback.
 
 Rules engine, protocol and docs adapted to the final Mexe-Mexe ruleset
-(`docs/RULES.md`), replacing the MVP's single-deck/ace-low/stalemate-by-passing
+(`docs/GAME_RULES.md`), replacing the MVP's single-deck/ace-low/stalemate-by-passing
 approximation.
 
 - **Two 54-card decks (108 cards, 4 jokers)** instead of one 52-card deck.
@@ -596,7 +620,7 @@ or absent.
   versioned save and the game reboots clean).
 - Four deterministic per-personality AI showcase captures (Dona Cida,
   Juninho, Bia, Seu Zé), each with its `ai:thought` asserted.
-- Release packaging: version bump to 1.0.0, `docs/RELEASE_NOTES.md`, README
+- Release packaging: version bump to 1.0.0, `docs/archive/RELEASE_NOTES.md`, README
   refresh.
 
 ## 0.3.0 — Phase 3 (flow, persistence, accessibility, perf, release)

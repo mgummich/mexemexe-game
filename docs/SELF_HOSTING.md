@@ -124,7 +124,7 @@ npm run server        # listens on :8787, PORT= to override
   `MEXE_ENV`/`NODE_ENV=production` the server refuses to start rather than
   dealing every match from the same seed.
 - Run the server with `MEXE_ENV=production` in a real deployment, and see
-  `docs/OPERATIONS.md` for the full environment-variable reference, log format,
+  `OPERATIONS.md` for the full environment-variable reference, log format,
   health-endpoint reading, troubleshooting and rollback.
 
 ### Service worker cache and deploys

@@ -83,7 +83,7 @@ Screenshots in `docs/screenshots/pwa/` (`pwa-log.json`) and `docs/screenshots/`.
 
 1. **Unhashed assets are stale until the version bumps** (low, documented). Cache-first on a
    fixed URL means a redeploy that changes `public/assets/**` without bumping
-   `package.json` keeps serving the old copy. Now called out in `SELF_HOSTING.md`
+   `package.json` keeps serving the old copy. Now called out in `docs/SELF_HOSTING.md`
    ("Service worker cache and deploys"). Not worth a per-build cache key: that would evict
    the whole offline set on every deploy, and the release flow bumps the version anyway.
 2. **Post-update offline window** (low, inherent). Between `activate` (old caches deleted)

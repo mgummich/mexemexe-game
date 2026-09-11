@@ -1,7 +1,7 @@
 import type Phaser from 'phaser';
 import { settings } from '../core/settings';
 
-// Same-key retrigger guard (AUDIO_DIRECTION.md mix rule: "no rapid repeats
+// Same-key retrigger guard (docs/AUDIO_DIRECTION.md mix rule: "no rapid repeats
 // <80ms apart") — a burst of the same cue (e.g. rapid card drags) would
 // otherwise stack into a harsh spike instead of the intended single hit.
 const RETRIGGER_MS = 80;

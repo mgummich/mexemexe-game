@@ -31,7 +31,7 @@ function fakeSock(): Sock & { sent: string[]; closed: boolean } {
   return sock;
 }
 
-describe('connections registry (docs/PHASE5_SERVER_REVIEW.md S1/S2/S4/S5)', () => {
+describe('connections registry (docs/archive/PHASE5_SERVER_REVIEW.md S1/S2/S4/S5)', () => {
   it('S1/S2: closeRoomSockets notifies every attached socket, clears its ConnState, and drops the room', () => {
     const sockets = new Map<string, Map<number, ReturnType<typeof fakeSock>>>();
     const connections = new Map<ReturnType<typeof fakeSock>, ConnState>();

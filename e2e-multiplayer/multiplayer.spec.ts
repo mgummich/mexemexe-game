@@ -7,7 +7,7 @@ import path from 'node:path';
  * Phase 5 multiplayer verification: launches the real WS server and drives two browser
  * contexts through the full online flow. Separate spec file + separate script from
  * `npm run verify` on purpose — a server crash here must never fail local verify.
- * See docs/MULTIPLAYER_ARCHITECTURE.md §11 and docs/PHASE5_CLIENT_PLAN.md.
+ * See docs/MULTIPLAYER.md §11 and docs/archive/PHASE5_CLIENT_PLAN.md.
  */
 
 const OUT_DIR = 'docs/screenshots';

@@ -1,7 +1,7 @@
 /**
  * Socket bookkeeping for the WebSocket server, kept as pure functions over
  * plain maps (not tied to `ws`) so it's unit-testable with fake sockets
- * instead of a real WebSocketServer. See docs/PHASE5_SERVER_REVIEW.md S1/S2/S4/S5.
+ * instead of a real WebSocketServer. See docs/archive/PHASE5_SERVER_REVIEW.md S1/S2/S4/S5.
  */
 
 /** The subset of the WebSocket interface this module needs. A real `ws`/browser

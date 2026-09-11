@@ -19,7 +19,7 @@ Audit run: 2026-09-09T08:25:11Z. Inspection model: GPT-5.6-Luna (Low substitute)
 - Focused unit coverage: `tests/rules.test.ts`, with AI invariants in `tests/ai.test.ts`.
 - Multiplayer authority and server tests: `server/rooms.ts`, `tests/server/rooms.test.ts`; protocol only carries card ids (`src/net/protocol.ts`).
 - AI generation: `src/ai/ai.ts`.
-- Player-facing rules: `docs/RULES.md`, `README.md`, and PT/EN `rules.body` strings in `src/localization/i18n.ts`. Current text says groups are 3+ and suits may repeat.
+- Player-facing rules: `docs/GAME_RULES.md`, `README.md`, and PT/EN `rules.body` strings in `src/localization/i18n.ts`. Current text says groups are 3+ and suits may repeat.
 - Status tracking: `docs/STATUS.json` (Main must update; this audit intentionally does not touch it).
 
 ## Gaps and risks
@@ -31,7 +31,7 @@ Audit run: 2026-09-09T08:25:11Z. Inspection model: GPT-5.6-Luna (Low substitute)
 5. Invalid reasons are coarse (`reason.notAMeld`/`reason.jokerUnassignable`), and analysis result lacks requested group metadata. Adding reason codes/types may affect localization and tests.
 6. Server correctness follows shared validation, so changing the shared validator should align multiplayer automatically; server tests still need explicit repeated-suit/all-joker/over-capacity coverage.
 7. AI candidate generation is validator-gated, but comments and rank buckets assume repeated-suit groups are legal. A validator change should be checked against AI tests and any direct group construction.
-8. UI/help/docs contain conflicting old wording in both locales and README. `docs/RULES.md` also documents the old repeated-suit behavior and `groupUniqueSuits: false` hook.
+8. UI/help/docs contain conflicting old wording in both locales and README. `docs/GAME_RULES.md` also documents the old repeated-suit behavior and `groupUniqueSuits: false` hook.
 
 ## Minimal implementation plan
 
@@ -40,7 +40,7 @@ Audit run: 2026-09-09T08:25:11Z. Inspection model: GPT-5.6-Luna (Low substitute)
 3. Main: enforce duplicate unique ids across all table melds and confirmation inputs at the shared validation boundary, with clear existing/new reason codes as needed. Ensure `validateTable`, `canConfirmTurn`, and server submission use same path.
 4. Main: add focused rules tests for all supplied valid/invalid examples, including assignment collision and duplicate ids; add confirm/table tests and explicit server proposal rejection tests.
 5. Main: run AI tests and patch only direct group generation if validator tests reveal an invalid candidate; ensure joker groups remain 3/4 cards and suit assignments are legal.
-6. Main: update `docs/RULES.md`, README rules copy, and PT/EN help strings to state same rank, unique suits, jokers fill missing suits, no all-joker groups, and exactly 3 or 4 cards. Remove conflicting repeated-suit/optional-house-rule text.
+6. Main: update `docs/GAME_RULES.md`, README rules copy, and PT/EN help strings to state same rank, unique suits, jokers fill missing suits, no all-joker groups, and exactly 3 or 4 cards. Remove conflicting repeated-suit/optional-house-rule text.
 7. Main: update `docs/STATUS.json` with active task, files/tests/issues, scripts absent/present, model routing, and caveman run record.
 
 ## Verification scripts

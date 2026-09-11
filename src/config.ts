@@ -8,13 +8,13 @@
 export type LocationLike = Pick<Location, 'protocol' | 'hostname' | 'host' | 'search'>;
 
 /**
- * Resolves the game server WebSocket URL. Order, see SELF_HOSTING.md
+ * Resolves the game server WebSocket URL. Order, see docs/SELF_HOSTING.md
  * "Pointing the client at the server":
  *   1. `?ws=` query override (e2e/verify:multiplayer rely on this).
  *   2. `VITE_WS_URL`, baked in at build time.
  *   3. Same-origin default: `ws://<hostname>:8787` over http (dev/LAN), or
  *      `wss://<host>/ws` over https — a page served over https can't open a
- *      plain ws:// socket, and SELF_HOSTING.md's "Behind a reverse proxy"
+ *      plain ws:// socket, and docs/SELF_HOSTING.md's "Behind a reverse proxy"
  *      Caddy example proxies the `/ws` path to the WebSocket server while
  *      the root path serves the static game, so that's the path that
  *      actually reaches the server for an operator following the doc.

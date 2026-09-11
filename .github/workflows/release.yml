@@ -62,7 +62,7 @@ jobs:
 
       # The static game. VITE_WS_URL is baked at build time and left empty here,
       # so this image plays offline and talks to a same-host server; point it at
-      # your own wss:// endpoint by building locally (see SELF_HOSTING.md).
+      # your own wss:// endpoint by building locally (see docs/SELF_HOSTING.md).
       - name: Build and push the web image
         uses: docker/build-push-action@v6
         with:

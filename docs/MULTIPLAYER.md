@@ -1,13 +1,32 @@
-# MEXEMEXE! Online Alpha — Multiplayer Architecture
+# Multiplayer (online alpha)
 
-*Design: Opus (reasoning/prose). Implementation + final review: Sonnet.
+How online rooms work: server authority, the wire protocol, room lifecycle,
+reconnect, and what the alpha does **not** do. The rules themselves are in
+[GAME_RULES.md](GAME_RULES.md); the client/server split in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 Scope: 2–4-player private rooms, alpha quality. No accounts, matchmaking,
-ranking, chat, or cosmetics sync.*
+ranking, chat, or cosmetics sync. The game labels the entry point
+`ONLINE (ALPHA)`.
 
-*This document was drafted before implementation began. It has been
-reconciled against the shipped code (§4 protocol table and §7 reconnect
-section in particular) — see §12 "As built" for the file list and any point
-where the built system differs from the original design.*
+## 0. Limitations
+
+- **No accounts, matchmaking, ranked play, chat or spectators.** Private rooms
+  by 5-character code only.
+- **No online rematch** — the win screen offers MENU only; play again by
+  creating or joining another room.
+- **No rematch stats or winning-move text online** — the client never observes
+  per-turn state locally, so there is no play log to summarize. The stats line
+  is hidden rather than showing zeros. Fixing it needs a protocol change.
+- **Opponent avatars are the generic player icon** — there are no accounts, so
+  there is no avatar to show.
+- **Rate limiting is per connection, not per IP** — enough to stop a looping
+  client, not a determined attacker opening many sockets.
+- **A seat disconnected past the 30s grace is played for you**: the server
+  draws and ends that seat's turn so the match keeps moving. It never melds on
+  your behalf.
+- **Reconnect is a single bounded retry**, not a persistent loop; if it fails
+  the client returns you to the local menu with a message.
 
 ## 1. Responsibilities
 
@@ -64,7 +83,7 @@ cannot leak an opponent's hand in an online match.
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 3` — bumped from 2 for the beta: `GameView` gained
+version (`PROTOCOL_VERSION = 3` — bumped from 2 in 1.2.0: `GameView` gained
 a `hash` digest and the client gained `resync`; v2 bumped from 1 for the rules
 adaptation, when `GameView` gained `config` and card ids changed shape with the
 two-deck/joker model); a mismatch is refused at connect with a clear reason rather than
@@ -163,7 +182,7 @@ room object exists in memory — there is no separate check against the
 disconnect timestamp or the grace window inside `reconnect` itself. The grace
 window (`DEFAULT_DISCONNECT_GRACE_MS`, 30s) only governs when the periodic
 `sweep()` is allowed to delete a room whose seats are *all* disconnected past
-that window (S1/S3 in `docs/PHASE5_SERVER_REVIEW.md`); once a room is swept,
+that window (S1/S3 in `archive/PHASE5_SERVER_REVIEW.md`); once a room is swept,
 its token stops working because the room itself is gone, not because the
 token was individually invalidated. A reconnect that lands before the sweep
 runs succeeds even if it arrives after the nominal 30s, and reconnecting
@@ -272,33 +291,19 @@ server; a client-supplied state hash is never accepted, only ever sent.
 Two processes: the existing static site and the WebSocket server. The client
 resolves the WS URL from build-time configuration with a same-host default;
 a page served over HTTPS must use `wss://`, which is the most common
-first-deployment failure and is called out in the README. The server takes its
+first-deployment failure and is called out in [SELF_HOSTING.md](SELF_HOSTING.md). The server takes its
 port from the environment, exposes a trivial health check, caps concurrent
 rooms, and reaps idle rooms on a timer. Local development runs both with two
 commands; a single `docker compose` service pair is the deployment shape.
 
-## 11. Test plan
+## 11. Tests
 
-**Unit (node, existing vitest runner)** — room creation and join, join codes,
-third-player rejection, ready/start, a full legal turn, rejection cases (wrong
-seat, stale rev, duplicate card, missing table card, zero hand cards, returned
-table card, forged card attributes, double submit), draw/end including the
-empty-pile stalemate, disconnect marking, room cleanup, and a malformed-message
-battery (non-JSON, wrong types, missing fields, oversized payloads, unknown
-types) asserting the server stays alive.
-
-**Redaction** — tests assert that no view for any seat contains an opponent
-hand ID or a draw-pile ID.
-
-**End-to-end (Playwright, two contexts)** — launch server, create room, join by
-code, both ready, start, play a legal turn on one client and observe it on the
-other, attempt an illegal proposal and observe the rejection reason, draw/end,
-run to a win, capture screenshots and a log containing room code, seed, every
-revision, the message trace, validation results, and screenshot paths. The gate
-fails on any client console error or any server error.
-
-**Local regression** — the existing `npm run verify` must stay green
-unchanged; that is the phase's primary success condition.
+Server unit suites (`tests/server/`) cover room lifecycle, legal and rejected
+turns, redaction, reconnect and a malformed-message battery; the integration
+suite spawns the real process and drives raw `ws` clients. `npm run
+verify:multiplayer` runs two-plus real browser clients against the real server
+and gates on client console errors, server stderr, accepted illegal proposals,
+hand privacy and state-hash agreement. Details in [TESTING.md](TESTING.md).
 
 ## 12. As built
 
@@ -339,6 +344,6 @@ Run commands: `npm run server` (start the WS server, `PORT` env var, default
 8787), `npm run test:server` (server unit suite), `npm run verify:multiplayer`
 (build + two-client Playwright flow + log-based gate). Deployment is two
 processes — the existing static site and this server — with the client
-resolving the WS URL as described in the README's Online Alpha section
+resolving the WS URL as described in [DEVELOPMENT.md](DEVELOPMENT.md) and [OPERATIONS.md](OPERATIONS.md)
 (`?ws=` override → `VITE_WS_URL` build-time env → same-host default), and a
 `wss://` endpoint required for any HTTPS-served deployment.

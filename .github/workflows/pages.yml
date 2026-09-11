@@ -30,10 +30,8 @@ jobs:
         run: |
           mkdir -p site/docs
           cp -r dist/* site/
-          cp docs/index.html site/docs/
-          cp docs/*.md site/docs/
-          cp README.md ARCHITECTURE.md ART_DIRECTION.md AUDIO_DIRECTION.md \
-             CHANGELOG.md SELF_HOSTING.md CONTRIBUTING.md site/docs/
+          cp docs/index.html docs/*.md site/docs/
+          cp README.md CHANGELOG.md CONTRIBUTING.md site/docs/
           cp -r docs/screenshots site/docs/screenshots
       - uses: actions/upload-pages-artifact@v5
         with:

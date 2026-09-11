@@ -25,11 +25,11 @@ places, all now fixed. Several plausible-looking cleanups were investigated and
    (`git status --porcelain public/` empty).
 
 2. **Shadowed docs file.** `docs/ART_DIRECTION.md` was not a copy of the root
-   `ART_DIRECTION.md` — it was a stray Phase-9 procedural-cosmetics note under a
+   `docs/ART_DIRECTION.md` — it was a stray Phase-9 procedural-cosmetics note under a
    misleading name. `.github/workflows/pages.yml` copies `docs/*.md` and *then*
-   the root `ART_DIRECTION.md` into `site/docs/`, so the root file overwrote it:
+   the root `docs/ART_DIRECTION.md` into `site/docs/`, so the root file overwrote it:
    the content was unreachable on the published site. Its substance is already in
-   `docs/PIXELLAB_ASSETS.md:53-65`. Removed.
+   `docs/ASSETS.md:53-65`. Removed.
 
 3. **Dead localization keys.** 12 keys unreferenced in either locale, removed
    from both (24 lines): `menu.players`, `online.copied`, `game.undo`,

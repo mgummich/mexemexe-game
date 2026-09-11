@@ -13,7 +13,7 @@ EXPOSE 8787
 CMD ["npx", "tsx", "server/index.ts"]
 
 FROM deps AS build
-# Baked into the bundle at build time; see SELF_HOSTING.md for HTTPS/wss setups.
+# Baked into the bundle at build time; see docs/SELF_HOSTING.md for HTTPS/wss setups.
 ARG VITE_WS_URL
 COPY tsconfig.json vite.config.ts index.html ./
 COPY public ./public

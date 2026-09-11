@@ -484,7 +484,7 @@ describe('disconnect / reconnect', () => {
   });
 });
 
-describe('lifecycle and liveness (docs/PHASE5_SERVER_REVIEW.md S1-S5)', () => {
+describe('lifecycle and liveness (docs/archive/PHASE5_SERVER_REVIEW.md S1-S5)', () => {
   it('S2: leaving mid-game ends the room for the survivor instead of leaving a dead board', () => {
     const { mgr, code } = startRoom(7);
     const result = mgr.leaveRoom(code, 1);
