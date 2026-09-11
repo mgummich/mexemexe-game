@@ -57,10 +57,10 @@ describe('onConnectivityChange', () => {
 });
 
 describe('offline/update i18n keys', () => {
-  const KEYS = ['offline.banner', 'offline.online', 'update.available'];
+  const KEYS = ['offline.banner', 'offline.online', 'update.available', 'update.now'];
 
   for (const locale of ['pt', 'en'] as const) {
-    it(`${locale} defines all three keys, non-empty`, () => {
+    it(`${locale} defines every offline/update key, non-empty`, () => {
       setLocale(locale);
       const keys = new Set(localeKeys(locale));
       for (const k of KEYS) {

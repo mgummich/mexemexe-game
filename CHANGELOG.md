@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased — Phase 23 (PWA offline reliability)
+
+Service worker lifecycle pass. Offline play, the versioned cache and the offline
+online-room gating were already built and tested (Phases 16, 18 and 20); what had
+no coverage was what happens on the *first* install and on an *update*. Five
+defects there, all client-side, no game rules touched. See
+`docs/PHASE23_PWA_OFFLINE_AUDIT.md`.
+
+- **Fixed: the first install reloaded the page mid-boot.** `sw.js`'s `activate`
+  calls `clients.claim()`, so a first-ever visit fires `controllerchange` — and
+  the handler reloaded unconditionally, throwing away a cold boot's worth of
+  asset loading and repeating it. Reloading now requires the player to have
+  actually asked for an update. Measured 2 main-frame navigations on a first load
+  before the fix, 1 after.
+- **Fixed: a build that finished installing during an earlier visit never
+  announced itself.** The update banner was wired only from `updatefound`, which
+  does not fire again for a worker already `waiting` at page load, so that build
+  sat unused while the stale one kept being served. The waiting worker is now
+  checked at registration.
+- **Fixed: the update banner had no action affordance** — it showed the notice
+  only, while the whole div was silently the tap target. It now reads
+  `Nova versão disponível. Atualize quando terminar a partida. [Atualizar agora]`
+  (new `update.now` key, both locales). The handover still happens only on a tap,
+  so an in-progress match is never interrupted.
+- **Fixed: `updatefound` firing twice stacked a second banner** on the first.
+- **Added: an installed PWA re-checks for updates on resume.** Browsers only
+  check on navigation, which a standalone app that is merely backgrounded never
+  does. `visibilitychange` now calls `reg.update()`; it can at most surface the
+  banner.
+- **Added: `e2e-pwa/update.spec.ts`** (2 tests, a fresh context each — the only
+  way to observe a first install). The second stands in for a deploy by rewriting
+  `dist/sw.js`'s cache key, then asserts the banner appears with no reload, the
+  old cache still serves, and the tap produces exactly one reload plus eviction
+  of the old cache.
+- **Docs: `SELF_HOSTING.md` gained "Service worker cache and deploys"** —
+  `public/assets/**` is unhashed and served cache-first, so a deploy that changes
+  art or SFX needs a `package.json` version bump to reach players who already
+  loaded the game.
+
 ## Unreleased — Phase 19 (gameplay bug hunt + rules regression + iOS/WebKit mobile probe)
 
 An active hunt for gameplay, rules, AI, local/online parity and mobile bugs. No
