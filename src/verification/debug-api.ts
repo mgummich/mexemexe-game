@@ -68,6 +68,8 @@ export interface MexeDebugApi {
   errors: string[];
   missingAssets: string[];
   validation: { ok: boolean; reasons: string[] } | null;
+  /** Verification-only: the live reason line rendered next to FEITO, checklist lines included. */
+  reasonLine: string;
   state: (() => GameState | null) | null;
   showcase: string | null;
   /** Verification-only (Phase 16): ?crowd=N — minTableCards passed to buildShowcaseState for the
@@ -169,6 +171,7 @@ export const debugApi: MexeDebugApi = {
   errors: [],
   missingAssets: [],
   validation: null,
+  reasonLine: '',
   state: null,
   showcase: null,
   crowd: null,

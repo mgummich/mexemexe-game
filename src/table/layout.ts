@@ -57,6 +57,18 @@ function packRows(melds: MeldLayoutInput[], areaW: number, gap: number, cw: numb
   return rows;
 }
 
+/**
+ * Horizontal offset that centres one packed row inside areaW. packRows lays every row out from
+ * x0 left-aligned; on a table holding a single meld that parked it in the far-left corner of a
+ * wide empty area. Never negative — a row wider than the area keeps its left edge.
+ */
+function rowIndent(row: RowItem[], areaW: number): number {
+  const last = row[row.length - 1];
+  if (!last) return 0;
+  const rowW = last.x + last.width; // trailing meldGap excluded: x only advances between items
+  return Math.max(0, Math.round((areaW - rowW) / 2));
+}
+
 interface Candidate {
   rows: RowItem[][];
   scale: number;
@@ -99,8 +111,9 @@ export function computeMeldLayout(
     const positions: MeldPosition[] = [];
     rows.forEach((row, rowIndex) => {
       const y = rowIndex * pitch;
+      const indent = rowIndent(row, areaW);
       for (const item of row) {
-        const x = Math.min(item.x, Math.max(0, areaW - item.width));
+        const x = Math.min(item.x + indent, Math.max(0, areaW - item.width));
         positions.push({ meldId: item.meldId, x, y, width: item.width, height: rowH, cardGap: gap, cardScale: scale });
       }
     });
@@ -143,11 +156,18 @@ export function computeMeldLayout(
   const rowH = ch + pad * 2;
   const pitch = rowH + best.rowGap;
 
+  // Vertical centring: an early-game table holds one or two melds, and left-top-aligning them in
+  // a ~100-unit-tall area read as "the game forgot to draw the table". Only applied when the
+  // block genuinely fits — an overflowing table keeps y0 so nothing is pushed off the top.
+  const totalH = rows.length * rowH + Math.max(0, rows.length - 1) * best.rowGap;
+  const yOffset = totalH < areaH ? Math.round((areaH - totalH) / 2) : 0;
+
   const positions: MeldPosition[] = [];
   rows.forEach((row, rowIndex) => {
-    const y = rowIndex * pitch;
+    const y = rowIndex * pitch + yOffset;
+    const indent = rowIndent(row, areaW);
     for (const item of row) {
-      const x = Math.min(item.x, Math.max(0, areaW - item.width));
+      const x = Math.min(item.x + indent, Math.max(0, areaW - item.width));
       positions.push({ meldId: item.meldId, x, y, width: item.width, height: rowH, cardGap: gap, cardScale: scale });
     }
   });

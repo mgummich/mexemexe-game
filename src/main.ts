@@ -105,6 +105,13 @@ function updatePortraitHint(): void {
     portraitHint.style.display = 'none';
     return;
   }
+  // Only during a match. On the menu/tutorial there is nothing crowded to escape, and a banner
+  // that greets every phone player at boot reads as "this game does not want to be in portrait"
+  // — which is wrong: portrait has a hand-authored layout (see src/ui/regions.ts).
+  if (debugApi.scene !== 'game') {
+    portraitHint.style.display = 'none';
+    return;
+  }
   // Read the copy on every show, never once at module load: MenuScene applies the saved locale
   // after this module runs, so a captured string would keep showing pt-BR to an en-US player.
   portraitHint.textContent = t('a11y.rotateHint');

@@ -113,4 +113,34 @@ describe('computeMeldLayout', () => {
       expect(clampScroll(5, contentH, AREA_H)).toBe(5);
     });
   });
+
+  describe('centring', () => {
+    it('a single meld sits centred in the area, not pinned to the top-left corner', () => {
+      const [pos] = computeMeldLayout([{ id: 'm0', cardCount: 3 }], AREA_W, AREA_H);
+      expect(pos).toBeDefined();
+      const centreX = pos!.x + pos!.width / 2;
+      const centreY = pos!.y + pos!.height / 2;
+      expect(Math.abs(centreX - AREA_W / 2)).toBeLessThanOrEqual(1);
+      expect(Math.abs(centreY - AREA_H / 2)).toBeLessThanOrEqual(1);
+    });
+
+    it('keeps every meld inside the area horizontally', () => {
+      const melds: MeldLayoutInput[] = Array.from({ length: 5 }, (_, i) => ({ id: `m${i}`, cardCount: 4 }));
+      for (const p of computeMeldLayout(melds, AREA_W, AREA_H)) {
+        expect(p.x).toBeGreaterThanOrEqual(0);
+        expect(p.x + p.width).toBeLessThanOrEqual(AREA_W + 1);
+      }
+    });
+
+    it('an overflowing table keeps its first row at y0 so nothing is pushed off the top', () => {
+      const melds: MeldLayoutInput[] = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, cardCount: 3 }));
+      const positions = computeMeldLayout(melds, AREA_W, AREA_H, { minCardScale: 1 });
+      expect(Math.min(...positions.map((p) => p.y))).toBe(0);
+    });
+
+    it('still never overlaps once rows are centred', () => {
+      const melds: MeldLayoutInput[] = Array.from({ length: 9 }, (_, i) => ({ id: `m${i}`, cardCount: 3 + (i % 2) }));
+      assertNoOverlaps(computeMeldLayout(melds, AREA_W, AREA_H));
+    });
+  });
 });

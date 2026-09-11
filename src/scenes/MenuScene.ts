@@ -6,7 +6,7 @@ import { bus } from '../core/events';
 import { isOffline, onConnectivityChange } from '../core/pwa';
 import { openRulesPanel } from '../ui/rules-panel';
 import { openSettingsPanel } from '../ui/settings-panel';
-import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
+import { coverBackground, cx, cy, panelW, vy, woodPanel } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
 import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
@@ -88,9 +88,11 @@ export class MenuScene extends Phaser.Scene {
     this.children.removeAll(true);
     coverBackground(this, 'bg-menu');
     this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.35);
-    // backdrop so controls read against the busy boteco scene
-    // wide enough to actually contain the rules/language row (x 146..334) and the online button
-    this.add.rectangle(cx(), vy(184), panelW(204), vy(168), 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
+    // Backdrop so controls read against the busy boteco scene. A near-transparent rectangle with
+    // a hairline stroke read as a debug overlay in playtests — this is a real warm wooden panel:
+    // opaque fill, rounded corners, a tan edge plus a darker inner line for depth.
+    // Wide enough to contain the rules/language row (x 146..334) and the online button.
+    woodPanel(this, cx(), vy(200), panelW(212), vy(142));
     if (this.textures.exists('logo') && !debugApi.missingAssets.includes('logo')) {
       // logo.png ships at 3x (600x240) like every other sprite — pin it to its logical size
       const logo = this.add.image(cx(), vy(62), 'logo').setDisplaySize(200, 80);
@@ -102,7 +104,7 @@ export class MenuScene extends Phaser.Scene {
       label(this, cx(), vy(84), t('menu.tagline'), 8, '#f7f2e7');
     }
 
-    new PixelButton(this, cx(), vy(145), t('menu.play'), () => gotoScene(this, 'setup'), {
+    new PixelButton(this, cx(), vy(168), t('menu.play'), () => gotoScene(this, 'setup'), {
       textureBase: 'btn-feito', w: 90, h: 24, size: 10,
     });
     // kept at its original logical coords (240, 207) in landscape — e2e clicks this position directly
@@ -110,13 +112,13 @@ export class MenuScene extends Phaser.Scene {
       textureBase: 'btn-comprar', w: 90, h: 20, size: 9,
     });
     if (!settings.progress().tutorialCompleted) {
-      label(this, cx(), vy(222), t('menu.firstRunHint'), 6, '#c0b8a8');
+      label(this, cx(), vy(219), t('menu.firstRunHint'), 6, '#c0b8a8');
     }
 
-    new PixelButton(this, cx() + (182 - 240), vy(237), t('menu.rules'), () => openRulesPanel(this, () => { /* noop */ }), {
+    new PixelButton(this, cx() + (182 - 240), vy(234), t('menu.rules'), () => openRulesPanel(this, () => { /* noop */ }), {
       textureBase: 'btn-comprar', w: 72, h: 18, size: 6,
     });
-    new PixelButton(this, cx() + (298 - 240), vy(237), t('menu.language'), () => {
+    new PixelButton(this, cx() + (298 - 240), vy(234), t('menu.language'), () => {
       const next = getLocale() === 'pt' ? 'en' : 'pt';
       setLocale(next);
       settings.update({ locale: next });
@@ -128,19 +130,22 @@ export class MenuScene extends Phaser.Scene {
       textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.settings'),
     });
 
-    // visually subordinate to JOGAR: smaller, muted, tucked below the rules/language row
-    this.onlineBtn = new PixelButton(this, cx(), vy(258), t('menu.online'), () => gotoScene(this, 'online'), {
-      textureBase: 'btn-comprar', w: 100, h: 13, size: 6, color: 0x8a7f68,
+    // Visually subordinate to JOGAR: smaller, muted, tucked below the rules/language row. The
+    // alpha caveat is a separate small line rather than "(ALPHA)" shouted inside the label —
+    // the old caption read like a warning not to press it.
+    this.onlineBtn = new PixelButton(this, cx(), vy(254), t('menu.online'), () => gotoScene(this, 'online'), {
+      textureBase: 'btn-comprar', w: 104, h: 14, size: 6, color: 0x8a7f68,
       onBlocked: () => this.flashOnlineBlocked(),
     });
     this.onlineBtn.setEnabled(!isOffline());
+    label(this, cx(), vy(264), t('menu.onlineTag'), 6, '#a89e8c');
   }
 
   /** Transient reason line under ONLINE when it's tapped while offline — same "always say why"
    * pattern as GameScene's onFeitoBlocked, just local to this button since MenuScene has no
    * persistent reason-text widget. */
   private flashOnlineBlocked(): void {
-    const el = label(this, cx(), vy(226), t('offline.online'), 6, '#ff6b5e');
+    const el = label(this, cx(), vy(205), t('offline.online'), 6, '#ff6b5e');
     this.time.delayedCall(2000, () => el.destroy());
   }
 }

@@ -7,7 +7,11 @@ import { getLocale, setLocale, t } from '../localization/i18n';
 import { debugApi } from '../verification/debug-api';
 import { panelW } from './menu-layout';
 import { buildOverlay } from './overlay';
-import { cosmeticsPanelH, cosmeticsRowOffset, SETTINGS_PANEL_H, settingsRowOffset, SettingsRow } from './settings-layout';
+import {
+  AccessRow, ACCESS_ROWS, AdvancedRow, ADVANCED_ROWS, AudioRow, AUDIO_ROWS,
+  cosmeticsPanelH, cosmeticsRowOffset, GameRow, GAME_ROWS, MAIN_ROWS,
+  panelHForRows, rowOffset, SettingsRow,
+} from './settings-layout';
 import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
 
 // Row y-coordinates (settingsRowY, cosmeticsRowY, SettingsRow, ...) live in ./settings-layout,
@@ -46,7 +50,8 @@ function copyPlaylog(onDone: (ok: boolean) => void): void {
   }
 }
 
-/** Opens the settings overlay (mute, sfx/music volume, reduced motion, language, reset data). Returns a close() fn. */
+/** Opens the settings overlay: a section menu (Game / Audio / Accessibility / Cosmetics /
+ * Advanced) over one sub-panel each. Returns a close() fn. */
 export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): () => void {
   let objs: Phaser.GameObjects.GameObject[] = [];
   const close = (): void => {
@@ -55,133 +60,133 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     onClosed();
   };
 
-  const showMain = (): void => {
+  /** Shared chrome for every panel in this overlay: frame, title, and a row-y helper. */
+  const openPanel = (rows: number, title: string): { cx: number; rowY: (i: number) => number } => {
     for (const o of objs) o.destroy();
     objs = [];
-    const w = panelW(200);
-    // Fixed height: 14 rows at ROW_PITCH must fit inside the 270-unit world, so the panel frame
-    // and its title stay on screen. Large text scales the glyphs inside the rows, not the panel.
-    const h = SETTINGS_PANEL_H; // 14 rows at ROW_PITCH — see src/ui/settings-layout.ts
-    const base = buildOverlay(scene, w, h, close);
+    const h = panelHForRows(rows);
+    const base = buildOverlay(scene, panelW(200), h, close);
     objs.push(...base.objs);
-    const { cx, top } = base;
+    objs.push(label(scene, base.cx, base.top + 10, title, 9, '#f7d23e').setDepth(510));
+    return { cx: base.cx, rowY: (i: number) => base.top + rowOffset(i) };
+  };
 
-    objs.push(label(scene, cx, top + 10, t('settings.title'), 9, '#f7d23e').setDepth(510));
+  /** Wooden row button — every settings row is one of these, so sizes stay consistent. */
+  const rowBtn = (
+    x: number,
+    y: number,
+    text: string,
+    onClick: () => void,
+    opts: { w?: number; size?: number; color?: number; tooltip?: string } = {},
+  ): PixelButton => {
+    const btn = new PixelButton(scene, x, y, text, onClick, {
+      textureBase: 'btn-comprar', w: opts.w ?? 170, h: 16, size: opts.size ?? 6,
+      ...(opts.color === undefined ? {} : { color: opts.color }),
+      ...(opts.tooltip === undefined ? {} : { tooltip: opts.tooltip }),
+    }).setDepth(510);
+    objs.push(btn);
+    return btn;
+  };
 
-    // Row positions come from settings-layout's SettingsRow enum, never a local walk: the e2e
-    // spec clicks these rows by the same formula, so adding a row can't silently shift them.
-    const rowY = (row: SettingsRow): number => top + settingsRowOffset(row);
-    let y = rowY(SettingsRow.Mute);
-    const muteBtn = new PixelButton(
-      scene,
-      cx,
-      y,
-      settings.get().muted ? t('settings.unmute') : t('settings.mute'),
-      () => {
-        settings.update({ muted: !settings.get().muted });
-        muteBtn.setLabel(settings.get().muted ? t('settings.unmute') : t('settings.mute'));
-      },
-      { textureBase: 'btn-comprar', w: 150, h: 16, size: 7 },
-    ).setDepth(510);
-    objs.push(muteBtn);
+  /** "Label: On/Off" toggle bound to one boolean settings field. */
+  const toggleBtn = (
+    x: number,
+    y: number,
+    labelKey: string,
+    get: () => boolean,
+    set: (v: boolean) => void,
+    opts: { tooltip?: string; rebuild?: () => void } = {},
+  ): void => {
+    const caption = (): string => `${t(labelKey)}: ${get() ? t('settings.on') : t('settings.off')}`;
+    const btn = rowBtn(x, y, caption(), () => {
+      set(!get());
+      if (opts.rebuild) opts.rebuild();
+      else btn.setLabel(caption());
+    }, opts.tooltip === undefined ? {} : { tooltip: opts.tooltip });
+  };
 
-    y = rowY(SettingsRow.Sfx);
-    objs.push(label(scene, cx - 84, y, t('settings.sfx'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
-    objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().sfxVolume, (v) => settings.update({ sfxVolume: v })));
+  /**
+   * Main panel: a mute shortcut plus one row per section. Everything else lives one tap deeper,
+   * so the first thing a player sees is five plain choices instead of the whole option surface.
+   */
+  const showMain = (): void => {
+    const { cx, rowY } = openPanel(MAIN_ROWS, t('settings.title'));
 
-    y = rowY(SettingsRow.Music);
-    objs.push(label(scene, cx - 84, y, t('settings.music'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
-    objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().musicVolume, (v) => settings.update({ musicVolume: v })));
+    const muteCaption = (): string => (settings.get().muted ? t('settings.unmute') : t('settings.mute'));
+    const muteBtn = rowBtn(cx, rowY(SettingsRow.Mute), muteCaption(), () => {
+      settings.update({ muted: !settings.get().muted });
+      muteBtn.setLabel(muteCaption());
+    }, { w: 150, size: 7 });
 
-    y = rowY(SettingsRow.MusicEnabled);
-    const musicBtn = new PixelButton(
-      scene,
-      cx,
-      y,
-      `${t('settings.music')}: ${settings.get().musicEnabled ? t('settings.on') : t('settings.off')}`,
-      () => {
-        settings.update({ musicEnabled: !settings.get().musicEnabled });
-        musicBtn.setLabel(`${t('settings.music')}: ${settings.get().musicEnabled ? t('settings.on') : t('settings.off')}`);
-      },
-      { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 },
-    ).setDepth(510);
-    objs.push(musicBtn);
+    rowBtn(cx, rowY(SettingsRow.Game), t('settings.section.game'), showGame, { w: 150, size: 7 });
+    rowBtn(cx, rowY(SettingsRow.Audio), t('settings.section.audio'), showAudio, { w: 150, size: 7 });
+    rowBtn(cx, rowY(SettingsRow.Access), t('settings.section.access'), showAccess, { w: 150, size: 7 });
+    rowBtn(cx, rowY(SettingsRow.Cosmetics), t('cosmetics.title'), showCosmetics, { w: 150, size: 7 });
+    // Replay seed, test-log export and the destructive reset all sit behind this one row: they
+    // are testing affordances, and mixing them into the player-facing list made the whole screen
+    // look like a debug menu.
+    rowBtn(cx, rowY(SettingsRow.Advanced), t('settings.advanced'), showAdvanced, { w: 150, size: 7, color: 0x8a7f68 });
+    rowBtn(cx, rowY(SettingsRow.Close), t('settings.close'), close, { w: 90, size: 7 });
+  };
 
-    y = rowY(SettingsRow.MusicContext);
-    const contextBtn = new PixelButton(
-      scene,
-      cx,
-      y,
-      `${t('settings.musicContext')}: ${settings.get().musicContextAware ? t('settings.on') : t('settings.off')}`,
-      () => {
-        settings.update({ musicContextAware: !settings.get().musicContextAware });
-        contextBtn.setLabel(`${t('settings.musicContext')}: ${settings.get().musicContextAware ? t('settings.on') : t('settings.off')}`);
-      },
-      { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 },
-    ).setDepth(510);
-    objs.push(contextBtn);
+  const showGame = (): void => {
+    const { cx, rowY } = openPanel(GAME_ROWS, t('settings.section.game'));
 
-    y = rowY(SettingsRow.Motion);
-    const motionBtn = new PixelButton(
-      scene,
-      cx,
-      y,
-      `${t('settings.reducedMotion')}: ${settings.get().reducedMotion ? t('settings.on') : t('settings.off')}`,
-      () => {
-        settings.update({ reducedMotion: !settings.get().reducedMotion });
-        motionBtn.setLabel(`${t('settings.reducedMotion')}: ${settings.get().reducedMotion ? t('settings.on') : t('settings.off')}`);
-      },
-      { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 },
-    ).setDepth(510);
-    objs.push(motionBtn);
-
-    y = rowY(SettingsRow.BatterySaver);
-    const batteryBtn = new PixelButton(
-      scene,
-      cx,
-      y,
-      `${t('settings.batterySaver')}: ${settings.get().batterySaver ? t('settings.on') : t('settings.off')}`,
-      () => {
-        settings.update({ batterySaver: !settings.get().batterySaver });
-        batteryBtn.setLabel(`${t('settings.batterySaver')}: ${settings.get().batterySaver ? t('settings.on') : t('settings.off')}`);
-      },
-      { textureBase: 'btn-comprar', w: 170, h: 16, size: 6, tooltip: t('settings.batterySaverHint') },
-    ).setDepth(510);
-    objs.push(batteryBtn);
-
-    y = rowY(SettingsRow.LargeText);
-    const largeTextBtn = new PixelButton(
-      scene,
-      cx,
-      y,
-      `${t('settings.largeText')}: ${settings.get().largeText ? t('settings.on') : t('settings.off')}`,
-      () => {
-        settings.update({ largeText: !settings.get().largeText });
-        showMain(); // font scale changed — full rebuild picks up new sizes/panel height
-      },
-      { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 },
-    ).setDepth(510);
-    objs.push(largeTextBtn);
-
-    y = rowY(SettingsRow.HelperMode);
-    const helperModeLabel = (): string => `${t('settings.helperMode')}: ${t(`settings.helperMode.${settings.helperMode()}`)}`;
-    const helperModeBtn = new PixelButton(scene, cx, y, helperModeLabel(), () => {
+    const helperCaption = (): string => `${t('settings.helperMode')}: ${t(`settings.helperMode.${settings.helperMode()}`)}`;
+    const helperBtn = rowBtn(cx, rowY(GameRow.HelperMode), helperCaption(), () => {
       settings.update({ helperMode: cycleHelperMode(settings.helperMode()) });
-      helperModeBtn.setLabel(helperModeLabel());
-    }, { textureBase: 'btn-comprar', w: 170, h: 16, size: 6 }).setDepth(510);
-    objs.push(helperModeBtn);
+      helperBtn.setLabel(helperCaption());
+    });
 
-    y = rowY(SettingsRow.Lang);
-    const langBtn = new PixelButton(scene, cx, y, t('menu.language'), () => {
+    rowBtn(cx, rowY(GameRow.Lang), t('menu.language'), () => {
       const next = getLocale() === 'pt' ? 'en' : 'pt';
       setLocale(next);
       settings.update({ locale: next });
-      showMain();
-    }, { textureBase: 'btn-comprar', w: 150, h: 16, size: 7 }).setDepth(510);
-    objs.push(langBtn);
+      showGame();
+    }, { w: 150, size: 7 });
 
-    y = rowY(SettingsRow.Export);
-    const exportBtn = new PixelButton(scene, cx, y, t('settings.exportLog'), () => {
+    rowBtn(cx, rowY(GameRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
+  };
+
+  const showAudio = (): void => {
+    const { cx, rowY } = openPanel(AUDIO_ROWS, t('settings.section.audio'));
+
+    let y = rowY(AudioRow.Sfx);
+    objs.push(label(scene, cx - 84, y, t('settings.sfx'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
+    objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().sfxVolume, (v) => settings.update({ sfxVolume: v })));
+
+    y = rowY(AudioRow.Music);
+    objs.push(label(scene, cx - 84, y, t('settings.music'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
+    objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().musicVolume, (v) => settings.update({ musicVolume: v })));
+
+    toggleBtn(cx, rowY(AudioRow.MusicEnabled), 'settings.music',
+      () => settings.get().musicEnabled, (v) => settings.update({ musicEnabled: v }));
+    toggleBtn(cx, rowY(AudioRow.MusicContext), 'settings.musicContext',
+      () => settings.get().musicContextAware, (v) => settings.update({ musicContextAware: v }));
+
+    rowBtn(cx, rowY(AudioRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
+  };
+
+  const showAccess = (): void => {
+    const { cx, rowY } = openPanel(ACCESS_ROWS, t('settings.section.access'));
+
+    toggleBtn(cx, rowY(AccessRow.Motion), 'settings.reducedMotion',
+      () => settings.get().reducedMotion, (v) => settings.update({ reducedMotion: v }));
+    toggleBtn(cx, rowY(AccessRow.BatterySaver), 'settings.batterySaver',
+      () => settings.get().batterySaver, (v) => settings.update({ batterySaver: v }),
+      { tooltip: t('settings.batterySaverHint') });
+    // Large text rescales every glyph in the overlay, so this one rebuilds the whole sub-panel
+    // instead of just relabelling its own button.
+    toggleBtn(cx, rowY(AccessRow.LargeText), 'settings.largeText',
+      () => settings.get().largeText, (v) => settings.update({ largeText: v }), { rebuild: showAccess });
+
+    rowBtn(cx, rowY(AccessRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
+  };
+
+  const showAdvanced = (): void => {
+    const { cx, rowY } = openPanel(ADVANCED_ROWS, t('settings.advanced'));
+
+    const exportBtn = rowBtn(cx, rowY(AdvancedRow.Export), t('settings.exportLog'), () => {
       copyPlaylog((ok) => {
         // Panel may have closed (or rebuilt for a settings change) before this callback runs —
         // never touch a destroyed button.
@@ -189,29 +194,15 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
         exportBtn.setLabel(ok ? t('settings.exportLogCopied') : t('settings.exportLogFailed'));
         scene.time.delayedCall(1500, () => exportBtn.active && exportBtn.setLabel(t('settings.exportLog')));
       });
-    }, { textureBase: 'btn-comprar', w: 170, h: 16, size: 7 }).setDepth(510);
-    objs.push(exportBtn);
+    }, { size: 7 });
 
-    y = rowY(SettingsRow.Cosmetics);
-    objs.push(
-      new PixelButton(scene, cx, y, t('cosmetics.title'), showCosmetics, {
-        textureBase: 'btn-comprar', w: 150, h: 16, size: 7,
-      }).setDepth(510),
-    );
+    rowBtn(cx, rowY(AdvancedRow.ResetData), t('settings.resetData'), showResetConfirm, {
+      w: 150, size: 7, color: DANGER_TINT,
+    });
 
-    y = rowY(SettingsRow.ResetData);
-    objs.push(
-      new PixelButton(scene, cx, y, t('settings.resetData'), showResetConfirm, {
-        textureBase: 'btn-comprar', w: 150, h: 16, size: 7, color: DANGER_TINT,
-      }).setDepth(510),
-    );
+    objs.push(label(scene, cx, rowY(AdvancedRow.Version), `v${__APP_VERSION__}`, 7, '#8a7f68').setDepth(510));
 
-    y = rowY(SettingsRow.Close);
-    objs.push(
-      new PixelButton(scene, cx, y, t('settings.close'), close, {
-        textureBase: 'btn-comprar', w: 90, h: 16, size: 7,
-      }).setDepth(510),
-    );
+    rowBtn(cx, rowY(AdvancedRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
   };
 
   /** Replaces the main panel content with a Yes/No confirm — Yes wipes the save and reloads, No returns to the main panel. */

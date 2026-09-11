@@ -7,7 +7,7 @@ import { editorZones, meldListRows, meldListRowY, MELD_LIST_ROW_H } from '../src
 import { computeMeldLayout } from '../src/table/layout';
 import { ZOOM_FLOORS } from '../src/table/zoom';
 import { gameRegions, type GameRegions } from '../src/ui/regions';
-import { cosmeticsRowY, settingsRowY, SettingsRow } from '../src/ui/settings-layout';
+import { advancedRowY, AdvancedRow, audioRowY, AudioRow, cosmeticsRowY, settingsRowY, SettingsRow } from '../src/ui/settings-layout';
 import { pickProfile } from '../src/ui/viewport';
 
 const OUT_DIR = 'docs/screenshots';
@@ -286,8 +286,11 @@ test('reset-data: settings APAGAR DADOS + confirm clears the versioned save and 
   await page.mouse.click(mx, my);
   const savedBefore = await page.evaluate(() => localStorage.getItem('mexe-save'));
   expect(savedBefore).not.toBeNull();
-  // "APAGAR DADOS" button
-  const [dx, dy] = toScreen(240, settingsRowY(SettingsRow.ResetData));
+  // "APAGAR DADOS" now lives one level down, under ADVANCED — open that sub-panel first.
+  const [ax, ay] = toScreen(240, settingsRowY(SettingsRow.Advanced));
+  await page.mouse.click(ax, ay);
+  await page.waitForTimeout(150);
+  const [dx, dy] = toScreen(240, advancedRowY(AdvancedRow.ResetData));
   await page.mouse.click(dx, dy);
   // showResetConfirm() destroys and rebuilds the whole panel into a Yes/No dialog — the same
   // rebuild-mid-click race as the cosmetics test below, so retry the "Sim" click until its effect
@@ -1014,23 +1017,36 @@ test('english pass: rule-reason and server-error copy are translated, not bare k
 const TABLE_THEME_ROW_Y = cosmeticsRowY(0); // src/ui/settings-layout.ts: table theme is row 0
 const CYCLE_BTN = toScreen(286, TABLE_THEME_ROW_Y); // row's cycle button, cx(240)+46
 
-/** Every click on a cosmetics cycle button fully rebuilds the panel's rows (showCosmetics()
- * destroys and recreates every row's button) — polling the persisted save for the actual effect,
- * rather than sleeping a fixed guess, is what makes a follow-up click on that panel reliable. */
-async function waitForCosmetic(p: Page, field: 'tableTheme' | 'cardBack' | 'avatar', expected: string): Promise<void> {
-  await p.waitForFunction(
-    ({ field, expected }) => {
-      const raw = localStorage.getItem('mexe-save');
-      if (!raw) return false;
-      const save = JSON.parse(raw) as { cosmetics?: Record<string, string> };
-      return save.cosmetics?.[field] === expected;
-    },
-    { field, expected },
-    { timeout: 5000 },
-  );
-}
-
 const THEMES = ['boteco', 'kitchen', 'quintal', 'feira'];
+
+/**
+ * Clicks a cosmetics cycle button until the persisted save reaches `want`. Every click destroys
+ * and rebuilds all of the panel's rows, so one can land in that gap and hit nothing at all —
+ * which is what the single-click version did intermittently under a loaded parallel run. Reading
+ * before each click (rather than clicking then reading) keeps a slow-but-successful click from
+ * being double-counted into an over-cycled value.
+ */
+async function clickCosmeticUntil(
+  p: Page,
+  [x, y]: [number, number],
+  field: 'tableTheme' | 'cardBack' | 'avatar',
+  want: string,
+): Promise<void> {
+  const read = (): Promise<string | null> =>
+    p.evaluate(
+      (f) => (JSON.parse(localStorage.getItem('mexe-save') ?? '{}') as { cosmetics?: Record<string, string> }).cosmetics?.[f] ?? null,
+      field,
+    );
+  await expect
+    .poll(async () => {
+      const now = await read();
+      if (now === want) return now;
+      await p.mouse.click(x, y);
+      await p.waitForTimeout(120);
+      return read();
+    }, { timeout: 5000 })
+    .toBe(want);
+}
 
 /** Opens Settings → Cosmetics from the menu and cycles the table-theme row `clicks` times. */
 async function setTableTheme(p: Page, clicks: number): Promise<void> {
@@ -1040,8 +1056,11 @@ async function setTableTheme(p: Page, clicks: number): Promise<void> {
   await p.mouse.click(cx, cy);
   await p.waitForTimeout(150);
   for (let i = 0; i < clicks; i++) {
-    await p.mouse.click(CYCLE_BTN[0], CYCLE_BTN[1]);
-    await waitForCosmetic(p, 'tableTheme', THEMES[i + 1]!);
+    // Each click destroys and rebuilds every row of the panel, so a click can land in the gap
+    // between the destroy and the rebuild and hit nothing at all — which is exactly what happens
+    // under a loaded parallel run. Retry until the persisted effect shows up, the same
+    // poll-the-effect pattern the reset-data test uses, instead of trusting one blind click.
+    await clickCosmeticUntil(p, CYCLE_BTN, 'tableTheme', THEMES[i + 1]!);
   }
 }
 /** Reads the mexe-save JSON, or the shipped defaults if nothing was ever written yet
@@ -1080,12 +1099,8 @@ test('cosmetics: avatar/card-back selection persists across a reload', async ({ 
   // card back row (index 1) and avatar row (index 2) cycle buttons, same x as the table row.
   // Each click rebuilds every row's button (showCosmetics()), so the avatar click must wait for
   // the card-back click's persisted effect first, or it can land mid-rebuild and hit nothing.
-  const [backX, backY] = toScreen(286, cosmeticsRowY(1));
-  await page.mouse.click(backX, backY); // back-0 -> back-1
-  await waitForCosmetic(page, 'cardBack', 'back-1');
-  const [avatarX, avatarY] = toScreen(286, cosmeticsRowY(2));
-  await page.mouse.click(avatarX, avatarY); // player -> cida
-  await waitForCosmetic(page, 'avatar', 'cida');
+  await clickCosmeticUntil(page, toScreen(286, cosmeticsRowY(1)), 'cardBack', 'back-1'); // back-0 -> back-1
+  await clickCosmeticUntil(page, toScreen(286, cosmeticsRowY(2)), 'avatar', 'cida'); // player -> cida
   const beforeReload = JSON.parse((await page.evaluate(() => localStorage.getItem('mexe-save')))!) as {
     cosmetics: { cardBack: string; avatar: string };
   };
@@ -1141,7 +1156,11 @@ test('music: "music by context" toggle switches the track pool selection mode', 
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   const before = (await readSave(page)).settings.musicContextAware;
   expect(before).toBe(true); // default on
-  const [bx, by] = toScreen(240, settingsRowY(SettingsRow.MusicContext));
+  // "music by context" moved into the AUDIO sub-panel.
+  const [sx, sy] = toScreen(240, settingsRowY(SettingsRow.Audio));
+  await page.mouse.click(sx, sy);
+  await page.waitForTimeout(150);
+  const [bx, by] = toScreen(240, audioRowY(AudioRow.MusicContext));
   await page.mouse.click(bx, by);
   const after = (await readSave(page)).settings.musicContextAware;
   expect(after).toBe(false);
@@ -1352,7 +1371,7 @@ test('helper-standard-feedback: standard mode never highlights on select, only o
   });
 });
 
-test('helper-expert-minimal: expert mode shows no select-highlight, no ghost preview, and a silent FEITO reason until pressed', async ({ page }) => {
+test('helper-expert-minimal: expert mode shows no select-highlight, no ghost preview, and no DONE checklist — but still says why DONE is blocked', async ({ page }) => {
   await capture(page, '/?seed=37&showcase=mexe&helper=expert', 'helper-expert-minimal', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
     expect(await p.evaluate(() => window.__MEXE__.mexe!.helperMode())).toBe('expert');
@@ -1363,6 +1382,11 @@ test('helper-expert-minimal: expert mode shows no select-highlight, no ghost pre
     expect(await p.evaluate(() => window.__MEXE__.mexe!.selectionTargets())).toEqual([]);
     await tapCard(page, 'clubs-13-d0'); // deselect
     // pressing the blocked FEITO still explains itself (onFeitoBlocked runs in every mode).
+    // The blocking reason is live in every mode (a greyed DONE with no explanation was the one
+    // thing expert mode used to hide); what expert drops is the three-line checklist.
+    const expertReason = await p.evaluate(() => window.__MEXE__.reasonLine);
+    expect(expertReason).not.toBe('');
+    expect(expertReason).not.toContain('\u2713');
     await p.keyboard.press('f');
     await p.waitForFunction(
       () => (window.__MEXE__.playlog.summary().invalidFeitoByReason['reason.groupDuplicateSuit'] ?? 0) > 0,
@@ -1509,7 +1533,14 @@ async function focusIconLogicalPos(p: Page, meldId: string, r: GameRegions = DES
   const MELD_PAD = 4;
   const pos = computeMeldLayout(melds, r.tableAreaW, r.tableAreaH).find((m) => m.meldId === meldId)!;
   const pad = MELD_PAD * pos.cardScale;
-  return { x: r.tableLeft + pos.x + pos.width - 3, y: r.tableTop + 6 + pos.y - pad + 2 };
+  // Centre of the magnifier glyph, not its top-right anchor point: the icon is drawn with
+  // origin(1, 0) at (zoneRect.right - 3, zoneRect.y + 2) and is ~7 units square, so the anchor
+  // itself sits on the icon's own corner — a tap there is one pixel from the card underneath.
+  const ICON_HALF = 3.5;
+  return {
+    x: r.tableLeft + pos.x + pos.width - 3 - ICON_HALF,
+    y: r.tableTop + 6 + pos.y - pad + 2 + ICON_HALF,
+  };
 }
 
 /** A logical point guaranteed to be empty table (a horizontal gap between two melds sharing a
@@ -1720,6 +1751,24 @@ test('meld-focus: opens a read-only large view of one meld with its invalid reas
     // dismiss by tapping outside the panel (top-left corner, well clear of the centered panel)
     await tapWorld(p, 4, 4);
     expect(await p.evaluate(() => window.__MEXE__.mexe!.focusedMeldId())).toBeNull();
+  });
+});
+
+test.describe('portrait beginner', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  // The DONE checklist only renders where the reason line has room to wrap (portrait and the
+  // touch-landscape strip — see GameScene.reasonLineText); desktop landscape's 72-unit reason
+  // column would stack three lines into mush, so it keeps the single top reason.
+  test('mobile-done-checklist: beginner mode spells out the three DONE conditions', async ({ page }) => {
+    await capture(page, '/?seed=37&showcase=mexe&helper=beginner', 'mobile-done-checklist', async (p) => {
+      await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+      await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']); // invalid: duplicate suit
+      const line = await p.evaluate(() => window.__MEXE__.reasonLine);
+      // one tick/cross per condition, plus the top blocking reason above them
+      expect(line.split('\n').filter((l) => l.startsWith('\u2713') || l.startsWith('\u2715')).length).toBe(3);
+      expect(line).toContain('\u2715'); // the invalid meld line is failing
+    });
   });
 });
 
