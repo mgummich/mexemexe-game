@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased — Phase 18 (multiplayer stability + abuse hardening)
+
+Online hardening pass over reconnect, seat ownership, protocol bounds, room
+cleanup and the client's online UX. No game-rule changes. See
+`docs/PHASE18_MULTIPLAYER_AUDIT.md`.
+
+- **Fixed: reconnecting onto another room no longer leaves the old room stuck.**
+  `reconnect` detached the socket from its previous seat but never told the room
+  manager, so that seat stayed `connected` with nothing attached — which hid the
+  room from the stalled-turn advance, from the sweep and from the idle backstop.
+  A member of a live match could hop away and strand everyone else in it
+  permanently. The hop now releases the old seat and tells that room
+  (`player_disconnected` + refreshed `room_state`).
+- **Fixed: a legal late-game proposal could be rejected as a malformed message.**
+  `parseClientMessage` capped `submit_turn` at 60 card ids, but a proposal carries
+  the whole draft table plus the cards being played, against a 108-card deck.
+  Cap raised to 120, so a large table rearrangement comes back as a proposal
+  result instead of a generic `bad_message` that made FEITO look dead.
+- **Fixed: a move pressed while the socket was down was dropped silently.**
+  `NetClient.submitTurn`/`drawEndTurn` now report that nothing went out, and the
+  board releases its submit lock with "Sua jogada não foi enviada. Reconecte e
+  tente de novo." instead of sitting locked until the pending timeout.
+- **Fixed: an expired session token trapped the online lobby.** The dead token
+  stayed in `sessionStorage` and was re-sent on every later entry, so the lobby
+  (and the retry) kept landing on the "session expired" screen. The client now
+  drops a token the server has rejected.
+- **Fixed: stale lobby presence.** Disconnect and reconnect now re-broadcast
+  `room_state`, which is what the lobby renders presence from.
+- **Added: the online lobby survives app sleep**, matching the in-match
+  behaviour — resync if the socket is still open, otherwise reconnect.
+- **Crash policy: an uncaught exception now exits the process** (status 1) rather
+  than serving rooms from unknown state; `docker-compose` already restarts it.
+  Per-room crash isolation is unchanged and still handles a single corrupt room.
+- The flood guard closes with `1008` (policy violation) instead of a bare close,
+  so a client can tell it apart from a network drop.
+- **New integration suite** `tests/server/index.integration.test.ts`: spawns the
+  real server and drives raw `ws` clients through malformed, oversized and
+  out-of-room frames, the failed-join and flood closes, the connection cap, seat
+  ownership and the room-hop regression, hand privacy in a real frame, room and
+  connection cleanup, and a clean-session stderr check.
+- `verify:multiplayer` now runs in CI as its own job.
+
 ## 1.6.0 — Audit fixes
 
 - Isolate reconnect sockets and harden connection limits.

@@ -178,7 +178,29 @@ receives an `error` with `code: 'room_closed'` and must return to the lobby.
 
 Any proposal that was in flight when the socket dropped is treated as never
 submitted: the server only mutates state on a fully validated message it has
-already processed, so there is no half-committed turn to recover.
+already processed, so there is no half-committed turn to recover. The same
+applies to a Mexe draft: it stays entirely on the client until FEITO, so a
+disconnect mid-draft loses the draft and nothing else — the reconnected view is
+the last committed state, byte-identical to the one before the drop
+(`tests/server/rooms.test.ts`, "a disconnect mid-turn discards only the
+client-side draft").
+
+A `reconnect` may arrive on a socket that is *already* holding a seat in another
+room (a different token, a second room joined on the same socket). That seat is
+released as part of the hop: the server marks it disconnected in the room
+manager, tells that room's remaining sockets (`player_disconnected` plus a
+refreshed `room_state`), and only then attaches the socket to its new seat.
+Detaching the socket alone is not enough — a seat left `connected` with no
+socket attached makes its room invisible to the stalled-turn advance (the active
+seat looks present), to the sweep (`anyConnected`) and to the idle backstop, so
+the room would sit stuck forever with its remaining players stranded
+(Phase 18 finding 1, regression-tested in
+`tests/server/index.integration.test.ts`).
+
+Seat presence changes — a disconnect, a reconnect, a hop — always re-broadcast
+`room_state` alongside the `player_disconnected`/`player_reconnected` event,
+because the lobby renders presence from `room_state` and would otherwise keep
+showing a stale marker.
 
 On the client, reconnect is **not** a persistent retry loop. `NetClient`
 attempts exactly one bounded reconnect (`RECONNECT_DELAY_MS` after an
@@ -298,6 +320,20 @@ Files:
   generation, turn validation and application, reconnect, sweep.
 - `server/connections.ts` — per-connection state, socket attach/detach/evict,
   the flood guard, and closing every socket attached to a reaped room.
+
+Payload bounds in `parseClientMessage`: a `submit_turn` carries the whole draft
+table plus the hand cards being played, so it is bounded by the deck
+(`2 x (52 + 2) = 108` cards under `DEFAULT_RULES`), not by a hand.
+`MAX_TOTAL_CARDS` is 120 for that reason — a lower cap rejected a legal
+late-game rearrangement of a large table as a generic `bad_message` instead of a
+proposal result, which made FEITO look dead (Phase 18 finding 2).
+
+Tests: `tests/server/rooms.test.ts` and `tests/server/connections.test.ts` cover
+the manager and the socket registry in isolation; `tests/server/index.integration.test.ts`
+covers `server/index.ts` itself by spawning the real process and driving raw
+`ws` clients — malformed/oversized/out-of-room frames, the failed-join and flood
+closes, the connection cap, seat ownership and the room-hop path, hand privacy in
+a real frame, and that a clean session writes nothing to stderr.
 
 Run commands: `npm run server` (start the WS server, `PORT` env var, default
 8787), `npm run test:server` (server unit suite), `npm run verify:multiplayer`

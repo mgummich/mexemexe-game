@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-10T20:54:43.235Z",
-  "roomCode": "R4CPB",
+  "generatedAt": "2026-09-11T06:27:35.065Z",
+  "roomCode": "NZWBJ",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-10T20:54:34.707Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":3,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-11T06:27:25.652Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":3,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -70,7 +70,15 @@
       },
       {
         "dir": "in",
+        "type": "room_state"
+      },
+      {
+        "dir": "in",
         "type": "player_reconnected"
+      },
+      {
+        "dir": "in",
+        "type": "room_state"
       },
       {
         "dir": "in",
@@ -78,7 +86,15 @@
       },
       {
         "dir": "in",
+        "type": "room_state"
+      },
+      {
+        "dir": "in",
         "type": "player_reconnected"
+      },
+      {
+        "dir": "in",
+        "type": "room_state"
       }
     ],
     "b": [
@@ -93,6 +109,10 @@
       {
         "dir": "in",
         "type": "state_sync"
+      },
+      {
+        "dir": "in",
+        "type": "room_state"
       },
       {
         "dir": "out",
@@ -160,7 +180,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "42XTM",
+    "code": "HTWQZ",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {

@@ -20,6 +20,31 @@ jobs:
       - run: npm run test
       - run: npm run build
 
+  multiplayer:
+    name: Multiplayer verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Chromium only: the multiplayer spec drives the protocol and the server, not rendering
+      # across engines (the cross-browser gate in the e2e job covers that).
+      - run: npx playwright install --with-deps chromium
+      # Spawns the real WS server and gates on server stderr, client console errors, accepted
+      # illegal proposals and missing screenshots (scripts/check-verify-multiplayer.mjs).
+      - run: npm run verify:multiplayer
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: multiplayer-artifacts
+          path: |
+            test-results/
+            docs/screenshots/verify-multiplayer-log.json
+          retention-days: 7
+
   e2e:
     name: Playwright e2e
     runs-on: ubuntu-latest

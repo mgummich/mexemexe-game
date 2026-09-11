@@ -429,7 +429,7 @@ export class GameScene extends Phaser.Scene {
    * player, and ask for a fresh authoritative snapshot rather than leaving a dead board. */
   private onOnlinePendingTimeout(): void {
     this.setOnlinePending(false);
-    this.onlineNoticeText?.setText(t('online.resyncing'));
+    this.setOnlineNotice(t('online.resyncing'));
     this.online?.client.requestResync();
     // The lock is read at render time, and the message that would normally trigger the next
     // render is the one that never came — so re-render here or the board stays visibly dead.
@@ -441,7 +441,7 @@ export class GameScene extends Phaser.Scene {
     if (view.rev < this.online.lastRev) return; // stale/out-of-order delivery — ignore
     this.online.lastRev = view.rev;
     this.setOnlinePending(false);
-    this.onlineNoticeText?.setText('');
+    this.setOnlineNotice('');
     const before = this.store.get();
     const actingSeat = before.activePlayerIndex;
     this.store = new GameStore(viewToState(view));
@@ -468,7 +468,7 @@ export class GameScene extends Phaser.Scene {
     if (this.onlineResyncing) return true; // already asked once for this snapshot — take it and move on
     this.onlineResyncing = true;
     this.setOnlinePending(true);
-    this.onlineNoticeText?.setText(t('online.resyncing'));
+    this.setOnlineNotice(t('online.resyncing'));
     this.online.client.requestResync();
     return false;
   }
@@ -521,7 +521,7 @@ export class GameScene extends Phaser.Scene {
    * Either way: a clear localized notice, then back to the menu — never a silent scene switch. */
   private onOnlineTerminalError(msg: ErrorMsg): void {
     if (!this.online || (msg.code !== 'room_closed' && msg.code !== 'invalid_token')) return;
-    this.onlineNoticeText?.setText(msg.code === 'room_closed' ? t('online.roomClosed') : t('online.connectionLost'));
+    this.setOnlineNotice(msg.code === 'room_closed' ? t('online.roomClosed') : t('online.connectionLost'));
     this.time.delayedCall(2000, () => {
       if (!this.online) return; // scene already moved on
       this.online.client.disconnect();
@@ -532,8 +532,8 @@ export class GameScene extends Phaser.Scene {
 
   private onOnlineOpponentEvent(seat: number, disconnected: boolean): void {
     if (!this.online || seat === this.localSeat || !this.onlineNoticeText) return;
-    this.onlineNoticeText.setText(disconnected ? t('online.opponentDisconnected') : t('online.opponentReconnected'));
-    if (!disconnected) this.time.delayedCall(3000, () => this.onlineNoticeText?.setText(''));
+    this.setOnlineNotice(disconnected ? t('online.opponentDisconnected') : t('online.opponentReconnected'));
+    if (!disconnected) this.time.delayedCall(3000, () => this.setOnlineNotice(''));
   }
 
   /** Corner connection dot +, on an unexpected close, one C1 reconnect attempt ("reconnecting..."),
@@ -544,11 +544,11 @@ export class GameScene extends Phaser.Scene {
       status === 'open' ? 0x3ec06a : status === 'connecting' || status === 'reconnecting' ? 0xf7d23e : 0xd83a3a;
     this.onlineStatusDot.setFillStyle(color);
     if (status === 'reconnecting') {
-      this.onlineNoticeText?.setText(t('online.reconnecting'));
+      this.setOnlineNotice(t('online.reconnecting'));
       return;
     }
     if (status === 'closed' || status === 'error') {
-      this.onlineNoticeText?.setText(t('online.connectionLost'));
+      this.setOnlineNotice(t('online.connectionLost'));
       this.time.delayedCall(2500, () => {
         if (!this.online) return; // scene already moved on
         this.online.client.disconnect();
@@ -984,12 +984,28 @@ export class GameScene extends Phaser.Scene {
       // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
       // presence — not just its color — is the "you are online" tell (task: never ambiguous).
       const onlineLabel = label(this, this.r.onlineDot.x + 10, this.r.onlineDot.y, t('game.onlineBadge'), 6, '#8a7f68').setOrigin(0, 0.5).setDepth(600);
+      // Backing strip, not bare text: the notice sits over baked-in table props (napkin, mug) and
+      // the longer connection sentences were unreadable against them. Hidden entirely while empty,
+      // so the strip never shows as a stray blob (see setOnlineNotice).
       this.onlineNoticeText = this.add
-        .text(this.r.onlineNotice.x, this.r.onlineNotice.y, '', { ...fontStyle(8, '#f0c040'), align: 'center', wordWrap: { width: this.r.onlineNotice.wrap } })
+        .text(this.r.onlineNotice.x, this.r.onlineNotice.y, '', {
+          ...fontStyle(8, '#f0c040'),
+          align: 'center',
+          wordWrap: { width: this.r.onlineNotice.wrap },
+          backgroundColor: 'rgba(26,15,10,0.85)',
+          padding: { x: 4, y: 2 },
+        })
         .setOrigin(0.5)
-        .setDepth(600);
+        .setDepth(600)
+        .setVisible(false);
       this.staticUi.push(this.onlineStatusDot, onlineLabel, this.onlineNoticeText);
     }
+  }
+
+  /** Single set point for the online notice: an empty message hides the whole object, so its
+   * backing strip never lingers as an empty box over the table. */
+  private setOnlineNotice(message: string): void {
+    this.onlineNoticeText?.setText(message).setVisible(message !== '');
   }
 
   /** Re-lays-out the live scene on an orientation/pointer flip (bus 'viewport:changed') without
@@ -1007,7 +1023,7 @@ export class GameScene extends Phaser.Scene {
     const savedNotice = this.onlineNoticeText?.text ?? '';
     for (const o of this.staticUi) o.destroy();
     this.buildStaticUi();
-    this.onlineNoticeText?.setText(savedNotice);
+    this.setOnlineNotice(savedNotice);
     this.renderAll();
   }
 
@@ -1275,8 +1291,17 @@ export class GameScene extends Phaser.Scene {
     const draft = this.editor.getDraft();
     const melds: SubmitTurnMeld[] = draft.melds.map((m) => ({ id: m.id, cardIds: m.cards.map((c) => c.id) }));
     this.setOnlinePending(true);
-    this.online.client.submitTurn(this.online.lastRev, melds);
+    if (this.online.client.submitTurn(this.online.lastRev, melds) === null) this.onOnlineSendFailed();
     this.renderAll();
+  }
+
+  /** The socket was not open, so the proposal never left the device. Release the submit lock and
+   * say so, instead of leaving the board locked until the pending timeout expires on a reply that
+   * can never arrive. The draft itself is untouched — the player can retry once reconnected. */
+  private onOnlineSendFailed(): void {
+    this.setOnlinePending(false);
+    this.setOnlineNotice(t('online.sendFailed'));
+    playSfx(this, 'sfx-invalid');
   }
 
   /** COMPRAR online: same submit-and-wait discipline as FEITO. */
@@ -1284,7 +1309,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.editor || !this.online || this.onlinePending) return;
     playSfx(this, 'sfx-draw');
     this.setOnlinePending(true);
-    this.online.client.drawEndTurn(this.online.lastRev);
+    if (this.online.client.drawEndTurn(this.online.lastRev) === null) this.onOnlineSendFailed();
     this.renderAll();
   }
 

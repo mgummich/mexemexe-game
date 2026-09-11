@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
 import { bus } from '../core/events';
+import { onAppVisible } from '../core/lifecycle';
 import { isOffline, onConnectivityChange } from '../core/pwa';
 import { t } from '../localization/i18n';
 import { NetClient, type ConnStatus } from '../net/client';
@@ -66,6 +67,17 @@ export class OnlineScene extends Phaser.Scene {
     // Connectivity regained just re-renders (buttons re-enable) — never auto-connects behind
     // the player's back. If the offline error put them here, drop back to 'idle' so they can retry.
     this.unsubs.push(
+      // Mobile browsers suspend sockets and timers while backgrounded, so a lobby left on a phone
+      // comes back with a socket that is closed (or looks open but is dead) and a stale status
+      // line. Reuse the existing connect() path — which drives the same status copy a first
+      // connection does — rather than inventing a separate resume state. Never auto-connects when
+      // the player is offline or deliberately sitting on the offline error screen.
+      onAppVisible(() => {
+        if (isOffline() || this.offlineError) return;
+        const s = this.client.getStatus();
+        if (s === 'open') this.client.requestResync();
+        else if (s !== 'connecting' && s !== 'reconnecting') this.client.connect();
+      }),
       onConnectivityChange((offline) => {
         if (!offline && this.offlineError) {
           this.offlineError = false;

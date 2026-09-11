@@ -161,6 +161,10 @@ export class NetClient {
       }
       this.pushTrace('in', msg.type);
       if (msg.type === 'room_joined') writeToken(msg.token);
+      // The stored token is provably dead: keep it and every later entry into the online lobby
+      // re-sends it, gets invalid_token again, and lands on the same error screen — including
+      // the retry. Dropping it turns that into a normal, joinable lobby.
+      if (msg.type === 'error' && msg.code === 'invalid_token') clearToken();
       if (msg.type === 'proposal_rejected') playlog.record('net:reject', { reason: msg.reasons[0] ?? '' });
       const set = this.listeners.get(msg.type);
       if (set) for (const cb of set) cb(msg);
@@ -216,17 +220,17 @@ export class NetClient {
     this.sendRaw({ v: PROTOCOL_VERSION, type: 'start_game', reqId: this.nextReqId() });
   }
 
-  /** Returns the reqId used, so a caller could correlate a later rejection if it ever needs to. */
-  submitTurn(rev: number, melds: SubmitTurnMeld[]): string {
+  /** Returns the reqId used, so a caller could correlate a later rejection if it ever needs to,
+   * or null when the socket was not open and the proposal never went out. */
+  submitTurn(rev: number, melds: SubmitTurnMeld[]): string | null {
     const reqId = this.nextReqId();
-    this.sendRaw({ v: PROTOCOL_VERSION, type: 'submit_turn', reqId, rev, melds });
-    return reqId;
+    return this.sendRaw({ v: PROTOCOL_VERSION, type: 'submit_turn', reqId, rev, melds }) ? reqId : null;
   }
 
-  drawEndTurn(rev: number): string {
+  /** Null when the socket was not open — same contract as `submitTurn`. */
+  drawEndTurn(rev: number): string | null {
     const reqId = this.nextReqId();
-    this.sendRaw({ v: PROTOCOL_VERSION, type: 'draw_end_turn', reqId, rev });
-    return reqId;
+    return this.sendRaw({ v: PROTOCOL_VERSION, type: 'draw_end_turn', reqId, rev }) ? reqId : null;
   }
 
   /** Ask the server to re-send authoritative state. Used when the local reconstruction's hash
@@ -251,13 +255,18 @@ export class NetClient {
     return `r${++this.reqCounter}`;
   }
 
-  private sendRaw(msg: ClientMessage): void {
+  /** Returns false when nothing left the device (socket not open, or send threw). Callers that
+   * then wait for a server reply must surface that instead of waiting for an answer that can
+   * never arrive. */
+  private sendRaw(msg: ClientMessage): boolean {
     this.pushTrace('out', msg.type);
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
     try {
       this.ws.send(JSON.stringify(msg));
+      return true;
     } catch (err) {
       this.setStatus('error', String(err));
+      return false;
     }
   }
 
