@@ -102,7 +102,7 @@ jobs:
       # docs/screenshots/verify-log-parts/ (see e2e/screenshot.spec.ts's afterAll) — the second
       # pass sets MEXE_KEEP_VERIFY_LOG so global-setup.ts doesn't wipe the first pass's shards.
       - run: npx playwright test e2e/screenshot.spec.ts --grep-invert @perf
-      - run: MEXE_KEEP_VERIFY_LOG=1 MEXE_FPS_GATE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1
+      - run: MEXE_KEEP_VERIFY_LOG=1 MEXE_FPS_GATE=1 MEXE_NO_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1
       # This gate (console/page errors, screenshot exists, fps floors, EXPECTED_SHOTS present)
       # never ran in CI before — only locally — so console errors or missing screenshots were
       # only ever caught by hand.

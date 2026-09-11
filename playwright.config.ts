@@ -10,7 +10,9 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:4173',
     viewport: { width: 1280, height: 720 },
-    trace: process.env.CI ? 'retain-on-failure' : 'off',
+    // MEXE_NO_TRACE disables tracing for the serial @perf pass: the tracer's own overhead
+    // shows up in the fps the game reports, which is exactly what those tests measure.
+    trace: process.env.CI && !process.env.MEXE_NO_TRACE ? 'retain-on-failure' : 'off',
     screenshot: 'only-on-failure',
   },
   webServer: {
