@@ -10,7 +10,15 @@
  * together — which read as a debug screen and left no room for the panel to grow.
  */
 import { settings } from '../core/settings';
-import { cy } from './menu-layout';
+import { view } from './viewport';
+
+/** Vertical centre of the current world — same value menu-layout's `cy()` returns. Computed from
+ * viewport.ts directly rather than imported from menu-layout, which pulls in Phaser at module
+ * scope: this module has to stay loadable from Node (unit tests and the cross-browser spec both
+ * import these row formulas instead of re-deriving them by hand, which is how they last drifted). */
+function cy(): number {
+  return view().h / 2;
+}
 
 /** Vertical pitch between settings rows. */
 export const ROW_PITCH = 17;
