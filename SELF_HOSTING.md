@@ -111,3 +111,23 @@ npm run server        # listens on :8787, PORT= to override
 - Run the server with `MEXE_ENV=production` in a real deployment, and see
   `docs/OPERATIONS.md` for the full environment-variable reference, log format,
   health-endpoint reading, troubleshooting and rollback.
+
+### Service worker cache and deploys
+
+The client's service worker (`public/sw.js`) keys its cache on
+`mexe-v<package.json version>` — the version is stamped into `dist/sw.js` at
+build time by a Vite plugin. `activate` deletes every cache that isn't the
+current one.
+
+That means **bump `package.json`'s version for any deploy that changes files
+under `public/assets/`**. The JS bundles are content-hashed and `index.html` is
+fetched network-first, so those two always roll forward on their own. Art, SFX
+and fonts are not hashed: they live at a fixed URL and are served cache-first,
+so a redeploy of the same version keeps serving the previously cached copy to
+anyone who already loaded the game.
+
+Players are never force-reloaded. A new build installs as a waiting worker and
+the app shows "Nova versão disponível / New version available"; the handover
+happens only when the player taps it, so an in-progress match is never
+interrupted. A player who never taps picks the update up on their next cold
+start of the app.
