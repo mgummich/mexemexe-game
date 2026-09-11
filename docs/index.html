@@ -131,7 +131,7 @@ async function load() {
     if (!res.ok) throw new Error(res.status);
     content.innerHTML = marked.parse(await res.text());
   } catch (e) {
-    content.innerHTML = '<p>Failed to load ' + file + '</p>';
+    content.replaceChildren(Object.assign(document.createElement('p'), { textContent: 'Failed to load ' + file }));
   }
 }
 load();
