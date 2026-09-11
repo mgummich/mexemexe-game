@@ -35,7 +35,7 @@ jobs:
           cp README.md ARCHITECTURE.md ART_DIRECTION.md AUDIO_DIRECTION.md \
              CHANGELOG.md SELF_HOSTING.md CONTRIBUTING.md site/docs/
           cp -r docs/screenshots site/docs/screenshots
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
