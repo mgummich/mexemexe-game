@@ -75,7 +75,13 @@ you push it.
 
 Pushing the tag runs `.github/workflows/release.yml`, which re-runs lint, tests
 and the build, checks the tag matches `package.json`, and publishes a GitHub
-Release whose body is that CHANGELOG section verbatim. So the version lives in
+Release. Its body is rendered from that CHANGELOG section by
+`node scripts/release.mjs --notes X.Y.Z`: a stat line, play/docs links, the
+bullets regrouped into Fixed / Added / Changed / Docs with the phase each came
+from, then the verbatim section folded into a `<details>` block and a compare
+link. That grouping reads the `- **Fixed: what broke.** why` bullet convention,
+so keep writing them that way — anything unrecognized still shows up, under
+"Also". `--raw-notes X.Y.Z` prints the section unrendered. So the version lives in
 exactly one place: `package.json`'s version feeds the git tag, the release notes
 and — via `vite.config.ts` — the service worker's cache key, which is what makes
 a deploy reach players who already have the game cached.
