@@ -5,6 +5,13 @@ export interface AssetDef {
   path: string;
   w: number; // logical display size
   h: number;
+  /**
+   * True for textures that are drawn at runtime (see compose-cards.ts) and have no file on
+   * disk. BootScene must not probe or load these — 53 guaranteed-miss round-trips on every
+   * cold boot — but they stay in the manifest so the fallback sweep still covers them if
+   * composition ever fails.
+   */
+  composed?: boolean;
 }
 
 export const CARD_W = 24;
@@ -14,14 +21,19 @@ function def(key: string, path: string, w: number, h: number): AssetDef {
   return { key, path, w, h };
 }
 
+/** Same as def(), for a texture composed at runtime instead of loaded from `path`. */
+function composed(key: string, path: string, w: number, h: number): AssetDef {
+  return { key, path, w, h, composed: true };
+}
+
 export function buildManifest(): AssetDef[] {
   const out: AssetDef[] = [];
   for (const suit of SUITS) {
     for (let rank = 1; rank <= 13; rank++) {
-      out.push(def(`card-${suit}-${rank}`, `assets/cards/${suit}-${rank}.png`, CARD_W, CARD_H));
+      out.push(composed(`card-${suit}-${rank}`, `assets/cards/${suit}-${rank}.png`, CARD_W, CARD_H));
     }
   }
-  out.push(def('card-joker', 'assets/cards/joker.png', CARD_W, CARD_H));
+  out.push(composed('card-joker', 'assets/cards/joker.png', CARD_W, CARD_H));
   out.push(def('card-blank', 'assets/cards/blank.png', CARD_W, CARD_H));
   out.push(def('card-back-0', 'assets/cards/back-0.png', CARD_W, CARD_H));
   out.push(def('card-back-1', 'assets/cards/back-1.png', CARD_W, CARD_H));
@@ -49,7 +61,6 @@ export function buildManifest(): AssetDef[] {
   out.push(def('btn-feito-normal', 'assets/ui/feito-normal.png', 56, 20));
   out.push(def('btn-comprar-normal', 'assets/ui/comprar-normal.png', 56, 20));
   out.push(def('btn-small-normal', 'assets/ui/btn-small-normal.png', 18, 18));
-  out.push(def('panel', 'assets/ui/panel.png', 48, 48));
   out.push(def('banner-victory', 'assets/ui/banner-victory.png', 160, 48));
   out.push(def('emote-bubble', 'assets/ui/emote-bubble.png', 20, 18));
   for (const name of ['excited', 'thinking', 'annoyed', 'happy', 'sleepy', 'confident']) {
@@ -59,9 +70,6 @@ export function buildManifest(): AssetDef[] {
   out.push(def('sparkle', 'assets/effects/sparkle.png', 8, 8));
   for (const suit of SUITS) {
     out.push(def(`suit-${suit}`, `assets/ui/suit-${suit}.png`, 8, 8));
-  }
-  for (const icon of ['drag', 'meld', 'draw', 'win']) {
-    out.push(def(`tut-${icon}`, `assets/ui/tut-${icon}.png`, 16, 16));
   }
   return out;
 }

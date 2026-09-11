@@ -38,8 +38,13 @@ export class BootScene extends Phaser.Scene {
 
   private async loadAll(): Promise<void> {
     const manifest = buildManifest();
+    // Composed textures (the 52 card faces + the joker) have no file on disk by design — see
+    // compose-cards.ts. Probing them cost 53 guaranteed misses on every cold boot, each one a
+    // full round-trip returning the SPA index.html fallback. They are still swept by the
+    // makeFallback loop in finish(), so a failed composition is still covered.
+    const loadable = manifest.filter((a) => !a.composed);
     const checks = await Promise.all([
-      ...manifest.map(async (a) => ({ asset: a, kind: 'image' as const, ok: await this.probe(a.path) })),
+      ...loadable.map(async (a) => ({ asset: a, kind: 'image' as const, ok: await this.probe(a.path) })),
       ...AUDIO_ASSETS.map(async (a) => ({ asset: a, kind: 'audio' as const, ok: await this.probe(a.path) })),
     ]);
 
@@ -61,12 +66,6 @@ export class BootScene extends Phaser.Scene {
         const font = await loadPixelFont();
         setPixelFont(font);
         composeCardFaces(this, font);
-        // Composed faces are real PixelLab-derived art — unmark them as missing.
-        if (this.textures.exists('card-blank')) {
-          debugApi.missingAssets = debugApi.missingAssets.filter(
-            (k) => !(k.startsWith('card-') && this.textures.exists(k)),
-          );
-        }
       } catch (err) {
         debugApi.errors.push(`BootScene.finish: ${String(err)}`);
       }

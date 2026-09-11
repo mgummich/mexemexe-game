@@ -30,11 +30,11 @@ scramble rank glyphs).
 | FEITO button | green wooden button blank | 128×44 | /public/assets/ui/feito-normal.png | ✅ done |
 | COMPRAR button | orange wooden button blank | 128×44 | /public/assets/ui/comprar-normal.png | ✅ done |
 | Small button | wooden square button | 36×36 | /public/assets/ui/btn-small-normal.png | ✅ done |
-| Panel | warm wooden panel, rope trim | 96×96 | /public/assets/ui/panel.png | ✅ done |
-| Emote bubble | white speech bubble | 40×36 | /public/assets/ui/emote-bubble.png | ✅ done |
+| Panel | warm wooden panel, rope trim | 96×96 | ~~/public/assets/ui/panel.png~~ | 🗑 removed Phase 22 — never drawn; UI panels are `Graphics` rounded rects (`GameScene.buildStaticUi`) |
+| Emote bubble | white speech bubble | 60×54 | /public/assets/ui/emote-bubble.png | ✅ done |
 | Victory banner | festive banner, bunting + gold | 320×96 | /public/assets/ui/banner-victory.png | ✅ done |
 | Sparkle | 4-point gold sparkle | 32×32 | /public/assets/effects/sparkle.png | ✅ done |
-| Tutorial icons ×4 | meld/drag/draw/win glyphs | 32×32 | /public/assets/ui/tut-*.png | ✅ done |
+| Tutorial icons ×4 | meld/drag/draw/win glyphs | 32×32 | ~~/public/assets/ui/tut-*.png~~ | 🗑 removed Phase 22 — never drawn; `TutorialScene` is text + board highlights |
 | SFX ×9 + ambience loop | procedural synthesis (PixelLab has no audio) | wav | /public/assets/audio/*.wav | ✅ done (scripts/gen-sfx.mjs) |
 
 Button hover/pressed/disabled states derive from `-normal` via runtime tint
@@ -44,10 +44,10 @@ Button hover/pressed/disabled states derive from `-normal` via runtime tint
 
 | Asset | Prompt (short) | Size | Path | Status |
 |---|---|---|---|---|
-| Emote: excited | yellow exclamation icon | 32×32 | /public/assets/ui/emote-excited.png | ✅ done — shown on AI confirm, <3 hand cards played |
-| Emote: thinking | grey rising dots icon | 32×32 | /public/assets/ui/emote-thinking.png | ✅ done — shown on AI draw |
-| Emote: annoyed | red anger-vein cross icon | 32×32 | /public/assets/ui/emote-annoyed.png | ✅ done — shown on AI fallback error |
-| Emote: happy | golden musical note icon | 32×32 | /public/assets/ui/emote-happy.png | ✅ done — shown on AI confirm, ≥3 hand cards played |
+| Emote: excited | yellow exclamation icon | 36×36 | /public/assets/ui/emote-excited.png | ✅ done — shown on AI confirm, <3 hand cards played |
+| Emote: thinking | grey rising dots icon | 36×36 | /public/assets/ui/emote-thinking.png | ✅ done — shown on AI draw |
+| Emote: annoyed | red anger-vein cross icon | 36×36 | /public/assets/ui/emote-annoyed.png | ✅ done — shown on AI fallback error |
+| Emote: happy | golden musical note icon | 36×36 | /public/assets/ui/emote-happy.png | ✅ done — shown on AI confirm, ≥3 hand cards played |
 | Prop: dominoes box | worn wooden dominoes box, top-down | 64×48 | /public/assets/tables/prop-dominoes.png | ✅ done — covers boteco felt smudge (2p games only) |
 
 ## Phase 9 additions — procedural (PixelLab account out of credits)
@@ -168,3 +168,15 @@ base64-ing, which reliably fit.
   checkered border still needs a different approach — possibly
   `inpaint_image` targeted at just the border region instead of a
   whole-image img2img pass.
+
+## Phase 22 note — card faces are not files
+
+`assets/cards/{suit}-{rank}.png` and `assets/cards/joker.png` are **composed at
+runtime** by `src/assets/compose-cards.ts` from three real assets — `cards/blank.png`,
+the four `ui/suit-*.png` pips, and `ui/font.ttf` — into 72×96 canvases. Generating 52
+full faces would scramble the rank glyphs. They are flagged `composed: true` in
+`src/assets/manifest.ts` so `BootScene` never probes or loads them (see
+`docs/PHASE22_ASSET_VISUAL_AUDIT.md`); the on-disk files listed for them in older
+tables above never existed and are not expected to.
+
+Music bitrates were normalised to 128 kbps across all five tracks in Phase 22.

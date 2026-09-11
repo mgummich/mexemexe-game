@@ -59,7 +59,7 @@ describe('gameRegions landscape desktop regression', () => {
       handZone: { x: 20, y: 216, w: 360, h: 48 },
 
       actionPanel: { x: 398, y: 140, w: 78, h: 130 },
-      controlPanel: null,
+      controlPanel: { x: 400, y: 0, w: 78, h: 70 },
       feito: { x: 440, y: 210, w: 64, h: 22, size: 9 },
       comprar: { x: 440, y: 237, w: 64, h: 20, size: 8 },
       undo: { x: 414, y: 260, w: 16, h: 14, size: 8 },
@@ -244,8 +244,23 @@ describe('touch hit boxes: every orientation, no overlaps, desktop unchanged', (
     expect(r.reason.y).toBeLessThanOrEqual(r.handZone.y);
   });
 
-  it('desktop and portrait have no control backdrop', () => {
-    expect(gameRegions(LANDSCAPE).controlPanel).toBeNull();
+  it('landscape desktop: the control backdrop covers its top cluster and clears the action panel', () => {
+    const r = gameRegions(LANDSCAPE);
+    const cp = r.controlPanel!;
+    expect(cp).not.toBeNull();
+    // reset/undo/redo live in the bottom cluster on desktop, so only these four are covered
+    for (const b of [r.gear, r.zoomIn, r.zoomOut, r.mexeToggle]) {
+      const box = hitBox(b, false);
+      expect(box.x - box.w / 2).toBeGreaterThanOrEqual(cp.x - 2);
+      expect(box.x + box.w / 2).toBeLessThanOrEqual(cp.x + cp.w + 2);
+      expect(box.y - box.h / 2).toBeGreaterThanOrEqual(cp.y - 1);
+      expect(box.y + box.h / 2).toBeLessThanOrEqual(cp.y + cp.h);
+    }
+    expect(cp.y + cp.h).toBeLessThanOrEqual(r.actionPanel.y);
+    expect(cp.x + cp.w).toBeLessThanOrEqual(r.w);
+  });
+
+  it('portrait has no control backdrop', () => {
     expect(gameRegions({ w: 270, h: 480, portrait: true, touch: true }).controlPanel).toBeNull();
   });
 

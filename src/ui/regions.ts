@@ -147,7 +147,13 @@ function landscape(p: ViewProfile): GameRegions {
     actionPanel: t ? { x: 400 + dx, y: 155, w: 80, h: 113 } : { x: 398 + dx, y: 140, w: 78, h: 130 },
     // Spans the touch column's top cluster: gear (hit box 2.5-33.5), zoom pair (40.5-71.5),
     // reset (78.5-109.5) and mexeToggle (112-140). Stops short of actionPanel's y155.
-    controlPanel: t ? { x: 400 + dx, y: 0, w: 80, h: 146 } : null,
+    //
+    // Desktop gets a shorter one over its own top cluster — gear (y3-17), mexeToggle (y23-37)
+    // and the zoom pair (y46.5-63.5), x406-470. Those four sat straight on the baked-in table
+    // props (the boteco mug, which the >480-wide cover-scale slides right under them), where the
+    // dark glyphs on dark coffee were barely findable. Only a backdrop is added: no desktop
+    // control moves, so the authored 480x270 grid is untouched.
+    controlPanel: t ? { x: 400 + dx, y: 0, w: 80, h: 146 } : { x: 400 + dx, y: 0, w: 78, h: 70 },
     feito: t ? { x: 438 + dx, y: 176, w: 72, h: 34, size: 10 } : { x: 440 + dx, y: 210, w: 64, h: 22, size: 9 },
     comprar: t ? { x: 438 + dx, y: 214, w: 72, h: 32, size: 9 } : { x: 440 + dx, y: 237, w: 64, h: 20, size: 8 },
     undo: t ? { x: 419 + dx, y: 250, w: 36, h: 31, size: 8 } : { x: 414 + dx, y: 260, w: 16, h: 14, size: 8 },
