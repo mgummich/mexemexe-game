@@ -45,6 +45,14 @@ defects there, all client-side, no game rules touched. See
   `crowded-table-max`'s fps floor is now `process.env.CI ? 30 : 45`: the GPU-less
   runner measured 40 and had been squeaking past a single 45 bar, so that bar was
   gating on runner load rather than on a regression.
+- **Fixed: a third flaky CI gate**, in the WebKit touch suite. Three
+  `e2e-cross/mobile-gameplay.spec.ts` tests tapped twice in a row and asserted
+  immediately, trusting `tapWorld`'s two-frame barrier. Phaser applies a tap on
+  the frame it drains its pointer queue, so on a loaded runner the second tap
+  could be dispatched before the first had taken effect and then act on stale
+  state — a deselect that arrived before its own select landed, or a place tap
+  with nothing yet held. New `tapCardAndSettle` helper polls for the selection
+  to flip before returning, and the drop is polled for the same reason.
 - **Docs: `SELF_HOSTING.md` gained "Service worker cache and deploys"** —
   `public/assets/**` is unhashed and served cache-first, so a deploy that changes
   art or SFX needs a `package.json` version bump to reach players who already

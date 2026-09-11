@@ -65,6 +65,24 @@ async function tapCard(p: Page, cardId: string): Promise<void> {
   await tapWorld(p, pos.x, pos.y);
 }
 
+/** Taps a card and waits for the selection to actually flip before returning, instead of
+ * trusting tapWorld's two-frame barrier.
+ *
+ * Phaser applies a tap on the frame it drains its pointer queue. Two frames is enough on the dev
+ * machine, but on a loaded CI runner the *next* tap could be dispatched before this one had taken
+ * effect, and then acted on stale state: a deselect that arrived before its own select landed
+ * (ending up still selected), or a place tap with nothing yet held (ending up a no-op with an
+ * empty handCardsPlayed). Both were observed on the WebKit touch projects, 2026-09-11.
+ *
+ * @param expected the selection this tap should produce — the card id to select it, null to
+ * deselect. Polling for it is the assertion, so callers don't repeat it. */
+async function tapCardAndSettle(p: Page, cardId: string, expected: string | null): Promise<void> {
+  await tapCard(p, cardId);
+  await expect
+    .poll(() => p.evaluate(() => window.__MEXE__.mexe!.selection()), { timeout: 10_000 })
+    .toBe(expected);
+}
+
 /** Real drag: press on the card, move onto the target in a few steps (fires Phaser's drag
  * threshold and the legality-aware highlights), then release. Mirrors dragCardOnto in
  * e2e/screenshot.spec.ts but releases the mouse too — this suite asserts post-drop state. */
@@ -130,11 +148,8 @@ test('tap a hand card to select it, tap again to deselect', async ({ page }) => 
   const cardId = hand[0]!;
 
   expect(await page.evaluate(() => window.__MEXE__.mexe!.selection())).toBeNull();
-  await tapCard(page, cardId);
-  expect(await page.evaluate(() => window.__MEXE__.mexe!.selection())).toBe(cardId);
-
-  await tapCard(page, cardId);
-  expect(await page.evaluate(() => window.__MEXE__.mexe!.selection())).toBeNull();
+  await tapCardAndSettle(page, cardId, cardId);
+  await tapCardAndSettle(page, cardId, null);
 
   await shot(page, 'select-deselect');
   expect(await errors(page)).toEqual([]);
@@ -149,15 +164,19 @@ test('tap a card onto the table builds/extends a draft meld (valid destination)'
   const hand = await page.evaluate(() => window.__MEXE__.state!()!.players[0]!.hand.map((c) => c.id));
   const cardId = hand[0]!;
 
-  await tapCard(page, cardId); // select
+  await tapCardAndSettle(page, cardId, cardId); // select
   // Top-left corner of the table area itself (r.tableLeft/tableTop, per src/ui/regions.ts) —
   // whatever is there (empty gap or an existing meld), a tap while holding a card is a legal
   // drop: it either starts a new meld or joins the existing one, never a rejected no-op.
   const r = await regionsFor(page);
   await tapWorld(page, r.tableLeft + 10, r.tableTop + 10);
 
+  // Polled for the same reason as tapCardAndSettle above: the drop lands on whichever frame
+  // Phaser drains the tap, which is not necessarily within tapWorld's two-frame barrier.
+  await expect
+    .poll(() => page.evaluate(() => window.__MEXE__.mexe!.getDraft()!.handCardsPlayed), { timeout: 10_000 })
+    .toContain(cardId);
   const draft = await page.evaluate(() => window.__MEXE__.mexe!.getDraft()!);
-  expect(draft.handCardsPlayed).toContain(cardId);
   const totalCardsAfter = draft.melds.reduce((n, m) => n + m.cards.length, 0);
   expect(totalCardsAfter).toBe(totalCardsBefore + 1);
   await shot(page, 'tap-valid-destination');
@@ -172,7 +191,7 @@ test('tap outside any interactive zone is a no-op (invalid destination): draft u
   const hand = await page.evaluate(() => window.__MEXE__.state!()!.players[0]!.hand.map((c) => c.id));
   const cardId = hand[0]!;
 
-  await tapCard(page, cardId); // select
+  await tapCardAndSettle(page, cardId, cardId); // select
   // A corner of the world, clear of every card/meld/button — background, not interactive.
   await tapWorld(page, 2, 2);
 
