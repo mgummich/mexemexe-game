@@ -31,7 +31,7 @@ jobs:
       # flaky drop is expected occasionally; a *repeated* failure across 5 runs is a real signal,
       # so retries stay at 0 here (unlike the CI cross-browser gate, which retries once).
       - run: MEXE_TRACE=1 npx playwright test -c playwright.cross.config.ts --project="ios safari" --project="ipad" --repeat-each=5 --retries=0
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: flake-detection-artifacts
@@ -58,7 +58,7 @@ jobs:
       - run: MEXE_TRACE=1 npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0
       - run: MEXE_TRACE=1 MEXE_KEEP_VERIFY_LOG=1 npx playwright test e2e/screenshot.spec.ts --grep-invert @perf --retries=0
       - run: node scripts/check-verify.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: screenshot-suite-no-retry-artifacts
@@ -82,7 +82,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run verify:cross
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: cross-browser-matrix-artifacts
@@ -105,7 +105,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run build
       - run: npx playwright test e2e/screenshot.spec.ts --grep @perf --workers=1 --retries=0 --repeat-each=5
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: fps-drift-artifacts
@@ -132,7 +132,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: MEXE_TRACE=1 npm run verify:multiplayer
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: multiplayer-traced-artifacts
