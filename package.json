@@ -23,7 +23,7 @@
     "release": "node scripts/release.mjs"
   },
   "dependencies": {
-    "phaser": "^3.87.0",
+    "phaser": "^4.2.1",
     "tsx": "^4.23.13",
     "ws": "^8.21.3"
   },
