@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased — Phase 19 (gameplay bug hunt + rules regression + iOS/WebKit mobile probe)
+
+An active hunt for gameplay, rules, AI, local/online parity and mobile bugs. No
+bug was reproducible, so no game code changed — the outcome of this phase is
+test coverage over the two areas that had none. See
+`docs/PHASE19_GAMEPLAY_BUG_AUDIT.md`.
+
+- **Added: seeded whole-game invariant probes (`tests/probes.test.ts`, 45 tests).**
+  `tests/soak.test.ts` only asserted that games terminate. These probes run 40
+  seeded full AI-vs-AI games (seeds 1-40) and check, on every turn, that the deck
+  still totals 108 cards with no duplicate ids, that the committed table passes
+  `validateTable`, that `activePlayerIndex` stays in range and advances clockwise,
+  and that at least one card leaves the active hand on every confirm. Plus a
+  determinism test (seeds 1, 17 and 40 run twice produce a JSON-equal final state
+  and turn count) and four edge probes: an empty draw pile, a one-card draw pile, a
+  ten-meld crowded table, and 120 operations of `DraftEditor` undo/redo/reset abuse.
+- **Added: mobile gameplay end-to-end coverage (`e2e-cross/mobile-gameplay.spec.ts`,
+  12 tests across 3 WebKit touch projects).** `e2e-cross/` previously covered layout
+  and rotation only — no tap, drag, FEITO, Mexe Mode, undo/reset or draw had ever
+  been exercised on a touch viewport. The suite runs on `ios safari`,
+  `ios safari portrait` and `ipad`, asserting real game state through
+  `window.__MEXE__` rather than pixels, and checks that an orientation flip
+  mid-match preserves card conservation. Screenshots land in
+  `docs/screenshots/phase19-mobile-*.png`.
+- **Added: three rules regression tests** covering card conservation on the deal,
+  the `applyConfirmedTurn` conservation invariant, and 4-player clockwise turn-order
+  cycling.
+- **Verified, not changed:** every required joker, trinca and ace example
+  (including `K♠ A♠ 2♠` wrap rejection and a cross-deck repeated suit), the
+  fewest-cards-wins tie-break, the server's start/stall/reconnect guards, and the
+  redaction boundary that keeps opponent hands off the wire. Seven suspected
+  defects raised during the audit were each probed and refuted; the refutations are
+  recorded in the audit document.
+- **Checked that the new suites can fail:** breaking `applyConfirmedTurn`'s hand
+  removal failed 41 of 45 probe tests, and breaking `DraftEditor.reset()` failed the
+  mobile undo/reset test. Both mutations were reverted.
+
 ## Unreleased — Phase 18 (multiplayer stability + abuse hardening)
 
 Online hardening pass over reconnect, seat ownership, protocol bounds, room

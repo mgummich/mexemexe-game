@@ -187,7 +187,7 @@
   },
   "phase4PassGate": "PASS: all scores >=8.5; 112/112 unit + 25/25 e2e + lint + build + preview green; 0 console errors; 0 missing assets; 58-60fps; no programmer art (all buttons wooden PixelButton, fable-verified in screenshots); AI confirms gated by canConfirmTurn; no stuck flows (pause/quit/error/rematch/reset-data all tested); meld layout overlap-proof to 80 cards (21 layout tests); per-personality showcases captured; version 1.0.0 + CHANGELOG + RELEASE_NOTES shipped",
   "phase4CriticNotes": "Fable visual pass over final set: readability floor holds at 720p and 1080p; 4p occlusion resolved (opaque top bar + action panel backdrop); stress table rows clean with scaled cards; help panel lists shortcuts; minor cosmetics carried: napkin edge near top meld row, turn-banner pulse can overflow its pill ~250ms, PT accents rough at smallest sizes",
-  "phase": 18,
+  "phase": 19,
   "phase6": {
     "auditSummary": "Phase 5 authority/redaction/reconnect base retained. Fixed two-seat room lifecycle is generalized to stable 2–4P seats with host-only explicit start and deterministic turn rotation.",
     "blockers": [],
@@ -1675,5 +1675,121 @@
     ],
     "extraAgentJustification": "No subagents spawned. The server plus client net layer is ~2,900 lines and the whole surface fitted in one context; the phase hinges on server-authority and session-ownership reasoning, which the budget assigns to Opus directly. Delegating discovery would have cost a round trip without changing the findings.",
     "nextTask": "Optional follow-ups, in order: (1) per-IP failed-join counter to replace the per-connection-only room-code throttle; (2) a trusted-proxy config flag if a deployment must sit behind one, so the per-IP cap keeps working; (3) an online results summary, which needs a protocol change."
+  },
+  "phase19": {
+    "name": "Gameplay bug hunt + rules regression + iOS/WebKit mobile probe",
+    "gameplay_bug_hunt": "complete",
+    "outcome": "No P0 or P1 gameplay, rules, AI, parity, or mobile bug was reproducible. No src/ or server/ change was required. The phase's deliverable is therefore coverage, not fixes: 48 new unit tests and a 12-test WebKit/iOS gameplay suite that close the two real gaps found (no seeded whole-game invariant probes, no mobile gameplay e2e).",
+    "auditDoc": "docs/PHASE19_GAMEPLAY_BUG_AUDIT.md",
+    "modelCavemanLog": [
+      {
+        "role": "discovery audit",
+        "model": "haiku",
+        "task": "read-only gameplay/rules/mobile risk map, wrote docs/PHASE19_GAMEPLAY_BUG_AUDIT.md",
+        "caveman": "available",
+        "run": "phase19-audit"
+      },
+      {
+        "role": "rules regression + seeded probes",
+        "model": "sonnet",
+        "task": "rules source-of-truth tests, tests/probes.test.ts seeded invariant probes",
+        "caveman": "available",
+        "run": "phase19-rules"
+      },
+      {
+        "role": "iOS/WebKit mobile gameplay probe",
+        "model": "sonnet",
+        "task": "e2e-cross/mobile-gameplay.spec.ts on WebKit touch projects",
+        "caveman": "available",
+        "run": "phase19-mobile"
+      },
+      {
+        "role": "orchestration + root-cause review",
+        "model": "opus",
+        "task": "rules-engine hand verification, audit triage, mutation testing of new suites",
+        "caveman": "available",
+        "run": "phase19-opus"
+      }
+    ],
+    "extraAgentJustification": "Two Sonnet agents instead of one. The rules/probe work (tests/, src/rules, src/mexe-mode) and the mobile gameplay work (e2e-cross/, src/scenes, src/table) share no files, so running them concurrently cost no extra serialization risk and halved wall-clock. File ownership was assigned explicitly in both briefs and no write conflict occurred.",
+    "testsAdded": {
+      "tests/rules.test.ts": "+3 (deal card conservation; applyConfirmedTurn conservation invariant; 4-player clockwise turn-order cycling) -> 95 in file",
+      "tests/probes.test.ts": "NEW, 45 tests: 40 seeded full AI-vs-AI games (seeds 1-40) asserting per turn card conservation=108, no duplicate uniqueIds, validateTable(table), activePlayerIndex in range and advancing, >=1 card leaves the hand on every confirm; 1 determinism test (seeds 1/17/40 run twice, JSON-equal final state and turn count); 4 edge probes (drawPile length 0, drawPile length 1, 10-meld crowded table, 120-op DraftEditor undo/redo/reset abuse)",
+      "tests/draft.test.ts": "0 added - existing coverage (reset deep-equal restore, undo/redo, returnHandCard refusing a turn-start table card, history-cap reset) already satisfies the source-of-truth list",
+      "e2e-cross/mobile-gameplay.spec.ts": "NEW, 12 tests x 3 WebKit touch projects = 36 runs"
+    },
+    "seeds": "1-40 for the full-game probes; 1, 17, 40 re-run for determinism",
+    "mobileEvidence": {
+      "tool": "Playwright CLI only (no Playwright MCP used)",
+      "config": "playwright.cross.config.ts",
+      "projects": [
+        "ios safari (iPhone 14 landscape)",
+        "ios safari portrait (iPhone 14)",
+        "ipad (iPad gen 7)"
+      ],
+      "skipped": "the 5 non-touch projects (chrome, firefox, safari, android chrome, android chrome portrait) skip via test.skip in beforeEach",
+      "flowsCovered": [
+        "boot to a playable human turn, landscape and portrait",
+        "card select/deselect",
+        "tap to a valid destination",
+        "tap to an invalid destination (no-op, draft unchanged, rejected move returns false)",
+        "drag to a valid meld",
+        "invalid drop restores the draft",
+        "FEITO while blocked stays blocked with a surfaced reason",
+        "undo, and RESET via the real button",
+        "portrait focused Mexe editor open/close",
+        "COMPRAR draw advances the turn",
+        "orientation flip mid-match preserves card conservation"
+      ],
+      "screenshots": "docs/screenshots/phase19-mobile-*.png (12 files)",
+      "iosSimulator": "available on this machine (iOS 26.4: iPhone 17/17 Pro/17e/Air, iPad Pro/mini/Air, iPad A16) but NOT used - every targeted flow reproduced cleanly under Playwright WebKit, and no Safari- or PWA-specific quirk surfaced that the CLI could not cover. Documented as a limitation: real-device Safari and Add-to-Home-Screen remain unverified.",
+      "webkitFinding": "page.mouse.{move,down,up,click} DOES dispatch working pointer events under WebKit touch emulation (hasTouch/isMobile), unlike Chromium which drops page.mouse.click there. Confirmed with a throwaway probe before the suite was written."
+    },
+    "auditClaimsRefuted": [
+      "rules.ts checkWinner/fewestCardsWinner wrong sort or off-by-one - refuted. Array.prototype.sort is stable, so a hand-count tie resolves to the earliest seat as documented; covered by tests/rules.test.ts and the drawPile-length-0 edge probe.",
+      "rules.ts isValidGroup/isValidRun let a repeated suit or a second joker through - refuted. Every required source-of-truth example, including K-A-2 wrap rejection and 7H-deck0 + 7H-deck1 + 7C, passes; the >1-joker guard fires before any window search.",
+      "rules.ts canConfirmTurn falsely rejects legal plays - refuted. 40 seeded full games produced no rejected-legal-confirm and no illegal accepted confirm.",
+      "viewToState.ts placeholder reconstruction makes the server reject legal online moves - refuted. Placeholders never reach validation; canConfirmTurn reads only state.table and the active player's own hand. verify:multiplayer stays green.",
+      "rooms.ts startGame starts with a missing player - refuted. rooms.ts:218 already rejects when any occupied seat has !ready || !connected.",
+      "rooms.ts advanceStalledTurns stalls a room - refuted. rooms.ts:322-349 is per-room isolated, asserts conservation, and drops plus reports a corrupt room rather than throwing out of the caller's interval.",
+      "rooms.ts reconnect orphans the socket - refuted. rooms.ts:358-368 resolves the seat by token, clears disconnectedAt, and returns a fresh redacted view."
+    ],
+    "mutationTesting": [
+      "applyConfirmedTurn stopped removing played cards from the hand -> 41 of 45 tests in tests/probes.test.ts failed. The probes genuinely detect card duplication.",
+      "DraftEditor.reset() restored the current snapshot instead of the turn-start snapshot -> e2e-cross/mobile-gameplay.spec.ts:267 failed on ios safari portrait. The mobile suite genuinely detects a broken reset.",
+      "Both mutations were reverted and dist/ rebuilt; git diff on src/ is empty."
+    ],
+    "verification": {
+      "npm run test": "38 files, 531 passed (baseline 37 files / 483)",
+      "npm run lint": "clean (eslint + tsc --noEmit)",
+      "npm run build": "clean",
+      "npm run verify:cross": "84 passed, 60 skipped (48 baseline + 36 new mobile gameplay)",
+      "npm run verify:multiplayer": "9 passed, room=7BHHT seed=2 revisions=[1,2], 18 screenshots",
+      "npm run verify:pwa": "11 passed",
+      "notRun": "npm run verify (full chromium screenshot gate) was not re-run in this phase - no src/ change was made, so its screenshot baseline is untouched"
+    },
+    "remainingIssues": [
+      {
+        "priority": "P2",
+        "issue": "The mobile 'invalid destination' test taps empty space rather than a genuinely illegal meld target, so the on-screen invalid-reason banner path is asserted only via invalidMeldReasons(), not by a real illegal drop."
+      },
+      {
+        "priority": "P2",
+        "issue": "Real-device iOS Safari and Add-to-Home-Screen PWA install remain unverified; only Playwright WebKit emulation and, in earlier phases, the Simulator have been used."
+      },
+      {
+        "priority": "P2",
+        "issue": "Carried from Phase 18: the per-IP connection cap reads req.socket.remoteAddress directly, so it is wrong behind a reverse proxy without a trusted-proxy config."
+      },
+      {
+        "priority": "P2",
+        "issue": "Carried from Phase 18: no per-IP failed-join counter; room-code guessing is bounded only by the per-connection throttle and the per-IP connection cap."
+      },
+      {
+        "priority": "P2",
+        "issue": "Online 4P gameplay has server-side coverage but no dedicated 4-player e2e-multiplayer spec."
+      }
+    ],
+    "nextTask": "Phase 20 candidates, in priority order: a 4-player online e2e-multiplayer spec; a real-device iOS Safari and Add-to-Home-Screen pass; trusted-proxy handling plus a per-IP failed-join counter on the server; and a genuine illegal-drop invalid-reason assertion in the mobile gameplay suite."
   }
 }

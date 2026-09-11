@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-11T06:27:35.065Z",
-  "roomCode": "NZWBJ",
+  "generatedAt": "2026-09-11T08:22:52.529Z",
+  "roomCode": "8MSBG",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-11T06:27:25.652Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":3,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-11T08:22:43.936Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":3,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -180,7 +180,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "HTWQZ",
+    "code": "2P63W",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {
