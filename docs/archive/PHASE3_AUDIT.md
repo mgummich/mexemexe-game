@@ -50,7 +50,7 @@ gated in verify.
 
 - Felt smudge (above). Results screen is WinScene banner — adequate, could
   show per-player card counts ("results" feel). Audio: volumes unbalanced
-  (win jingle louder than rest); no AUDIO_DIRECTION.md.
+  (win jingle louder than rest); no docs/AUDIO_DIRECTION.md.
 
 ## Accessibility gaps
 
@@ -92,4 +92,4 @@ gated in verify.
 8. Audio balance pass (normalize per-sfx volumes), optional font-scale.
 9. Verify gains `npm run build`; screenshot set per Phase 3 list.
 10. Release docs: CHANGELOG.md, README (controls/rules/asset replacement/
-    known issues), AUDIO_DIRECTION.md; Sonnet reviews all.
+    known issues), docs/AUDIO_DIRECTION.md; Sonnet reviews all.

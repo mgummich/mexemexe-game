@@ -156,7 +156,7 @@ export class WinScene extends Phaser.Scene {
     debugApi.winButtonY = buttonY0;
 
     if (data.online) {
-      // online rematch is out of MVP scope (docs/PHASE5_CLIENT_PLAN.md §A) — never strand the
+      // online rematch is out of MVP scope (docs/archive/PHASE5_CLIENT_PLAN.md §A) — never strand the
       // player on a dead room, just leave it and go back to the local menu.
       const client = data.online.client;
       new PixelButton(this, cx(), buttonY0, t('win.menu'), () => {

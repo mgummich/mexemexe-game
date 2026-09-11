@@ -26,11 +26,11 @@ strategy guidance that jokers are usually best saved for the final play.
 | AI | `src/ai/ai.ts` | `holdJokers` preference; joker-count candidate tiebreak |
 | Server | `server/rooms.ts` | none — it already calls the shared `canConfirmTurn` |
 | UI copy | `src/localization/i18n.ts` | `reason.tooManyJokers`, `rules.body`, `tutorial.step6` (pt-BR + en-US) |
-| Docs | `docs/RULES.md`, `README.md` | one-joker rule + strategy section |
+| Docs | `docs/GAME_RULES.md`, `README.md` | one-joker rule + strategy section |
 
 ## Old conflicting text
 
-- `docs/RULES.md` said "each joker fills a different unused suit", implying multiple jokers per
+- `docs/GAME_RULES.md` said "each joker fills a different unused suit", implying multiple jokers per
   group — rewritten.
 - `README.md` said "a group joker fills a different missing suit", same implication — rewritten.
 - `rules.body` (both locales) described group jokers in the plural — rewritten.

@@ -5,7 +5,7 @@
  * Uses the shared rules functions directly (`applyConfirmedTurn`,
  * `drawAndEndTurn`, `canConfirmTurn`) instead of `GameStore` — a room is one
  * of potentially many in a single process, and `GameStore` emits on a global
- * event bus, which would cross-talk between rooms (see docs/PHASE5_AUDIT.md §4).
+ * event bus, which would cross-talk between rooms (see docs/archive/PHASE5_AUDIT.md §4).
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import { createRng } from '../src/core/rng';
@@ -242,7 +242,7 @@ export class RoomManager {
     return { ok: true, started: true, players: this.summarize(room) };
   }
 
-  /** Full validation path per docs/MULTIPLAYER_ARCHITECTURE.md §5. */
+  /** Full validation path per docs/MULTIPLAYER.md §5. */
   submitTurn(code: string, seat: number, rev: number, melds: SubmitTurnMeld[]): TurnResult {
     const room = this.rooms.get(code);
     if (!room || !room.state) return { ok: false, reasons: ['reason.notYourTurn'] };
@@ -315,7 +315,7 @@ export class RoomManager {
 
   /** Keep a match moving when the seat whose turn it is has been gone past the disconnect grace:
    * the server plays that seat's always-legal move (draw and end turn) so the survivors are not
-   * stuck on a board that can never advance (docs/PHASE7_AUDIT.md #4). Only fires while at least
+   * stuck on a board that can never advance (docs/archive/PHASE7_AUDIT.md #4). Only fires while at least
    * one other seat is still connected — an empty room is the sweep's job, not this one. Returns
    * the rooms whose state advanced. */
   advanceStalledTurns(): { code: string; gameOver: boolean; crashed?: boolean }[] {

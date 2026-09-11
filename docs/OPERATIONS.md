@@ -1,7 +1,7 @@
 # Operations — MEXEMEXE!
 
 How to build, run, observe and roll back a deployment. For the *why* behind the
-architecture see `ARCHITECTURE.md` and `docs/MULTIPLAYER_ARCHITECTURE.md`; for the
+architecture see `ARCHITECTURE.md` and `MULTIPLAYER.md`; for the
 container/reverse-proxy walkthrough see `SELF_HOSTING.md`. This document covers running it
 in production.
 

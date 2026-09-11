@@ -1,7 +1,7 @@
 /**
  * Thin WebSocket client for online play. Never throws into the game: every
  * socket failure surfaces as a status change plus an optional message, never
- * an exception the caller has to catch. See docs/PHASE5_CLIENT_PLAN.md.
+ * an exception the caller has to catch. See docs/archive/PHASE5_CLIENT_PLAN.md.
  */
 import { playlog } from '../core/playlog';
 import { resolveWsUrl } from '../config';

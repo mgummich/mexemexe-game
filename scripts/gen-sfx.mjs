@@ -87,7 +87,7 @@ function concat(...parts) {
   return out;
 }
 
-// Mix balance (AUDIO_DIRECTION.md): loudness order win > feito > invalid >
+// Mix balance (docs/AUDIO_DIRECTION.md): loudness order win > feito > invalid >
 // drop/draw/deal > pickup/snap > click > ambience, peaks <=0.5 pre-user-volume.
 // Vol constants below are scaled so each cue's summed/sequential peak lands
 // on its tier target; ratios within a cue are preserved from the original mix.

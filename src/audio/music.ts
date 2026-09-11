@@ -16,7 +16,7 @@ interface Track {
   contexts: MusicContext[];
 }
 
-// Mapping (see AUDIO_DIRECTION.md): the two shorter "table/cafe" loops are
+// Mapping (see docs/AUDIO_DIRECTION.md): the two shorter "table/cafe" loops are
 // calm enough for the menu AND for Mexe's heads-down draft moment; the three
 // fuller songs carry general gameplay where a bit more energy is welcome.
 const TRACKS: Track[] = [

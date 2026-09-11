@@ -1,14 +1,14 @@
 /**
  * Shared wire protocol for online play. Pure module: no browser APIs, no
  * Node APIs — safe to import from both the client bundle and the server.
- * See docs/MULTIPLAYER_ARCHITECTURE.md for the design this implements.
+ * See docs/MULTIPLAYER.md for the design this implements.
  */
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 
 export const PROTOCOL_VERSION = 3;
 
 // ---------------------------------------------------------------------------
-// Redacted view (docs/MULTIPLAYER_ARCHITECTURE.md §2)
+// Redacted view (docs/MULTIPLAYER.md §2)
 // ---------------------------------------------------------------------------
 
 /** One seat's entry in a GameView. `hand` is present only for the viewing seat. */
@@ -34,7 +34,7 @@ export interface GameView {
   winnerId: string | null;
   config: RulesConfig;
   /** Digest of the parts of the authoritative state every seat can see. A client recomputes it
-   * from its own reconstruction and asks for a resync on mismatch (docs/PHASE7_AUDIT.md #3). */
+   * from its own reconstruction and asks for a resync on mismatch (docs/archive/PHASE7_AUDIT.md #3). */
   hash: string;
 }
 

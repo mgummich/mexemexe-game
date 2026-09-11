@@ -1,6 +1,6 @@
 # MEXEMEXE! — Playtest guide
 
-This is the content-rich beta build (Phase 9). It is a **playtest**, not a release: we want to
+This is a **playtest**, not a release demo: we want to
 find out where people get stuck, which rules bite, and whether online play survives real humans
 on real networks. Everything below takes about 35 minutes.
 
@@ -24,8 +24,9 @@ npm run server       # terminal 1 — WebSocket room server
 npm run dev          # terminal 2 — game client
 ```
 
-The client picks its WebSocket URL from the page origin; see the **Online Beta** section of
-`README.md` if you are serving the build from somewhere other than `localhost`.
+The client picks its WebSocket URL from the page origin; see [DEVELOPMENT.md](DEVELOPMENT.md)
+and [SELF_HOSTING.md](SELF_HOSTING.md) if you are serving the build from somewhere other than
+`localhost`.
 
 Useful URL parameters:
 
@@ -86,7 +87,7 @@ even if nothing broke.
 
 ## Rule summary
 
-Full rules: `docs/RULES.md`. The short version:
+Full rules with worked examples: [GAME_RULES.md](GAME_RULES.md). The short version:
 
 - Two 54-card decks — **108 cards, 4 jokers**. Everyone is dealt **7**.
 - **Goal:** empty your hand first. If the draw pile runs out, fewest cards in hand wins.
@@ -94,8 +95,8 @@ Full rules: `docs/RULES.md`. The short version:
   wrapping (K-A-2 is not a run).
 - **Groups (trincas):** **exactly 3 or 4** cards of the same rank, and every natural card must be
   a **different suit** — even when they came from different decks.
-- **Jokers** are wildcards, but every joker must have a concrete card it stands for, and every
-  meld needs at least one natural card.
+- **Jokers** are wildcards, but **at most one per meld**; every joker must have a concrete card
+  it stands for, and every meld needs at least one natural card.
 - The whole table is **shared**. On your turn you may rearrange it freely, but to confirm (FEITO)
   you must add at least one card from your hand and every meld on the table must be valid.
 - If you do not confirm, you draw one card and your turn ends. There is no draw at the start of a
@@ -124,7 +125,7 @@ These are known and in scope for a later phase. Reporting them again is not usef
 - The four AI opponents are personalities, not difficulty levels — there is no Easy/Hard setting.
 - Rate limiting is per connection, not per IP.
 - Pointer-drag is verified in tests through editor hooks rather than synthetic pointer drags.
-- Cosmetic issues already logged in the **Known issues** section of `README.md`.
+- Cosmetic issues already logged under **Known limitations** in `README.md`.
 
 ## How to report a bug
 

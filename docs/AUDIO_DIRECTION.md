@@ -36,12 +36,12 @@ release-docs wave.*
   `playSfx` call that lands within 80ms of the previous one for that key,
   instead of letting two copies stack into a louder spike. Debounce is
   per-key (`sfx-drop` and `sfx-snap` back to back both still play).
-- `scripts/gen-sfx.mjs` re-run (Phase 9 balance pass) reproduced the
+- `scripts/gen-sfx.mjs` re-run reproduced the
   checked-in WAVs byte-for-byte (seeded RNG, no `Math.random()`) — no asset
   regeneration was needed this pass, the existing gains already matched the
   loudness order above.
 
-## Music (Phase 9: context-aware playlist)
+## Music (context-aware playlist)
 
 `src/audio/music.ts` picks tracks by scene context instead of a flat
 shuffle, so the player gets calmer music while heads-down in a Mexe draft:

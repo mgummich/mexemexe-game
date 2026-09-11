@@ -1,7 +1,8 @@
-# Mexe-Mexe — Final Rules
+# Game rules
 
-The authoritative ruleset implemented by MEXEMEXE!. Where code and this document disagree, this
-document wins and the code is a bug.
+The authoritative ruleset implemented by MEXEMEXE!. Where the code and this document disagree,
+this document wins and the code is a bug. Every example below is asserted against the engine
+(`analyzeMeld`, `src/rules/rules.ts`) and covered by `tests/rules.test.ts`.
 
 ## Setup
 
@@ -75,8 +76,42 @@ On your turn:
 **Draw only happens when you pass, cannot play, or will not play.** There is no draw at the start
 of a turn.
 
-If the optional turn timer is enabled and it expires with an unconfirmed or invalid table, the
-table reverts to how it looked at the start of your turn, you draw one card, and your turn ends.
+**Turn timer — not in play.** `turnTimerSeconds` defaults to 0 (off) and nothing in the client
+or the server starts a timer. The rules function exists (`timerExpireTurn`: revert the table to
+the start of the turn, draw one card, end the turn) and is unit-tested, but it is an unused hook,
+not a feature.
+
+## Worked examples
+
+| Cards | Result |
+|---|---|
+| Joker + 7♥ + Joker | **invalid** — `reason.tooManyJokers` (2 jokers) |
+| Joker + 7♥ + 8♥ + Joker | **invalid** — `reason.tooManyJokers` |
+| Joker + 7♥ + 8♥ | **valid** run (joker = 6♥ or 9♥) |
+| 7♥ + Joker + 9♥ | **valid** run (joker = 8♥) |
+| 7♥ + 7♠ + Joker | **valid** group (joker takes an unused suit) |
+| 7♥ + Joker + Joker | **invalid** — `reason.tooManyJokers` |
+| 7♥ (deck 1) + 7♥ (deck 2) + 7♣ | **invalid** group — `reason.groupDuplicateSuit`; two decks do not make ♥ two different suits |
+| A♥ + 2♥ + 3♥ | **valid** run (ace low) |
+| Q♠ + K♠ + A♠ | **valid** run (ace high) |
+| K♠ + A♠ + 2♠ | **invalid** — `reason.runWrap`; an ace is low or high, never both |
+
+## Draft vs final table
+
+While it is your turn you may leave the table in any state — a two-card meld, a pile of jokers,
+a half-split run. That is a **draft**, and nothing validates it except the on-screen feedback.
+
+Validation happens at **FEITO**: every meld on the table must be valid, you must have added at
+least one card from your hand, and no card that was on the table when your turn began may be
+missing. Cards *you* played this turn can still be pulled back until you confirm.
+
+## Where validation happens
+
+`analyzeMeld` and `canConfirmTurn` in `src/rules/rules.ts` are the only implementations of these
+rules. The client uses them to gate the FEITO button and to explain invalid melds; in an online
+game the **server** calls the same functions on the submitted table before accepting anything, so
+a client cannot confirm a turn the server would reject, and the two can never drift apart. See
+[MULTIPLAYER.md](MULTIPLAYER.md).
 
 ## Configuration defaults
 
@@ -91,7 +126,7 @@ The engine carries hooks for these variants; none is enabled in a standard game:
 | `groupUniqueSuits` | true | fixed: natural group suits are all different |
 | `allowAllJokerGroups` | false | fixed: every group needs a natural card |
 | `firstMeldMinPoints` | 0 (off) | minimum points for a player's first meld |
-| `turnTimerSeconds` | 0 (off) | timed turns |
+| `turnTimerSeconds` | 0 (off) | timed turns — hook only, not wired into play |
 | `handSize` | 7 | different deal size |
 
 ## Rejected variants

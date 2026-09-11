@@ -1,6 +1,6 @@
 /**
  * MEXEMEXE! online alpha WebSocket server. Plain Node + `ws`, run via `tsx`.
- * See docs/MULTIPLAYER_ARCHITECTURE.md for protocol and validation order.
+ * See docs/MULTIPLAYER.md for protocol and validation order.
  */
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -24,7 +24,7 @@ const log = createLogger(config.logLevel);
 
 const SWEEP_INTERVAL_MS = 30_000;
 /** Liveness probe. A half-open socket (lid closed, dead NAT entry) otherwise holds its seat
- * `connected` until TCP gives up, so the disconnect grace never starts (docs/PHASE7_AUDIT.md #1). */
+ * `connected` until TCP gives up, so the disconnect grace never starts (docs/archive/PHASE7_AUDIT.md #1). */
 const HEARTBEAT_INTERVAL_MS = 15_000;
 /** How often stalled matches are checked. Independent of the grace period itself. */
 const TURN_TICK_MS = 5_000;

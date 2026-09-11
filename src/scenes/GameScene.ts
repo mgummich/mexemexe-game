@@ -418,7 +418,7 @@ export class GameScene extends Phaser.Scene {
     this.onOnlineStatusChange(client.getStatus());
   }
 
-  // ---------- online reconciliation (docs/MULTIPLAYER_ARCHITECTURE.md §6) ----------
+  // ---------- online reconciliation (docs/MULTIPLAYER.md §6) ----------
 
   /** Single set/clear point for onlinePending — keeps the timeout timer in lockstep with the
    * flag instead of letting scattered raw assignments each need their own timer bookkeeping. */
@@ -999,7 +999,7 @@ export class GameScene extends Phaser.Scene {
     this.staticUi.push(this.reasonText, this.bannerBg, this.banner, this.lastMoveText);
 
     if (this.online) {
-      // small corner connection indicator — never a modal, per docs/PHASE5_CLIENT_PLAN.md section A
+      // small corner connection indicator — never a modal, per docs/archive/PHASE5_CLIENT_PLAN.md section A
       this.onlineStatusDot = this.add.circle(this.r.onlineDot.x, this.r.onlineDot.y, 3, 0x3ec06a).setDepth(600);
       // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
       // presence — not just its color — is the "you are online" tell (task: never ambiguous).

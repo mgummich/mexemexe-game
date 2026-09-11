@@ -252,8 +252,8 @@ function selfcheck() {
 
   assert.deepEqual(classifyBullet('**Fixed: the banner stacked.** Because x.'),
     { kind: 'Fixed', headline: 'the banner stacked' });
-  assert.deepEqual(classifyBullet('**Docs: `SELF_HOSTING.md` grew a section**'),
-    { kind: 'Docs', headline: '`SELF_HOSTING.md` grew a section' });
+  assert.deepEqual(classifyBullet('**Docs: `docs/SELF_HOSTING.md` grew a section**'),
+    { kind: 'Docs', headline: '`docs/SELF_HOSTING.md` grew a section' });
   assert.deepEqual(classifyBullet('**Crash policy:** the process exits. More prose.'),
     { kind: 'Other', headline: 'Crash policy: the process exits' }, 'an introducer lead pulls in its sentence');
   assert.deepEqual(classifyBullet('**Added: a spec** (2 tests, fresh context) and prose.'),

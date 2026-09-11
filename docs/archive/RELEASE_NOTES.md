@@ -14,7 +14,7 @@ that. Any TLS deployment that forgot to set `VITE_WS_URL` at build time got an
 ONLINE menu that silently never connected — documented as "the most common
 first-deployment surprise", which is really an admission that the default was
 wrong. The fallback now follows the page's protocol: `wss://<host>/ws` over
-https, matching the reverse-proxy layout in `SELF_HOSTING.md`, so following that
+https, matching the reverse-proxy layout in `docs/SELF_HOSTING.md`, so following that
 guide is enough. `?ws=` and `VITE_WS_URL` still override, in that order.
 
 **The server can no longer be misconfigured quietly.** All of its settings —
@@ -120,9 +120,9 @@ none exists yet. If you're reading this and about to play: please run
 `docs/PLAYTEST_GUIDE.md` end to end and send back the session log. That's the
 single most useful thing anyone can do for the next phase.
 
-See `docs/PLAYTEST_GUIDE.md` for how to run a session, `docs/PIXELLAB_ASSETS.md`
+See `docs/PLAYTEST_GUIDE.md` for how to run a session, `docs/ASSETS.md`
 for the full asset/license table (all art original, no third-party or
-copyrighted sources), and `AUDIO_DIRECTION.md` for the music-context design.
+copyrighted sources), and `docs/AUDIO_DIRECTION.md` for the music-context design.
 
 ---
 
@@ -254,7 +254,7 @@ S sort hand · H help.
 
 - Design/code: built with Vite, TypeScript and Phaser 3 (MIT-licensed
   framework).
-- All art generated with PixelLab (see `docs/PIXELLAB_ASSETS.md` for the
+- All art generated with PixelLab (see `docs/ASSETS.md` for the
   full prompt/asset table); no copyrighted third-party assets.
 - All audio synthesized by `scripts/gen-sfx.mjs` (procedural; no recorded
   samples).

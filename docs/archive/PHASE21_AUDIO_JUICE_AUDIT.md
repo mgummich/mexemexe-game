@@ -4,7 +4,7 @@
 
 **SFX Layer** (src/audio/sfx.ts)
 - Fire-and-forget `playSfx(scene, key, volume)` with mute/volume multiplied from settings.
-- 80ms retrigger guard per key — no rapid stacking (intended per AUDIO_DIRECTION.md).
+- 80ms retrigger guard per key — no rapid stacking (intended per docs/AUDIO_DIRECTION.md).
 - Try/catch silently eats missing audio and load failures; never crashes.
 - Called from: widgets.ts (button click), GameScene.ts (all gameplay events).
 
