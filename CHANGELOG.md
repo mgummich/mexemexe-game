@@ -3,7 +3,9 @@
 All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
 wave-by-wave log this summarizes.
 
-## Unreleased — Phase 23 (PWA offline reliability)
+## 1.7.0 — 2026-09-11
+
+### Phase 23 (PWA offline reliability)
 
 Service worker lifecycle pass. Offline play, the versioned cache and the offline
 online-room gating were already built and tested (Phases 16, 18 and 20); what had
@@ -61,7 +63,7 @@ defects there, all client-side, no game rules touched. See
   art or SFX needs a `package.json` version bump to reach players who already
   loaded the game.
 
-## Unreleased — Phase 19 (gameplay bug hunt + rules regression + iOS/WebKit mobile probe)
+### Phase 19 (gameplay bug hunt + rules regression + iOS/WebKit mobile probe)
 
 An active hunt for gameplay, rules, AI, local/online parity and mobile bugs. No
 bug was reproducible, so no game code changed — the outcome of this phase is
@@ -98,7 +100,7 @@ test coverage over the two areas that had none. See
   removal failed 41 of 45 probe tests, and breaking `DraftEditor.reset()` failed the
   mobile undo/reset test. Both mutations were reverted.
 
-## Unreleased — Phase 18 (multiplayer stability + abuse hardening)
+### Phase 18 (multiplayer stability + abuse hardening)
 
 Online hardening pass over reconnect, seat ownership, protocol bounds, room
 cleanup and the client's online UX. No game-rule changes. See
