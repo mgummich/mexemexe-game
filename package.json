@@ -19,7 +19,8 @@
     "verify:multiplayer": "npm run build && playwright test -c playwright.multiplayer.config.ts && node scripts/check-verify-multiplayer.mjs",
     "verify:cross": "npm run build && playwright test -c playwright.cross.config.ts",
     "verify:pwa": "npm run build && playwright test -c playwright.pwa.config.ts",
-    "verify:preview": "npm run build && node scripts/check-preview.mjs"
+    "verify:preview": "npm run build && node scripts/check-preview.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "phaser": "^3.87.0",

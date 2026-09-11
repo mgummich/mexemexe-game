@@ -1,5 +1,8 @@
 # Changelog
 
+All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
+wave-by-wave log this summarizes.
+
 ## Unreleased — Phase 23 (PWA offline reliability)
 
 Service worker lifecycle pass. Offline play, the versioned cache and the offline
@@ -154,10 +157,7 @@ cleanup and the client's online UX. No game-rule changes. See
   drains the response body rather than cancelling it — cancelling raced the
   service worker's own `cache.put` clone and broke asset loads in Firefox.
 
-All notable changes to MEXEMEXE! by phase. See `docs/STATUS.json` for the full
-wave-by-wave log this summarizes.
-
-## Unreleased — Phase 15 (PWA + offline local/AI play)
+### Phase 15 (PWA + offline local/AI play)
 
 The game is now installable and works fully offline once loaded once. See
 `docs/PHASE15_AUDIT.md`.
@@ -185,7 +185,7 @@ The game is now installable and works fully offline once loaded once. See
   local/AI/tutorial play, and returning online. `tests/pwa.test.ts` and
   `tests/offline.test.ts` added (408/408 unit tests total, was 330).
 
-## Unreleased — Phase 14 (helper modes, mobile Mexe editor, table zoom, tutorial/help)
+### Phase 14 (helper modes, mobile Mexe editor, table zoom, tutorial/help)
 
 Phase 13 gave touch its own board shape; Phase 12 gave tap-select-then-place
 visual feedback on drag only. This phase closes both remaining gaps: the
@@ -221,7 +221,7 @@ tutorial and in-game help panel teach all of it. See `docs/PHASE14_AUDIT.md`.
 - **Full pt-BR/en-US coverage**: every string this phase added exists in both
   locales with real, locale-specific copy, checked by `tests/i18n.test.ts`.
 
-## Unreleased — Phase 13 (mobile layout, tap-first controls)
+### Phase 13 (mobile layout, tap-first controls)
 
 The board was authored into one fixed 480x270 world and letterboxed to fit, so a
 portrait phone got a 390x219 board and a permanent "turn your phone sideways"
@@ -411,7 +411,7 @@ Playtest-ready demo → content-rich beta. No rules change, no protocol change.
   280/280 unit (18 files), 46/46 local e2e, 7/7 multiplayer e2e, lint clean,
   build clean, zero console/server errors.
 
-## Unreleased — Rules adaptation
+### Rules adaptation
 
 ### Phase 8 — playtest-ready public demo
 

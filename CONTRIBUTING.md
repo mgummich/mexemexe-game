@@ -57,6 +57,31 @@ git config core.hooksPath .githooks
 - New game logic needs unit tests in `tests/`; user-visible behavior should be
   reachable from the `?showcase=` URL params so the screenshot suite can cover it.
 
+## Releases
+
+Every user-visible change lands under a `## Unreleased — <title>` heading at the
+top of `CHANGELOG.md`; several may stack up between releases. Cutting a release
+collapses them into one version:
+
+```
+npm run release minor          # or patch / major / an explicit 1.7.0
+git push origin main --follow-tags
+```
+
+`scripts/release.mjs` bumps `package.json`, rewrites those `Unreleased` headings
+into a single `## X.Y.Z — <date>` section (each keeps its title as an `###`
+subhead), commits and creates an annotated `vX.Y.Z` tag. Nothing is pushed until
+you push it.
+
+Pushing the tag runs `.github/workflows/release.yml`, which re-runs lint, tests
+and the build, checks the tag matches `package.json`, and publishes a GitHub
+Release whose body is that CHANGELOG section verbatim. So the version lives in
+exactly one place: `package.json`'s version feeds the git tag, the release notes
+and — via `vite.config.ts` — the service worker's cache key, which is what makes
+a deploy reach players who already have the game cached.
+
+`node scripts/release.mjs --selfcheck` covers the bump and CHANGELOG rewriting.
+
 ## Art & audio
 
 All art is generated with PixelLab (`docs/PIXELLAB_ASSETS.md` has the full
