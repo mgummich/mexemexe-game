@@ -4,7 +4,8 @@ import { bus } from './core/events';
 import { recoverToMenu } from './core/error-recovery';
 import { playlog } from './core/playlog';
 import { initPwa } from './core/pwa';
-import { t } from './localization/i18n';
+import { settings } from './core/settings';
+import { setLocale, t } from './localization/i18n';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { MenuScene } from './scenes/MenuScene';
@@ -16,6 +17,9 @@ import { refreshProfile, view } from './ui/viewport';
 import { debugApi, installDebugApi } from './verification/debug-api';
 
 installDebugApi();
+// Apply the saved locale before anything outside a scene reads copy — MenuScene also does this,
+// but it runs after this module, so DOM overlays here would otherwise render in the default locale.
+setLocale(settings.get().locale);
 playlog.attachToBus(bus);
 startMusic();
 initPwa();
@@ -85,7 +89,6 @@ game.events.on('step', () => {
 // not sit on top of the board forever: show it briefly on load / on entering portrait, then
 // auto-hide so it doesn't block the re-stacked board it used to warn people away from.
 const portraitHint = document.createElement('div');
-portraitHint.textContent = t('a11y.rotateHint');
 portraitHint.style.cssText =
   // top offset adds the safe-area inset: installed as a PWA the status bar is translucent
   // (apple-mobile-web-app-status-bar-style in index.html), so a bare 12px lands under the notch.
@@ -102,6 +105,9 @@ function updatePortraitHint(): void {
     portraitHint.style.display = 'none';
     return;
   }
+  // Read the copy on every show, never once at module load: MenuScene applies the saved locale
+  // after this module runs, so a captured string would keep showing pt-BR to an en-US player.
+  portraitHint.textContent = t('a11y.rotateHint');
   portraitHint.style.display = 'block';
   hintTimer = setTimeout(() => {
     portraitHint.style.display = 'none';

@@ -33,6 +33,7 @@ import {
 } from '../table/editor-layout';
 import { computeMeldLayout, type MeldLayoutInput } from '../table/layout';
 import { computeSnapTargets, snapTargetFor, type SnapStatus, type SnapTarget } from '../table/snap';
+import { resolveCardTapDestination } from '../table/tap-destination';
 import { ZOOM_FLOORS, zoomStepIn, zoomStepOut } from '../table/zoom';
 import { buildTutorialState } from '../tutorial/fixture';
 import { TutorialDirector, type TutorialAction } from '../tutorial/director';
@@ -1170,8 +1171,9 @@ export class GameScene extends Phaser.Scene {
       this.selectCard(cardId);
       return;
     }
-    const meld = this.editor.getDraft().melds.find((m) => m.cards.some((c) => c.id === cardId));
-    if (meld) this.placeSelected('meld', meld.id);
+    const dest = resolveCardTapDestination(this.editor, this.selectedCardId, cardId);
+    if (dest.kind === 'switch') this.selectCard(cardId);
+    else if (dest.kind === 'meld') this.placeSelected('meld', dest.meldId);
     else this.placeSelected('hand', null);
   }
 
@@ -1767,9 +1769,10 @@ export class GameScene extends Phaser.Scene {
         const reasons = invalidReasons.get(meld.id);
         if (reasons) {
           const reasonText = reasons.join('\n');
-          // Enlarged hit rect: the glyph itself is a few px, far under a usable touch target;
-          // grown further on touch/portrait.
-          const pad = strong ? 9 : 5;
+          // Enlarged hit rect: the glyph itself is a few px, far under a usable touch target.
+          // Kept small on touch/portrait (2px) — a bigger pad here covers the card art
+          // underneath and wins the hit test over tap/drag on the card (see IOS_UI_UX_AUDIT.md).
+          const pad = strong ? 2 : 5;
           badge.setInteractive(
             new Phaser.Geom.Rectangle(-pad, -pad, badge.width + pad * 2, badge.height + pad * 2),
             Phaser.Geom.Rectangle.Contains,
