@@ -115,8 +115,12 @@ function applyVolume(): void {
 /** Switches which track pool the playlist draws from. No-op if the context hasn't changed or music hasn't started yet (the next start picks it up). */
 export function setMusicContext(ctx: MusicContext): void {
   if (ctx === context) return;
+  // 'game' and 'mexe' flip on every turn hand-off (a draw can end a turn in seconds), so swapping
+  // tracks there restarts the music constantly. In-game the new pool only applies to the next
+  // track; menu transitions are real scene changes and still swap right away.
+  const inGameFlip = ctx !== 'menu' && context !== 'menu';
   context = ctx;
-  if (audio) changeTrack();
+  if (audio && !inGameFlip) changeTrack();
 }
 
 /** Starts the playlist. Safe to call more than once — only the first call takes effect. */
