@@ -1,7 +1,9 @@
 name: _exp
 
 # Throwaway measurement workflow — deleted once the numbers are in.
-on: workflow_dispatch
+on:
+  push:
+    branches: [ci/quality-gates]
 
 permissions:
   contents: read
