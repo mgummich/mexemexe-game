@@ -66,7 +66,8 @@ export enum AccessRow {
   Motion = 0,
   BatterySaver = 1,
   LargeText = 2,
-  Back = 3,
+  Haptics = 3,
+  Back = 4,
 }
 
 /** Rows in the Advanced sub-panel — testing/debug affordances, off the player's main path. */

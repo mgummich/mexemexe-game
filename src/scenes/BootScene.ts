@@ -17,6 +17,10 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
+    // A long press on a card is a normal way to pick it up, and on touch it otherwise raises the
+    // browser's own context menu and selection handles over the board mid-gesture. Set once here,
+    // for the whole game, rather than per scene.
+    this.input.mouse?.disableContextMenu();
     void this.loadAll();
   }
 

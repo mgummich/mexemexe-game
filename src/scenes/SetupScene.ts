@@ -70,6 +70,7 @@ export class SetupScene extends Phaser.Scene {
   create(): void {
     setMusicContext('menu');
     debugApi.scene = 'setup';
+    this.dealing = false;
     // No live connection here (unlike OnlineScene) — a full restart on orientation flip is
     // simplest and correct.
     const unsub = bus.on('viewport:changed', () => this.scene.restart());

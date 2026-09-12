@@ -146,10 +146,14 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     const { cx, rowY } = openPanel(GAME_ROWS, t('settings.section.game'));
 
     const helperCaption = (): string => `${t('settings.helperMode')}: ${t(`settings.helperMode.${settings.helperMode()}`)}`;
-    const helperBtn = rowBtn(cx, rowY(GameRow.HelperMode), helperCaption(), () => {
+    // ACCESS-09: the tooltip names exactly what this mode changes (and that it never touches AI
+    // difficulty) so BEGINNER/NORMAL/MINIMAL never read as a hidden difficulty dial. Rebuilt via
+    // showGame() rather than setLabel() — a PixelButton's tooltip text is fixed at construction,
+    // and each mode has its own description.
+    rowBtn(cx, rowY(GameRow.HelperMode), helperCaption(), () => {
       settings.update({ helperMode: cycleHelperMode(settings.helperMode()) });
-      helperBtn.setLabel(helperCaption());
-    });
+      showGame();
+    }, { tooltip: t(`settings.helperModeHint.${settings.helperMode()}`) });
 
     rowBtn(cx, rowY(GameRow.Lang), t('menu.language'), () => {
       const next = getLocale() === 'pt' ? 'en' : 'pt';
@@ -224,6 +228,12 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     // instead of just relabelling its own button.
     toggleBtn(cx, rowY(AccessRow.LargeText), 'settings.largeText',
       () => settings.get().largeText, (v) => settings.update({ largeText: v }), { rebuild: showAccess });
+
+    // Inert on any browser without the Vibration API (all of iOS), so the row explains itself
+    // rather than looking broken when nothing happens.
+    toggleBtn(cx, rowY(AccessRow.Haptics), 'settings.haptics',
+      () => settings.get().haptics, (v) => settings.update({ haptics: v }),
+      { tooltip: t('settings.hapticsHint') });
 
     rowBtn(cx, rowY(AccessRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
   };

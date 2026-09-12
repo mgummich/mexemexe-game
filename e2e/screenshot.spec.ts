@@ -7,7 +7,7 @@ import { editorZones, meldListRows, meldListRowY, MELD_LIST_ROW_H } from '../src
 import { computeMeldLayout } from '../src/table/layout';
 import { ZOOM_FLOORS } from '../src/table/zoom';
 import { gameRegions, type GameRegions } from '../src/ui/regions';
-import { advancedRowY, AdvancedRow, aiRowY, AiRow, audioRowY, AudioRow, cosmeticsRowY, rulesBox, RULES_TAB_DX, settingsRowY, SettingsRow } from '../src/ui/settings-layout';
+import { advancedRowY, AdvancedRow, aiRowY, AiRow, audioRowY, AudioRow, cosmeticsRowY, GameRow, gameRowY, rulesBox, RULES_TAB_DX, settingsRowY, SettingsRow } from '../src/ui/settings-layout';
 import { pickProfile } from '../src/ui/viewport';
 
 const OUT_DIR = 'docs/screenshots';
@@ -196,6 +196,47 @@ test('win screen', async ({ page }) => {
   expect(results!.reactionText).toContain(translate('ai.line.juninho.lostMatch'));
 });
 
+test('win-real-finish: a played-out match ends on its own final table, with the head-to-head tally', async ({ page }) => {
+  trackConsoleErrors(page);
+  // ?motion=0 is both the reduced-motion a11y state and the fastest way to actually reach a finish:
+  // the AI's think delay is motion-scaled, so the match plays out inside the test budget.
+  await page.goto('/?seed=42&showcase=game&motion=0');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  // Draw-and-pass on every human turn until the pile decides it. A real terminal state, so
+  // WinScene gets the board the match ended on (RESULT-09) and the save is tallied (RESULT-06).
+  for (let i = 0; i < 150; i++) {
+    const playing = await page.evaluate(() => {
+      if (window.__MEXE__.scene !== 'game') return false;
+      const s = window.__MEXE__.state?.();
+      if (!s || s.winnerId) return false;
+      if (!s.players[s.activePlayerIndex]!.isAi) window.__MEXE__.mexe!.comprar();
+      return true;
+    });
+    if (!playing) break;
+    await page.waitForFunction(
+      () => {
+        const s = window.__MEXE__.state?.();
+        return window.__MEXE__.scene !== 'game' || !s || !!s.winnerId || !s.players[s.activePlayerIndex]!.isAi;
+      },
+      undefined,
+      { timeout: 15_000 },
+    );
+  }
+  await page.waitForFunction(() => window.__MEXE__.scene === 'win', undefined, { timeout: 15_000 });
+  await snap(page, 'win-real-finish');
+  const results = await page.evaluate(() => window.__MEXE__.results);
+  expect(results!.results).toHaveLength(2);
+  expect(results!.results.filter((r) => r.isWinner)).toHaveLength(1);
+  // RESULT-06: the match just played is tallied against the character it was played against.
+  const h2h = await page.evaluate(() => JSON.parse(localStorage.getItem('mexe-save') ?? '{}') as {
+    progress?: { headToHead?: Record<string, { wins: number; losses: number }> };
+  });
+  const tally = Object.values(h2h.progress?.headToHead ?? {});
+  expect(tally).toHaveLength(1);
+  expect(tally[0]!.wins + tally[0]!.losses).toBe(1);
+});
+
 test('mexe mode: break a meld, see invalid glow and exact reason, undo restores', async ({ page }) => {
   await capture(page, '/?seed=77&showcase=mexe', 'mexe-invalid', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
@@ -224,6 +265,233 @@ test('mexe mode: break a meld, see invalid glow and exact reason, undo restores'
     // colorblind-safe channel: the invalid meld also shows a ✗ badge, not just the red glow
     const invalidBadges = await p.evaluate(() => window.__MEXE__.a11y.invalidBadges);
     expect(invalidBadges).toBeGreaterThan(0);
+  });
+});
+
+test('mexe mode: a run with one gap shows a spatial missing-slot placeholder (MEXE-19/RECOVERY-04)', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe', 'mexe-run-gap', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildRunGapMeld(p);
+    expect(meldId).not.toBeNull();
+    const invalid = await p.evaluate(() => window.__MEXE__.a11y.invalidBadges);
+    expect(invalid).toBeGreaterThan(0);
+  });
+});
+
+// Coordinator finding: the placeholder used to be drawn ON TOP of the following card instead of
+// in its own reserved column. Re-verified under reduced motion (the placeholder/label carry the
+// information, no tween involved, so ?motion=0 must show exactly the same layout) and in portrait
+// (a different meld-layout code path — see table/editor-layout.ts / layoutMelds's non-editor call).
+test('mexe mode: run-gap placeholder still reserves its own space under reduced motion (MEXE-19/RECOVERY-04)', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe&motion=0', 'mexe-run-gap-reduced-motion', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildRunGapMeld(p);
+    expect(meldId).not.toBeNull();
+    const invalid = await p.evaluate(() => window.__MEXE__.a11y.invalidBadges);
+    expect(invalid).toBeGreaterThan(0);
+  });
+});
+
+
+/** RECOVERY-14: two same-suit naturals spread far enough apart (>= as many ranks as the meld has
+ * cards, so no window of that size can contain both) plus the joker — analyzeRun's window search
+ * has nowhere to put it, a genuine contradiction (jokerUnassignable), not just an under-length
+ * meld. Any gap of 3+ between two naturals plus one joker qualifies (3-card meld, so a window of 3
+ * is the biggest that could bridge them) — far less picky than requiring an exact "+8" triple, so
+ * it reliably finds a combo without needing the hand's scarcest low cards. Shared by the base
+ * joker-conflict test and the B2 tri-state test below (which excludes whichever suit the run-gap
+ * meld used, so the two don't reach for the same cards). */
+async function buildJokerConflictMeld(p: Page, excludeSuits: readonly string[] = []): Promise<'ok' | 'no-joker' | 'no-combo'> {
+  return p.evaluate((excludeSuitsList) => {
+    const api = window.__MEXE__;
+    const state = api.state!()!;
+    const excludeSuitSet = new Set(excludeSuitsList);
+    const all = state.table.flatMap((m) => m.cards).concat(state.players[state.activePlayerIndex]!.hand);
+    const joker = all.find((c) => c.isJoker);
+    if (!joker) return 'no-joker';
+    for (const suit of (['hearts', 'diamonds', 'clubs', 'spades'] as const).filter((s) => !excludeSuitSet.has(s))) {
+      const ranks = [...new Set(all.filter((c) => c.suit === suit && !c.isJoker).map((c) => c.rank!))].sort((x, y) => x - y);
+      for (let i = 0; i < ranks.length; i++) {
+        for (let j = i + 1; j < ranks.length; j++) {
+          if (ranks[j]! - ranks[i]! < 3) continue;
+          const a = all.find((c) => c.suit === suit && c.rank === ranks[i])!;
+          const b = all.find((c) => c.suit === suit && c.rank === ranks[j])!;
+          const played = api.mexe!.playHandCard(a.id, null);
+          if (!played && !api.mexe!.moveTableCard(a.id, null)) continue;
+          const created = api.mexe!.getDraft()!.melds.find((m) => m.cards.some((card) => card.id === a.id))!.id;
+          const move = (id: string): boolean => api.mexe!.playHandCard(id, created) || api.mexe!.moveTableCard(id, created);
+          if (move(b.id) && move(joker.id)) return 'ok';
+        }
+      }
+    }
+    return 'no-combo';
+  }, excludeSuits);
+}
+
+test('mexe mode: a joker with no reachable slot exposes the joker-failure reason (RECOVERY-14)', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe', 'mexe-joker-conflict', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const ok = await buildJokerConflictMeld(p);
+    expect(ok).toBe('ok');
+    const reasons = await p.evaluate(() => window.__MEXE__.invalidMeldReasons());
+    expect(reasons.some((r) => r.reasons.includes(translate('reason.jokerUnassignable')))).toBe(true);
+    const invalid = await p.evaluate(() => window.__MEXE__.a11y.invalidBadges);
+    expect(invalid).toBeGreaterThan(0);
+  });
+});
+
+// N11: mexe-run-gap and mexe-run-gap-reduced-motion were byte-identical — that case draws no
+// pulsing ring at all, so it never exercised the reduced-motion claim for the thing that actually
+// pulses (the conflict ring on a genuine contradiction). Capture the joker-conflict case instead.
+test('mexe mode: joker-conflict ring is still visible (static) under reduced motion (N11)', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe&motion=0', 'mexe-joker-conflict-reduced-motion', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const ok = await buildJokerConflictMeld(p);
+    expect(ok).toBe('ok');
+    const invalid = await p.evaluate(() => window.__MEXE__.a11y.invalidBadges);
+    expect(invalid).toBeGreaterThan(0);
+  });
+});
+
+// B2: the resting board used to be binary red/green — a lone under-length meld carried the same
+// red alarm as a genuine contradiction. Both cases built on one table in one frame: the run-gap
+// meld (incomplete, gold) and the joker-conflict meld (illegal, red) must render visibly distinct.
+test('mexe mode: incomplete and illegal melds render as distinct gold/red, not both red (B2)', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe', 'mexe-tri-state', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    // Run-gap first, then joker-conflict kept off whichever suit the gap meld used — this hand's
+    // only run-gap triple and its richest joker-conflict combo can otherwise both want the same
+    // low card of that suit (e.g. a scarce single copy), with the second builder's moveTableCard
+    // silently pulling it back out of the meld the first one just built.
+    const gapId = await buildRunGapMeld(p);
+    expect(gapId).not.toBeNull();
+    const gapSuit = await p.evaluate((id) => window.__MEXE__.mexe!.getDraft()!.melds.find((m) => m.id === id)!.cards[0]!.suit, gapId!);
+    const jokerOk = await buildJokerConflictMeld(p, gapSuit ? [gapSuit] : []);
+    expect(jokerOk).toBe('ok');
+    const reasons = await p.evaluate(() => window.__MEXE__.invalidMeldReasons());
+    expect(reasons.some((r) => r.reasons.includes(translate('reason.runGap')))).toBe(true);
+    expect(reasons.some((r) => r.reasons.includes(translate('reason.jokerUnassignable')))).toBe(true);
+    const invalid = await p.evaluate(() => window.__MEXE__.a11y.invalidBadges);
+    expect(invalid).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// R3: a blocked FEITO tap used to end in renderAll() opening the landscape meld-focus overlay
+// (focusedMeldId), whose full-screen depth-700 backdrop then sat over the FEITO button itself —
+// the very next "show me the next problem" tap landed on that backdrop and just closed it instead
+// of advancing. cycleProblem() now drives a separate, non-modal `problemHighlightMeldId` instead,
+// so repeated taps on the blocked button keep stepping through the unresolved melds and the modal
+// never opens uninvited.
+test('cycleProblem: repeated taps on a blocked FEITO advance through unresolved melds without opening the meld-focus modal (R3)', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe', 'cycle-problem-advances', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const gapId = await buildRunGapMeld(p);
+    expect(gapId).not.toBeNull();
+    const gapSuit = await p.evaluate((id) => window.__MEXE__.mexe!.getDraft()!.melds.find((m) => m.id === id)!.cards[0]!.suit, gapId!);
+    const jokerOk = await buildJokerConflictMeld(p, gapSuit ? [gapSuit] : []);
+    expect(jokerOk).toBe('ok');
+
+    // Don't assume exactly 2 unresolved melds: buildRunGapMeld/buildJokerConflictMeld pull cards
+    // out of whatever melds the deal already had on the table, so a source meld can itself end up
+    // short a card and join the unresolved set. Ask the board for the real count instead.
+    const unresolvedCount = await p.evaluate(() => window.__MEXE__.invalidMeldReasons().length);
+    expect(unresolvedCount).toBeGreaterThanOrEqual(2);
+
+    const v = await p.evaluate(() => window.__MEXE__.viewport());
+    const r = gameRegions(v);
+    const seen: (string | null)[] = [];
+    for (let i = 0; i < unresolvedCount; i++) {
+      await tapWorld(p, r.feito.x, r.feito.y); // blocked — triggers onFeitoBlocked -> cycleProblem
+      const current = await p.evaluate(() => window.__MEXE__.mexe!.problemHighlightMeldId());
+      expect(current).not.toBeNull();
+      expect(seen).not.toContain(current); // each tap advances to a NOT-yet-seen unresolved meld
+      seen.push(current);
+      // The non-modal ring must never open the full-screen meld-focus overlay on its own — that
+      // modal's depth-700 backdrop is exactly what used to swallow the next tap (R3).
+      expect(await p.evaluate(() => window.__MEXE__.mexe!.focusedMeldId())).toBeNull();
+    }
+    // One more tap than there are unresolved melds must wrap back to the first one — proof the
+    // cycle actually advances every time instead of getting stuck after the first tap.
+    await tapWorld(p, r.feito.x, r.feito.y);
+    const wrapped = await p.evaluate(() => window.__MEXE__.mexe!.problemHighlightMeldId());
+    expect(wrapped).toBe(seen[0]);
+  });
+});
+
+test('reset: small draft resets immediately, a large draft arms then confirms on a second tap (MEXE-14/RECOVERY-09)', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe', 'mexe-reset-confirm', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const v = await p.evaluate(() => window.__MEXE__.viewport());
+    const r = gameRegions(v);
+
+    // Rack up more edits than RESET_CONFIRM_EDITS by shuttling a table card back and forth.
+    const originalMelds = await p.evaluate(() => window.__MEXE__.state!()!.table);
+    const meldId = originalMelds[0]!.id;
+    const cardId = originalMelds[0]!.cards[originalMelds[0]!.cards.length - 1]!.id;
+    for (let i = 0; i < 3; i++) {
+      await p.evaluate((id) => window.__MEXE__.mexe!.moveTableCard(id, null), cardId);
+      await p.evaluate(({ id, m }) => window.__MEXE__.mexe!.moveTableCard(id, m), { id: cardId, m: meldId });
+    }
+
+    // First tap on a large draft arms the confirm instead of resetting.
+    await tapWorld(p, r.reset.x, r.reset.y);
+    const armedReason = await p.evaluate(() => window.__MEXE__.reasonLine);
+    expect(armedReason).toContain(translate('mobile.resetConfirm'));
+    const stillEdited = await p.evaluate(() => window.__MEXE__.mexe!.getDraft());
+    expect(stillEdited!.melds.find((m) => m.id === meldId)?.cards.length).toBe(originalMelds[0]!.cards.length);
+    await snap(page, 'mexe-reset-armed');
+
+    // Second tap commits the reset back to the turn's starting table.
+    await tapWorld(p, r.reset.x, r.reset.y);
+    const draft = await p.evaluate(() => window.__MEXE__.mexe!.getDraft());
+    expect(draft!.melds.map((m) => m.cards.map((c) => c.id))).toEqual(originalMelds.map((m) => m.cards.map((c) => c.id)));
+  });
+});
+
+// Coordinator finding: the reset button's own tooltip ran off the right edge with the longer PT
+// wording, and EN's "Restart turn" has a different width — verify the same fix (widgets.ts
+// showTooltip's Phaser.Math.Clamp) holds for both strings, not just the one that surfaced it.
+test('mexe-reset-tooltip-en: the reset button tooltip stays on screen in English', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe&lang=en', 'mexe-reset-tooltip-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const v = await p.evaluate(() => window.__MEXE__.viewport());
+    const r = gameRegions(v);
+    await tapWorld(p, r.reset.x, r.reset.y);
+  });
+});
+
+// Evidence gap (coordinator): MEXE-01's turn-entry beat (table wash + banner) is a self-reverting
+// tween — capture() 's normal 700ms settle wait would always miss it. Screenshot the instant the
+// board becomes interactive again, before anything has settled, to catch it mid-fade.
+test('mexe-turn-enter-wash: the turn-entry wash is visible right as the board becomes yours again (MEXE-01)', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=77&showcase=mexe');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  const before = await page.evaluate(() => window.__MEXE__.state!()!.turn);
+  await page.evaluate(() => window.__MEXE__.mexe!.comprar());
+  await page.waitForFunction(
+    (t) => {
+      const s = window.__MEXE__.state?.();
+      return s !== null && s !== undefined && s.turn >= t + 2 && window.__MEXE__.mexe !== null;
+    },
+    before,
+    { timeout: 10_000 },
+  );
+  // No settle wait here on purpose — announceTurn()'s wash fades over ~2 * FEEL.expressive (~760ms).
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  await page.screenshot({ path: path.join(OUT_DIR, 'mexe-turn-enter-wash.png') });
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
+// Evidence gap (coordinator): show the HUD-quiet side of MEXE-01 with more than one opponent on
+// screen. During your own turn none of them is "active" (you are), so the exception that stays at
+// full brightness is a threatened hand, not an active ring — this deal doesn't manufacture a
+// near-win hand (that would need new showcase scaffolding), so what's visible here is the
+// baseline: three opponents, all quieted while the board is yours to edit.
+test('mexe-hud-quiet-4p: opponent row quiets during your own Mexe turn (MEXE-01)', async ({ page }) => {
+  await capture(page, '/?seed=1337&showcase=game4', 'mexe-hud-quiet-4p', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
   });
 });
 
@@ -502,6 +770,64 @@ test('pause-quit-confirm: the quit step asks in sentences, and Esc cancels it', 
   await page.mouse.click(...toScreen(240, PAUSE_RULES_Y));
   await page.waitForFunction(() => window.__MEXE__.rulesOpen === true, undefined, { timeout: 5_000 });
   expect(await page.evaluate(() => window.__MEXE__.scene)).toBe('game');
+});
+
+test('second-match: after quitting to the menu, a new match still lets the AI take its turn (D1 regression)', async ({ page }) => {
+  // GameScene is a single Phaser scene instance reused across scene.start — quitting a match runs
+  // its shutdown handler, and starting a new one re-runs create() on the SAME instance. A field
+  // initializer that shutdown sets (e.g. a "scene is gone" flag) but create() never resets stays
+  // set forever, so the second match's AI turn silently never completes. ?showcase=win (used by
+  // the older rematch test) boots straight into WinScene and never runs a GameScene shutdown at
+  // all, so it cannot catch this — this test goes through a real quit and a real second match.
+  // No ?showcase= param here on purpose: MenuScene re-reads debugApi.showcase (from the URL)
+  // every time it's created and immediately restarts straight into a game when it's set, which
+  // would fire before a click on the menu could ever land — a real menu round trip needs the
+  // plain menu.
+  trackConsoleErrors(page);
+  await page.goto('/?seed=42');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'menu');
+  // First run (tutorial not completed this session): the secondary button is playDirect, straight
+  // to setup, skipping the tutorial.
+  await page.mouse.click(...toScreen(240, 207));
+  await page.waitForFunction(() => window.__MEXE__.scene === 'setup', undefined, { timeout: 10_000 });
+  await page.waitForTimeout(150);
+  await page.mouse.click(...toScreen(300, 248)); // SetupScene PLAY
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null, undefined, { timeout: 10_000 });
+
+  // Quit the first match back to the menu.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  await page.mouse.click(...toScreen(240, PAUSE_QUIT_Y));
+  await page.waitForTimeout(150);
+  await page.mouse.click(...toScreen(240, 172)); // pause-menu.ts showQuitConfirm's "leaveMatch" button
+  await page.waitForFunction(() => window.__MEXE__.scene === 'menu', undefined, { timeout: 10_000 });
+
+  // Start a second match from the menu — same GameScene instance, second create().
+  await page.mouse.click(...toScreen(240, 207));
+  await page.waitForFunction(() => window.__MEXE__.scene === 'setup', undefined, { timeout: 10_000 });
+  await page.waitForTimeout(150);
+  await page.mouse.click(...toScreen(300, 248)); // SetupScene PLAY
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null, undefined, { timeout: 10_000 });
+
+  // Draw to end the human's turn, then require the AI to actually finish its own turn and hand
+  // control back — not just that the active seat moved off the human once.
+  const before = await page.evaluate(() => window.__MEXE__.state!()!.turn);
+  await page.keyboard.press('c');
+  await page.waitForFunction(() => {
+    const s = window.__MEXE__.state!()!;
+    return s.players[s.activePlayerIndex]!.isAi; // human's turn actually ended
+  }, undefined, { timeout: 10_000 });
+  await page.waitForFunction(
+    (t) => {
+      const s = window.__MEXE__.state?.();
+      return s !== null && s !== undefined && s.turn >= t + 2 && !s.players[s.activePlayerIndex]!.isAi;
+    },
+    before,
+    { timeout: 10_000 },
+  ); // the AI's turn completed and control returned to the human — the board is interactive again
+  const errs = await page.evaluate(() => window.__MEXE__.errors);
+  expect(errs).toEqual([]);
 });
 
 test('rules-large-text: the quick reference at 125% text scale', async ({ page }) => {
@@ -857,6 +1183,38 @@ async function tapMeld(p: Page, meldId: string): Promise<void> {
   await tapWorld(p, pos.x, pos.y);
 }
 
+/** MEXE-19/RECOVERY-04: builds a same-suit run with exactly one gap (e.g. 4, 5, [6 missing], 7)
+ * out of whatever this seed's active player actually holds, by trying every low rank/suit combo
+ * until one is fully available. Returns the created meld id, or null if this deal has no such
+ * triple anywhere in table+hand. Shared by the base/reduced-motion/portrait run-gap tests so the
+ * search isn't triplicated.
+ */
+async function buildRunGapMeld(p: Page, excludeIds: readonly string[] = []): Promise<string | null> {
+  return p.evaluate((exclude) => {
+    const api = window.__MEXE__;
+    const state = api.state!()!;
+    const excludeSet = new Set(exclude);
+    const all = state.table
+      .flatMap((m) => m.cards)
+      .concat(state.players[state.activePlayerIndex]!.hand)
+      .filter((c) => !excludeSet.has(c.id));
+    for (const suit of ['hearts', 'diamonds', 'clubs', 'spades'] as const) {
+      for (let base = 1; base <= 9; base++) {
+        const cLow = all.find((c) => c.suit === suit && c.rank === base);
+        const cMid = all.find((c) => c.suit === suit && c.rank === base + 1);
+        const cHigh = all.find((c) => c.suit === suit && c.rank === base + 3);
+        if (!cLow || !cMid || !cHigh) continue;
+        const played = api.mexe!.playHandCard(cLow.id, null);
+        if (!played && !api.mexe!.moveTableCard(cLow.id, null)) continue;
+        const created = api.mexe!.getDraft()!.melds.find((m) => m.cards.some((c) => c.id === cLow.id))!.id;
+        const move = (id: string): boolean => api.mexe!.playHandCard(id, created) || api.mexe!.moveTableCard(id, created);
+        if (move(cMid.id) && move(cHigh.id)) return created;
+      }
+    }
+    return null;
+  }, excludeIds);
+}
+
 async function meldCardIds(p: Page, meldId: string): Promise<string[]> {
   return p.evaluate(
     (id) => window.__MEXE__.mexe!.getDraft()!.melds.find((m) => m.id === id)?.cards.map((c) => c.id) ?? [],
@@ -889,6 +1247,104 @@ test('snap-targets-legal: dragging a card that legally extends a run highlights 
     expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal');
     const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
     await dragCardOnto(p, 'clubs-13-d0', meldPos!);
+  });
+});
+
+// R1 proof: before this remediation, snap.ts's statusFor put reason.runGap in 'illegal' while
+// layoutMelds' resting-board classifier put the exact same reason in 'incomplete' — a card could
+// be dragged over a run-gap zone RED and the instant it was released the same meld rendered GOLD.
+// meldStatus() is now the one classifier both paths call, so the drag-time zone paint and the
+// resting-board paint for the same reason must agree. Two single-screenshot tests (the codebase's
+// established drag-capture pattern — see snap-targets-legal/snap-target-illegal above; a
+// page.screenshot() taken WHILE the mouse is still down cancels Phaser's active drag, so the
+// mid-drag and after-release frames cannot share one gesture/one test) give the "before vs. after"
+// pair to compare directly: run-gap-mid-drag.png (drag-time) and run-gap-after-release.png
+// (resting), same deterministic seed/meld, both must read gold, never one gold and one red.
+
+/** Shared by both R1 tests below: a same-suit low/mid/high triple (base, base+1, base+3) with low
+ * and mid anywhere in table+hand and high specifically in HAND (dragging a card off the table
+ * mid-gesture would shrink its source meld and reflow every other meld's position, moving the
+ * drop target out from under the drag). Builds low+mid as a 2-card partial run on the table. */
+async function buildRunGapDragSetup(p: Page): Promise<{ meldId: string; highId: string }> {
+  const combo = await p.evaluate(() => {
+    const api = window.__MEXE__;
+    const state = api.state!()!;
+    const hand = state.players[state.activePlayerIndex]!.hand;
+    const all = state.table.flatMap((m) => m.cards).concat(hand);
+    for (const suit of ['hearts', 'diamonds', 'clubs', 'spades'] as const) {
+      for (let base = 1; base <= 9; base++) {
+        const low = all.find((c) => c.suit === suit && c.rank === base);
+        const mid = all.find((c) => c.suit === suit && c.rank === base + 1);
+        const high = hand.find((c) => c.suit === suit && c.rank === base + 3);
+        if (low && mid && high) return { low: low.id, mid: mid.id, high: high.id };
+      }
+    }
+    return null;
+  });
+  if (!combo) throw new Error('no low/mid/high run-gap combo in this deal');
+  const meldId = await p.evaluate(({ low, mid }) => {
+    const api = window.__MEXE__;
+    const play = (id: string): boolean => api.mexe!.playHandCard(id, null) || api.mexe!.moveTableCard(id, null);
+    play(low);
+    const created = api.mexe!.getDraft()!.melds.find((m) => m.cards.some((c) => c.id === low))!.id;
+    const move = (id: string): boolean => api.mexe!.playHandCard(id, created) || api.mexe!.moveTableCard(id, created);
+    move(mid);
+    return created;
+  }, combo);
+  return { meldId, highId: combo.high };
+}
+
+test('R1 FRAME 1 (mid-drag): dropping the gap-completing card onto a run-gap paints the zone gold, not red', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe', 'run-gap-mid-drag', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const { meldId, highId } = await buildRunGapDragSetup(p);
+
+    // Drag-time (snap.ts): must be 'incomplete', never 'illegal' — this is R1's actual regression.
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), highId);
+    const target = targets.find((t) => t.meldId === meldId);
+    expect(target?.status).toBe('incomplete');
+    expect(target?.reason).toBe('reason.runGap');
+
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, highId, meldPos!); // mouse stays down — capture() takes the mid-drag shot
+  });
+});
+
+test('R1 FRAME 2 (after release): the same run-gap meld reads gold at rest too — same colour as mid-drag', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe', 'run-gap-after-release', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const { meldId, highId } = await buildRunGapDragSetup(p);
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, highId, meldPos!);
+    await p.mouse.up(); // commits the drop — no screenshot taken while the mouse was down
+    // Wait for the dragged card itself to land, not merely for the meld to carry SOME reason: it
+    // already carries meldTooSmall as a 2-card partial, so waiting on "has a reason" is satisfied
+    // before the drop commits and the assertion below then reads the pre-drop state.
+    await p.waitForFunction(
+      ({ id, card }) =>
+        window.__MEXE__.mexe!.getDraft()!.melds
+          .find((m) => m.id === id)?.cards.some((c) => c.id === card) === true,
+      { id: meldId, card: highId },
+    );
+    // Resting board (layoutMelds): the same meld must be PAINTED 'incomplete' (gold), matching the
+    // drag-time status FRAME 1 asserted. The reason string alone proves nothing here — a gapped run
+    // reports reason.runGap whether it is classified incomplete or illegal; only the status
+    // separates gold from red, which is the divergence R1 exists to prevent.
+    // invalidMeldReasons/renderedMeldStatus are both snapshots of the last RENDER, and the drop
+    // tweens before calling renderAll, so wait for the render to catch up with the landed card.
+    // Wait on the reason set losing meldTooSmall — that flips only once the render has taken in the
+    // third card. Deliberately NOT waiting on the status assertion below, which would be circular.
+    await p.waitForFunction(
+      ({ id, tooSmall }) => {
+        const r = window.__MEXE__.invalidMeldReasons().find((x) => x.meldId === id);
+        return r !== undefined && !r.reasons.includes(tooSmall);
+      },
+      { id: meldId, tooSmall: translate('reason.meldTooSmall') },
+    );
+    const painted = await p.evaluate(() => window.__MEXE__.renderedMeldStatus());
+    expect(painted.find((m) => m.meldId === meldId)?.status).toBe('incomplete');
+    const reasons = await p.evaluate(() => window.__MEXE__.invalidMeldReasons());
+    expect(reasons.find((r) => r.meldId === meldId)?.reasons).toContain(translate('reason.runGap'));
   });
 });
 
@@ -935,6 +1391,41 @@ test('snap-preview-joker: dragging a joker onto a partial run shows what it stan
     expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal'); // joker fills 7
     const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
     await dragCardOnto(p, 'joker-d0-1', meldPos!);
+  });
+});
+
+// MEXE-05 is DEFERRED-PRODUCT (round-2 review): an in-place ghost was tried here and found
+// illegible (gold tint on an already-light card face, under the dragged sprite, overlapping both
+// neighbours) and was reverted. This test still exercises the mid-run-gap drag and confirms the
+// detached panel (status text + joker hint) is the only preview drawn for it.
+test('snap-preview-inplace: dragging a card into a mid-run gap shows the detached preview panel', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe', 'snap-preview-inplace', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    // Same low/mid/high search buildRunGapMeld uses, but this time the low+high pair becomes the
+    // meld and the mid card is the one dragged back in afterward — whatever this hand actually
+    // holds, rather than hardcoded ids that only exist for one particular seed's deal.
+    const combo = await p.evaluate(() => {
+      const api = window.__MEXE__;
+      const state = api.state!()!;
+      // Hand only, not table: buildMeld below plays via playHandCard, which only works on cards
+      // still in hand.
+      const all = state.players[state.activePlayerIndex]!.hand;
+      for (const suit of ['hearts', 'diamonds', 'clubs', 'spades'] as const) {
+        for (let base = 1; base <= 9; base++) {
+          const low = all.find((c) => c.suit === suit && c.rank === base);
+          const mid = all.find((c) => c.suit === suit && c.rank === base + 1);
+          const high = all.find((c) => c.suit === suit && c.rank === base + 2);
+          if (low && mid && high) return { low: low.id, mid: mid.id, high: high.id };
+        }
+      }
+      return null;
+    });
+    expect(combo).not.toBeNull();
+    const meldId = await buildMeld(p, [combo!.low, combo!.high]);
+    const targets = await p.evaluate((id) => window.__MEXE__.mexe!.snapTargets(id), combo!.mid);
+    expect(targets.find((t) => t.meldId === meldId)?.status).toBe('legal');
+    const meldPos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
+    await dragCardOnto(p, combo!.mid, meldPos!);
   });
 });
 
@@ -1062,7 +1553,9 @@ test('tutorial: first-run 12-step completion, including the trinca-limit and jok
   await page.evaluate(() => window.__MEXE__.mexe!.moveTableCard('clubs-9-d0', null));
   await waitStep(8);
 
-  // step8 "invalid": explanatory only — the broken 9s-set is now on screen showing its own reason
+  // step8 "invalid": explanatory only — the broken 9s-set is now on screen showing its own reason.
+  // TUTORIAL-10: this is also where the script now points the player at Undo.
+  await snap(page, 'tutorial-undo');
   await clickNext();
   await waitStep(9);
 
@@ -1104,6 +1597,85 @@ test('tutorial: first-run 12-step completion, including the trinca-limit and jok
   expect(saved.progress.tutorialCompleted).toBe(true);
 
   await snap(page, 'tutorial-complete');
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+
+  // TUTORIAL-13/14: JOGAR (same spot the NEXT button used, x=438,y=144 — see r.tutorialPanel)
+  // lands straight in a real match against the tutorial's own mentor, Dona Cida, and — since this
+  // is this browser's first-ever match — turns on Beginner assistance to keep teaching.
+  const [playX, playY] = toScreen(438, 144);
+  await page.mouse.click(playX, playY);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null, undefined, { timeout: 10_000 });
+  const firstMatch = await page.evaluate(() => window.__MEXE__.state!()!);
+  expect(firstMatch.players.map((p) => p.name)).toEqual(['Você', 'Dona Cida']);
+  const savedAfterPlay = JSON.parse((await page.evaluate(() => localStorage.getItem('mexe-save')))!) as {
+    settings: { helperMode: string };
+  };
+  expect(savedAfterPlay.settings.helperMode).toBe('beginner');
+});
+
+test('tutorial-reduced-motion: the invalid/undo step still shows the Undo callout at ?motion=0', async ({ page }) => {
+  // TUTORIAL-10 a11y check: the highlight is a glow/arrow tween (GameScene.ts renderTutorialOverlay)
+  // — confirm the pointer and copy still land with reducedMotion on, not just compilation.
+  await page.goto('/?seed=42&showcase=menu&motion=0');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const [tx, ty] = toScreen(240, 168);
+  await page.mouse.click(tx, ty);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'tutorial' && window.__MEXE__.mexe !== null);
+  await page.waitForFunction(() => window.__MEXE__.tutorialStep === 0);
+  const [nextX, nextY] = toScreen(438, 144);
+  const clickNext = async (): Promise<void> => {
+    const before = await page.evaluate(() => window.__MEXE__.tutorialStep);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await page.mouse.click(nextX, nextY);
+      try {
+        await page.waitForFunction((s) => window.__MEXE__.tutorialStep !== s, before, { timeout: 2_500 });
+        return;
+      } catch { /* re-rendered mid-click — try again */ }
+    }
+  };
+  const waitStep = async (step: number): Promise<void> => {
+    await page.waitForFunction((s) => window.__MEXE__.tutorialStep === s, step, { timeout: 15_000 });
+  };
+  await clickNext(); // step0 -> 1
+  await waitStep(1);
+  await page.evaluate(() => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('hearts-9-d0', null);
+  });
+  const meldA = await meldIdOf(page, 'hearts-9-d0');
+  await page.evaluate((id) => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('spades-9-d0', id);
+    mexe.playHandCard('clubs-9-d0', id);
+  }, meldA);
+  await waitStep(2);
+  await page.evaluate((id) => window.__MEXE__.mexe!.playHandCard('hearts-9-d1', id), meldA);
+  await page.evaluate(() => window.__MEXE__.mexe!.moveTableCard('hearts-9-d1', null));
+  const meldD = await meldIdOf(page, 'hearts-9-d1');
+  await page.evaluate((id) => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('spades-9-d1', id);
+    mexe.playHandCard('clubs-9-d1', id);
+  }, meldD);
+  await waitStep(3);
+  await page.evaluate(() => window.__MEXE__.mexe!.playHandCard('diamonds-3-d0', null));
+  const meldRun = await meldIdOf(page, 'diamonds-3-d0');
+  await page.evaluate((id) => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('diamonds-4-d0', id);
+    mexe.playHandCard('diamonds-5-d0', id);
+  }, meldRun);
+  await waitStep(4);
+  await page.evaluate((id) => window.__MEXE__.mexe!.playHandCard('diamonds-6-d0', id), meldRun);
+  await waitStep(5);
+  await page.evaluate((id) => window.__MEXE__.mexe!.playHandCard('joker-d0-1', id), meldRun);
+  await waitStep(6);
+  await clickNext(); // mexe-explain -> rebuild
+  await waitStep(7);
+  await page.evaluate(() => window.__MEXE__.mexe!.moveTableCard('clubs-9-d0', null));
+  await waitStep(8); // "invalid" step — Undo is highlighted here
+  await page.waitForTimeout(450); // let the (unscaled) glow/arrow tween complete at least one cycle
+  await snap(page, 'tutorial-undo-reduced-motion');
   expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
 });
 
@@ -1428,6 +2000,32 @@ test('ai-settings: the AI sub-panel cycles difficulty, pace and explanation, and
   expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
 });
 
+// ACCESS-09: the VISUAL HELP row's tooltip must name what the mode changes and say it is not AI
+// difficulty, on screen, in both languages — not just present in the i18n table.
+test('helper-mode-tooltip: VISUAL HELP tooltip explains the mode, in PT and EN (ACCESS-09)', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=1&showcase=settings');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+
+  const [sx, sy] = toScreen(240, settingsRowY(SettingsRow.Game));
+  await page.mouse.click(sx, sy);
+  await page.waitForTimeout(150);
+  const [hx, hy] = toScreen(240, gameRowY(GameRow.HelperMode));
+  await page.mouse.move(hx, hy);
+  await page.waitForTimeout(450); // PixelButton's tooltip shows after a 400ms hover delay
+  await snap(page, 'access-09-helper-tooltip-pt');
+
+  // Same row, switched to English inside the same panel.
+  const [lx, ly] = toScreen(240, gameRowY(GameRow.Lang));
+  await page.mouse.click(lx, ly);
+  await page.waitForTimeout(150);
+  const [hx2, hy2] = toScreen(240, gameRowY(GameRow.HelperMode));
+  await page.mouse.move(hx2, hy2);
+  await page.waitForTimeout(450);
+  await snap(page, 'access-09-helper-tooltip-en');
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
 test('a11y-reduced-motion: ?motion=0 disables cosmetic tweens/fades', async ({ page }) => {
   await capture(page, '/?seed=42&showcase=game&motion=0', 'a11y-reduced-motion', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game');
@@ -1595,6 +2193,141 @@ test('mobile-portrait-en: the portrait board reads in English', async ({ page })
   });
 });
 
+// MOBILE-15/16: a hand this long (seed=12460 + crowd=44 leaves 61+ cards in the human hand — see
+// crowded-table-max above) overflows even the floor-spacing overlap (portrait handSpan 210 / the
+// MIN_HAND_GAP=9 floor stops giving up space once span/(n-1) < 9, i.e. past ~24 cards), so
+// layoutHand() genuinely engages enableHandScroll() rather than just sitting close to its floor.
+test('mobile-hand-scroll: a 60+ card hand drag-scrolls on the strip behind the cards in portrait', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=12460&showcase=mexe&crowd=44', 'mobile-hand-scroll', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await waitForSettledBoard(p);
+    const handLen = await p.evaluate(() => window.__MEXE__.state!()!.players[0]!.hand.length);
+    expect(handLen).toBeGreaterThan(24); // proves this scenario actually overflows, not just sits tight
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.handScroll())).toBe(0);
+    // Press near the top of the taller touch zone (above the card row) and drag left across it —
+    // a press that lands on a card instead starts a card drag (see enableHandScroll's
+    // gesture-priority comment in GameScene.ts). This exact geometry only clears every
+    // overlapping card's padded hit box because layoutHand() shrinks that pad while the hand
+    // overflows (MOBILE-16 fix); it reliably failed to reach the strip before that fix.
+    const stripY = PORTRAIT_REGIONS.handY - 20;
+    const zone = PORTRAIT_REGIONS.handZone;
+    const [sx, sy] = await toCanvasPoint(p, zone.x + zone.w - 4, stripY);
+    const [ex, ey] = await toCanvasPoint(p, zone.x + 4, stripY);
+    await p.mouse.move(sx, sy);
+    await p.mouse.down();
+    await p.mouse.move(ex, ey, { steps: 8 });
+    await p.mouse.up();
+    // Dragged left -> handScroll increases -> every hand sprite's x shifts left under the finger.
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.handScroll())).toBeGreaterThan(0);
+  });
+});
+
+// MOBILE-23/ACCESS-15: the explicit worst-case combination both items name — large text, portrait,
+// a crowded table and a currently-invalid draft, all at once.
+test('mobile-worst-case: large text + portrait + crowded table + invalid draft', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=12460&showcase=mexe&crowd=44&textscale=125', 'mobile-worst-case', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await waitForSettledBoard(p);
+    const tableCount = await p.evaluate(() => window.__MEXE__.state!()!.table.reduce((s, m) => s + m.cards.length, 0));
+    expect(tableCount).toBeGreaterThanOrEqual(44);
+    await crowdTheTable(p); // dumps the full hand into its own 1-card draft melds — none confirmable
+    const validation = await p.evaluate(() => window.__MEXE__.validation as { ok: boolean });
+    expect(validation.ok).toBe(false); // genuinely an invalid draft, not merely a crowded valid one
+    expect(await p.evaluate(() => window.__MEXE__.a11y.invalidBadges)).toBeGreaterThan(0);
+  });
+});
+
+// MOBILE-13: the rotate hint (#portrait-hint, src/main.ts) only shows once the table is genuinely
+// dense (renderedMeldStatus().length >= DENSE_TABLE_MELDS). Prove both sides of the gate: a sparse
+// table never shows it, a dense one does. Neither side is ever exercised by a page load alone
+// (main.ts only re-checks on the portrait media-query's 'change' event, not on a scene change), so
+// each case flips out to landscape and back to fire that listener against a stable scene.
+test('mobile-rotate-hint: the portrait rotate hint only shows on a dense table (MOBILE-13)', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+
+  // Sparse: a fresh 1v1 table has 0 melds.
+  await page.goto('/?seed=42&showcase=game');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game');
+  await page.setViewportSize(PHONE_LANDSCAPE);
+  await page.waitForFunction(() => window.__MEXE__.viewport().portrait === false, undefined, { timeout: 5000 });
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await page.waitForFunction(() => window.__MEXE__.viewport().portrait === true, undefined, { timeout: 5000 });
+  expect(await page.evaluate(() => window.__MEXE__.renderedMeldStatus().length)).toBeLessThan(5);
+  expect(await page.$eval('#portrait-hint', (el) => (el as HTMLElement).style.display)).toBe('none');
+
+  // Dense: crowd the table past the gate, then flip again to re-trigger the same listener.
+  await page.goto('/?seed=12460&showcase=mexe&crowd=44');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  await page.setViewportSize(PHONE_LANDSCAPE);
+  await page.waitForFunction(() => window.__MEXE__.viewport().portrait === false, undefined, { timeout: 5000 });
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await page.waitForFunction(() => window.__MEXE__.viewport().portrait === true, undefined, { timeout: 5000 });
+  expect(await page.evaluate(() => window.__MEXE__.renderedMeldStatus().length)).toBeGreaterThanOrEqual(5);
+  expect(await page.$eval('#portrait-hint', (el) => (el as HTMLElement).style.display)).toBe('block');
+  await snap(page, 'mobile-rotate-hint-dense');
+});
+
+// MOBILE-14: the zoom level is an index into the fixed ZOOM_FLOORS table, not a pixel offset, so it
+// survives an orientation flip — unlike pan (a pixel offset, geometry-dependent) and the
+// landscape-only meld-focus popup, both of which must still reset.
+test('mobile-zoom-survives-flip: zoom level survives an orientation flip mid-draft, pan/focus still reset (MOBILE-14)', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await page.goto('/?seed=77&showcase=mexe&crowd=20');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  await waitForSettledBoard(page);
+  await crowdTheTable(page); // leaves a genuine mid-draft (uncommitted) edit on the table
+  const draftBefore = await page.evaluate(() => window.__MEXE__.mexe!.getDraft());
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.zoomLevel())).toBe(0);
+
+  const [zx, zy] = await toCanvasPoint(page, PORTRAIT_REGIONS.zoomIn.x, PORTRAIT_REGIONS.zoomIn.y);
+  await page.mouse.click(zx, zy);
+  await page.waitForTimeout(80);
+  const zoomBefore = await page.evaluate(() => window.__MEXE__.mexe!.zoomLevel());
+  expect(zoomBefore).toBeGreaterThan(0);
+
+  await page.setViewportSize(PHONE_LANDSCAPE);
+  await page.waitForFunction(() => window.__MEXE__.viewport().portrait === false, undefined, { timeout: 5000 });
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await page.waitForFunction(() => window.__MEXE__.viewport().portrait === true, undefined, { timeout: 5000 });
+
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.zoomLevel())).toBe(zoomBefore); // survives
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.panOffset())).toBe(0); // still resets
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.focusedMeldId())).toBeNull(); // still resets
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.getDraft())).toEqual(draftBefore); // the edit itself is untouched
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
+// MOBILE-16: a press that lands on an actual card must still drag that card, never the strip
+// underneath it — proven by watching handScroll stay exactly 0 through a full press-drag-release
+// on a known on-screen card centre (never the shrunk margin enableHandScroll's fix uses).
+test('mobile-hand-scroll-vs-card-drag: a press on a card still drags the card, not the strip (MOBILE-16)', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=12460&showcase=mexe&crowd=44', 'mobile-hand-scroll-vs-card-drag', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    await waitForSettledBoard(p);
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.handScroll())).toBe(0);
+
+    const cards = await p.evaluate(() => {
+      const hand = window.__MEXE__.state!()!.players[0]!.hand;
+      return hand.map((c) => ({ id: c.id, pos: window.__MEXE__.mexe!.cardPos(c.id) }));
+    });
+    const onscreen = cards.find((c) => c.pos!.x >= 30 && c.pos!.x <= 260)!;
+    const [cx, cy] = await toCanvasPoint(p, onscreen.pos!.x, onscreen.pos!.y); // dead centre of a real card
+    await p.mouse.move(cx, cy);
+    await p.mouse.down();
+    await p.mouse.move(cx, cy - 40, { steps: 8 }); // drag it up, off the hand row entirely
+    // Mid-drag: this must be a card drag, not a strip scroll.
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.handScroll())).toBe(0);
+    await p.mouse.up();
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.handScroll())).toBe(0);
+  });
+});
+
 // ---------- Phase 14 Wave B: helper modes ----------
 
 test('helper-beginner-destinations: selecting a card highlights its legal destinations and previews the drop', async ({ page }) => {
@@ -1728,6 +2461,38 @@ test('editor-invalid-draft: an invalid meld is viewable inside the editor and FE
     await page.waitForTimeout(300); // FEITO accidental-confirm guard (CONFIRM_GUARD_MS) — irrelevant here since check.ok is false anyway
     const confirmed = await p.evaluate(() => window.__MEXE__.mexe!.feito());
     expect(confirmed).toBe(false); // canConfirmTurn is the sole gate — the editor adds no second copy of it
+  });
+});
+
+// B1: layoutMelds (the landscape/desktop path) drew the conflict ring, reserved gap column and
+// missing-slot placeholder, but renderMexeEditor (the mobile touch editor — the primary
+// rearranging surface on mobile, and where cycleProblem() actually steps the player) never called
+// layoutMelds, so none of that spatial explanation existed there. These two tests are the first
+// screenshot evidence of that surface at all.
+test('editor-run-gap: the touch editor shows the missing-slot placeholder for an under-length run (B1)', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=77&showcase=mexe', 'editor-run-gap', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const meldId = await buildRunGapMeld(p);
+    expect(meldId).not.toBeNull();
+    await p.evaluate(() => window.__MEXE__.mexe!.openEditor());
+    await tapMeldListRow(p, meldId);
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.editorMeldId())).toBe(meldId);
+  });
+});
+
+test('editor-joker-conflict: the touch editor shows the conflict ring for a genuinely contradictory meld (B1)', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=77&showcase=mexe', 'editor-joker-conflict', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const ok = await buildJokerConflictMeld(p);
+    expect(ok).toBe('ok');
+    const reasons = await p.evaluate(() => window.__MEXE__.invalidMeldReasons());
+    const meldId = reasons.find((r) => r.reasons.includes(translate('reason.jokerUnassignable')))?.meldId ?? null;
+    expect(meldId).not.toBeNull();
+    await p.evaluate(() => window.__MEXE__.mexe!.openEditor());
+    await tapMeldListRow(p, meldId);
+    expect(await p.evaluate(() => window.__MEXE__.mexe!.editorMeldId())).toBe(meldId);
   });
 });
 
@@ -2056,6 +2821,29 @@ test.describe('portrait', () => {
     await page.waitForFunction(() => window.__MEXE__.tutorialStep === 1, undefined, { timeout: 10_000 });
     await snap(page, 'tutorial-portrait');
     expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  });
+
+  // Coordinator finding: the reset button's own tooltip (PixelButton.showTooltip) wasn't clamped
+  // to the world bounds, so a longer string ran off the right/bottom edge near an edge-hugging
+  // button. Fixed at the shared widget level (src/ui/widgets.ts) — verified here in portrait,
+  // where the reset button sits in a different corner than landscape.
+  test('mexe-reset-tooltip-portrait: the reset button tooltip stays on screen in portrait', async ({ page }) => {
+    await capture(page, '/?seed=77&showcase=mexe', 'mexe-reset-tooltip-portrait', async (p) => {
+      await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+      const v = await p.evaluate(() => window.__MEXE__.viewport());
+      const r = gameRegions(v);
+      await tapWorld(p, r.reset.x, r.reset.y);
+    });
+  });
+
+  test('mexe mode: run-gap placeholder reserves its own space in portrait too (MEXE-19/RECOVERY-04)', async ({ page }) => {
+    await capture(page, '/?seed=77&showcase=mexe', 'mexe-run-gap-portrait', async (p) => {
+      await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+      const meldId = await buildRunGapMeld(p);
+      expect(meldId).not.toBeNull();
+      const invalid = await p.evaluate(() => window.__MEXE__.a11y.invalidBadges);
+      expect(invalid).toBeGreaterThan(0);
+    });
   });
 });
 

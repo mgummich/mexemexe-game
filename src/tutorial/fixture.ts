@@ -34,7 +34,10 @@ export function buildTutorialState(): GameState {
 
   const players: PlayerState[] = [
     { id: 'p0', name: t('menu.you'), isAi: false, hand: p0Hand },
-    { id: 'p1', name: 'Juninho', isAi: true, aiType: 'simple', hand: p1Hand },
+    // TUTORIAL-17: Dona Cida (calm, patient personality — see PERSONALITY_STYLE/PERSONALITY_TRAITS
+    // in src/ai/ai.ts) mentors the lesson; Juninho's aggressive dump-everything style fit poorly
+    // as a first teacher.
+    { id: 'p1', name: 'Dona Cida', isAi: true, aiType: 'simple', hand: p1Hand },
   ];
 
   return {

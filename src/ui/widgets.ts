@@ -68,6 +68,9 @@ export interface PixelButtonOpts {
   color?: number;
   /** Small dark label shown above the button 400ms after hover starts. */
   tooltip?: string;
+  /** N8: side the tooltip opens on. Default 'above' can occlude a control sitting right above the
+   * button (e.g. reset sitting under DRAW/COMPRAR) — pass 'below' there. */
+  tooltipSide?: 'above' | 'below';
   /**
    * Main call-to-action of its screen: lifts further on hover, presses deeper, and pops back on
    * release, so it outweighs the secondary buttons beside it. Purely a feel difference — the
@@ -96,6 +99,11 @@ const STATE_SHADE: Record<'normal' | 'hover' | 'pressed' | 'disabled', number> =
 };
 
 const INK_FRAME = 'ink';
+
+/** R9: every live PixelButton, so a tooltip can check whether its default side would sit on top of
+ * another *enabled* control instead of that being a hardcoded per-button constant (N8's original
+ * fix only covered the reset button — everything else still risked covering a neighbour). */
+const liveButtons = new Set<PixelButton>();
 
 /**
  * Adds (once per texture) a frame cropped to the texture's opaque pixels and returns its name.
@@ -153,6 +161,8 @@ export class PixelButton extends Phaser.GameObjects.Container {
     opts: PixelButtonOpts = {},
   ) {
     super(scene, x, y);
+    liveButtons.add(this);
+    this.on('destroy', () => liveButtons.delete(this));
     const w = opts.w ?? 56;
     const h = opts.h ?? 20;
     this.visualW = w;
@@ -189,8 +199,13 @@ export class PixelButton extends Phaser.GameObjects.Container {
       this.setScale(1);
     });
     if (opts.tooltip) {
+      const side = opts.tooltipSide ?? 'above';
       this.on('pointerover', () => {
-        this.tooltipTimer = scene.time.delayedCall(400, () => this.showTooltip(opts.tooltip!, h));
+        // C1: a disabled button already answers hover-in with its blocking reason text elsewhere
+        // on screen (see onBlocked/touch path above) — showing "Confirm your move" over that text
+        // on hover reads as a lie and can visually cover the reason line itself.
+        if (!this.enabledState) return;
+        this.tooltipTimer = scene.time.delayedCall(400, () => this.showTooltip(opts.tooltip!, h, side));
       });
       this.on('pointerout', () => this.hideTooltip());
       this.on('destroy', () => this.hideTooltip());
@@ -200,7 +215,7 @@ export class PixelButton extends Phaser.GameObjects.Container {
         // (see onBlocked), and "Confirm your move" next to "you can't confirm yet" reads as a lie.
         this.on('pointerdown', () => {
           if (!this.enabledState) return;
-          this.showTooltip(opts.tooltip!, h);
+          this.showTooltip(opts.tooltip!, h, side);
           this.tooltipTimer = scene.time.delayedCall(2500, () => this.hideTooltip());
         });
       }
@@ -272,13 +287,40 @@ export class PixelButton extends Phaser.GameObjects.Container {
     return this;
   }
 
-  private showTooltip(text: string, h: number): void {
+  /** R9: true if a box of this size centred at (cx, cy) would sit on top of another *enabled*
+   * live button — "would cover an enabled control", not a hardcoded per-button side. */
+  private overlapsEnabledControl(cx: number, cy: number, w: number, h: number): boolean {
+    const box = new Phaser.Geom.Rectangle(cx - w / 2, cy - h / 2, w, h);
+    for (const btn of liveButtons) {
+      if (btn === this || !btn.enabledState || !btn.visible) continue;
+      const other = new Phaser.Geom.Rectangle(btn.x - btn.width / 2, btn.y - btn.height / 2, btn.width, btn.height);
+      if (Phaser.Geom.Rectangle.Overlaps(box, other)) return true;
+    }
+    return false;
+  }
+
+  private showTooltip(text: string, h: number, preferredSide: 'above' | 'below' = 'above'): void {
     this.hideTooltip();
     const scene = this.scene;
-    const ty = this.y - h / 2 - 8;
-    const txt = label(scene, this.x, ty, text, 6, '#f7f2e7').setDepth(1000);
-    const w = txt.width + 6;
-    const bg = scene.add.rectangle(this.x, ty, w, txt.height + 3, 0x1a1410, 0.9).setDepth(999);
+    const boxAt = (side: 'above' | 'below'): number => (side === 'below' ? this.y + h / 2 + 8 : this.y - h / 2 - 8);
+    // Measure first (text width decides box width), same as GameScene.showGhostPreview's clamp.
+    const probe = label(scene, this.x, 0, text, 6, '#f7f2e7');
+    const boxW = probe.width + 6;
+    const boxH = probe.height + 3;
+    probe.destroy();
+    // R9: flip off the preferred side only when it would actually sit on top of another enabled
+    // control (e.g. DRAW/COMPRAR sitting right above RESET) — a rule evaluated against every live
+    // button's current position, not a per-button opt-in that only reset ever got.
+    const other: 'above' | 'below' = preferredSide === 'below' ? 'above' : 'below';
+    const side = this.overlapsEnabledControl(this.x, boxAt(preferredSide), boxW, boxH) && !this.overlapsEnabledControl(this.x, boxAt(other), boxW, boxH) ? other : preferredSide;
+    const ty = boxAt(side);
+    // Clamp inside the world bounds — a button near the right/bottom edge (e.g. the reset toggle)
+    // would otherwise centre a long tooltip past the visible edge.
+    const { w: worldW, h: worldH } = view();
+    const tx = Phaser.Math.Clamp(this.x, boxW / 2 + 2, worldW - boxW / 2 - 2);
+    const tyClamped = Phaser.Math.Clamp(ty, boxH / 2 + 2, worldH - boxH / 2 - 2);
+    const txt = label(scene, tx, tyClamped, text, 6, '#f7f2e7').setDepth(1000);
+    const bg = scene.add.rectangle(tx, tyClamped, boxW, boxH, 0x1a1410, 0.9).setDepth(999);
     this.tooltipGfx = [bg, txt];
   }
 

@@ -22,6 +22,10 @@
         /* iOS Safari: no rubber-band scroll or double-tap zoom stealing drags */
         overscroll-behavior: none;
         touch-action: none;
+        /* A drag across the board must not start a text selection or raise selection handles. */
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
         -webkit-text-size-adjust: 100%;
       }
       #game {

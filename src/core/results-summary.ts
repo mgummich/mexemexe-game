@@ -75,3 +75,15 @@ export function matchStoryKey(players: readonly MatchStoryPlayer[], stalemate: b
   if (closest >= 4) return 'win.story.runaway';
   return null;
 }
+
+/**
+ * The head-to-head tally to print under an AI opponent's column (RESULT-06), read from that
+ * opponent's side — the save stores it from the human's (`settings.recordMatchResult`). Null when
+ * nothing has been played against them, so the screen never shows a meaningless "0-0".
+ */
+export function headToHeadRecord(
+  record: { wins: number; losses: number } | undefined,
+): { w: number; l: number } | null {
+  if (!record || record.wins + record.losses <= 0) return null;
+  return { w: record.losses, l: record.wins };
+}

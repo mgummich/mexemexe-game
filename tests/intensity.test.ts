@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchIntensity, threatOf } from '../src/core/intensity';
+import { isComeback, matchIntensity, threatOf } from '../src/core/intensity';
 import type { Card, GameState, Meld } from '../src/rules/types';
 
 function card(i: number): Card {
@@ -58,5 +58,23 @@ describe('matchIntensity', () => {
 
   it('reports the lowest hand at the table, not the local player', () => {
     expect(matchIntensity(state([9, 1, 7], 60)).lowestHand).toBe(1);
+  });
+});
+
+describe('isComeback', () => {
+  it('flags a seat that was strictly trailing the table by the comeback gap', () => {
+    expect(isComeback(state([9, 4], 60), 0)).toBe(true);
+  });
+
+  it('does not flag a seat only barely ahead of the pack', () => {
+    expect(isComeback(state([6, 4], 60), 0)).toBe(false);
+  });
+
+  it('does not flag the leader itself', () => {
+    expect(isComeback(state([2, 9], 60), 0)).toBe(false);
+  });
+
+  it('does not flag an empty hand (already won, not catching up)', () => {
+    expect(isComeback(state([0, 9], 60), 0)).toBe(false);
   });
 });

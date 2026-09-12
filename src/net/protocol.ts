@@ -134,6 +134,11 @@ export interface GameView {
    * state the server owns, not something a client reconstructs.
    */
   missedTurns: number[];
+  /** Whether the active seat has already claimed this turn's one-off Mexe extension. Public
+   * (every seat can see the clock move) and presentation state like `missedTurns` — the client
+   * uses the false->true edge to show a one-time "extension granted" notice, never part of the
+   * hash. Resets to false at the start of each turn. */
+  mexeBonusClaimed: boolean;
   /** Digest of the parts of the authoritative state every seat can see. A client recomputes it
    * from its own reconstruction and asks for a resync on mismatch (docs/archive/PHASE7_AUDIT.md #3). */
   hash: string;
@@ -207,6 +212,7 @@ export function buildView(
   settings: RoomSettings = DEFAULT_ROOM_SETTINGS,
   turnMsLeft: number | null = null,
   missedTurns: number[] = [],
+  mexeBonusClaimed = false,
 ): GameView {
   const view: GameView = {
     seat,
@@ -228,6 +234,7 @@ export function buildView(
     settings,
     turnMsLeft,
     missedTurns: state.players.map((_, i) => missedTurns[i] ?? 0),
+    mexeBonusClaimed,
     hash: '',
   };
   view.hash = stateHash(digestOfView(view));

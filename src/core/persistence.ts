@@ -33,6 +33,13 @@ export interface Settings {
   aiSpeed: AiSpeed;
   /** Whether an AI move is described in the last-move line, and how fully. */
   aiExplain: AiExplain;
+  /**
+   * Short vibration on touch actions, where the browser supports it (Android Chrome does; iOS
+   * Safari has no Vibration API at all, so this is simply inert there). On by default and easy to
+   * turn off — it is a third confirmation channel alongside the visual and the sound, not a
+   * replacement for either.
+   */
+  haptics: boolean;
   /** Ticking cue over the last seconds of an online turn timer. Mixed through the SFX volume. */
   timerTickSound: boolean;
 }
@@ -69,7 +76,7 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
 export const AI_DIFFICULTIES: readonly Difficulty[] = ['beginner', 'casual', 'smart', 'expert'];
 export const AI_SPEEDS: readonly AiSpeed[] = ['instant', 'fast', 'normal', 'slow'];
@@ -105,6 +112,7 @@ function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
     aiSpeed: oneOf(AI_SPEEDS, merged.aiSpeed, DEFAULT_SETTINGS.aiSpeed),
     aiExplain: oneOf(AI_EXPLAIN_MODES, merged.aiExplain, DEFAULT_SETTINGS.aiExplain),
     timerTickSound: typeof merged.timerTickSound === 'boolean' ? merged.timerTickSound : DEFAULT_SETTINGS.timerTickSound,
+    haptics: typeof merged.haptics === 'boolean' ? merged.haptics : DEFAULT_SETTINGS.haptics,
   };
 }
 

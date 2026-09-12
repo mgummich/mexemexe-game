@@ -88,7 +88,10 @@ game.events.on('step', () => {
 // Portrait is now a real playable layout (src/ui/viewport.ts + regions.ts), so this hint must
 // not sit on top of the board forever: show it briefly on load / on entering portrait, then
 // auto-hide so it doesn't block the re-stacked board it used to warn people away from.
+// MOBILE-13: gated to "very dense" boards only, below.
+const DENSE_TABLE_MELDS = 5;
 const portraitHint = document.createElement('div');
+portraitHint.id = 'portrait-hint'; // e2e selector — MOBILE-13's density gate is asserted against this
 portraitHint.style.cssText =
   // top offset adds the safe-area inset: installed as a PWA the status bar is translucent
   // (apple-mobile-web-app-status-bar-style in index.html), so a bare 12px lands under the notch.
@@ -109,6 +112,14 @@ function updatePortraitHint(): void {
   // that greets every phone player at boot reads as "this game does not want to be in portrait"
   // — which is wrong: portrait has a hand-authored layout (see src/ui/regions.ts).
   if (debugApi.scene !== 'game') {
+    portraitHint.style.display = 'none';
+    return;
+  }
+  // MOBILE-13: "only on very dense portrait boards" — a hint on every portrait match, empty table
+  // included, is exactly the unhelpful default this item asks not to ship. Melds on the table is
+  // the cheapest scene-agnostic density proxy debugApi already exposes (renderedMeldStatus() is
+  // last-render-accurate, same field the e2e suite reads for meld counts).
+  if (debugApi.renderedMeldStatus().length < DENSE_TABLE_MELDS) {
     portraitHint.style.display = 'none';
     return;
   }

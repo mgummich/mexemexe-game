@@ -13,14 +13,20 @@ export interface TutorialStepCtx {
   draft: DraftState | null;
 }
 
+/** TUTORIAL-15: the four conceptual phases of a turn — BAIXAR (lay melds), MEXE (rearrange),
+ * COMPRAR (draw) and BATER (go out) — surfaced next to the step counter so the lesson's 12
+ * internal steps read as belonging to a turn's real shape, not just as an opaque "N/12". */
+export type TutorialPhase = 'baixar' | 'mexer' | 'comprar' | 'bater';
+
 export interface TutorialStep {
   id: string;
   textKey: string;
+  phase: TutorialPhase;
   allowed: StepAction[];
   /** Card ids to draw attention to (glow) while this step is active. */
   highlightCardIds?: string[];
   /** HUD buttons to draw attention to while this step is active. */
-  highlightButtons?: ('feito' | 'comprar')[];
+  highlightButtons?: ('feito' | 'comprar' | 'undo')[];
   /** Auto-advance once true. Steps gated only by the NEXT button return false here. */
   isComplete: (ctx: TutorialStepCtx) => boolean;
 }
@@ -49,12 +55,14 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'goal',
     textKey: 'tutorial.step1',
+    phase: 'baixar',
     allowed: [{ type: 'next' }],
     isComplete: () => false,
   },
   {
     id: 'set',
     textKey: 'tutorial.step2',
+    phase: 'baixar',
     allowed: [...NINE_IDS.map((cardId) => ({ type: 'playHandCard' as const, cardId })), CORRECT],
     highlightCardIds: NINE_IDS,
     isComplete: ({ draft }) => !!draft && meldHas(draft.melds, NINE_IDS),
@@ -62,6 +70,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'trinca-limit',
     textKey: 'tutorial.step3',
+    phase: 'baixar',
     // Single step covers the whole round-trip (trigger the duplicate-suit rejection, then fix
     // it) so its goal stays monotonic — a two-step split would have the fix un-do the trigger
     // step's own goal mid-turn, and TutorialDirector.rewindUndoneGoals would bounce back to it.
@@ -78,6 +87,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'run',
     textKey: 'tutorial.step4',
+    phase: 'baixar',
     allowed: [...RUN_IDS.map((cardId) => ({ type: 'playHandCard' as const, cardId })), CORRECT],
     highlightCardIds: RUN_IDS,
     isComplete: ({ draft }) => !!draft && meldHas(draft.melds, RUN_IDS),
@@ -85,6 +95,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'extend',
     textKey: 'tutorial.step5',
+    phase: 'baixar',
     allowed: [{ type: 'playHandCard', cardId: 'diamonds-6-d0' }, CORRECT],
     highlightCardIds: ['diamonds-6-d0'],
     isComplete: ({ draft }) => !!draft && meldHas(draft.melds, [...RUN_IDS, 'diamonds-6-d0']),
@@ -92,6 +103,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'joker',
     textKey: 'tutorial.step6',
+    phase: 'baixar',
     allowed: [{ type: 'playHandCard', cardId: JOKER_ID }, CORRECT],
     highlightCardIds: [JOKER_ID],
     isComplete: ({ draft }) =>
@@ -100,12 +112,14 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'mexe-explain',
     textKey: 'tutorial.step7',
+    phase: 'mexer',
     allowed: [{ type: 'next' }],
     isComplete: () => false,
   },
   {
     id: 'rebuild',
     textKey: 'tutorial.step8',
+    phase: 'mexer',
     allowed: [CORRECT],
     highlightCardIds: ['clubs-9-d0'],
     isComplete: ({ draft }) => !!draft && !meldHas(draft.melds, NINE_IDS),
@@ -113,12 +127,17 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'invalid',
     textKey: 'tutorial.step9',
+    phase: 'mexer',
     allowed: [{ type: 'next' }],
+    // TUTORIAL-10: point at Undo here — the player has just seen a harmless invalid state, the
+    // natural moment to learn that any single move is one tap away from reverting.
+    highlightButtons: ['undo'],
     isComplete: () => false,
   },
   {
     id: 'feito',
     textKey: 'tutorial.step10',
+    phase: 'mexer',
     allowed: [CORRECT, { type: 'feito' }],
     highlightButtons: ['feito'],
     isComplete: ({ state }) => state.turn >= 2,
@@ -126,6 +145,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'comprar',
     textKey: 'tutorial.step11',
+    phase: 'comprar',
     allowed: [{ type: 'comprar' }],
     highlightButtons: ['comprar'],
     // turn 2 (feito) -> 3 (ai draw) -> 4 (this draw)
@@ -134,6 +154,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'win',
     textKey: 'tutorial.step12',
+    phase: 'bater',
     allowed: [
       { type: 'playHandCard', cardId: 'diamonds-9-d0' },
       { type: 'playHandCard', cardId: 'diamonds-7-d0' },

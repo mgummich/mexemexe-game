@@ -7,10 +7,11 @@ import { rankLabel, SUIT_CHAR } from '../assets/fallbacks';
 import { settings } from '../core/settings';
 import { bus } from '../core/events';
 import { onAppHidden, onAppVisible } from '../core/lifecycle';
+import { haptic } from '../core/haptics';
 import { playlog } from '../core/playlog';
 import { createNewGame, GameStore } from '../game-state/store';
 import { buildShowcaseState } from '../demo/showcase';
-import { matchIntensity, threatOf } from '../core/intensity';
+import { isComeback, matchIntensity, threatOf } from '../core/intensity';
 import { doneChecklist, formatChecklist, objectiveKey, objectivePhase } from '../core/objective';
 import { playerStats, summarizeMoveKey } from '../core/results-summary';
 import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES } from '../cosmetics';
@@ -33,7 +34,8 @@ import {
   type MeldListRow,
 } from '../table/editor-layout';
 import { computeMeldLayout, type MeldLayoutInput } from '../table/layout';
-import { computeSnapTargets, snapTargetFor, type SnapStatus, type SnapTarget } from '../table/snap';
+import { computeSnapTargets, meldStatus, snapTargetFor, STATUS_COLOR, type SnapStatus, type SnapTarget } from '../table/snap';
+import { invalidMeldDetail, type InvalidDetail } from '../table/invalid-detail';
 import { resolveCardTapDestination } from '../table/tap-destination';
 import { ZOOM_FLOORS, zoomStepIn, zoomStepOut } from '../table/zoom';
 import { buildTutorialState } from '../tutorial/fixture';
@@ -45,7 +47,7 @@ import { openRulesPanel } from '../ui/rules-panel';
 import { view } from '../ui/viewport';
 import { coverBackground } from '../ui/menu-layout';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
-import { debugApi } from '../verification/debug-api';
+import { debugApi, urlSeed } from '../verification/debug-api';
 
 type SortMode = 'suit' | 'rank';
 
@@ -65,14 +67,14 @@ export function buildTutorialLaunchConfig(): GameSceneConfig {
     seed: 0,
     players: [
       { name: t('menu.you'), isAi: false },
-      { name: 'Juninho', isAi: true, personality: 'juninho' },
+      { name: 'Dona Cida', isAi: true, personality: 'cida' },
     ],
     tutorial: true,
   };
 }
 
 const MELD_PAD = 4;
-const GOLD = 0xf7d23e;
+const GOLD = 0xd4af37; // C3: distinct from STATUS_COLOR.incomplete.fill (0xf7d23e) so chrome gold != incomplete-meld gold
 const CONFIRM_GUARD_MS = 250;
 /** Bound on how long onlinePending may lock input: a healthy FEITO/COMPRAR round trip is well
  * under this. If neither state_sync nor proposal_rejected arrives in time (dropped/ignored
@@ -91,6 +93,17 @@ type DraftAnalysis = ReturnType<DraftEditor['analyze']>;
  * noise. The rest are simply placed, which is where they were going anyway.
  */
 const MAX_ANIMATED_CARDS = 24;
+/**
+ * Narrowest a hand may fan before it scrolls instead. At this spacing the rank and suit corner of
+ * every card is still visible, which is the only part that has to be readable to pick one.
+ */
+const MIN_HAND_GAP = 9;
+/** Band at the top and bottom of a zoomed table where holding a dragged card scrolls it. */
+const EDGE_PAN_ZONE = 24;
+/** Fastest edge-pan step per drag event, in world units. */
+const EDGE_PAN_MAX_STEP = 4;
+/** How far a dragged card rides above a finger, so the thumb never covers it or its target. */
+const FINGER_LIFT_TOUCH = 18;
 /** Degrees of lean per world-unit of drag velocity, and the hard cap on it. Readability first. */
 const DRAG_TILT_PER_UNIT = 0.5;
 const DRAG_TILT_MAX = 6;
@@ -100,6 +113,11 @@ const MIN_TRAVEL_SQ = 4;
 const DEAL_STAGGER_MS = 22;
 /** Quiet for this long on your own turn and the game offers a hint. See `armHesitationHint`. */
 const HESITATION_MS = 18_000;
+/** MEXE-14/RECOVERY-09: a draft this many edits deep arms Reset instead of firing it immediately —
+ * below this, undo/reset are interchangeable enough that a confirm step would only be friction. */
+const RESET_CONFIRM_EDITS = 4;
+/** How long a confirm-armed Reset stays armed before it quietly disarms again. */
+const RESET_ARM_MS = 3000;
 
 interface MeldZone {
   meldId: string;
@@ -129,6 +147,9 @@ export class GameScene extends Phaser.Scene {
 
   private cardSprites: Phaser.GameObjects.Image[] = [];
   private meldZones: MeldZone[] = [];
+  /** R1 verification: the status each meld was actually PAINTED with on the last render, filled by
+   * whichever table renderer ran (layoutMelds or renderMexeEditor) and exposed via debugApi. */
+  private renderedMeldStatus = new Map<string, SnapStatus>();
   private meldGlowRects: { meldId: string; rect: Phaser.GameObjects.Rectangle }[] = [];
   private hud: Phaser.GameObjects.GameObject[] = [];
   private meldTooltip: Phaser.GameObjects.GameObject[] = [];
@@ -166,6 +187,9 @@ export class GameScene extends Phaser.Scene {
   private validSince: number | null = null;
   private lastValidOk = false;
 
+  /** MEXE-14/RECOVERY-09: this.time.now a Reset tap armed a confirm until, or 0 when unarmed. */
+  private resetArmedUntil = 0;
+
   // tutorial mode
   private tutorialDirector: TutorialDirector | null = null;
 
@@ -176,7 +200,20 @@ export class GameScene extends Phaser.Scene {
 
   // online mode — 0 for every local/AI/tutorial game, the server-assigned seat when online
   private localSeat = 0;
-  private online: { client: NetClient; seat: number; code: string; lastRev: number } | null = null;
+  private online: {
+    client: NetClient;
+    seat: number;
+    code: string;
+    lastRev: number;
+    /** Last state_sync's mexeBonusClaimed — the false->true edge is what triggers the notice. */
+    mexeBonusClaimed: boolean;
+    /** Last state_sync's missedTurns per seat — read by onOnlineTurnTimeout to size the warning
+     * and to know whether a timeout is about to hit the room's missedTurnLimit. */
+    missedTurns: number[];
+  } | null = null;
+  /** Set in onOnlineTurnTimeout when a timeout is about to push a seat to missedTurnLimit, so the
+   * room_closed that follows can show the specific "match ended" copy instead of the generic one. */
+  private pendingMissedLimitClose = false;
   /** True from FEITO/COMPRAR submit until state_sync or proposal_rejected — locks all input.
    * Set/cleared only via setOnlinePending() so the timeout timer never drifts from the flag. */
   private onlinePending = false;
@@ -221,10 +258,16 @@ export class GameScene extends Phaser.Scene {
   private guardTimer: Phaser.Time.TimerEvent | null = null;
   /** Kept so a refused FEITO can briefly point at Undo — see checkMyWork. */
   private undoBtn?: PixelButton;
+  private resetBtn?: PixelButton;
   /** While an opponent's move is still being shown, the board is read-only — see presentAiMove. */
   private presentingUntil = 0;
   /** Seats whose last card has already been announced, so the moment fires once, not every render. */
   private lastCardAnnounced = new Set<number>();
+  /** END-15: seats already given the subtle 2-cards tension cue, so it plays once per entry into
+   * `threat`, not every render — mirrors `lastCardAnnounced` one rung down the escalation. */
+  private threatAnnounced = new Set<number>();
+  /** Horizontal scroll offset of the main hand, for hands too long to fit — see enableHandScroll. */
+  private handScroll = 0;
   private hesitationHint: Phaser.GameObjects.Text | null = null;
   private lastMoveText: Phaser.GameObjects.Text | null = null;
   /** Readback of the most recently *confirmed* (meld) turn — read by onWin() to build the
@@ -265,8 +308,16 @@ export class GameScene extends Phaser.Scene {
   private zoomInBtn!: PixelButton;
   private zoomOutBtn!: PixelButton;
   /** Meld focus view (Phase 14 Wave C landscape counterpart — see layoutMelds): id of the meld
-   * currently shown large in the read-only overlay, or null when closed. */
+   * currently shown large in the read-only overlay, or null when closed. Only ever set by the
+   * explicit 🔍 icon (layoutMelds) — kept separate from `problemHighlightMeldId` (R3/R4) so
+   * cycleProblem's "show next problem" ping never opens this modal on top of the FEITO button it
+   * was tapped from. */
   private focusedMeldId: string | null = null;
+  /** R3/R4: which meld cycleProblem() last pointed at — a static (reduced-motion-safe), non-modal
+   * ring layoutMelds draws, distinct in both colour and shape from `focusedMeldId`'s full-screen
+   * modal and from the gold dashed "incomplete" meld outline. Cleared once that meld stops being
+   * invalid, so a fixed meld never keeps wearing a stale "look here" ring. */
+  private problemHighlightMeldId: string | null = null;
   /** Geometry mask clipping zoomed/panned table content to the table area — recreated each
    * layoutMelds() pass (only while zoomed; at the default zoom nothing is masked, so today's
    * landscape rendering is untouched), destroyed at the top of the next renderAll(). */
@@ -306,8 +357,16 @@ export class GameScene extends Phaser.Scene {
   create(config: GameSceneConfig): void {
     this.config = config;
     this.online = config.online
-      ? { client: config.online.client, seat: config.online.seat, code: config.online.code, lastRev: config.online.view.rev }
+      ? {
+          client: config.online.client,
+          seat: config.online.seat,
+          code: config.online.code,
+          lastRev: config.online.view.rev,
+          mexeBonusClaimed: config.online.view.mexeBonusClaimed,
+          missedTurns: config.online.view.missedTurns,
+        }
       : null;
+    this.pendingMissedLimitClose = false;
     this.localSeat = config.online ? config.online.seat : 0;
     this.setOnlinePending(false);
     this.lastRejections = [];
@@ -319,12 +378,21 @@ export class GameScene extends Phaser.Scene {
     this.mexeEditorMeldId = undefined;
     this.mexeEditorScroll = 0;
     this.mexeHandScroll = 0;
+    this.resetArmedUntil = 0;
+    this.handScroll = 0;
+    this.sceneGone = false;
+    this.guardTimer = null;
+    this.onlineResyncing = false;
     this.resetZoomPan();
     debugApi.scene = config.tutorial ? 'tutorial' : 'game';
     debugApi.seed = config.seed;
     if (!config.tutorial && !config.online) {
       settings.setLastSeed(config.seed);
       settings.noteGameStarted();
+      // A reused scene instance carries the previous match's confirms/draws/cardsPlayed
+      // (player ids are always p0/p1) — start each local match with a clean log so the results
+      // panel and matchStoryKey read this match's numbers, not the sum of both.
+      playlog.clear();
       // Which game this is for this browser, so the playtest log can tell a first match from a
       // rematch. Two counts, no identifier — read after noteGameStarted so this match is included.
       playlog.setSessionContext({
@@ -549,9 +617,24 @@ export class GameScene extends Phaser.Scene {
     if (actingSeat === this.localSeat) this.clearLastMove();
     else this.noteOpponentMove(before, this.store.get(), actingSeat);
     debugApi.state = () => this.store.get();
-    const hadDraft = (this.editor?.historyLength() ?? 0) > 0;
+    // historyLength() starts at 1 (the DraftEditor constructor snapshots the turn's starting
+    // position before any edit) — see onReset's `historyLength() - 1` for the same convention.
+    // Bug found alongside ONLINE-09: comparing against 0 here meant a state_sync mid-own-turn
+    // with zero edits (which is exactly what a Mexe bonus claim's broadcast now causes) always
+    // read as a dropped draft.
+    const hadDraft = (this.editor?.historyLength() ?? 0) > 1;
     this.editor = null;
+    // ONLINE-09: the server flips mexeBonusClaimed false->true the instant a Mexe grants the
+    // once-per-turn time extension. A dropped draft takes priority — it is the rarer, more
+    // disruptive event for the player who just lost work.
+    const bonusJustClaimed = view.mexeBonusClaimed && !this.online.mexeBonusClaimed;
+    this.online.mexeBonusClaimed = view.mexeBonusClaimed;
+    this.online.missedTurns = view.missedTurns;
     if (hadDraft) this.setOnlineNotice(t('online.draftDropped'));
+    else if (bonusJustClaimed) {
+      this.setOnlineNotice(t('online.mexeBonusGranted', { s: Math.round(view.settings.mexeBonusMs / 1000) }));
+      this.time.delayedCall(4000, () => this.setOnlineNotice(''));
+    }
     if (!this.verifyOnlineHash(view)) return;
     this.onlineResyncing = false;
     if (this.store.get().phase === 'playing') this.onTurnStart();
@@ -634,7 +717,15 @@ export class GameScene extends Phaser.Scene {
    * Either way: a clear localized notice, then back to the menu — never a silent scene switch. */
   private onOnlineTerminalError(msg: ErrorMsg): void {
     if (!this.online || (msg.code !== 'room_closed' && msg.code !== 'invalid_token')) return;
-    this.setOnlineNotice(msg.code === 'room_closed' ? t('online.roomClosed') : t('online.connectionLost'));
+    const missedLimitClose = msg.code === 'room_closed' && this.pendingMissedLimitClose;
+    this.pendingMissedLimitClose = false;
+    this.setOnlineNotice(
+      missedLimitClose
+        ? t('online.timeout.missedLimit')
+        : msg.code === 'room_closed'
+          ? t('online.roomClosed')
+          : t('online.connectionLost'),
+    );
     this.time.delayedCall(2000, () => {
       if (!this.online) return; // scene already moved on
       this.online.client.disconnect();
@@ -714,6 +805,8 @@ export class GameScene extends Phaser.Scene {
     this.mexeEditorMeldId = undefined;
     this.mexeEditorScroll = 0;
     this.mexeHandScroll = 0;
+    this.resetArmedUntil = 0;
+    this.resetBtn?.setSelected(false);
     this.resetZoomPan();
     // One board sample per turn (not per render): hand size, deck left and table complexity, which
     // is how the playtest log answers "when did this match get heavy?".
@@ -742,6 +835,11 @@ export class GameScene extends Phaser.Scene {
     this.renderAll();
     if (this.online) return; // opponent's turn online: read-only, never an AI timer
 
+    // AI-01: the opponent's turn gets its own brief start, same beat as the player's own, minus
+    // the "board becomes editable" wash (see announceTurn) — the seat/avatar activation ring and
+    // the receded hand (layoutHand) are already handled by renderAll above.
+    if (!this.dealPending) this.announceTurn(false);
+
     if (this.tutorialDirector) {
       // tutorial opponent: no thinking, always draws so the human's next scripted turn arrives fast
       this.aiTimer = this.time.delayedCall(500, () => {
@@ -750,6 +848,9 @@ export class GameScene extends Phaser.Scene {
       });
     } else {
       const personality = this.personalities[state.activePlayerIndex]!;
+      // AI-02: a personality-flavored pre-move tell (see PERSONALITY_STYLE.thinkEmote) instead of
+      // a generic pause — wordless and cooldown-exempt so it never eats the post-move reaction.
+      this.showEmote(state.activePlayerIndex, PERSONALITY_STYLE[personality].thinkEmote, null, undefined, true);
       this.aiTimer = this.time.delayedCall(this.aiThinkDelay(personality, state), () => void this.runAiTurn(personality));
     }
   }
@@ -783,8 +884,40 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * MEXE-14/RECOVERY-09: a small draft resets immediately — undo already covers that case, so a
+   * confirm step would just be friction. A draft with real work in it (RESET_CONFIRM_EDITS+ edits)
+   * arms instead of firing: the reason line names it, and a second tap within RESET_ARM_MS commits
+   * it. No modal — experimentation stays uninterrupted, the cost of a mistake is just one more tap.
+   */
   private onReset(): void {
     if (!this.editor) return;
+    const edits = this.editor.historyLength() - 1;
+    const armed = this.resetArmedUntil > this.time.now;
+    if (edits >= RESET_CONFIRM_EDITS && !armed) {
+      const until = this.time.now + RESET_ARM_MS;
+      this.resetArmedUntil = until;
+      this.reasonText.setText(t('mobile.resetConfirm'));
+      this.fitReasonBackdrop();
+      debugApi.reasonLine = this.reasonText.text;
+      // N7: arming is a neutral "are you sure", not a rejection — sfx-invalid is the punishment
+      // sound used elsewhere for a blocked action, wrong cue for this. sfx-pickup is the same
+      // neutral cue MEXE-17's reverse-commit already reuses.
+      playSfx(this, 'sfx-pickup', 0.35);
+      // N7: a visible armed state on the button itself (reused from the "chosen" ring elsewhere),
+      // plus the timer that clears both it and the reason line when the arm window lapses — before
+      // this, the line kept claiming the button was armed long after it had silently disarmed.
+      this.resetBtn?.setSelected(true);
+      this.time.delayedCall(RESET_ARM_MS, () => {
+        if (this.resetArmedUntil !== until || this.sceneGone) return; // re-armed or reset already fired
+        this.resetArmedUntil = 0;
+        this.resetBtn?.setSelected(false);
+        if (this.editor) this.renderAll();
+      });
+      return;
+    }
+    this.resetArmedUntil = 0;
+    this.resetBtn?.setSelected(false);
     const before = this.cardPositions();
     playSfx(this, 'sfx-drop', 0.4);
     this.editor.reset();
@@ -889,10 +1022,12 @@ export class GameScene extends Phaser.Scene {
       },
       editorMeldId: () => this.mexeEditorMeldId ?? null,
       editorScroll: () => this.mexeEditorScroll,
+      handScroll: () => this.handScroll,
       // Phase 14 Wave D — table zoom/pan/focus, verification-only reads.
       zoomLevel: () => this.zoomLevel,
       panOffset: () => this.tablePan,
       focusedMeldId: () => this.focusedMeldId,
+      problemHighlightMeldId: () => this.problemHighlightMeldId,
       // Phase 14 Wave E: whether a card sprite currently carries the zoomed-table geometry mask —
       // lets e2e prove a dragged sprite drops the mask mid-drag instead of visually clipping.
       cardMasked: (cardId: string) => {
@@ -1030,7 +1165,10 @@ export class GameScene extends Phaser.Scene {
   private onWin(): void {
     const state = this.store.get();
     const winner = state.players.find((p) => p.id === state.winnerId)!;
-    playSfx(this, 'sfx-win');
+    // JUICE-06: a short held beat before the BATER sting, so it reads as an earned impact instead
+    // of firing in the same frame the winning card touched the table. Scales to 0 under reduced
+    // motion — the sound still plays, it just loses the wind-up, which carries no information.
+    this.time.delayedCall(feelMs('fast'), () => playSfx(this, 'sfx-win'));
     if (this.tutorialDirector) {
       // stay in-scene: the overlay shows the BATEU banner + REPLAY/SKIP instead of leaving to WinScene
       this.renderAll();
@@ -1054,7 +1192,12 @@ export class GameScene extends Phaser.Scene {
         if (personality && i !== this.localSeat) settings.recordMatchResult(personality, humanWon);
       }
     }
-    this.time.delayedCall(400, () => {
+    // END-12: FEEL's own docs name victory as a `major`-band moment (FEEL's `major` comment:
+    // "FEITO, BATER, victory") — reusing that band instead of a bespoke 400ms gives the winning
+    // move's own animation (now fully played out, see presentAiMove/playFeitoConfirmFx) room to
+    // actually land on screen before results appear, and it still respects reduced motion since
+    // feelMs already scales by motionScale.
+    this.time.delayedCall(Math.max(400, feelMs('major')), () => {
       gotoScene(this, 'win', {
         winnerName: winner.name,
         stalemate,
@@ -1111,7 +1254,10 @@ export class GameScene extends Phaser.Scene {
     const undoBtn = new PixelButton(this, this.r.undo.x, this.r.undo.y, '↶', () => this.onUndo(), { textureBase: 'btn-small', w: this.r.undo.w, h: this.r.undo.h, size: this.r.undo.size, color: 0x5e5646, tooltip: t('tooltip.undo') });
     this.undoBtn = undoBtn;
     const redoBtn = new PixelButton(this, this.r.redo.x, this.r.redo.y, '↷', () => this.onRedo(), { textureBase: 'btn-small', w: this.r.redo.w, h: this.r.redo.h, size: this.r.redo.size, color: 0x5e5646, tooltip: t('tooltip.redo') });
-    const resetBtn = new PixelButton(this, this.r.reset.x, this.r.reset.y, '⟲', () => this.onReset(), { textureBase: 'btn-small', w: this.r.reset.w, h: this.r.reset.h, size: this.r.reset.size, color: 0x8e4632, tooltip: t('tooltip.reset') });
+    // N8: tooltip flips below the button — "above" (the default) sits right over DRAW/COMPRAR,
+    // which reset's row is directly beneath in every layout.
+    const resetBtn = new PixelButton(this, this.r.reset.x, this.r.reset.y, '⟲', () => this.onReset(), { textureBase: 'btn-small', w: this.r.reset.w, h: this.r.reset.h, size: this.r.reset.size, color: 0x8e4632, tooltip: t('tooltip.reset'), tooltipSide: 'below' });
+    this.resetBtn = resetBtn;
 
     // shifted off the corner: at (18,254) the table-frame art clipped this icon on both edges.
     const sortBtn = new PixelButton(this, this.r.sort.x, this.r.sort.y, '⇅', () => {
@@ -1218,7 +1364,25 @@ export class GameScene extends Phaser.Scene {
       const name = this.store.get().players[seat]?.name ?? '';
       this.setOnlineNotice(t('online.timeout.other', { name }));
     }
-    this.time.delayedCall(4000, () => this.setOnlineNotice(''));
+    // ONLINE-14: a room that closes on missedTurnLimit never gets the state_sync that would move
+    // play off `seat` — the tick loop skips broadcastStateSync when the room closed (see
+    // server/index.ts) — so if `seat` is still the active player here, this timeout is the one
+    // that pushed it over the limit. Remember that so onOnlineTerminalError can show the specific
+    // "match ended" copy instead of the generic one. Short of the limit, the preceding state_sync
+    // already landed (its handler updated this.online.missedTurns), so chain a warning naming the
+    // remaining allowance — repeated misses should never end a match by surprise.
+    const limit = this.onlineSettings?.missedTurnLimit ?? 0;
+    this.pendingMissedLimitClose = limit > 0 && this.store.get().activePlayerIndex === seat;
+    if (limit > 0 && !this.pendingMissedLimitClose) {
+      const missed = this.online.missedTurns[seat] ?? 0;
+      const name = this.store.get().players[seat]?.name ?? '';
+      this.time.delayedCall(2500, () =>
+        this.setOnlineNotice(t('online.missedWarning', { name, n: missed, left: Math.max(0, limit - missed) })),
+      );
+      this.time.delayedCall(5000, () => this.setOnlineNotice(''));
+    } else {
+      this.time.delayedCall(4000, () => this.setOnlineNotice(''));
+    }
   }
 
   /** One-second-resolution readout of the server's clock. Never authoritative: it renders
@@ -1259,7 +1423,13 @@ export class GameScene extends Phaser.Scene {
   private relayout(): void {
     if (!this.scene.isActive()) return;
     this.r = this.regionsForMode();
+    // MOBILE-14: the zoom *level* is an index into the fixed, orientation-independent ZOOM_FLOORS
+    // table, so it survives the flip even though resetZoomPan() below also clears tablePan (a raw
+    // pixel offset, meaningless once the table geometry changes size) and focusedMeldId (the
+    // landscape-only meld-focus popup, which portrait has no equivalent of).
+    const zoomLevel = this.zoomLevel;
     this.resetZoomPan();
+    this.zoomLevel = zoomLevel;
     // An orientation flip invalidates the portrait editor's scroll/focus state same as zoom/pan —
     // leaving it stale let a reopen after the flip restore a scroll offset or focused meld from
     // before it (finding 3, Phase 14 review).
@@ -1448,6 +1618,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     let acted = false;
+    const returning = !fromHand && kind === 'hand';
     if (fromHand) {
       if (kind !== 'hand') acted = this.editor.playHandCard(cardId, kind === 'meld' ? meldId : null);
     } else if (kind === 'hand') {
@@ -1455,7 +1626,8 @@ export class GameScene extends Phaser.Scene {
     } else {
       acted = this.editor.moveTableCard(cardId, kind === 'meld' ? meldId : null);
     }
-    playSfx(this, acted ? 'sfx-drop' : 'sfx-invalid', 0.5);
+    // MEXE-17: a returned card gets the "picked back up" cue, same as the drag path.
+    playSfx(this, acted ? (returning ? 'sfx-pickup' : 'sfx-drop') : 'sfx-invalid', 0.5);
     if (acted) this.clearLastMove();
     this.selectedCardId = null;
     this.focusIndex = 0;
@@ -1509,6 +1681,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     playSfx(this, 'sfx-feito');
+    haptic('thud');
     this.clearLastMove();
     const draft = this.editor.getDraft();
     const handCardIds = new Set(draft.handCardsPlayed);
@@ -1528,8 +1701,12 @@ export class GameScene extends Phaser.Scene {
     const prev = GameScene.meldOf(beforeState);
     let moved = 0;
     for (const [id, meldId] of GameScene.meldOf(afterState)) if (prev.has(id) && prev.get(id) !== meldId) moved++;
-    if (moveWeight(draft.handCardsPlayed.length, moved) === 'huge' && afterState.phase === 'playing') {
-      this.flashMoment(t('game.moment.mexeu'));
+    if (moveWeight(draft.handCardsPlayed.length, moved) === 'huge') {
+      // PACE-14/END-14: same comeback check as the AI's own huge moves, and — unlike before —
+      // shown on a winning huge move too (END-13's fix did the same for the AI side), not just
+      // ones that leave the match still playing.
+      this.flashMoment(t(isComeback(beforeState, beforeState.activePlayerIndex) ? 'game.moment.comeback' : 'game.moment.mexeu'));
+      if (afterState.phase === 'playing') this.reactToPlayerMexe(afterState); // an opponent reacting to being just defeated would read oddly
     }
     this.playFeitoConfirmFx(sparkleTargets, () => {
       if (this.store.get().phase === 'playing') this.renderAll();
@@ -1687,7 +1864,12 @@ export class GameScene extends Phaser.Scene {
    * legible — the pause is never there to make the AI look clever.
    */
   private presentAiMove(before: GameState, after: GameState, seat: number, boardBefore: Map<string, { x: number; y: number }>): void {
-    if (after.phase !== 'playing') return; // a winning move is the endgame's moment, not this one
+    // END-13: this used to bail out entirely once `after.phase` left 'playing', so an opponent's
+    // WINNING move never animated at all — the board sat frozen on last turn's state until
+    // WinScene simply cut in. The board still needs to resolve visibly first (END-12), so this
+    // now renders and animates the winning move exactly like any other; only the "hold, then
+    // re-render for the next turn" tail below is moot once the match is over (its own guard —
+    // `this.store.get().phase === 'playing'` — already makes that a safe no-op).
     const changed = GameScene.meldOf(after);
     const prev = GameScene.meldOf(before);
     let moved = 0;
@@ -1696,7 +1878,9 @@ export class GameScene extends Phaser.Scene {
     const weight = moveWeight(Math.max(0, played), moved);
     this.renderAll();
     this.animateBoardFrom(boardBefore, WEIGHT_BAND[weight], this.seatPosition(seat));
-    if (weight === 'huge') this.flashMoment(t('game.moment.mexeu'));
+    // PACE-14: a huge Mexe from whoever was trailing hardest reads as a comeback, not just a
+    // tidy table — no score is kept, this only ever looks at the one before/after pair in hand.
+    if (weight === 'huge') this.flashMoment(t(isComeback(before, seat) ? 'game.moment.comeback' : 'game.moment.mexeu'));
 
     // Hold the board for a beat after the movement lands. Without this the turn is handed over on
     // the same frame the cards arrive, and a big rearrangement is gone before it can be read.
@@ -1751,6 +1935,23 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * END-15: a quieter cue than `announceLastCards` for the rung just below it — 2 cards is worth
+   * noticing, not alarming. No banner (that would compete with the 1-card moment for attention);
+   * the existing size/colour bump (threatOf) already carries the visual half.
+   */
+  private announceThreat(state: GameState): void {
+    state.players.forEach((p, i) => {
+      if (threatOf(p.hand.length) !== 'threat') {
+        if (p.hand.length !== 2) this.threatAnnounced.delete(i); // moved off 2 either way — can fire again
+        return;
+      }
+      if (this.threatAnnounced.has(i)) return;
+      this.threatAnnounced.add(i);
+      playSfx(this, 'sfx-drop', 0.2);
+    });
+  }
+
   /** Where a seat sits on screen: the avatar strip for opponents, the hand for the local player. */
   private seatPosition(index: number): { x: number; y: number } {
     if (index === this.localSeat) return { x: this.r.handCenterX, y: this.r.handY };
@@ -1800,7 +2001,7 @@ export class GameScene extends Phaser.Scene {
    * `SUA VEZ` arrives as its own beat and then settles into the HUD line it normally is, so the
    * handover is something you notice once rather than a label that was always there.
    */
-  private announceTurn(): void {
+  private announceTurn(editable = true): void {
     const dur = feelMs('expressive');
     if (dur <= 0) return;
     this.tweens.killTweensOf([this.banner, this.bannerBg]);
@@ -1813,6 +2014,23 @@ export class GameScene extends Phaser.Scene {
       duration: dur,
       ease: FEEL.expressive.ease,
     });
+    // AI-01: an opponent's turn gets the same brief name/turn cue as the player's own — just
+    // without the "board becomes editable" wash below, which would be a lie while it's not
+    // actually editable.
+    if (!editable) return;
+    // MEXE-01: "the board becomes editable" gets a beat of its own too, not just the banner — a
+    // soft wash across the table that fades as the turn settles in, standing in for a physical
+    // lift without needing new art. Self-destroying, so it needs no renderAll teardown entry.
+    // N5: sized to the whole felt band (top bar to hand strip, edge to edge) rather than the
+    // narrower meld-layout box (tableTop/tableLeft/tableAreaW) — that box's edges don't coincide
+    // with anything visible, so a translucent rect stopping there read as a rendering glitch
+    // (cutting mid-surface, across the move toast). The top-bar/hand-strip seams are real edges.
+    const washTop = this.r.barH;
+    const washBottom = this.r.handY - CARD_H / 2 - 4;
+    const wash = this.add
+      .rectangle(this.r.w / 2, (washTop + washBottom) / 2, this.r.w, washBottom - washTop, GOLD, 0.1)
+      .setDepth(1);
+    this.tweens.add({ targets: wash, alpha: 0, scaleY: 1.015, duration: dur * 2, ease: FEEL.expressive.ease, onComplete: () => wash.destroy() });
   }
 
   /**
@@ -1837,7 +2055,10 @@ export class GameScene extends Phaser.Scene {
    * game — it is what makes this the signature moment of a Mexe.
    */
   private playTableResolved(): void {
-    playSfx(this, 'sfx-snap', 0.65);
+    // PACE-06: the same cue, a touch louder once the table's own state (not the clock) says the
+    // match is hot — a busy/close-to-the-wire table lands with a bit more weight.
+    const hot = matchIntensity(this.store.get()).level === 'hot';
+    playSfx(this, 'sfx-snap', hot ? 0.8 : 0.65);
     const dur = feelMs('fast');
     if (dur <= 0) return; // reduced motion: the cue and the woken-up button still say it resolved
     for (const { rect } of this.meldGlowRects) {
@@ -1869,7 +2090,11 @@ export class GameScene extends Phaser.Scene {
     state.players.forEach((p, i) => {
       if (i === this.localSeat) return; // local seat rendered at bottom
       const key = this.avatarKey(i);
-      const isActiveP = i === active;
+      // C6: once winnerId is set the match is over and no seat is "up next" — activePlayerIndex
+      // can still point at whoever's turn advance landed on right before the win was detected
+      // (e.g. the human goes out, turn flips to the next seat, then winnerId is checked), which
+      // left that seat's avatar wearing the active-seat gold ring after the human had already won.
+      const isActiveP = i === active && state.winnerId === null;
       const avSize = isActiveP ? 25 : 20;
       // text offset follows the avatar's outer extent (rings included) so it clears them at every
       // size instead of a fixed offset that a short name can end up hiding behind (L3).
@@ -1883,6 +2108,17 @@ export class GameScene extends Phaser.Scene {
       const countText = threat === 'last' ? t('game.lastCard') : `x${p.hand.length}`;
       const countSize = threat === 'last' ? 11 : threat === 'threat' ? 10 : threat === 'watch' ? 9 : 8;
       const count = this.add.text(textX, this.r.opponentY + 2, countText, fontStyle(countSize, threat === 'none' ? '#f7f2e7' : '#ffb35c'));
+      // AI-11: the size/word/colour jump above is the reduced-motion-safe fact of "2 or 1 cards
+      // left" — this pulse is the extra decoration on top for a near-win opponent, never the only
+      // carrier of the information.
+      if (threat === 'threat' || threat === 'last') {
+        const pulseDur = feelMs('normal');
+        if (pulseDur > 0) this.tweens.add({ targets: count, scale: 1.18, duration: pulseDur, yoyo: true, repeat: -1, ease: FEEL.normal.ease });
+      }
+      // MEXE-01: "surrounding HUD quiets" while the board is yours to edit — an opponent who is
+      // neither active nor a threat recedes a little so attention reads as belonging to the table.
+      // Never dims the threat count itself: that signal has to stay legible regardless of whose turn it is.
+      if (human && !isActiveP && threat === 'none') { av.setAlpha(0.7); name.setAlpha(0.7); }
       if (isActiveP) {
         const ring = this.add.rectangle(x, this.r.opponentY, avSize + 6, avSize + 6).setStrokeStyle(2, 0xf7d23e, 1);
         const glow = this.add.rectangle(x, this.r.opponentY, avSize + 11, avSize + 11).setStrokeStyle(1, 0xf7d23e, 0.4);
@@ -1895,6 +2131,7 @@ export class GameScene extends Phaser.Scene {
       x += this.r.opponentStep;
     });
     this.lastRenderedActiveSeat = active;
+    this.announceThreat(state);
     this.announceLastCards(state);
 
     // deck counter
@@ -1913,8 +2150,17 @@ export class GameScene extends Phaser.Scene {
 
     // banner
     const activeName = state.players[active]!.name;
+    // T-C: once someone has gone out, "Vez de X" is stale for however long the win overlay/scene
+    // transition takes to land (the tutorial stays in-scene on a win, see onWin) — the victory beat
+    // owns the banner instead of a turn announcement nobody is waiting on.
     this.banner.setText(
-      human ? t('game.yourTurn') : this.online ? t('game.opponentTurn', { name: activeName }) : t('game.turnOf', { name: activeName }),
+      state.winnerId !== null
+        ? t('win.title')
+        : human
+          ? t('game.yourTurn')
+          : this.online
+            ? t('game.opponentTurn', { name: activeName })
+            : t('game.turnOf', { name: activeName }),
     );
     this.bannerBg.setSize(this.banner.width + 14, this.banner.height + 6);
 
@@ -1925,10 +2171,16 @@ export class GameScene extends Phaser.Scene {
     // A meld can carry more than one reason (e.g. the analysis reason plus reason.duplicateCard) —
     // collect all of them, not just the last one a Map key would keep.
     const invalidReasons = new Map<string, string[]>();
+    this.renderedMeldStatus.clear();
     for (const r of analysis?.invalidMelds ?? []) {
       const list = invalidReasons.get(r.meldId) ?? [];
       list.push(t(r.reason));
       invalidReasons.set(r.meldId, list);
+    }
+    // R4: the "show problem" ring never lingers on a meld the player has already fixed — clear it
+    // the moment that meld stops being invalid, same render pass, no separate edit hook needed.
+    if (this.problemHighlightMeldId && !invalidReasons.has(this.problemHighlightMeldId)) {
+      this.problemHighlightMeldId = null;
     }
     // local seat's hand
     const hand = this.editor ? this.editor.getRemainingHand() : state.players[this.localSeat]!.hand;
@@ -1938,9 +2190,9 @@ export class GameScene extends Phaser.Scene {
     // re-lays-out (relayout()) but must not close the editor or touch the draft itself.
     const editorMode = this.mexeEditorOpen && this.editor !== null;
     if (editorMode) {
-      this.renderMexeEditor(melds, hand, invalidReasons, interactive, state.config);
+      this.renderMexeEditor(melds, hand, invalidReasons, interactive, state.config, analysis?.invalidMelds ?? []);
     } else {
-      this.layoutMelds(melds, invalidReasons, interactive, state.config);
+      this.layoutMelds(melds, invalidReasons, interactive, state.config, analysis?.invalidMelds ?? []);
       this.layoutHand(hand, interactive, human);
     }
 
@@ -2002,19 +2254,25 @@ export class GameScene extends Phaser.Scene {
     }
     debugApi.a11y = { invalidBadges: invalidReasons.size };
     debugApi.invalidMeldReasons = () => [...invalidReasons].map(([meldId, reasons]) => ({ meldId, reasons }));
+    // R1: expose what was actually painted, not what the draft says — the resting-board counterpart
+    // of mexe.snapTargets()'s drag-time status, so the two can be asserted to agree.
+    debugApi.renderedMeldStatus = () => [...this.renderedMeldStatus].map(([meldId, status]) => ({ meldId, status }));
 
     // Beginner: auto-open the first invalid meld's tooltip so the reason is visible without a
     // tap/hover. Only one at a time (first meld in table order) so a crowded table doesn't get covered.
     if (interactive && settings.helperFlags().autoShowInvalidReason) {
       const firstInvalid = melds.find((m) => invalidReasons.has(m.id));
       const zone = firstInvalid && this.meldZones.find((z) => z.meldId === firstInvalid.id);
-      if (firstInvalid && zone) this.showMeldReasonTooltip(zone.rect, invalidReasons.get(firstInvalid.id)!.join('\n'));
+      if (firstInvalid && zone) {
+        const rawReason = analysis?.invalidMelds.find((r) => r.meldId === firstInvalid.id)?.reason ?? null;
+        this.showMeldReasonTooltip(zone.rect, invalidReasons.get(firstInvalid.id)!.join('\n'), meldStatus(rawReason));
+      }
     }
 
     // Meld focus view (Task 2): landscape only — in portrait the Wave C editor's workspace
     // already shows one meld large plus its reasons, so this would be a second, redundant way to
     // do the same thing there. Landscape has no such view, hence adding it here.
-    if (!this.r.portrait && !editorMode) this.renderMeldFocus(melds, invalidReasons, state.config);
+    if (!this.r.portrait && !editorMode) this.renderMeldFocus(melds, invalidReasons, state.config, analysis?.invalidMelds ?? []);
 
     if (this.tutorialDirector) this.renderTutorialOverlay();
   }
@@ -2103,7 +2361,45 @@ export class GameScene extends Phaser.Scene {
     const reason = this.blockingReasonText() || t('tooltip.feito');
     this.reasonText.setText(`${t('mobile.feitoBlocked')} ${reason}`);
     playSfx(this, 'sfx-invalid', 0.15);
+    // R3: cycleProblem() first — it ends in renderAll(), which destroys and rebuilds the whole
+    // `hud` array (meldGlowRects included). checkMyWork() tweens those rects, so it must run
+    // *after* renderAll() has rebuilt them, never before — the old order started tweens on
+    // objects renderAll destroyed in the same tick, and the "valid melds step back, open ones
+    // stay lit" beat never played.
+    this.cycleProblem();
     this.checkMyWork();
+  }
+
+  /**
+   * RECOVERY-13's `show problem` interaction: each blocked-FEITO tap steps to the next unresolved
+   * meld, wrapping around, so a crowded table's problems can be walked one at a time instead of
+   * only ever naming the first. Opens whichever per-meld detail view is already on screen — the
+   * touch editor's own workspace inside it — or, outside the editor, points the static
+   * `problemHighlightMeldId` ring at it (R3: deliberately NOT `focusedMeldId` — that field also
+   * opens renderMeldFocus's full-screen modal backdrop, which would sit at depth 700 over the
+   * FEITO button this was tapped from and swallow the very next "show me the next problem" tap).
+   */
+  private cycleProblem(): void {
+    if (!this.editor) return;
+    const analysis = this.analyzeDraft();
+    if (analysis.invalidMelds.length === 0) return;
+    const unresolvedIds = new Set(analysis.invalidMelds.map((r) => r.meldId));
+    const order = this.editor.getDraft().melds.filter((m) => unresolvedIds.has(m.id)).map((m) => m.id);
+    if (order.length === 0) return;
+    const current = this.mexeEditorOpen ? this.mexeEditorMeldId : this.problemHighlightMeldId;
+    const idx = current ? order.indexOf(current) : -1;
+    const next = order[(idx + 1) % order.length]!;
+    if (this.mexeEditorOpen) {
+      this.mexeEditorMeldId = next;
+    } else {
+      // B3: portrait outside the editor has no popup detail view (renderMeldFocus is landscape-only,
+      // see its call site), but layoutMelds still draws a static ring around whichever meld is
+      // `problemHighlightMeldId` — that ring is the portrait "show problem" feedback, and unlike
+      // checkMyWork()'s pulse it needs no motion to read, so it is the reduced-motion fallback too.
+      // Landscape gets the same ring, non-modal, so a repeated tap keeps landing on FEITO.
+      this.problemHighlightMeldId = next;
+    }
+    this.renderAll();
   }
 
   /**
@@ -2116,7 +2412,10 @@ export class GameScene extends Phaser.Scene {
    */
   private checkMyWork(): void {
     const dur = feelMs('normal');
-    if (dur <= 0) return; // reduced motion: the reason line above already names the blocker
+    // B3: reduced motion drops the pulse/shake below, but onFeitoBlocked() calls cycleProblem()
+    // right after this — its static focus ring (layoutMelds) is the non-animated equivalent, so
+    // returning early here does not leave the tap with no feedback at all.
+    if (dur <= 0) return;
     const open = new Set(this.analyzeDraft().invalidMelds.map((m) => m.meldId));
     for (const { meldId, rect } of this.meldGlowRects) {
       if (open.has(meldId)) {
@@ -2196,12 +2495,19 @@ export class GameScene extends Phaser.Scene {
 
     // above the panel graphic (depth 300), or the 0.88-alpha fill washes the text out
     this.hud.push(label(this, cx, panelTop + 10, t('tutorial.title'), 7, '#f7d23e').setDepth(301));
+    // TUTORIAL-15: the counter names the phase it's in ("MEXE · 9/12"), not just a bare N/total —
+    // the 12 internal steps read as belonging to a turn's real BAIXAR/MEXE/COMPRAR/BATER shape.
+    // Finished carries no current step (T-B: dir.step still reports step 12's stale data), so the
+    // phase is dropped there rather than showing a phase the lesson is no longer in.
+    const counter = dir.finished ? `${dir.stepIndex + 1}/${dir.total}` : `${t(`tutorial.phase.${dir.step.phase}`)} · ${dir.stepIndex + 1}/${dir.total}`;
     this.hud.push(
-      label(this, sideBySide ? cx + 60 : cx, sideBySide ? panelTop + 10 : panelTop + 20, `${dir.stepIndex + 1}/${dir.total}`, 6, '#c0b8a8').setDepth(301),
+      label(this, sideBySide ? cx + 60 : cx, sideBySide ? panelTop + 10 : panelTop + 20, counter, 6, '#c0b8a8').setDepth(301),
     );
 
+    // T-A: the completion beat gets its own line instead of the leftover step-12 instruction
+    // ("drag the 9♦/7♦ and press DONE") — telling the player to do something they just finished.
     const txt = this.add
-      .text(cx, panelTop + (sideBySide ? 20 : 34), t(dir.step.textKey), {
+      .text(cx, panelTop + (sideBySide ? 20 : 34), t(dir.finished ? 'tutorial.complete' : dir.step.textKey), {
         ...fontStyle(7), align: 'center', wordWrap: { width: p.w - 10 },
       })
       .setOrigin(0.5, 0)
@@ -2217,9 +2523,14 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (dir.finished) {
+      // TUTORIAL-13: land straight in the first real match instead of stranding the player on a
+      // replay-only screen — REPLAY stays for anyone who wants to redo the lesson.
       this.hud.push(label(this, cx, nextY - 14, t('win.title'), 10, '#f7d23e').setDepth(301));
-      this.hud.push(new PixelButton(this, cx, nextY, t('tutorial.replay'), () => this.restartTutorial(), {
-        textureBase: 'btn-comprar', w: btnW, h: 14, size: 6, color: 0x2e9e50,
+      this.hud.push(new PixelButton(this, nextX, nextY, t('tutorial.play'), () => this.startFirstMatch(), {
+        textureBase: 'btn-feito', w: btnW, h: 14, size: 6, primary: true,
+      }).setDepth(302));
+      this.hud.push(new PixelButton(this, skipX, skipY, t('tutorial.replay'), () => this.restartTutorial(), {
+        textureBase: 'btn-comprar', w: btnW, h: 12, size: 6, color: 0x6b6b73,
       }).setDepth(302));
     } else {
       if (dir.step.allowed.some((a) => a.type === 'next')) {
@@ -2237,22 +2548,27 @@ export class GameScene extends Phaser.Scene {
       }).setDepth(302));
     }
 
-    // highlight cards named by the current step
-    const highlightIds = new Set(dir.step.highlightCardIds ?? []);
+    // T-B: no step is "current" once the script is finished — dir.step still reports step 12's
+    // data (highlightCardIds/highlightButtons included), so without this gate the FEITO arrow and
+    // card glow kept pointing at a button/cards from a lesson that's already over.
+    const highlightIds = dir.finished ? new Set<string>() : new Set(dir.step.highlightCardIds ?? []);
     if (highlightIds.size > 0) {
       for (const s of this.cardSprites) {
         if (!highlightIds.has(s.getData('cardId') as string)) continue;
         const glow = this.add.rectangle(s.x, s.y, CARD_W + 6, CARD_H + 6).setStrokeStyle(1, GOLD, 0.9).setDepth(290);
-        this.tweens.add({ targets: glow, alpha: 0.3, duration: 400, yoyo: true, repeat: -1 });
+        // reduced motion: the outline itself already marks the card — the pulse is decoration, not information.
+        if (settings.motionScale() > 0) this.tweens.add({ targets: glow, alpha: 0.3, duration: 400, yoyo: true, repeat: -1 });
         this.hud.push(glow);
       }
     }
 
-    // highlight named buttons
-    for (const btnName of dir.step.highlightButtons ?? []) {
-      const btn = btnName === 'feito' ? this.feitoBtn : this.comprarBtn;
+    // highlight named buttons (T-B: none once finished — see the card-highlight gate above)
+    for (const btnName of dir.finished ? [] : (dir.step.highlightButtons ?? [])) {
+      const btn = btnName === 'feito' ? this.feitoBtn : btnName === 'comprar' ? this.comprarBtn : this.undoBtn;
+      if (!btn) continue;
       const arrow = label(this, btn.x - 40, btn.y, '▶', 10, '#f7d23e').setDepth(290);
-      this.tweens.add({ targets: arrow, x: btn.x - 34, duration: 400, yoyo: true, repeat: -1 });
+      // reduced motion: the static arrow already points at the button — the wiggle is decoration.
+      if (settings.motionScale() > 0) this.tweens.add({ targets: arrow, x: btn.x - 34, duration: 400, yoyo: true, repeat: -1 });
       this.hud.push(arrow);
     }
   }
@@ -2261,16 +2577,36 @@ export class GameScene extends Phaser.Scene {
     gotoScene(this, 'game', buildTutorialLaunchConfig());
   }
 
+  /** TUTORIAL-13/14: the tutorial's JOGAR button — same mentor (Dona Cida) as the lesson, straight
+   * into a real match instead of back to the menu. TUTORIAL-14: a genuinely first-ever match
+   * (gamesStarted still 0 — checked before the new scene's init() counts this one) starts with
+   * Beginner assistance so the highlights/checklist keep teaching; a REPLAY-then-JOGAR player who
+   * already has a match under their belt keeps whatever helper mode they already chose. */
+  private startFirstMatch(): void {
+    if (settings.progress().gamesStarted === 0) settings.update({ helperMode: 'beginner' });
+    gotoScene(this, 'game', {
+      seed: urlSeed(),
+      players: [{ name: t('menu.you'), isAi: false }, { name: 'Dona Cida', isAi: true, personality: 'cida' }],
+    });
+  }
+
   /**
    * Hover-only reason tooltip for an invalid meld (rounded dark rect + yellow text). Shown only
    * while the pointer is over the meld's ✗ badge, so it never permanently occludes a neighboring
    * meld the way an always-on label would at crowded tables — the position is still clamped
    * fully inside the table/HUD area as a defensive belt-and-braces measure.
    */
-  private showMeldReasonTooltip(rect: Phaser.Geom.Rectangle, text: string): void {
+  /**
+   * @param status R2: when this tooltip is naming an actual meld-invalid reason, the text colour
+   * must match the outline/badge colour for that same meld — both now come from the one
+   * STATUS_COLOR map (src/table/snap.ts) keyed by meldStatus(). Omitted for purely informational hints
+   * (joker-stands-for, the 🔍 focus icon) that carry no legal/illegal verdict of their own; those
+   * keep the neutral gold they always had.
+   */
+  private showMeldReasonTooltip(rect: Phaser.Geom.Rectangle, text: string, status?: SnapStatus): void {
     this.hideMeldReasonTooltip();
     const maxW = this.r.tooltip.maxW;
-    const txt = label(this, 0, 0, text, 8, '#f0c040').setDepth(500);
+    const txt = label(this, 0, 0, text, 8, status ? STATUS_COLOR[status].text : STATUS_COLOR.incomplete.text).setDepth(500);
     txt.setWordWrapWidth(maxW - 8, true);
     const w = Math.min(maxW, txt.width + 8);
     const h = txt.height + 6;
@@ -2300,11 +2636,20 @@ export class GameScene extends Phaser.Scene {
     return sortMeldCards(meld.cards, config);
   }
 
+  /** R8: the one call site for invalidMeldDetail — layoutMelds (landscape) and renderMexeEditor's
+   * workspace (touch editor) both route through this instead of each calling the pure function
+   * directly, so the two can never quietly drift apart on what "the conflicting card(s)"/"the
+   * missing slot" means for the same (cards, reason) pair. */
+  private meldDetailFor(cards: readonly Card[], rawReason: ReasonCode | null | undefined): InvalidDetail | undefined {
+    return rawReason ? invalidMeldDetail(cards, rawReason) : undefined;
+  }
+
   private layoutMelds(
     melds: readonly Meld[],
     invalidReasons: Map<string, string[]>,
     interactive: boolean,
     config: RulesConfig,
+    rawInvalid: DraftAnalysis['invalidMelds'] = [],
   ): void {
     this.meldGlowRects = [];
     this.tableMaskGfx?.destroy();
@@ -2313,7 +2658,19 @@ export class GameScene extends Phaser.Scene {
     this.tableContainer = null;
     this.tablePanTargets = [];
     const handCardIds = new Set(this.editor?.getDraft().handCardsPlayed ?? []);
-    const inputs: MeldLayoutInput[] = melds.map((m) => ({ id: m.id, cardCount: m.cards.length }));
+    // MEXE-19/RECOVERY-04: a run's missing-slot placeholder needs its own reserved column, not a
+    // squeeze between two real cards — compute it before layout so computeMeldLayout accounts for
+    // it in the meld's width and every card after the gap shifts right to make room.
+    const detailByMeld = new Map<string, InvalidDetail>();
+    for (const m of melds) {
+      const raw = rawInvalid.find((r) => r.meldId === m.id)?.reason;
+      const detail = this.meldDetailFor(this.sortedForDisplay(m, config), raw);
+      if (detail) detailByMeld.set(m.id, detail);
+    }
+    const inputs: MeldLayoutInput[] = melds.map((m) => ({
+      id: m.id,
+      cardCount: m.cards.length + (detailByMeld.get(m.id)?.missingSlotIndex !== undefined ? 1 : 0),
+    }));
     const floor = ZOOM_FLOORS[this.zoomLevel];
     const positions = computeMeldLayout(inputs, this.r.tableAreaW, this.r.tableAreaH, floor ? { minCardScale: floor } : undefined);
     const posByMeld = new Map(positions.map((p) => [p.meldId, p]));
@@ -2416,11 +2773,26 @@ export class GameScene extends Phaser.Scene {
       }
 
       const isInvalid = invalidReasons.has(meld.id);
+      // MEXE-19/RECOVERY-04: point at the exact problem instead of only naming it — the conflicting
+      // card(s) pulse and, for a run with a single gap, a dashed "missing card" slot appears where it
+      // belongs. Presentation only: invalidMeldDetail never re-judges legality, just reads the same
+      // reason the validator already gave for this meld.
+      const rawReason = rawInvalid.find((r) => r.meldId === meld.id)?.reason ?? null;
+      const detail = detailByMeld.get(meld.id);
+      // B2/R1: under-length / no contradiction (too few cards, or a run missing one step) reads as
+      // 'incomplete', not 'illegal' — a lone card or a single-gap run mid-rearrange must not carry
+      // the same red alarm as a genuine contradiction (duplicate suit, mismatched suit, joker
+      // overflow/unassignable, ...). meldStatus() (src/table/snap.ts) is the single classifier for
+      // this — drag-time (snap.ts targetFor) and the resting board both call it now, so they can
+      // never disagree about a reason's severity again.
+      const status: SnapStatus = !isInvalid ? 'legal' : meldStatus(rawReason);
+      this.renderedMeldStatus.set(meld.id, status);
+      const color = STATUS_COLOR[status].fill;
       // Joker hint: never derive this ourselves — analyzeMeld is the single source of truth for
-      // what a joker stands for. Skip entirely on an invalid meld (task requirement: never invent
-      // an assignment when the meld is invalid).
+      // what a joker stands for. Skipped only on a genuine contradiction (task requirement: never
+      // invent an assignment there) — an incomplete meld can still legitimately resolve one.
       const jokerLabels = new Map<string, string>();
-      if (!isInvalid && meld.cards.some((c) => c.isJoker)) {
+      if (status !== 'illegal' && meld.cards.some((c) => c.isJoker)) {
         const analysis = analyzeMeld(meld.cards, config);
         if (analysis.valid) {
           for (const a of analysis.assignments) {
@@ -2428,8 +2800,7 @@ export class GameScene extends Phaser.Scene {
           }
         }
       }
-      const color = isInvalid ? 0xd83a3a : 0x3ec06a;
-      // colorblind-safe shape channel: solid stroke for valid, dashed for invalid — not hue alone.
+      // colorblind-safe shape channel: solid stroke for valid, dashed for incomplete/illegal — not hue alone.
       const glow = applyMask(
         this.add
           .rectangle(zoneRect.centerX, zoneRect.centerY, zoneRect.width, zoneRect.height, color, this.editor ? 0.18 : 0.1)
@@ -2437,7 +2808,10 @@ export class GameScene extends Phaser.Scene {
       );
       if (isInvalid) {
         const dashed = applyMask(this.add.graphics().setDepth(2));
-        this.drawDashedRect(dashed, zoneRect.x, zoneRect.y, zoneRect.width, zoneRect.height, color, this.editor ? 0.9 : 0.4);
+        // incomplete gets the same lighter "still working on it" weight the drag-time painter
+        // uses for 'incomplete' zones; a real contradiction keeps the stronger alarm weight.
+        const weight = status === 'incomplete' ? (this.editor ? 0.55 : 0.3) : this.editor ? 0.9 : 0.4;
+        this.drawDashedRect(dashed, zoneRect.x, zoneRect.y, zoneRect.width, zoneRect.height, color, weight);
         this.hud.push(dashed);
       } else {
         glow.setStrokeStyle(1, color, this.editor ? 0.9 : 0.4);
@@ -2445,14 +2819,26 @@ export class GameScene extends Phaser.Scene {
       this.hud.push(glow);
       this.meldGlowRects.push({ meldId: meld.id, rect: glow });
 
+      // B3/R3/R4: static (non-animated) pointer at whichever meld cycleProblem() last targeted —
+      // the reduced-motion-safe half of "show problem", non-modal (see problemHighlightMeldId's
+      // doc comment). A dashed light-blue ring: solid gold is already the 'incomplete' outline
+      // colour, so a solid gold ring here would read as a second, contradictory status instead of
+      // "look here" (R4) — dashed + a colour no status uses keeps the two unmistakably separate.
+      if (this.problemHighlightMeldId === meld.id) {
+        const focusRing = applyMask(this.add.graphics().setDepth(6));
+        this.drawDashedRect(focusRing, zoneRect.x - 3, zoneRect.y - 3, zoneRect.width + 6, zoneRect.height + 6, 0x6fc3ff, 0.95, 2);
+        this.hud.push(focusRing);
+      }
+
       // colorblind-safe icon channel: ✓/✗ badge, only while the human is actively editing (committed melds are always valid).
       if (interactive) {
         // Bigger, easier to hit on touch/portrait — same dashed-outline shape channel either way,
         // colour is never the only cue.
         const strong = this.r.touch || this.r.portrait;
         const badgeSize = isInvalid && strong ? 10 : 7;
+        const badgeColor = STATUS_COLOR[status].text;
         const badge = applyMask(
-          label(this, zoneRect.x + 4, zoneRect.y + 2, isInvalid ? '✗' : '✓', badgeSize, isInvalid ? '#ff6b5e' : '#7ee0a0')
+          label(this, zoneRect.x + 4, zoneRect.y + 2, isInvalid ? '✗' : '✓', badgeSize, badgeColor)
             .setOrigin(0, 0)
             .setAlpha(isInvalid ? 0.95 : 0.35)
             .setDepth(50),
@@ -2478,13 +2864,13 @@ export class GameScene extends Phaser.Scene {
           // latches (`tapped`) and pointerout only hides while unlatched — otherwise the release
           // half of the very tap that opened the tooltip would close it again the same instant.
           let tapped = false;
-          badge.on('pointerover', () => this.showMeldReasonTooltip(zoneRect, reasonText));
+          badge.on('pointerover', () => this.showMeldReasonTooltip(zoneRect, reasonText, status));
           badge.on('pointerout', () => {
             if (!tapped) this.hideMeldReasonTooltip();
           });
           badge.on('pointerdown', () => {
             tapped = !tapped;
-            if (tapped) this.showMeldReasonTooltip(zoneRect, reasonText);
+            if (tapped) this.showMeldReasonTooltip(zoneRect, reasonText, status);
             else this.hideMeldReasonTooltip();
           });
         }
@@ -2526,10 +2912,14 @@ export class GameScene extends Phaser.Scene {
         this.hud.push(focusIcon);
       }
 
+      // MEXE-19/RECOVERY-04: cards at/after the reserved gap column shift one cardGap right so the
+      // placeholder gets its own space instead of overlapping the next real card.
+      const slotAt = detail?.missingSlotIndex;
+      const visualIndex = (i: number): number => (slotAt !== undefined && i >= slotAt ? i + 1 : i);
       cards.forEach((card, i) => {
         const cw = CARD_W * scale;
         const ch = CARD_H * scale;
-        const x = cx + pad + cw / 2 + i * pos.cardGap;
+        const x = cx + pad + cw / 2 + visualIndex(i) * pos.cardGap;
         const y = cy + ch / 2;
         const sprite = this.makeCardSprite(x, y, card, interactive, 'table', handCardIds.has(card.id), scale);
         sprite.setDepth(3);
@@ -2550,6 +2940,39 @@ export class GameScene extends Phaser.Scene {
               this.time.delayedCall(2500, () => this.hideMeldReasonTooltip());
             });
           }
+        } else if (card.isJoker && detail?.conflictCardIds.includes(card.id)) {
+          // RECOVERY-14: a joker with nowhere to go still gets a plain-language reason instead of
+          // silence — "never invent an assignment" only meant never claiming it stands for a card.
+          const failText = rawReason === 'reason.tooManyJokers' ? t('joker.tooMany') : rawReason === 'reason.jokerUnassignable' ? t('joker.noRole') : null;
+          if (failText) {
+            if (!sprite.input) sprite.setInteractive();
+            const rect = new Phaser.Geom.Rectangle(x - cw / 2, y - ch / 2, cw, ch);
+            sprite.on('pointerover', () => this.showMeldReasonTooltip(rect, failText, 'illegal'));
+            sprite.on('pointerout', () => this.hideMeldReasonTooltip());
+            if (this.r.touch) {
+              sprite.on('pointerdown', () => {
+                this.showMeldReasonTooltip(rect, failText, 'illegal');
+                this.time.delayedCall(2500, () => this.hideMeldReasonTooltip());
+              });
+            }
+          }
+        } else if (card.isJoker && status === 'incomplete') {
+          // R5: N6's "always show a role" was dead code — analyzeMeld returns no assignments for
+          // an under-length/gapped meld, so jokerLabels is always empty here and this joker got no
+          // hint at all. A concrete role is genuinely impossible before the meld is complete (e.g.
+          // a 2-card meld), so the honest delivery is an explicit "not decided yet" hint rather
+          // than reusing the illegal-joker failText (this isn't a contradiction) or inventing one.
+          if (!sprite.input) sprite.setInteractive();
+          const rect = new Phaser.Geom.Rectangle(x - cw / 2, y - ch / 2, cw, ch);
+          const hint = t('joker.roleUnknown');
+          sprite.on('pointerover', () => this.showMeldReasonTooltip(rect, hint, 'incomplete'));
+          sprite.on('pointerout', () => this.hideMeldReasonTooltip());
+          if (this.r.touch) {
+            sprite.on('pointerdown', () => {
+              this.showMeldReasonTooltip(rect, hint, 'incomplete');
+              this.time.delayedCall(2500, () => this.hideMeldReasonTooltip());
+            });
+          }
         }
         if (this.lastMoveIds.has(card.id)) {
           // persistent "the opponent touched this" marker — stays until the local player acts
@@ -2558,7 +2981,42 @@ export class GameScene extends Phaser.Scene {
           );
           this.hud.push(mark);
         }
+        // MEXE-19/RECOVERY-04: the exact card(s) breaking this meld, not just the meld outline.
+        // Shape (thicker ring) + a pulse carries it, never colour alone — the ring itself is still
+        // there, static, under reduced motion.
+        if (detail?.conflictCardIds.includes(card.id)) {
+          const ring = applyMask(
+            this.add.rectangle(x, y, cw + 4, ch + 4).setStrokeStyle(2, parseInt(STATUS_COLOR.illegal.text.slice(1), 16), 0.95).setDepth(4),
+          );
+          this.hud.push(ring);
+          const dur = feelMs('normal');
+          if (dur > 0) this.tweens.add({ targets: ring, scaleX: 1.1, scaleY: 1.1, duration: dur, yoyo: true, repeat: -1, ease: FEEL.normal.ease });
+        }
       });
+      // MEXE-19/RECOVERY-04: a run missing exactly one step gets a dashed placeholder in its own
+      // reserved column (see `inputs` above), named when the missing rank/suit is unambiguous —
+      // "here" beats "somewhere". No longer squeezed between two real cards: computeMeldLayout was
+      // told about this extra column up front, so it sized/spaced the whole meld to fit it.
+      if (slotAt !== undefined) {
+        const cw = CARD_W * scale;
+        const ch = CARD_H * scale;
+        const slotX = cx + pad + cw / 2 + slotAt * pos.cardGap;
+        const slotY = cy + ch / 2;
+        const slotGfx = applyMask(this.add.graphics().setDepth(3));
+        this.drawDashedRect(slotGfx, slotX - cw / 2, slotY - ch / 2, cw, ch, STATUS_COLOR.incomplete.fill, 0.85);
+        this.hud.push(slotGfx);
+        if (detail?.missingCard) {
+          const missing = detail.missingCard;
+          // N12: at font size 6 only the dashed box survives portrait's smaller card scale — bump
+          // to the same "strong" size the invalid badge already uses there so "here" still reads
+          // as "this exact card" instead of degrading to just "something goes here".
+          const slotFontSize = this.r.touch || this.r.portrait ? 9 : 6;
+          const slotLabel = applyMask(
+            label(this, slotX, slotY, `${SUIT_CHAR[missing.suit]}${rankLabel(missing.rank)}`, slotFontSize, STATUS_COLOR.incomplete.text).setOrigin(0.5).setDepth(4),
+          );
+          this.hud.push(slotLabel);
+        }
+      }
     });
   }
 
@@ -2570,7 +3028,12 @@ export class GameScene extends Phaser.Scene {
    * Purely additive drawing over whatever renderAll() already built this pass — never touches the
    * editor/draft, so it can never disagree with (or mutate) the real board.
    */
-  private renderMeldFocus(melds: readonly Meld[], invalidReasons: Map<string, string[]>, config: RulesConfig): void {
+  private renderMeldFocus(
+    melds: readonly Meld[],
+    invalidReasons: Map<string, string[]>,
+    config: RulesConfig,
+    rawInvalid: DraftAnalysis['invalidMelds'] = [],
+  ): void {
     if (this.focusedMeldId === null) return;
     const meld = melds.find((m) => m.id === this.focusedMeldId);
     if (!meld) {
@@ -2580,6 +3043,10 @@ export class GameScene extends Phaser.Scene {
     }
     const cards = this.sortedForDisplay(meld, config);
     const isInvalid = invalidReasons.has(meld.id);
+    // R1/R2: same single classifier every other renderer now uses — never a second illegal/
+    // incomplete judgement of its own.
+    const rawReason = rawInvalid.find((r) => r.meldId === meld.id)?.reason ?? null;
+    const status: SnapStatus = isInvalid ? meldStatus(rawReason) : 'legal';
     const jokerLabels = new Map<string, string>();
     if (!isInvalid && meld.cards.some((c) => c.isJoker)) {
       const analysis = analyzeMeld(meld.cards, config);
@@ -2598,7 +3065,7 @@ export class GameScene extends Phaser.Scene {
     const reasons = invalidReasons.get(meld.id);
     const reasonText = reasons?.join('\n') ?? '';
     const statusText = isInvalid ? reasonText : t('snap.legal');
-    const statusColor = isInvalid ? '#ff6b5e' : '#7ee0a0';
+    const statusColor = STATUS_COLOR[status].text;
 
     const panelW = Math.min(this.r.w - 20, Math.max(140, cardsW + 24));
     const st = label(this, 0, 0, statusText, 8, statusColor);
@@ -2631,9 +3098,26 @@ export class GameScene extends Phaser.Scene {
     cards.forEach((card, i) => {
       const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
       const x = startX + i * gap;
-      objs.push(this.add.image(x, rowY, key).setDisplaySize(cw, ch).setDepth(702));
+      const img = this.add.image(x, rowY, key).setDisplaySize(cw, ch).setDepth(702);
+      objs.push(img);
       const hint = jokerLabels.get(card.id);
       if (hint) objs.push(label(this, x, rowY + ch / 2 + 7, hint, 7, '#f7d23e').setDepth(702));
+      // C4: R5's "role not decided yet" hint existed in layoutMelds and the editor workspace but
+      // not here — the surface a player opens specifically to understand a meld. Same trigger
+      // (joker + incomplete status), same tooltip helper, ported rather than reinvented.
+      else if (card.isJoker && status === 'incomplete') {
+        img.setInteractive({ useHandCursor: false });
+        const rect = new Phaser.Geom.Rectangle(x - cw / 2, rowY - ch / 2, cw, ch);
+        const roleHint = t('joker.roleUnknown');
+        img.on('pointerover', () => this.showMeldReasonTooltip(rect, roleHint, 'incomplete'));
+        img.on('pointerout', () => this.hideMeldReasonTooltip());
+        if (this.r.touch) {
+          img.on('pointerdown', () => {
+            this.showMeldReasonTooltip(rect, roleHint, 'incomplete');
+            this.time.delayedCall(2500, () => this.hideMeldReasonTooltip());
+          });
+        }
+      }
     });
 
     st.setPosition(cx, cy + panelH / 2 - 10 - st.height / 2).setDepth(702);
@@ -2696,11 +3180,28 @@ export class GameScene extends Phaser.Scene {
   private layoutHand(hand: readonly Card[], interactive: boolean, active: boolean): void {
     const sorted = this.sortedHand(hand);
     const maxSpan = this.r.handSpan;
-    const gap = Math.min(CARD_W + 2, sorted.length > 1 ? maxSpan / (sorted.length - 1) : CARD_W);
+    // Spacing adapts down to a floor, not to nothing. Dividing the span by the card count alone
+    // meant a long hand squeezed every card into a sliver where the rank corner was unreadable;
+    // below MIN_HAND_GAP the cards keep a legible overlap and the row scrolls instead.
+    const fitted = sorted.length > 1 ? maxSpan / (sorted.length - 1) : CARD_W;
+    const gap = Math.min(CARD_W + 2, Math.max(fitted, MIN_HAND_GAP));
     const total = (sorted.length - 1) * gap;
-    const startX = this.r.handCenterX - total / 2;
+    const overflow = Math.max(0, total - maxSpan);
+    if (overflow === 0) this.handScroll = 0;
+    this.handScroll = Phaser.Math.Clamp(this.handScroll, 0, overflow);
+    const startX = this.r.handCenterX - Math.min(total, maxSpan) / 2 - this.handScroll;
+    if (overflow > 0 && interactive) this.enableHandScroll(overflow);
+    // MOBILE-16: enableHandScroll's gesture needs a reachable strip pixel above/below the card
+    // row. Every card in an overflowing hand overlaps its neighbours horizontally by design (the
+    // "readable overlap" MOBILE-15 prefers over unreadable compression), so the strip is only
+    // ever reachable vertically — but the default touch-friendly hit pad (MOBILE-06, ~9.6 units)
+    // plus the card's own half-height (16) exceeds the hand zone's half-height (24), leaving no
+    // margin at all. Shrink the pad only here, only while overflowing: tap precision between
+    // already-overlapping cards is resolved by depth order, not by hit-area size, so this costs
+    // nothing real.
+    const overflowVPad = overflow > 0 ? Math.max(0, (this.r.handZone.h - CARD_H) / 2 - 2) : undefined;
     sorted.forEach((card, i) => {
-      const sprite = this.makeCardSprite(startX + i * gap, this.r.handY, card, interactive, 'hand', false);
+      const sprite = this.makeCardSprite(startX + i * gap, this.r.handY, card, interactive, 'hand', false, 1, true, overflowVPad);
       sprite.setDepth(10 + i);
       if (!active) {
         sprite.setAlpha(0.72);
@@ -2716,6 +3217,39 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * Horizontal drag-scroll for a hand too long to fit, on a strip behind the cards.
+   *
+   * The gesture rule is the same one the Mexe editor's strip already uses, and it has to be: a
+   * card sits on top of this strip, so a press that lands on a card is a card drag and only a
+   * press that lands on the bare strip scrolls. A movement under the tap threshold stays a tap.
+   */
+  private enableHandScroll(overflow: number): void {
+    const zone = this.r.handZone;
+    const strip = this.add
+      .rectangle(zone.x + zone.w / 2, zone.y + zone.h / 2, zone.w, zone.h, 0x000000, 0.001)
+      .setDepth(1); // below the cards (depth 10+), so a card always wins the hit test
+    strip.setInteractive({ useHandCursor: false });
+    let startX = 0;
+    let scrollStart = 0;
+    strip.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      startX = p.worldX;
+      scrollStart = this.handScroll;
+    });
+    strip.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!p.isDown) return;
+      const next = Phaser.Math.Clamp(scrollStart - (p.worldX - startX), 0, overflow);
+      if (next === this.handScroll) return;
+      const delta = next - this.handScroll;
+      this.handScroll = next;
+      // Reposition only — a re-render mid-gesture would destroy the sprites under the finger.
+      for (const sprite of this.cardSprites) {
+        if (sprite.getData('origin') === 'hand') sprite.x -= delta;
+      }
+    });
+    this.hud.push(strip);
+  }
+
+  /**
    * Focused Mexe editor (Phase 14 Wave C): three stacked zones replacing the normal table+hand
    * rendering — meld list (scrollable, tap a row to focus it), workspace (the focused meld, large),
    * hand strip (scrollable, tap to select). Every mutation still runs through
@@ -2728,6 +3262,7 @@ export class GameScene extends Phaser.Scene {
     invalidReasons: Map<string, string[]>,
     interactive: boolean,
     config: RulesConfig,
+    rawInvalid: DraftAnalysis['invalidMelds'] = [],
   ): void {
     this.mexeListPanTargets = [];
     this.mexeHandPanTargets = [];
@@ -2803,7 +3338,12 @@ export class GameScene extends Phaser.Scene {
         this.mexeListPanTargets.push(img);
       });
       const isInvalid = invalidReasons.has(meld.id);
-      const verdictLabel = label(this, zones.meldList.x + zones.meldList.w - 12, y + MELD_LIST_ROW_H / 2, isInvalid ? '✗' : '✓', 8, isInvalid ? '#ff6b5e' : '#7ee0a0')
+      // R1/R2: the meld-list ✗/✓ verdict used to be plain red/green — now the same meldStatus()
+      // classifier every other renderer uses, so it can never contradict the workspace it opens.
+      const rowRawReason = rawInvalid.find((r) => r.meldId === meld.id)?.reason ?? null;
+      const rowStatus: SnapStatus = isInvalid ? meldStatus(rowRawReason) : 'legal';
+      this.renderedMeldStatus.set(meld.id, rowStatus);
+      const verdictLabel = label(this, zones.meldList.x + zones.meldList.w - 12, y + MELD_LIST_ROW_H / 2, isInvalid ? '✗' : '✓', 8, STATUS_COLOR[rowStatus].text)
         .setOrigin(0.5)
         .setDepth(2);
       this.hud.push(verdictLabel);
@@ -2825,26 +3365,89 @@ export class GameScene extends Phaser.Scene {
     } else {
       const wsMeld = melds.find((m) => m.id === this.mexeEditorMeldId);
       const wsCards = wsMeld ? this.sortedForDisplay(wsMeld, config) : [];
+      // B1: this workspace card row is the touch editor's only view of a meld — the conflict ring,
+      // reserved gap column and missing-slot placeholder previously lived only in layoutMelds()
+      // (the landscape/desktop path), so cycleProblem() could step here (mexeEditorMeldId) and show
+      // nothing about why the meld is unresolved. Same detailByMeld computation as layoutMelds,
+      // built fresh here since the workspace only ever renders one meld at a time.
+      const wsRawReason = wsMeld ? (rawInvalid.find((r) => r.meldId === wsMeld.id)?.reason ?? null) : null;
+      const wsDetail = wsMeld ? this.meldDetailFor(wsCards, wsRawReason) : undefined;
+      const wsSlotAt = wsDetail?.missingSlotIndex;
+      const wsVisualIndex = (i: number): number => (wsSlotAt !== undefined && i >= wsSlotAt ? i + 1 : i);
       const wcw = CARD_W * 1.3;
       const wch = CARD_H * 1.3;
-      const gap = Math.min(wcw + 6, wsCards.length > 1 ? (wsRect.width - wcw - 16) / (wsCards.length - 1) : wcw);
-      const total = wsCards.length > 0 ? (wsCards.length - 1) * gap + wcw : 0;
+      const slotCount = wsCards.length + (wsSlotAt !== undefined ? 1 : 0);
+      const gap = Math.min(wcw + 6, slotCount > 1 ? (wsRect.width - wcw - 16) / (slotCount - 1) : wcw);
+      const total = slotCount > 0 ? (slotCount - 1) * gap + wcw : 0;
       const startX = wsRect.centerX - total / 2 + wcw / 2;
       const cardY = wsRect.y + 16 + wch / 2;
       const handCardIds = new Set(this.editor?.getDraft().handCardsPlayed ?? []);
       wsCards.forEach((card, i) => {
-        const sprite = this.makeCardSprite(startX + i * gap, cardY, card, interactive, 'table', handCardIds.has(card.id), 1.3, false);
+        const x = startX + wsVisualIndex(i) * gap;
+        const sprite = this.makeCardSprite(x, cardY, card, interactive, 'table', handCardIds.has(card.id), 1.3, false);
         sprite.setDepth(3);
         this.cardSprites.push(sprite);
+        // B1: the exact conflicting card(s) pulse here too — same visual as layoutMelds, static
+        // under reduced motion (the ring itself, not just the pulse, is the cue).
+        if (wsDetail?.conflictCardIds.includes(card.id)) {
+          const ring = this.add.rectangle(x, cardY, wcw + 4, wch + 4).setStrokeStyle(2, parseInt(STATUS_COLOR.illegal.text.slice(1), 16), 0.95).setDepth(4);
+          this.hud.push(ring);
+          const dur = feelMs('normal');
+          if (dur > 0) this.tweens.add({ targets: ring, scaleX: 1.08, scaleY: 1.08, duration: dur, yoyo: true, repeat: -1, ease: FEEL.normal.ease });
+          // RECOVERY-14: a joker with nowhere to go gets a plain-language reason, same as layoutMelds.
+          // R10: hover only, deliberately no `this.r.touch` pointerdown tooltip here — unlike
+          // layoutMelds' cards (drag-primary, tap-select secondary), every card in this workspace
+          // is tap-to-select ONLY (draggable=false), so a pointerdown tooltip on the same sprite
+          // fires on every tap-to-select gesture and turns one tap into two competing actions. The
+          // original skip existed for exactly this reason; B1 re-added it here and widened the
+          // collision instead of respecting the skip.
+          if (card.isJoker) {
+            const failText = wsRawReason === 'reason.tooManyJokers' ? t('joker.tooMany') : wsRawReason === 'reason.jokerUnassignable' ? t('joker.noRole') : null;
+            if (failText) {
+              if (!sprite.input) sprite.setInteractive();
+              const rect = new Phaser.Geom.Rectangle(x - wcw / 2, cardY - wch / 2, wcw, wch);
+              sprite.on('pointerover', () => this.showMeldReasonTooltip(rect, failText, 'illegal'));
+              sprite.on('pointerout', () => this.hideMeldReasonTooltip());
+            }
+          }
+        } else if (card.isJoker && meldStatus(wsRawReason) === 'incomplete') {
+          // R5, ported from layoutMelds: a joker in an under-length/gapped meld gets an explicit
+          // "not decided yet" hint instead of the silence N6's dead-code gate left here. R10: hover
+          // only — see the comment above.
+          if (!sprite.input) sprite.setInteractive();
+          const rect = new Phaser.Geom.Rectangle(x - wcw / 2, cardY - wch / 2, wcw, wch);
+          const hint = t('joker.roleUnknown');
+          sprite.on('pointerover', () => this.showMeldReasonTooltip(rect, hint, 'incomplete'));
+          sprite.on('pointerout', () => this.hideMeldReasonTooltip());
+        }
       });
+      // B1: the reserved-column missing-slot placeholder, ported from layoutMelds.
+      if (wsSlotAt !== undefined) {
+        const slotX = startX + wsSlotAt * gap;
+        const slotGfx = this.add.graphics().setDepth(3);
+        this.drawDashedRect(slotGfx, slotX - wcw / 2, cardY - wch / 2, wcw, wch, STATUS_COLOR.incomplete.fill, 0.85);
+        this.hud.push(slotGfx);
+        if (wsDetail?.missingCard) {
+          const missing = wsDetail.missingCard;
+          this.hud.push(
+            label(this, slotX, cardY, `${SUIT_CHAR[missing.suit]}${rankLabel(missing.rank)}`, 9, STATUS_COLOR.incomplete.text).setOrigin(0.5).setDepth(4),
+          );
+        }
+      }
       if (wsCards.length === 0) {
         this.hud.push(label(this, wsRect.centerX, cardY, t('mobile.editorEmpty'), 8, '#b8b0a0'));
       }
       const reasons = wsMeld && invalidReasons.get(wsMeld.id);
       if (reasons) {
+        // R1/R2: same meldStatus() classifier as the meld-list verdict and layoutMelds — this used
+        // to be hardcoded red for every reason, including the gold-outlined runGap case.
         this.hud.push(
           this.add
-            .text(wsRect.centerX, wsRect.y + wsRect.height - 20, reasons.join('\n'), { ...fontStyle(7, '#ff6b5e'), align: 'center', wordWrap: { width: wsRect.width - 12 } })
+            .text(wsRect.centerX, wsRect.y + wsRect.height - 20, reasons.join('\n'), {
+              ...fontStyle(7, STATUS_COLOR[meldStatus(wsRawReason)].text),
+              align: 'center',
+              wordWrap: { width: wsRect.width - 12 },
+            })
             .setOrigin(0.5, 0),
         );
       }
@@ -2859,8 +3462,7 @@ export class GameScene extends Phaser.Scene {
           const snap = snapTargetFor(targets, this.mexeEditorMeldId ?? null);
           if (snap) {
             if (flags.legalDestinationsOnSelect) {
-              const color = snap.status === 'legal' ? 0x3ec06a : snap.status === 'incomplete' ? GOLD : 0xd83a3a;
-              wsBg.setStrokeStyle(2, color, 0.9);
+              wsBg.setStrokeStyle(2, STATUS_COLOR[snap.status].fill, 0.9);
             }
             if (flags.ghostPreview !== 'off') this.showGhostPreview(snap, wsRect);
           }
@@ -2952,6 +3554,7 @@ export class GameScene extends Phaser.Scene {
     handAdded: boolean,
     scale = 1,
     draggable = true,
+    vPad?: number,
   ): Phaser.GameObjects.Image {
     const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
     const w = CARD_W * scale;
@@ -2966,7 +3569,7 @@ export class GameScene extends Phaser.Scene {
       const fw = sprite.frame.width;
       const fh = sprite.frame.height;
       const padX = fw * 0.12;
-      const padY = fh * 0.3;
+      const padY = vPad ?? fh * 0.3;
       sprite.setInteractive(
         new Phaser.Geom.Rectangle(-padX, -padY, fw + padX * 2, fh + padY * 2),
         Phaser.Geom.Rectangle.Contains,
@@ -3015,6 +3618,7 @@ export class GameScene extends Phaser.Scene {
   private wireDrag(sprite: Phaser.GameObjects.Image): void {
     const baseW = sprite.getData('baseW') as number;
     const baseH = sprite.getData('baseH') as number;
+    const FINGER_LIFT = view().touch ? FINGER_LIFT_TOUCH : 0;
     sprite.on('pointerover', () => {
       if (sprite.getData('dragging')) return;
       sprite.setDisplaySize(baseW + 4, baseH + 5);
@@ -3046,6 +3650,7 @@ export class GameScene extends Phaser.Scene {
       // Picking up the card that would end the match is worth hearing. A louder sample, not slow
       // motion — the player is mid-decision and does not want to be waited on.
       playSfx(this, 'sfx-pickup', sprite.getData('lastCard') ? 0.75 : 0.4);
+      haptic('tick');
       this.hideMeldReasonTooltip();
       this.snapTargets = this.computeSnapTargetsFor(sprite.getData('cardId') as string);
       this.showDropZoneHighlights();
@@ -3056,8 +3661,12 @@ export class GameScene extends Phaser.Scene {
       // physical object, never enough to make the rank and suit harder to read mid-drag.
       const lean = Phaser.Math.Clamp((dragX - sprite.x) * DRAG_TILT_PER_UNIT, -DRAG_TILT_MAX, DRAG_TILT_MAX);
       sprite.setAngle(settings.motionScale() > 0 ? lean : 0);
-      sprite.setPosition(dragX, dragY);
-      this.dragShadow?.setPosition(dragX + 2, dragY + 7);
+      // On a finger, the card is held above the contact point instead of under it — otherwise the
+      // thumb covers both the card being moved and the place it is going.
+      const y = dragY - FINGER_LIFT;
+      sprite.setPosition(dragX, y);
+      this.dragShadow?.setPosition(dragX + 2, y + 7);
+      this.edgePanWhileDragging(y);
       this.updateDropZoneHover(dragX, dragY);
     });
     sprite.on('dragend', () => {
@@ -3079,6 +3688,28 @@ export class GameScene extends Phaser.Scene {
 
   /** True inside the table drop area, matching `onCardDropped`'s own bounds check exactly — hover
    * preview and drop resolution must never disagree on where "the empty table" is. */
+  /**
+   * Scrolls a zoomed table when a dragged card is held near its top or bottom edge, so a meld that
+   * is off-screen can still be reached in one gesture. Below the dead zone nothing happens at all,
+   * and the speed ramps with how far past it the card is — a constant-speed pan is impossible to
+   * stop on the row you want.
+   */
+  private edgePanWhileDragging(y: number): void {
+    if (this.tableContentH <= this.r.tableAreaH) return; // nothing to scroll
+    const top = this.r.tableTop + EDGE_PAN_ZONE;
+    const bottom = this.r.tableTop + this.r.tableAreaH - EDGE_PAN_ZONE;
+    const past = y < top ? y - top : y > bottom ? y - bottom : 0;
+    if (past === 0) return;
+    const speed = Phaser.Math.Clamp(past / EDGE_PAN_ZONE, -1, 1) * EDGE_PAN_MAX_STEP;
+    const next = clampScroll(this.tablePan + speed, this.tableContentH, this.r.tableAreaH);
+    if (next === this.tablePan) return;
+    const delta = next - this.tablePan;
+    this.tablePan = next;
+    // Reposition only, exactly like the pan gesture — re-rendering mid-drag would destroy the
+    // sprite currently under the finger.
+    for (const o of this.tablePanTargets) o.y -= delta;
+  }
+
   private inTableArea(x: number, y: number): boolean {
     return y > this.r.tableTop - 6 && y < this.r.tableBottom + 10 && x < this.r.tableRightBound;
   }
@@ -3109,16 +3740,20 @@ export class GameScene extends Phaser.Scene {
       const hovered = this.hoverKey === z.meldId;
       let solid: Phaser.GameObjects.Rectangle | null = null;
       let dashed: Phaser.GameObjects.Graphics | null = null;
-      if (status === 'illegal') {
+      if (status !== 'legal') {
+        // C2: layoutMelds' resting state draws dashed for BOTH incomplete and illegal (the shape
+        // channel a colourblind player relies on) — this drag-time painter used to draw incomplete
+        // as solid, so the same zone visibly changed shape channel on drop. Dashed for both here
+        // too, keeping illegal's stronger weight so the two still read as different severities.
         dashed = this.add.graphics().setDepth(150);
-        this.drawDashedRect(dashed, z.rect.x, z.rect.y, z.rect.width, z.rect.height, 0xd83a3a, hovered ? 1 : 0.85, hovered ? 2 : 1);
+        const weight = status === 'illegal' ? (hovered ? 1 : 0.85) : hovered ? 0.6 : 0.45;
+        const lineWidth = status === 'illegal' ? (hovered ? 2 : 1) : 1;
+        this.drawDashedRect(dashed, z.rect.x, z.rect.y, z.rect.width, z.rect.height, STATUS_COLOR[status].fill, weight, lineWidth);
       } else {
-        const color = status === 'legal' ? 0x3ec06a : GOLD;
-        const baseWidth = status === 'legal' ? 2 : 1;
-        const baseAlpha = status === 'legal' ? 0.9 : 0.45;
+        const color = STATUS_COLOR.legal.fill;
         solid = this.add
           .rectangle(z.rect.centerX, z.rect.centerY, z.rect.width, z.rect.height)
-          .setStrokeStyle(hovered ? baseWidth + 1 : baseWidth, color, hovered ? Math.min(1, baseAlpha + 0.3) : baseAlpha)
+          .setStrokeStyle(hovered ? 3 : 2, color, hovered ? 1 : 0.9)
           .setDepth(150);
       }
       this.dragZoneHighlights.push({ meldId: z.meldId, status, solid, dashed });
@@ -3185,7 +3820,7 @@ export class GameScene extends Phaser.Scene {
 
     const statusText =
       target.status === 'legal' ? t('snap.legal') : target.status === 'incomplete' ? t('snap.incomplete') : t(target.reason ?? '');
-    const statusColor = target.status === 'legal' ? '#7ee0a0' : target.status === 'incomplete' ? '#f0c040' : '#ff6b5e';
+    const statusColor = STATUS_COLOR[target.status].text;
     const panelW = Math.min(150, Math.max(70, cardsW + 16));
     const st = label(this, 0, 0, statusText, 6, statusColor);
     st.setWordWrapWidth(panelW - 8, true);
@@ -3206,11 +3841,17 @@ export class GameScene extends Phaser.Scene {
       const x = startX + i * cardGap + cw / 2;
       objs.push(this.add.image(x, rowY, key).setDisplaySize(cw, ch).setAlpha(0.75).setDepth(501));
       const hint = jokerLabels.get(card.id);
-      if (hint) objs.push(label(this, x, rowY + ch / 2 + 5, hint, 5, '#f0c040').setDepth(501));
+      if (hint) objs.push(label(this, x, rowY + ch / 2 + 5, hint, 5, STATUS_COLOR.incomplete.text).setDepth(501));
     });
 
     st.setPosition(cx, cy + panelH / 2 - 6 - st.height / 2).setDepth(501);
     objs.push(st);
+
+    // MEXE-05 (in-place destination preview) is DEFERRED-PRODUCT: an attempt at drawing a ghost
+    // card inside the meld itself (under the dragged sprite, gold-tinted on an already-light card
+    // face, overlapping both neighbours by half a card) was found illegible in round-2 review and
+    // reverted rather than shipped as invisible code. The detached panel above remains the one
+    // preview surface; see docs/improvements/STATUS.md MEXE-05 for the reasoning.
     this.ghostPreview = objs;
   }
 
@@ -3271,6 +3912,9 @@ export class GameScene extends Phaser.Scene {
     // Stays undefined for a return-to-hand — that path has no snap target.
     let landedMeldId: string | null | undefined;
     let acted = false;
+    // MEXE-17: a table card going back to hand reads as "picked back up", not as a drop — it gets
+    // its own sfx and motion below rather than sharing sfx-drop/sfx-snap with every other landing.
+    const returning = origin === 'table' && inHandArea && !zone;
     if (origin === 'hand') {
       if (zone) { acted = this.editor.playHandCard(cardId, zone.meldId); landedMeldId = zone.meldId; }
       else if (inTableArea) { acted = this.editor.playHandCard(cardId, null); landedMeldId = null; }
@@ -3299,12 +3943,20 @@ export class GameScene extends Phaser.Scene {
     if (acted) {
       this.clearLastMove();
       playlog.recordDrop(origin === 'hand' ? 'played' : inHandArea && !zone ? 'returned' : 'moved', origin);
-      const landedTarget = landedMeldId !== undefined ? snapTargetFor(this.snapTargets, landedMeldId) : null;
-      playSfx(this, landedTarget?.status === 'legal' ? 'sfx-snap' : 'sfx-drop', 0.5);
-      this.tweens.add({ targets: sprite, ...settle, onComplete: rerenderWithMotion });
+      if (returning) {
+        playSfx(this, 'sfx-pickup', 0.5); // picked back up, not dropped
+        haptic('tick');
+        this.tweens.add({ targets: sprite, ...settle, angle: { from: -10, to: 0 }, onComplete: rerenderWithMotion });
+      } else {
+        const landedTarget = landedMeldId !== undefined ? snapTargetFor(this.snapTargets, landedMeldId) : null;
+        playSfx(this, landedTarget?.status === 'legal' ? 'sfx-snap' : 'sfx-drop', 0.5);
+        haptic(landedTarget?.status === 'legal' ? 'bump' : 'tick');
+        this.tweens.add({ targets: sprite, ...settle, onComplete: rerenderWithMotion });
+      }
     } else {
       // snap back
       playlog.recordDrop('rejected', origin);
+      haptic('tick'); // the drop registered, it just could not be taken
       this.tweens.add({
         targets: sprite,
         x: sprite.getData('homeX') as number,
@@ -3420,18 +4072,47 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * AI-16: an opponent occasionally notices an unusually strong PLAYER Mexe (the same `huge`
+   * weight that earns the human their own MEXEU BONITO flash). Not every huge Mexe gets a
+   * reaction — "occasionally" — and it rides the same per-seat cooldown as every other reaction,
+   * so it can never double up with one already showing.
+   */
+  private reactToPlayerMexe(state: GameState): void {
+    if (Math.random() >= 0.5) return;
+    const seats = state.players.map((_, i) => i).filter((i) => i !== this.localSeat && state.players[i]!.isAi);
+    if (seats.length === 0) return;
+    const seat = seats[Math.floor(Math.random() * seats.length)]!;
+    const personality = this.personalities[seat];
+    if (!personality) return;
+    this.showEmote(seat, PERSONALITY_STYLE[personality].emoteBig, 'playerMexe', personality);
+  }
+
   /** `lineMoment` + `personality` together pick a short characterful line (`ai.line.<personality>.<moment>`,
    * see i18n) shown alongside the emote for the handful of moments that call for one — big play,
    * forced draw, near-win. Omit either to show the emote alone (e.g. the error fallback). */
-  private showEmote(playerIndex: number, emote: EmoteKey, lineMoment?: 'bigPlay' | 'nearWin' | 'forcedDraw' | null, personality?: Personality): void {
+  /** @param skipCooldown AI-02's pre-move "thinking" tell: a wordless bubble shown before the AI
+   * has even decided its move, which must never consume the reaction cooldown slot the real
+   * post-move reaction (with its character line) relies on a few hundred ms later. */
+  private showEmote(
+    playerIndex: number,
+    emote: EmoteKey,
+    lineMoment?: 'bigPlay' | 'nearWin' | 'forcedDraw' | 'playerMexe' | null,
+    personality?: Personality,
+    skipCooldown = false,
+  ): void {
     if (playerIndex === 0) return;
     const now = Date.now();
     const previous = this.lastEmoteBySeat.get(playerIndex);
-    if (previous && now - previous.at < EMOTE_COOLDOWN_MS) return; // they just spoke — let it breathe
+    // PACE-06: the table's calm/active/hot tier (state-derived, never the clock) tightens or
+    // loosens how often a seat is allowed to react — a hot table talks more.
+    const level = matchIntensity(this.store.get()).level;
+    const cooldown = level === 'hot' ? EMOTE_COOLDOWN_MS * 0.6 : level === 'calm' ? EMOTE_COOLDOWN_MS * 1.3 : EMOTE_COOLDOWN_MS;
+    if (!skipCooldown && previous && now - previous.at < cooldown) return; // they just spoke — let it breathe
     // Show the face but drop the words when the line would repeat the one before it.
     const lineText = lineMoment && personality ? t(`ai.line.${personality}.${lineMoment}`) : null;
     const sayLine = lineText !== null && lineText !== previous?.line;
-    this.lastEmoteBySeat.set(playerIndex, { line: sayLine ? lineText : (previous?.line ?? null), at: now });
+    if (!skipCooldown) this.lastEmoteBySeat.set(playerIndex, { line: sayLine ? lineText : (previous?.line ?? null), at: now });
 
     const x = this.r.opponentX0 + (playerIndex - 1) * this.r.opponentStep;
     const bubble = this.add.image(x + 16, -2, 'emote-bubble').setDisplaySize(18, 16).setDepth(400);

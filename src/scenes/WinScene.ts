@@ -2,10 +2,13 @@ import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
 import { PERSONALITY_STYLE, type Personality } from '../ai/ai';
 import { bus } from '../core/events';
-import { matchStoryKey } from '../core/results-summary';
+import { headToHeadRecord, matchStoryKey } from '../core/results-summary';
 import { settings } from '../core/settings';
 import { t } from '../localization/i18n';
 import type { NetClient } from '../net/client';
+import type { Meld } from '../rules/types';
+import { CARD_H, CARD_W } from '../assets/manifest';
+import { computeMeldLayout } from '../table/layout';
 import { FEEL, feelMs } from '../ui/feel';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
@@ -35,12 +38,17 @@ interface WinData {
   /** Localized readback of the winning play (e.g. "X played 2 card(s)") — empty/undefined on a
    * stalemate or an online match, where no local draft is available. */
   winningMoveText?: string;
-  /** Present only after an online match — rematch is out of MVP scope, so this replaces it with a menu path. */
-  online?: { client: NetClient };
+  /** Present only after an online match: the live room this result came out of, so REMATCH can
+   * walk straight back into the recycled lobby on the same code (ONLINE-23/24). */
+  online?: { client: NetClient; code: string; seat: number };
+  /** The table exactly as the match ended, drawn faintly behind the result (RESULT-09). */
+  finalTable?: readonly Meld[];
 }
 
 /** Vertical cost of the per-player comparison line inside the results block. */
 const STATS_H = 12;
+/** Vertical cost of the per-player head-to-head tally inside the results block. */
+const RECORD_H = 9;
 
 export class WinScene extends Phaser.Scene {
   constructor() {
@@ -56,6 +64,7 @@ export class WinScene extends Phaser.Scene {
     // ...and pointless when every counter reads 0 (an online match, or a showcase state with no
     // playlog behind it): "0 cards played" for everyone is a comparison of nothing.
     const showStats = !data.online && results.some((r) => (r.cardsPlayed ?? 0) > 0);
+    const showRecord = results.some((r) => this.recordLine(r) !== '');
     const storyKey = results.length > 0 ? matchStoryKey(results, data.stalemate) : null;
     const reaction = this.reactionLine(results);
     debugApi.results = {
@@ -84,6 +93,7 @@ export class WinScene extends Phaser.Scene {
     const off = view().portrait ? 40 : 0;
     coverBackground(this, 'bg-boteco');
     this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.55);
+    this.renderFinalTable(data.finalTable ?? []);
     // banner ships at 3x (480x144); logical size is 160x48, so scale 1/3 is "full size"
     const bannerScale = 1 / 3;
     const banner = this.add.image(cx(), vy(50) + off, 'banner-victory').setScale(bannerScale);
@@ -123,7 +133,7 @@ export class WinScene extends Phaser.Scene {
     // dead-end MENU, 3 otherwise) instead of a fixed offset from the top content — a fixed offset
     // let the last button run past the world's bottom edge on any short landscape viewport (an
     // iPhone in landscape), since nothing accounted for how tall the stack itself is.
-    const stackExtent = data.online ? 10 : 53; // bottom-most button's edge, relative to buttonY0
+    const stackExtent = data.online ? 33 : 53; // bottom-most button's edge, relative to buttonY0
     const buttonY0Max = view().h - 4 - stackExtent;
     // buttonY0 is the FIRST button's centre, so its own top edge sits FIRST_BTN_HALF above it —
     // a content/button gap smaller than that (the original bug) puts the button's top edge
@@ -142,19 +152,25 @@ export class WinScene extends Phaser.Scene {
     const headlineH = headline ? measure(headline, 9, panelW(360)) + 4 : 0;
     const reactionH = reaction ? measure(reaction, 7, panelW(380)) + 4 : 0;
     const top = vy(95) + off;
-    const contentBottom = (withHeadline: boolean, withStats: boolean, withReaction: boolean) =>
-      top + storyH + (withHeadline ? headlineH : 0)
-      + 36 /* renderResults' fixed offset */ + (withStats ? STATS_H : 0)
-      + (withReaction ? reactionH : 0);
+    interface Parts { headline: boolean; record: boolean; stats: boolean; reaction: boolean }
+    const contentBottom = (p: Parts) =>
+      top + storyH + (p.headline ? headlineH : 0)
+      + 36 /* renderResults' fixed offset */ + (p.stats ? STATS_H : 0) + (p.record ? RECORD_H : 0)
+      + (p.reaction ? reactionH : 0);
     // Fit-priority ladder, cheapest drop first: the results block (avatars + winner) is the one
     // thing that always stays, and the story label is one short line that never costs enough to
-    // drop. A short landscape viewport (an iPhone in landscape, or 125% text) sheds the per-player
-    // comparison first, then the character reaction, and only as a last resort the winning-move
-    // headline — guaranteeing content never renders under the button stack.
+    // drop. A short landscape viewport (an iPhone in landscape, or 125% text) sheds the
+    // head-to-head tally first, then the per-player comparison, then the character reaction, and
+    // only as a last resort the winning-move headline — guaranteeing content never renders under
+    // the button stack.
     const fits = (bottom: number) => bottom + GAP + FIRST_BTN_HALF <= buttonY0Max;
-    const includeStats = showStats && fits(contentBottom(true, true, !!reaction));
-    const includeReaction = !!reaction && fits(contentBottom(true, includeStats, true));
-    const includeHeadline = !!headline && fits(contentBottom(true, includeStats, includeReaction));
+    const all = { headline: true, record: true, stats: true, reaction: !!reaction };
+    const includeRecord = showRecord && fits(contentBottom(all));
+    const includeStats = showStats && fits(contentBottom({ ...all, record: includeRecord }));
+    const includeReaction = !!reaction
+      && fits(contentBottom({ ...all, record: includeRecord, stats: includeStats }));
+    const includeHeadline = !!headline
+      && fits(contentBottom({ headline: true, record: includeRecord, stats: includeStats, reaction: includeReaction }));
 
     let y = top;
     const story: Phaser.GameObjects.GameObject[] = [];
@@ -177,7 +193,7 @@ export class WinScene extends Phaser.Scene {
       story.push(moveTxt);
       y += headlineH;
     }
-    const board = this.renderResults(results, y + 8, includeStats);
+    const board = this.renderResults(results, y + 8, includeStats, includeRecord);
     y = board.y;
     const tail: Phaser.GameObjects.GameObject[] = [];
     if (includeReaction) {
@@ -192,14 +208,17 @@ export class WinScene extends Phaser.Scene {
     debugApi.winButtonY = buttonY0;
 
     if (data.online) {
-      // online rematch is out of MVP scope (docs/archive/PHASE5_CLIENT_PLAN.md §A) — never strand the
-      // player on a dead room, just leave it and go back to the local menu.
-      const client = data.online.client;
-      tail.push(new PixelButton(this, cx(), buttonY0, t('win.menu'), () => {
+      // ONLINE-23/24: the room survives a finished match and recycles into an unlocked lobby on the
+      // same code, so REMATCH walks the live socket straight back into it; MENU still leaves.
+      const { client, code, seat } = data.online;
+      tail.push(new PixelButton(this, cx(), buttonY0, t('win.rematch'), () => {
+        gotoScene(this, 'online', { client, code, seat });
+      }, { textureBase: 'btn-feito', w: 140, h: 22, size: 9, primary: true }));
+      tail.push(new PixelButton(this, cx(), buttonY0 + 24, t('win.menu'), () => {
         client.leaveRoom();
         debugApi.online = null;
         gotoScene(this, 'menu');
-      }, { textureBase: 'btn-feito', w: 130, h: 20, size: 8 }));
+      }, { textureBase: 'btn-comprar', w: 130, h: 18, size: 7 }));
     } else {
       // RESULT-04/11/12: one dominant CTA that deals the next hand with the same lineup and
       // settings, a secondary path to change who is playing, menu last. The same-seed replay
@@ -253,6 +272,7 @@ export class WinScene extends Phaser.Scene {
     results: PlayerResult[],
     y: number,
     withStats: boolean,
+    withRecord: boolean,
   ): { y: number; objects: Phaser.GameObjects.GameObject[] } {
     const objects: Phaser.GameObjects.GameObject[] = [];
     if (results.length === 0) return { y, objects };
@@ -261,24 +281,68 @@ export class WinScene extends Phaser.Scene {
     const startX = cx() - ((results.length - 1) * slotW) / 2;
     results.forEach((r, i) => {
       const x = startX + i * slotW;
-      if (r.isWinner) {
-        const h = withStats ? 32 + STATS_H : 32;
-        objects.push(this.add
-          .rectangle(x, rowY + (withStats ? STATS_H / 2 : 0), slotW - 6, h, 0xf7d23e, 0.16)
-          .setStrokeStyle(1, 0xf7d23e, 0.9));
-      }
+      const extra = (withStats ? STATS_H : 0) + (withRecord ? RECORD_H : 0);
+      // JUICE/RESULT readability fix: renderFinalTable() dims the ended match's cards behind this
+      // whole block (RESULT-09), which left every column's text sitting directly on top of card
+      // art with nothing but a thin 0.16-alpha tint behind it. A solid backing plate per column —
+      // gold-tinted and opaque for the winner, neutral and opaque for everyone else — gives the
+      // text a clean surface regardless of what meld happens to sit behind that seat.
+      objects.push(this.add
+        .rectangle(x, rowY + extra / 2, slotW - 6, 32 + extra, r.isWinner ? 0xf7d23e : 0x1a0f0a, r.isWinner ? 0.85 : 0.72)
+        .setStrokeStyle(1, r.isWinner ? 0xf7d23e : 0x4a3a28, r.isWinner ? 0.9 : 0.6));
       if (this.textures.exists(r.avatarKey)) objects.push(this.add.image(x, rowY - 8, r.avatarKey).setDisplaySize(16, 16));
       if (r.personality) {
         const emote = r.isWinner ? PERSONALITY_STYLE[r.personality].emoteBig : PERSONALITY_STYLE[r.personality].emoteDraw;
         const key = `emote-${emote}`;
         if (this.textures.exists(key)) objects.push(this.add.image(x + 9, rowY - 15, key).setDisplaySize(9, 9));
       }
-      objects.push(label(this, x, rowY + 5, r.name, 8, r.isWinner ? '#f7d23e' : '#d8d0c0'));
-      objects.push(label(this, x, rowY + 14, `x${r.cardsLeft}`, 8, r.isWinner ? '#f7d23e' : '#c0b8a8'));
+      // Winner text sits on an opaque gold plate now (see above), so it needs the same dark
+      // ink the win.story chip already uses on gold rather than the gold-on-felt colour that
+      // made sense when the plate was a thin 0.16-alpha tint.
+      const ink = r.isWinner ? '#1a0f0a' : '#d8d0c0';
+      const inkDim = r.isWinner ? '#4a3420' : '#c0b8a8';
+      objects.push(label(this, x, rowY + 5, r.name, 8, ink));
+      objects.push(label(this, x, rowY + 14, `x${r.cardsLeft}`, 8, inkDim));
       if (withStats) {
-        objects.push(label(this, x, rowY + 24, t('win.statCards', { n: r.cardsPlayed ?? 0 }), 6, '#b8ac98'));
+        objects.push(label(this, x, rowY + 24, t('win.statCards', { n: r.cardsPlayed ?? 0 }), 6, r.isWinner ? inkDim : '#b8ac98'));
       }
+      const record = withRecord ? this.recordLine(r) : '';
+      if (record) objects.push(label(this, x, rowY + 24 + (withStats ? RECORD_H : 0), record, 6, r.isWinner ? inkDim : '#b8ac98'));
     });
-    return { y: rowY + 20 + (withStats ? STATS_H : 0), objects };
+    return { y: rowY + 20 + (withStats ? STATS_H : 0) + (withRecord ? RECORD_H : 0), objects };
+  }
+
+  /** RESULT-06: this opponent's running tally against the local player, e.g. "vs. você: 3-1".
+   * Empty for the human seat, for online opponents, and before anything has been played — a plain
+   * count of finished matches, never a score, a streak or an unlock. */
+  private recordLine(r: PlayerResult): string {
+    if (!r.personality) return '';
+    const record = headToHeadRecord(settings.progress().headToHead[r.personality]);
+    return record ? t('win.record', record) : '';
+  }
+
+  /** RESULT-09: the melds the match ended on, drawn faintly across the whole screen *behind*
+   * everything else, so the board that decided it is still readable without ever competing with
+   * the result or the buttons. Static — nothing here is animated, so reduced motion needs no gate. */
+  private renderFinalTable(melds: readonly Meld[]): void {
+    if (melds.length === 0) return;
+    const areaW = view().w - 16;
+    const areaH = view().h - 16;
+    const positions = computeMeldLayout(melds.map((m) => ({ id: m.id, cardCount: m.cards.length })), areaW, areaH);
+    for (const pos of positions) {
+      const meld = melds.find((m) => m.id === pos.meldId);
+      if (!meld) continue;
+      const scale = pos.cardScale;
+      const cw = CARD_W * scale;
+      const ch = CARD_H * scale;
+      meld.cards.forEach((card, i) => {
+        const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
+        if (!this.textures.exists(key)) return;
+        this.add
+          .image(8 + pos.x + 4 * scale + cw / 2 + i * pos.cardGap, 8 + pos.y + ch / 2, key)
+          .setDisplaySize(cw, ch)
+          .setAlpha(0.3);
+      });
+    }
   }
 }

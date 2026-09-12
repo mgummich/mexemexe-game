@@ -135,10 +135,15 @@ describe('server-authoritative turn timer', () => {
     const clock = { t: 1000 };
     const mgr = startedRoom(clock, TIMER_PRESETS.fast);
     clock.t += 10_000;
+    expect(mgr.getView('ROOM', 0)!.mexeBonusClaimed).toBe(false);
     expect(mgr.claimMexeBonus('ROOM', 0)).toEqual({ ok: true, msLeft: 55_000 });
     // Spamming the claim is a no-op — the bonus is once per turn.
     expect(mgr.claimMexeBonus('ROOM', 0).ok).toBe(false);
     expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBe(55_000);
+    // ONLINE-09: the view carries the grant explicitly, for every seat, not just the claimant —
+    // this is what lets a client show a one-time "extension granted" notice off the false->true edge.
+    expect(mgr.getView('ROOM', 0)!.mexeBonusClaimed).toBe(true);
+    expect(mgr.getView('ROOM', 1)!.mexeBonusClaimed).toBe(true);
   });
 
   it('a seat that is not the active one gains nothing by claiming the bonus', () => {
@@ -153,6 +158,8 @@ describe('server-authoritative turn timer', () => {
     const mgr = startedRoom(clock, TIMER_PRESETS.fast);
     expect(mgr.claimMexeBonus('ROOM', 0).ok).toBe(true);
     mgr.drawEndTurn('ROOM', 0, mgr.getRoom('ROOM')!.rev);
+    // The view flag resets with the turn, same as the underlying grant.
+    expect(mgr.getView('ROOM', 1)!.mexeBonusClaimed).toBe(false);
     expect(mgr.claimMexeBonus('ROOM', 1).ok).toBe(true);
   });
 
@@ -217,6 +224,18 @@ describe('reconnect grace and anti-stall', () => {
     clock.t += 45_000;
     expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, closed: true, timedOut: 0 }]);
     expect(mgr.getRoomInfo('ROOM')).toBeNull();
+  });
+
+  it('ONLINE-14: the public view carries each seat\'s missed-turn count, for every viewer', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 2 }));
+    expect(mgr.getView('ROOM', 0)!.missedTurns).toEqual([0, 0]);
+    clock.t += 45_000;
+    mgr.advanceStalledTurns(); // seat 0 misses once
+    // Both seats' views agree, and it is seat 0 that ticked up — the data a client needs to warn
+    // "N more and the match ends" without guessing who is at risk.
+    expect(mgr.getView('ROOM', 0)!.missedTurns).toEqual([1, 0]);
+    expect(mgr.getView('ROOM', 1)!.missedTurns).toEqual([1, 0]);
   });
 
   it('a turn the seat actually takes clears its missed-turn streak', () => {

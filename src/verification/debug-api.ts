@@ -116,6 +116,17 @@ export interface MexeDebugApi {
   /** Verification-only: every reason string currently displayed for each invalid meld (Phase 14
    * Wave B — a meld can carry more than one, e.g. an analysis reason plus reason.duplicateCard). */
   invalidMeldReasons: () => { meldId: string; reasons: string[] }[];
+  /** R1 verification: the three-way status (`legal` / `incomplete` / `illegal`) the board actually
+   * PAINTED for each meld on the last render, as classified by `meldStatus()` in src/table/snap.ts.
+   * Drag-time status comes from `mexe.snapTargets()`; this is its resting-board counterpart, so a
+   * test can assert the two agree for the same meld. Reason STRINGS cannot prove this — a run with
+   * a gap reports `reason.runGap` whether it is classified incomplete or illegal; only the status
+   * distinguishes gold from red.
+   *
+   * NOT test-only any more (MOBILE-13): `src/main.ts`'s portrait rotate-hint reads `.length` off
+   * this as its "is the table dense" gate — do not remove or restrict this field without updating
+   * that call site too. */
+  renderedMeldStatus: () => { meldId: string; status: 'legal' | 'incomplete' | 'illegal' }[];
   /** Active layout world + input mode (see src/ui/viewport.ts). Lets e2e map world coordinates
    * onto the canvas without assuming an orientation or a scale factor. */
   viewport: () => ViewProfile;
@@ -153,6 +164,9 @@ export interface MexeDebugApi {
     editorMeldId: () => string | null;
     /** Verification-only: the editor's meld-list vertical scroll offset. */
     editorScroll: () => number;
+    /** Verification-only (MOBILE-15/16): the hand strip's horizontal scroll offset — 0 unless the
+     * hand overflows its span (see enableHandScroll in GameScene.ts). */
+    handScroll: () => number;
     /** Verification-only (Phase 14 Wave D): current table zoom level — index into ZOOM_FLOORS,
      * 0 is "auto" (today's shrink-to-fit, no zoom applied). */
     zoomLevel: () => number;
@@ -162,6 +176,10 @@ export interface MexeDebugApi {
     /** Verification-only (Phase 14 Wave D): the meld id shown in the landscape meld-focus
      * overlay, or null when it's closed. */
     focusedMeldId: () => string | null;
+    /** Verification-only (R3/R4 remediation): the meld id cycleProblem() last pointed the
+     * non-modal "show problem" ring at, or null. Deliberately separate from focusedMeldId — see
+     * GameScene's problemHighlightMeldId doc comment. */
+    problemHighlightMeldId: () => string | null;
     /** Verification-only (Phase 14 Wave E): whether a table card sprite currently carries the
      * zoomed-table geometry mask, or null if the card isn't on screen. */
     cardMasked: (cardId: string) => boolean | null;
@@ -209,6 +227,7 @@ export const debugApi: MexeDebugApi = {
   offline: false,
   analyzeCount: 0,
   invalidMeldReasons: () => [],
+  renderedMeldStatus: () => [],
   viewport: () => view(),
   music: () => ({ track: '', playing: false, volume: 0, context: 'menu' }),
   mexe: null,

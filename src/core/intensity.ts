@@ -62,3 +62,21 @@ export function matchIntensity(state: GameState): MatchIntensity {
   if (threat === 'threat' || threat === 'last' || deckCritical) level = 'hot';
   return { level, lowestHand, threat, deckLow, deckCritical };
 }
+
+/** Cards a hand must trail the table leader by, before catching up counts as a comeback rather
+ * than routine play. */
+const COMEBACK_GAP = 3;
+
+/**
+ * PACE-14: whether `seat` was meaningfully behind (the largest hand at the table, by at least
+ * `COMEBACK_GAP` over the current leader) right before making the move being presented. Purely a
+ * presentation flag read from board state at one instant — it stores nothing between turns and
+ * feeds no score, so it can never disagree with a match a player joins mid-way.
+ */
+export function isComeback(before: GameState, seat: number): boolean {
+  const mine = before.players[seat]?.hand.length ?? 0;
+  const others = before.players.filter((_, i) => i !== seat).map((p) => p.hand.length);
+  if (others.length === 0 || mine === 0) return false;
+  const leader = Math.min(...others);
+  return mine >= Math.max(...others) && mine - leader >= COMEBACK_GAP;
+}

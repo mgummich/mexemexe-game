@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchStoryKey, playerStats, summarizeMoveKey } from '../src/core/results-summary';
+import { headToHeadRecord, matchStoryKey, playerStats, summarizeMoveKey } from '../src/core/results-summary';
 import type { PlaylogSummary } from '../src/core/playlog';
 import { cardId } from '../src/rules/rules';
 import type { Card, Meld, Rank, Suit } from '../src/rules/types';
@@ -97,5 +97,16 @@ describe('matchStoryKey', () => {
   it('returns null when the results list has no winner or no rival', () => {
     expect(matchStoryKey([win()], false)).toBeNull();
     expect(matchStoryKey([], false)).toBeNull();
+  });
+});
+
+describe('headToHeadRecord', () => {
+  it('renders nothing until a match has actually been played', () => {
+    expect(headToHeadRecord(undefined)).toBeNull();
+    expect(headToHeadRecord({ wins: 0, losses: 0 })).toBeNull();
+  });
+
+  it('flips the saved human-side tally into the opponent\'s own record', () => {
+    expect(headToHeadRecord({ wins: 1, losses: 3 })).toEqual({ w: 3, l: 1 });
   });
 });

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { computeSnapTargets, snapTargetFor } from '../src/table/snap';
+import { computeSnapTargets, meldStatus, snapTargetFor } from '../src/table/snap';
 import { DraftEditor } from '../src/mexe-mode/draft';
 import { sortMeldCards } from '../src/rules/rules';
-import type { DraftState, GameState } from '../src/rules/types';
+import type { DraftState, GameState, ReasonCode } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
 import { n, j } from './helpers/cards';
 
@@ -146,5 +146,49 @@ describe('computeSnapTargets', () => {
     expect(d).toEqual(snapshot);
     const t = snapTargetFor(targets, 'm1')!;
     expect(t.preview[0]).not.toBe(d.melds[0]!.cards[0]);
+  });
+});
+
+// R1: meldStatus() is now the ONE classifier every renderer (drag-time zone highlighting, the
+// resting board, the touch editor, the meld-focus panel) calls to decide incomplete vs. illegal.
+// This locks its behaviour so a second, diverging classifier can never quietly grow back — see
+// GameScene.ts's STATUS_FILL/STATUS_TEXT comment for the render-side half of this guarantee.
+describe('meldStatus (R1: the single incomplete/illegal classifier)', () => {
+  it('null reason is legal', () => {
+    expect(meldStatus(null)).toBe('legal');
+  });
+
+  it('meldTooSmall and runGap are incomplete, not illegal — both are normal mid-edit states', () => {
+    expect(meldStatus('reason.meldTooSmall')).toBe('incomplete');
+    expect(meldStatus('reason.runGap')).toBe('incomplete');
+  });
+
+  it('every other reason is a genuine contradiction: illegal', () => {
+    const contradictions: ReasonCode[] = [
+      'reason.notAMeld',
+      'reason.runSuitMismatch',
+      'reason.noHandCard',
+      'reason.cardMissing',
+      'reason.duplicateCard',
+      'reason.foreignCard',
+      'reason.groupTooLarge',
+      'reason.groupDuplicateSuit',
+      'reason.groupAllJokers',
+      'reason.jokerUnassignable',
+      'reason.tooManyJokers',
+      'reason.runWrap',
+    ];
+    for (const reason of contradictions) expect(meldStatus(reason)).toBe('illegal');
+  });
+
+  it('drag-time preview classifies a run-gap drop as incomplete (gold), not illegal (red) — R1', () => {
+    // 3-4-[5 missing]-6 hearts: dropping the 6 onto 3-4 leaves a single-step gap, not a
+    // contradiction. Before R1 this returned 'illegal' here while the resting-board renderer
+    // called the exact same reason 'incomplete', a live red/gold disagreement on the same drag.
+    const d: DraftState = { melds: [{ id: 'm1', cards: [n('hearts', 3), n('hearts', 4)] }], handCardsPlayed: [] };
+    const targets = computeSnapTargets(d, n('hearts', 6));
+    const t = snapTargetFor(targets, 'm1')!;
+    expect(t.reason).toBe('reason.runGap');
+    expect(t.status).toBe('incomplete');
   });
 });

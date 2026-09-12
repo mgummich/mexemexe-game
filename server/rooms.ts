@@ -533,7 +533,7 @@ export class RoomManager {
         // A reconnecting seat receives the *current* remaining time, not a fresh budget: the
         // clock kept running while it was away, which is what stops a reconnect loop from
         // extending a turn indefinitely.
-        const view = room.state ? buildView(room.state, seat.seat, room.rev, room.settings, this.msLeft(room), room.seats.map((s) => s?.missedTurns ?? 0)) : null;
+        const view = room.state ? buildView(room.state, seat.seat, room.rev, room.settings, this.msLeft(room), room.seats.map((s) => s?.missedTurns ?? 0), room.mexeBonusClaimed) : null;
         return { ok: true, code: room.code, seat: seat.seat, view, players: this.summarize(room) };
       }
     }
@@ -543,7 +543,7 @@ export class RoomManager {
   getView(code: string, seat: number): GameView | null {
     const room = this.rooms.get(code);
     if (!room || !room.state) return null;
-    return buildView(room.state, seat, room.rev, room.settings, this.msLeft(room), room.seats.map((s) => s?.missedTurns ?? 0));
+    return buildView(room.state, seat, room.rev, room.settings, this.msLeft(room), room.seats.map((s) => s?.missedTurns ?? 0), room.mexeBonusClaimed);
   }
 
   getPlayers(code: string): RoomPlayerSummary[] | null {
