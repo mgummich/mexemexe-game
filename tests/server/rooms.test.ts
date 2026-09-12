@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
-import { digestOfState, digestOfView, parseClientMessage, PROTOCOL_VERSION, stateHash } from '../../src/net/protocol';
+import { DEFAULT_ROOM_SETTINGS, digestOfState, digestOfView, parseClientMessage, PROTOCOL_VERSION, stateHash } from '../../src/net/protocol';
 import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
 import { createRng } from '../../src/core/rng';
 import type { Card } from '../../src/rules/types';
@@ -235,6 +235,22 @@ describe('room lifecycle', () => {
     const { code } = mustCreate(mgr, 'Alice');
     mgr.leaveRoom(code, 0);
     expect(mgr.getRoom(code)).toBeNull();
+  });
+
+  it('D15: host authority moves to the next occupied seat when the host leaves a post-match lobby, so a survivor is never locked out of starting a rematch', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice'); // seat 0, host
+    mgr.joinRoom(code, 'Bob'); // seat 1
+    // Recycled post-match lobby: no active game, so leaveRoom does not close the room.
+    expect(mgr.leaveRoom(code, 0)).toEqual({ roomClosed: false });
+    expect(mgr.getHostSeat(code)).toBe(1);
+    // The old host seat is refused; the survivor (now host) is accepted.
+    expect(mgr.setRoomSettings(code, 0, DEFAULT_ROOM_SETTINGS)).toMatchObject({ ok: false, error: 'not_host' });
+    expect(mgr.setRoomSettings(code, 1, DEFAULT_ROOM_SETTINGS)).toMatchObject({ ok: true });
+    mgr.setReady(code, 1, true);
+    expect(mgr.joinRoom(code, 'Carol')).toMatchObject({ ok: true, seat: 0 });
+    mgr.setReady(code, 0, true);
+    expect(mgr.startGame(code, 1)).toMatchObject({ ok: true, started: true });
   });
 });
 

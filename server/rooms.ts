@@ -33,7 +33,9 @@ const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_ROOMS = 500;
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 4;
-/** The only seat allowed to change room settings or start the match. Seats never move. */
+/** A fresh room's host is seat 0 (its creator). Host authority is otherwise tracked per-room in
+ * `RoomInternal.hostSeat` and moves to the next-occupied seat if the current host leaves (D15) —
+ * this constant is only the fallback for a nonexistent room. */
 export const HOST_SEAT = 0;
 
 export interface RoomManagerDeps {
@@ -87,6 +89,10 @@ interface RoomInternal {
   processing: boolean;
   createdAt: number;
   lastActivityAt: number;
+  /** The seat with host authority (settings + start). Seat 0 at creation; reassigned to the
+   * next-lowest occupied seat only when the CURRENT host leaves (D15) — filling a vacated seat
+   * never hands authority to the newcomer. */
+  hostSeat: number;
   /** Host-chosen, frozen at `startGame`. The server is the only writer. */
   settings: RoomSettings;
   /** When the current turn's clock started. null while the room has no running turn. */
@@ -161,6 +167,12 @@ export class RoomManager {
     return this.rooms.size;
   }
 
+  /** Public host lookup for the socket layer's `hostSeat` broadcasts. */
+  getHostSeat(code: string): number {
+    const room = this.rooms.get(code);
+    return room ? room.hostSeat : HOST_SEAT;
+  }
+
   createRoom(name: string): CreateRoomResult {
     if (this.rooms.size >= this.maxRooms) return { ok: false, error: 'room_limit' };
     let code = this.genCode();
@@ -185,6 +197,7 @@ export class RoomManager {
       processing: false,
       createdAt: this.now(),
       lastActivityAt: this.now(),
+      hostSeat: 0,
       // Reconnect grace starts at the deployment's configured value; picking a timer preset in
       // the lobby replaces it with that preset's own grace.
       settings: { ...DEFAULT_ROOM_SETTINGS, reconnectGraceMs: this.disconnectGraceMs },
@@ -232,6 +245,13 @@ export class RoomManager {
       this.rooms.delete(code);
       return { roomClosed: true };
     }
+    // D15: the host left a recycled post-match lobby with a survivor still seated — hand host
+    // authority to the next occupied seat instead of leaving it pointed at an empty chair
+    // nobody can ever fill back into (seats never move once assigned).
+    if (seat === room.hostSeat) {
+      const next = room.seats.findIndex((s) => s !== null);
+      if (next !== -1) room.hostSeat = next;
+    }
     return { roomClosed: false };
   }
 
@@ -255,7 +275,7 @@ export class RoomManager {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: 'room_not_found' };
     if (room.state) return { ok: false, error: 'game_started' };
-    if (seat !== HOST_SEAT) return { ok: false, error: 'not_host' };
+    if (seat !== room.hostSeat) return { ok: false, error: 'not_host' };
     // Normalized again here: `setRoomSettings` is a public manager entry point, not only the
     // socket path, so it must not depend on the caller having gone through the wire parser.
     room.settings = normalizeRoomSettings(proposed);
@@ -297,12 +317,14 @@ export class RoomManager {
     return { ok: true, msLeft: this.msLeft(room) };
   }
 
-  /** Seat 0 starts only a full-ready 2–4P lobby. Seats never move, so turn order is stable. */
+  /** The host seat starts only a full-ready 2–4P lobby. Seats never move, so turn order is
+   * stable; the host authority itself can move, to the next occupied seat, if the host leaves
+   * (see leaveRoom). */
   startGame(code: string, seat: number): StartResult {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: 'room_not_found' };
     if (room.state) return { ok: false, error: 'game_started' };
-    if (seat !== HOST_SEAT) return { ok: false, error: 'not_host' };
+    if (seat !== room.hostSeat) return { ok: false, error: 'not_host' };
     const occupied = room.seats.filter((s): s is Seat => s !== null);
     // A ready bit survives a transient socket close so a reconnect can resume a lobby, but it
     // must not let the host start a game with an absent seat. That would immediately create a

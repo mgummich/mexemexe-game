@@ -91,6 +91,15 @@ function shade(hex: number, factor: number): number {
 /** Red multiply-tint for danger buttons (e.g. APAGAR DADOS / reset) applied over the neutral wood texture. */
 export const DANGER_TINT = 0xff7a68;
 
+/** Brand/chrome gold — selection rings, banners, titles, the "you're active" cues — for text and
+ * strokes alike. Deliberately distinct from `STATUS_COLOR.incomplete` (src/table/snap.ts,
+ * #f7d23e/#f0c040): that hex used to double as this one too, so a meld's "incomplete, not really
+ * wrong" gold and a purely decorative title/selection gold read as the same signal. C3 already
+ * split the two for graphics-only chrome (GameScene's own `GOLD` constant); this is the matching
+ * split for text and widget strokes, so a status colour is never reused as a brand colour. */
+export const CHROME_GOLD = 0xd4af37;
+export const CHROME_GOLD_TEXT = '#d4af37';
+
 const STATE_SHADE: Record<'normal' | 'hover' | 'pressed' | 'disabled', number> = {
   normal: 1,
   hover: 1.18,
@@ -278,7 +287,7 @@ export class PixelButton extends Phaser.GameObjects.Container {
     if (on && !this.selectedRing) {
       this.selectedRing = this.scene.add
         .rectangle(0, 0, this.width + 6, this.height + 6)
-        .setStrokeStyle(2, 0xf7d23e, 1);
+        .setStrokeStyle(2, CHROME_GOLD, 1);
       this.addAt(this.selectedRing, 0);
     } else if (!on && this.selectedRing) {
       this.selectedRing.destroy();

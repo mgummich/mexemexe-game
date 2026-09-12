@@ -7,7 +7,7 @@ import type { IncomingMessage } from 'node:http';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { DEFAULT_ROOM_SETTINGS, parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
-import { RoomManager, HOST_SEAT } from './rooms';
+import { RoomManager } from './rooms';
 import { config } from './config';
 import { createLogger, errorFields } from './log';
 import { counters, renderMetrics } from './metrics';
@@ -136,10 +136,11 @@ function broadcastRoomState(code: string): void {
   const bySeat = sockets.get(code);
   const info = rooms.getRoomInfo(code);
   if (!bySeat || !info) return;
+  const hostSeat = rooms.getHostSeat(code);
   for (const ws of bySeat.values()) {
     send(ws, {
       v: PROTOCOL_VERSION, type: 'room_state',
-      players: info.players, settings: info.settings, hostSeat: HOST_SEAT, locked: info.locked,
+      players: info.players, settings: info.settings, hostSeat, locked: info.locked,
     });
   }
 }
@@ -152,7 +153,7 @@ function roomJoined(code: string, seat: number, token: string): ServerMessage {
     v: PROTOCOL_VERSION, type: 'room_joined', code, seat, token,
     players: info?.players ?? [],
     settings: info?.settings ?? DEFAULT_ROOM_SETTINGS,
-    hostSeat: HOST_SEAT,
+    hostSeat: rooms.getHostSeat(code),
   };
 }
 
@@ -361,7 +362,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       if (info) {
         send(ws, {
           v: PROTOCOL_VERSION, type: 'room_state',
-          players: info.players, settings: info.settings, hostSeat: HOST_SEAT, locked: info.locked,
+          players: info.players, settings: info.settings, hostSeat: rooms.getHostSeat(conn.code), locked: info.locked,
         });
       }
       const view = rooms.getView(conn.code, conn.seat);

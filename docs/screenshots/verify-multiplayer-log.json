@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-12T19:52:59.054Z",
-  "roomCode": "H6ZNJ",
+  "generatedAt": "2026-09-12T22:28:39.729Z",
+  "roomCode": "K5MTB",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-12T19:52:47.900Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":4,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-12T22:28:31.551Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":4,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -181,7 +181,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "7QWWG",
+    "code": "XXBVK",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {
@@ -198,7 +198,7 @@
     }
   },
   "mobileTouchJoin": {
-    "code": "9KX4W",
+    "code": "MQHV6",
     "screenshot": "docs/screenshots/mp-mobile-join-input.png"
   }
 }

@@ -134,6 +134,9 @@ export class OnlineScene extends Phaser.Scene {
     this.lastReaction = null;
     this.rematch = false;
     this.inFlight.clear();
+    // Field initializer, not reset here, is exactly the class of bug this run's worst defect
+    // (D1) came from — a restart must never inherit a scene's previous life's state.
+    this.offlineError = false;
     // ONLINE-03: a shared link carries the room code, so the invited player lands in the lobby
     // instead of transcribing five characters. Still a normal join — the server validates the
     // code exactly as it does a typed one.

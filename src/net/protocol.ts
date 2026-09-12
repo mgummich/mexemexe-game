@@ -369,7 +369,9 @@ export interface RoomJoinedMsg {
   token: string;
   players: RoomPlayerSummary[];
   settings: RoomSettings;
-  /** Seat 0 is the host: the only seat whose settings proposals and start are accepted. */
+  /** The current host seat: the only seat whose settings proposals and start are accepted.
+   * Starts as seat 0 (the creator) but moves to the next-lowest occupied seat if seat 0 leaves
+   * (D15) — never assume it is 0. */
   hostSeat: number;
 }
 export interface RoomStateMsg {

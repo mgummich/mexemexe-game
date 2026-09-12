@@ -22,7 +22,7 @@ import { digestOfState, stateHash } from '../net/protocol';
 import type { ErrorMsg, GameOverMsg, GameView, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
-import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
+import type { Card, GameState, Meld, MeldReason, ReasonCode, RulesConfig } from '../rules/types';
 import {
   clampScroll,
   editorZones,
@@ -46,7 +46,7 @@ import { gameRegions, wideReason, type GameRegions } from '../ui/regions';
 import { openRulesPanel } from '../ui/rules-panel';
 import { view } from '../ui/viewport';
 import { coverBackground } from '../ui/menu-layout';
-import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
+import { CHROME_GOLD, CHROME_GOLD_TEXT, fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 
 type SortMode = 'suit' | 'rank';
@@ -74,7 +74,6 @@ export function buildTutorialLaunchConfig(): GameSceneConfig {
 }
 
 const MELD_PAD = 4;
-const GOLD = 0xd4af37; // C3: distinct from STATUS_COLOR.incomplete.fill (0xf7d23e) so chrome gold != incomplete-meld gold
 const CONFIRM_GUARD_MS = 250;
 /** Bound on how long onlinePending may lock input: a healthy FEITO/COMPRAR round trip is well
  * under this. If neither state_sync nor proposal_rejected arrives in time (dropped/ignored
@@ -718,13 +717,20 @@ export class GameScene extends Phaser.Scene {
     const state = this.store.get();
     const winner = state.players.find((p) => p.id === msg.winnerId) ?? null;
     playSfx(this, 'sfx-win');
-    const perPlayer = playlog.summary().perPlayer; // best-effort — an online store never emits turn:confirmed/turn:drawn locally
+    // Online turns are server-driven and never write to the local playlog, so reading
+    // playlog.summary() here was never actually observing this match — only whatever a PRIOR
+    // local match (same page load, same p0/p1 ids) happened to leave behind, which
+    // matchStoryKey/WinScene would then read as this match's confirms/draws/cardsPlayed. An
+    // online result has no local counters to report, ever — say so directly instead of reading a
+    // log this match can't have written to.
     const results = state.players.map((p, i) => ({
       name: p.name,
       cardsLeft: p.hand.length,
       isWinner: p.id === msg.winnerId,
       avatarKey: this.avatarKey(i),
-      ...playerStats(p.id, perPlayer),
+      turnsPlayed: 0,
+      cardsPlayed: 0,
+      draws: 0,
     }));
     const client = this.online.client;
     const { code, seat } = this.online;
@@ -791,21 +797,29 @@ export class GameScene extends Phaser.Scene {
     const color =
       status === 'open' ? 0x3ec06a : status === 'connecting' || status === 'reconnecting' ? 0xf7d23e : 0xd83a3a;
     this.onlineStatusDot.setFillStyle(color);
+    // D14: `interactive` (renderAll) reads lastOnlineStatus, but nothing else re-renders on a
+    // status change — without this, a drop mid-turn left every control exactly as interactive as
+    // it was the instant before the socket died, until some unrelated event happened to redraw.
+    // Read and write lastOnlineStatus up front so every branch below sees the NEW status and the
+    // re-render (once connectedness actually flips) reads it too, not the stale value.
+    const wasConnected = this.lastOnlineStatus === null || this.lastOnlineStatus === 'open';
+    const nowConnected = status === 'open';
+    const prevStatus = this.lastOnlineStatus;
+    this.lastOnlineStatus = status;
+    if (wasConnected !== nowConnected && this.store.get().phase === 'playing') this.renderAll();
     if (status === 'reconnecting') {
       this.setOnlineNotice(t('online.reconnecting'));
       playSfx(this, 'sfx-invalid', 0.3);
-      this.lastOnlineStatus = status;
       return;
     }
     // Only the opponent's reconnect is announced elsewhere (onOnlineOpponentEvent) — this own
     // socket coming back from a reconnect attempt was silent, leaving the player to guess
     // whether they're actually back in the room.
-    if (status === 'open' && this.lastOnlineStatus === 'reconnecting') {
+    if (status === 'open' && prevStatus === 'reconnecting') {
       this.setOnlineNotice(t('online.selfReconnected'));
       playSfx(this, 'sfx-feito', 0.3);
       this.time.delayedCall(3000, () => this.setOnlineNotice(''));
     }
-    this.lastOnlineStatus = status;
     if (status === 'closed' || status === 'error') {
       this.setOnlineNotice(t('online.connectionLost'));
       playSfx(this, 'sfx-invalid', 0.5);
@@ -1296,11 +1310,11 @@ export class GameScene extends Phaser.Scene {
       // portrait's bottom bar is a plain full-width strip, not a floating card — a rounded rect
       // there would leave visible corners of table art poking through.
       panel.fillRect(ap.x, ap.y, ap.w, ap.h);
-      panel.lineStyle(1, GOLD, 0.35);
+      panel.lineStyle(1, CHROME_GOLD, 0.35);
       panel.strokeRect(ap.x, ap.y, ap.w, ap.h);
     } else {
       panel.fillRoundedRect(ap.x, ap.y, ap.w, ap.h, 4);
-      panel.lineStyle(1, GOLD, 0.35);
+      panel.lineStyle(1, CHROME_GOLD, 0.35);
       panel.strokeRoundedRect(ap.x, ap.y, ap.w, ap.h, 4);
     }
 
@@ -1311,7 +1325,7 @@ export class GameScene extends Phaser.Scene {
     if (cp && !this.config.tutorial) {
       panel.fillStyle(0x1a1410, 0.82);
       panel.fillRoundedRect(cp.x, cp.y, cp.w, cp.h, 4);
-      panel.lineStyle(1, GOLD, 0.35);
+      panel.lineStyle(1, CHROME_GOLD, 0.35);
       panel.strokeRoundedRect(cp.x, cp.y, cp.w, cp.h, 4);
     }
 
@@ -1368,7 +1382,7 @@ export class GameScene extends Phaser.Scene {
     // not readable on its own.
     this.reasonBg = this.add.rectangle(this.r.reason.x, this.r.reason.y, 10, 10, 0x1a1410, 0.8).setDepth(48).setVisible(false);
     this.reasonText = this.add
-      .text(this.r.reason.x, this.r.reason.y, '', { ...fontStyle(this.r.reason.size, '#f7d23e'), align: 'center', wordWrap: { width: this.r.reason.wrap } })
+      .text(this.r.reason.x, this.r.reason.y, '', { ...fontStyle(this.r.reason.size, CHROME_GOLD_TEXT), align: 'center', wordWrap: { width: this.r.reason.wrap } })
       .setOrigin(0.5, this.r.reason.originY)
       .setDepth(49);
     this.reasonBg.setOrigin(0.5, this.r.reason.originY);
@@ -1376,7 +1390,7 @@ export class GameScene extends Phaser.Scene {
     // cells at 3-4p) with an opaque pill behind the text (resized in renderAll) so "Sua vez" / the
     // AI's name always reads clearly regardless of what's behind it.
     this.bannerBg = this.add.rectangle(this.r.banner.x, this.r.banner.y, 10, 10, 0x1a1410, 0.78).setDepth(49);
-    this.banner = label(this, this.r.banner.x, this.r.banner.y, '', 11, '#f7d23e').setDepth(50);
+    this.banner = label(this, this.r.banner.x, this.r.banner.y, '', 11, CHROME_GOLD_TEXT).setDepth(50);
     // one-line readback of the opponent's last action, just above the table
     this.lastMoveText = this.add
       .text(this.r.lastMove.x, this.r.lastMove.y, '', { ...fontStyle(8, '#d8c890'), align: 'center', wordWrap: { width: this.r.lastMove.wrap } })
@@ -2122,7 +2136,7 @@ export class GameScene extends Phaser.Scene {
     const washTop = this.r.barH;
     const washBottom = this.r.handY - CARD_H / 2 - 4;
     const wash = this.add
-      .rectangle(this.r.w / 2, (washTop + washBottom) / 2, this.r.w, washBottom - washTop, GOLD, 0.1)
+      .rectangle(this.r.w / 2, (washTop + washBottom) / 2, this.r.w, washBottom - washTop, CHROME_GOLD, 0.1)
       .setDepth(1);
     this.tweens.add({ targets: wash, alpha: 0, scaleY: 1.015, duration: dur * 2, ease: FEEL.expressive.ease, onComplete: () => wash.destroy() });
   }
@@ -2193,7 +2207,13 @@ export class GameScene extends Phaser.Scene {
     const state = this.store.get();
     const active = state.activePlayerIndex;
     const human = this.editor !== null; // editor only exists on the local seat's own turn
-    const interactive = human && !this.onlinePending && !this.onlineResyncing && this.time.now >= this.presentingUntil;
+    // D14: online input stays live-editable while the socket is reconnecting/closed — nothing
+    // desyncs (client.ts returns null and onOnlineSendFailed recovers), but the player only
+    // learns the table wasn't actually theirs to edit after FEITO fails, instead of the control
+    // being visibly disabled the moment the connection isn't open. Same shape as presentingUntil.
+    const connected = this.online === null || this.lastOnlineStatus === 'open';
+    const interactive =
+      human && connected && !this.onlinePending && !this.onlineResyncing && this.time.now >= this.presentingUntil;
 
     // top bar: opponents — the active seat gets a bigger avatar + double gold ring, a static (not
     // animated) highlight so it stays reduced-motion-safe with zero extra tweens per render.
@@ -2212,7 +2232,7 @@ export class GameScene extends Phaser.Scene {
       const outer = isActiveP ? avSize + 11 : avSize;
       const textX = x + outer / 2 + 4;
       const av = this.add.image(x, this.r.opponentY, key).setDisplaySize(avSize, avSize);
-      const name = this.add.text(textX, this.r.opponentY - 11, p.name, fontStyle(9, isActiveP ? '#f7d23e' : '#d8d0c0'));
+      const name = this.add.text(textX, this.r.opponentY - 11, p.name, fontStyle(9, isActiveP ? CHROME_GOLD_TEXT : '#d8d0c0'));
       // Hand counts grow and change wording as a seat closes in, so the race is legible from the
       // HUD instead of needing to be counted. Size and the word carry it, never colour alone.
       const threat = threatOf(p.hand.length);
@@ -2231,8 +2251,8 @@ export class GameScene extends Phaser.Scene {
       // Never dims the threat count itself: that signal has to stay legible regardless of whose turn it is.
       if (human && !isActiveP && threat === 'none') { av.setAlpha(0.7); name.setAlpha(0.7); }
       if (isActiveP) {
-        const ring = this.add.rectangle(x, this.r.opponentY, avSize + 6, avSize + 6).setStrokeStyle(2, 0xf7d23e, 1);
-        const glow = this.add.rectangle(x, this.r.opponentY, avSize + 11, avSize + 11).setStrokeStyle(1, 0xf7d23e, 0.4);
+        const ring = this.add.rectangle(x, this.r.opponentY, avSize + 6, avSize + 6).setStrokeStyle(2, CHROME_GOLD, 1);
+        const glow = this.add.rectangle(x, this.r.opponentY, avSize + 11, avSize + 11).setStrokeStyle(1, CHROME_GOLD, 0.4);
         this.hud.push(glow, ring);
         // Handing over is a sequence, not a swap: the hand has just receded, so the seat taking
         // over lights up a beat later rather than at the same instant.
@@ -2392,6 +2412,18 @@ export class GameScene extends Phaser.Scene {
     if (this.tutorialDirector) this.renderTutorialOverlay();
   }
 
+  /** D11: `invalidMelds` is in table-position order, not severity order — a lone real
+   * contradiction (duplicate suit, second joker, unassignable joker) sitting next to several
+   * trivially-fixable under-3-card melds used to lose to whichever one happened to sit first on
+   * the table. `meldStatus()` (src/table/snap.ts) is the one classifier for illegal-vs-incomplete;
+   * this only orders by its result, it never re-decides it. Stable otherwise — a tie keeps table
+   * order, same as before. Shared by blockingReasonText (the reason line) and cycleProblem (the
+   * "show next problem" ring), so the two can never point at a different meld first. */
+  private bySeverity(reasons: readonly MeldReason[]): MeldReason[] {
+    const rank = (r: MeldReason) => (meldStatus(r.reason) === 'illegal' ? 0 : 1);
+    return [...reasons].sort((a, b) => rank(a) - rank(b));
+  }
+
   /** What's blocking FEITO right now: top invalid-meld reason, else the objective-phase text, else
    * the raw canConfirm() reason. Single source for both the on-screen reasonText and the disabled
    * FEITO button's tap feedback, so the two can never disagree. */
@@ -2414,8 +2446,10 @@ export class GameScene extends Phaser.Scene {
       this.selectedCardId !== null,
       this.editor.getRemainingHand().length === 0,
     );
-    // The exact top reason beats the generic "fix the invalid meld" phase text whenever one exists.
-    const topInvalidReason = analysis.invalidMelds[0]?.reason ?? null;
+    // D11: the real contradiction outranks a merely-incomplete meld for which reason names the
+    // problem, even though both keep equal weight in `phase` above (any invalid meld blocks FEITO
+    // the same way either way).
+    const topInvalidReason = this.bySeverity(analysis.invalidMelds)[0]?.reason ?? null;
     // Emptying your hand outranks whatever else is wrong: "you are one fix from winning" is the
     // headline, and the specific reason rides behind it rather than replacing it.
     if (phase === 'handEmptyInvalid' || phase === 'canBater') {
@@ -2498,8 +2532,17 @@ export class GameScene extends Phaser.Scene {
     if (!this.editor) return;
     const analysis = this.analyzeDraft();
     if (analysis.invalidMelds.length === 0) return;
-    const unresolvedIds = new Set(analysis.invalidMelds.map((r) => r.meldId));
-    const order = this.editor.getDraft().melds.filter((m) => unresolvedIds.has(m.id)).map((m) => m.id);
+    // D11: same severity order as blockingReasonText, so "show next problem" and the reason line
+    // never disagree about which meld is the real contradiction versus a merely-incomplete one.
+    // A meld can carry more than one reason (e.g. also reason.duplicateCard) — dedupe by meld id,
+    // keeping each meld's place from its worst (first-sorted) entry.
+    const seen = new Set<string>();
+    const order: string[] = [];
+    for (const r of this.bySeverity(analysis.invalidMelds)) {
+      if (seen.has(r.meldId)) continue;
+      seen.add(r.meldId);
+      order.push(r.meldId);
+    }
     if (order.length === 0) return;
     const current = this.mexeEditorOpen ? this.mexeEditorMeldId : this.problemHighlightMeldId;
     const idx = current ? order.indexOf(current) : -1;
@@ -2607,12 +2650,12 @@ export class GameScene extends Phaser.Scene {
     const g = this.add.graphics().setDepth(300);
     g.fillStyle(0x1a1410, 0.88);
     g.fillRoundedRect(p.x, panelTop, p.w, panelH, 4);
-    g.lineStyle(1, GOLD, 0.7);
+    g.lineStyle(1, CHROME_GOLD, 0.7);
     g.strokeRoundedRect(p.x, panelTop, p.w, panelH, 4);
     this.hud.push(g);
 
     // above the panel graphic (depth 300), or the 0.88-alpha fill washes the text out
-    this.hud.push(label(this, cx, panelTop + 10, t('tutorial.title'), 7, '#f7d23e').setDepth(301));
+    this.hud.push(label(this, cx, panelTop + 10, t('tutorial.title'), 7, CHROME_GOLD_TEXT).setDepth(301));
     // TUTORIAL-15: the counter names the phase it's in ("MEXE · 9/12"), not just a bare N/total —
     // the 12 internal steps read as belonging to a turn's real BAIXAR/MEXE/COMPRAR/BATER shape.
     // Finished carries no current step (T-B: dir.step still reports step 12's stale data), so the
@@ -2673,7 +2716,7 @@ export class GameScene extends Phaser.Scene {
     if (highlightIds.size > 0) {
       for (const s of this.cardSprites) {
         if (!highlightIds.has(s.getData('cardId') as string)) continue;
-        const glow = this.add.rectangle(s.x, s.y, CARD_W + 6, CARD_H + 6).setStrokeStyle(1, GOLD, 0.9).setDepth(290);
+        const glow = this.add.rectangle(s.x, s.y, CARD_W + 6, CARD_H + 6).setStrokeStyle(1, CHROME_GOLD, 0.9).setDepth(290);
         // reduced motion: the outline itself already marks the card — the pulse is decoration, not information.
         if (settings.motionScale() > 0) this.tweens.add({ targets: glow, alpha: 0.3, duration: 400, yoyo: true, repeat: -1 });
         this.hud.push(glow);
@@ -2944,7 +2987,7 @@ export class GameScene extends Phaser.Scene {
       // "look here" (R4) — dashed + a colour no status uses keeps the two unmistakably separate.
       if (this.problemHighlightMeldId === meld.id) {
         const focusRing = applyMask(this.add.graphics().setDepth(6));
-        this.drawDashedRect(focusRing, zoneRect.x - 3, zoneRect.y - 3, zoneRect.width + 6, zoneRect.height + 6, 0x6fc3ff, 0.95, 2);
+        this.drawDashedRect(focusRing, zoneRect.x - 3, zoneRect.y - 3, zoneRect.width + 6, zoneRect.height + 6, 0x6fc3ff, 0.95, 2, 8, 4);
         this.hud.push(focusRing);
       }
 
@@ -3093,9 +3136,13 @@ export class GameScene extends Phaser.Scene {
           }
         }
         if (this.lastMoveIds.has(card.id)) {
-          // persistent "the opponent touched this" marker — stays until the local player acts
+          // Coherence-2: this used to be a 1px ring nested half a pixel inside the conflict ring's
+          // 2px one (cw+3 vs cw+4) — a third near-identical ring in the exact hue band between
+          // incomplete-gold and illegal-red, even though it means recency/ownership, not status.
+          // A small corner dot carries "the opponent touched this" on a channel status doesn't
+          // already own, so it can never be mistaken for (or visually collide with) a status ring.
           const mark = applyMask(
-            this.add.rectangle(x, y, cw + 3, ch + 3).setStrokeStyle(1, 0xf0a030, 0.95).setDepth(4),
+            this.add.circle(x + cw / 2 - 2, y - ch / 2 + 2, 2, 0xf0a030, 1).setStrokeStyle(1, 0x1a0f0a, 0.9).setDepth(5),
           );
           this.hud.push(mark);
         }
@@ -3207,7 +3254,7 @@ export class GameScene extends Phaser.Scene {
     const g = this.add.graphics().setDepth(701);
     g.fillStyle(0x1a1410, 0.96);
     g.fillRoundedRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH, 4);
-    g.lineStyle(1, GOLD, 0.6);
+    g.lineStyle(1, CHROME_GOLD, 0.6);
     g.strokeRoundedRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH, 4);
     objs.push(g);
 
@@ -3480,7 +3527,7 @@ export class GameScene extends Phaser.Scene {
     const wsBg = this.add
       .rectangle(wsRect.centerX, wsRect.centerY, wsRect.width, wsRect.height, 0x000000, 0.3)
       .setDepth(0)
-      .setStrokeStyle(1, GOLD, 0.5);
+      .setStrokeStyle(1, CHROME_GOLD, 0.5);
     this.hud.push(wsBg);
     this.meldZones = this.mexeEditorMeldId !== undefined ? [{ meldId: this.mexeEditorMeldId ?? '', rect: wsRect }] : [];
 
@@ -3645,7 +3692,7 @@ export class GameScene extends Phaser.Scene {
         this.hud.push(
           this.add
             .rectangle(heldSprite.x, heldSprite.y, heldSprite.displayWidth + 4, heldSprite.displayHeight + 4)
-            .setStrokeStyle(2, GOLD, 1)
+            .setStrokeStyle(2, CHROME_GOLD, 1)
             .setDepth(260),
         );
       }
@@ -3713,7 +3760,7 @@ export class GameScene extends Phaser.Scene {
     }
     if (handAdded) {
       // marks a card played from hand this turn — still returnable to hand
-      const dot = this.add.circle(x + w / 2 - 2, y - h / 2 + 2, 1.6, GOLD, 1).setDepth(250);
+      const dot = this.add.circle(x + w / 2 - 2, y - h / 2 + 2, 1.6, CHROME_GOLD, 1).setDepth(250);
       this.hud.push(dot);
     }
     return sprite;
@@ -3849,7 +3896,7 @@ export class GameScene extends Phaser.Scene {
     this.hoverKey = undefined;
     this.redrawZoneHighlights();
     const outline = this.add.graphics().setDepth(140);
-    this.drawDashedRect(outline, this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop, GOLD, 0.3);
+    this.drawDashedRect(outline, this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop, CHROME_GOLD, 0.3, 1, 2, 2);
     this.dragTableOutline = outline;
   }
 
@@ -3986,10 +4033,30 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ponytail: hand-rolled dashed border — Phaser has no native dashed stroke and this is only a few lines.
-  private drawDashedRect(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, color: number, alpha: number, width = 1): void {
+  /**
+   * Coherence-3: "dashed rectangle" used to be one visual grammar carrying four unrelated
+   * meanings (invalid status, missing-card slot, "look here", drag-time table boundary),
+   * separated only by hue — the one channel the tri-state work was built to avoid depending on.
+   * `dash`/`gap` give each MEANING (not each colour) its own rhythm: the default (4/3) is the
+   * status truth STATUS_COLOR/meldStatus() owns (the meld outline, the missing-card slot inside
+   * it — same meaning, just a more precise location, so they intentionally keep the same rhythm);
+   * a "look here" pointer (the blue cycle ring, the white focus ring) uses a longer, sparser
+   * rhythm so it reads as a highlight, never a status; the whole-table drag boundary uses a
+   * tighter one so it reads as a frame, never a per-meld outline.
+   */
+  private drawDashedRect(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    color: number,
+    alpha: number,
+    width = 1,
+    dash = 4,
+    gap = 3,
+  ): void {
     g.lineStyle(width, color, alpha);
-    const dash = 4;
-    const gap = 3;
     for (let sx = x; sx < x + w; sx += dash + gap) {
       const ex = Math.min(sx + dash, x + w);
       g.lineBetween(sx, y, ex, y);
@@ -4150,7 +4217,7 @@ export class GameScene extends Phaser.Scene {
 
       for (const target of this.focusTargets) {
         const zone = this.add
-          .rectangle(target.rect.centerX, target.rect.centerY, target.rect.width, target.rect.height, GOLD, 0.07)
+          .rectangle(target.rect.centerX, target.rect.centerY, target.rect.width, target.rect.height, CHROME_GOLD, 0.07)
           .setDepth(1)
           .setInteractive({ useHandCursor: true });
         zone.on('pointerup', () => this.placeSelected(target.kind, target.id ?? null));
@@ -4170,7 +4237,7 @@ export class GameScene extends Phaser.Scene {
         this.hud.push(
           this.add
             .rectangle(heldSprite.x, heldSprite.y, heldSprite.displayWidth + 4, heldSprite.displayHeight + 4)
-            .setStrokeStyle(2, GOLD, 1)
+            .setStrokeStyle(2, CHROME_GOLD, 1)
             .setDepth(260),
         );
       }
@@ -4257,7 +4324,7 @@ export class GameScene extends Phaser.Scene {
     let line: Phaser.GameObjects.Text | null = null;
     if (sayLine) {
       line = this.add
-        .text(x + 16, 12, lineText, { ...fontStyle(7, '#f7d23e'), align: 'center', wordWrap: { width: 90 } })
+        .text(x + 16, 12, lineText, { ...fontStyle(7, CHROME_GOLD_TEXT), align: 'center', wordWrap: { width: 90 } })
         .setOrigin(0.5, 0)
         .setDepth(402);
       targets.push(line);

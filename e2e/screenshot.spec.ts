@@ -373,6 +373,12 @@ test('mexe mode: incomplete and illegal melds render as distinct gold/red, not b
     expect(reasons.some((r) => r.reasons.includes(translate('reason.jokerUnassignable')))).toBe(true);
     const invalid = await p.evaluate(() => window.__MEXE__.a11y.invalidBadges);
     expect(invalid).toBeGreaterThanOrEqual(2);
+    // D11: the run-gap meld was built FIRST (table-position order), so the reason line must not
+    // name it just because it came first — the genuine contradiction (joker-unassignable) outranks
+    // a merely-incomplete meld and must be what the player is told is blocking FEITO.
+    const reasonLine = await p.evaluate(() => window.__MEXE__.reasonLine);
+    expect(reasonLine).toContain(translate('reason.jokerUnassignable'));
+    expect(reasonLine).not.toContain(translate('reason.runGap'));
   });
 });
 
@@ -390,6 +396,8 @@ test('cycleProblem: repeated taps on a blocked FEITO advance through unresolved 
     const gapSuit = await p.evaluate((id) => window.__MEXE__.mexe!.getDraft()!.melds.find((m) => m.id === id)!.cards[0]!.suit, gapId!);
     const jokerOk = await buildJokerConflictMeld(p, gapSuit ? [gapSuit] : []);
     expect(jokerOk).toBe('ok');
+    const reasonsList = await p.evaluate(() => window.__MEXE__.invalidMeldReasons());
+    const jokerMeldId = reasonsList.find((r) => r.reasons.includes(translate('reason.jokerUnassignable')))!.meldId;
 
     // Don't assume exactly 2 unresolved melds: buildRunGapMeld/buildJokerConflictMeld pull cards
     // out of whatever melds the deal already had on the table, so a source meld can itself end up
@@ -410,6 +418,10 @@ test('cycleProblem: repeated taps on a blocked FEITO advance through unresolved 
       // modal's depth-700 backdrop is exactly what used to swallow the next tap (R3).
       expect(await p.evaluate(() => window.__MEXE__.mexe!.focusedMeldId())).toBeNull();
     }
+    // D11: the genuine contradiction (joker-unassignable, illegal) must be cycled to before the
+    // merely-incomplete run-gap meld, whatever table position each happened to be built in.
+    expect(seen.indexOf(jokerMeldId)).toBeLessThan(seen.indexOf(gapId));
+
     // One more tap than there are unresolved melds must wrap back to the first one — proof the
     // cycle actually advances every time instead of getting stuck after the first tap.
     await tapWorld(p, r.feito.x, r.feito.y);

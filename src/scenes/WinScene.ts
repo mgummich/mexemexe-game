@@ -12,7 +12,7 @@ import { computeMeldLayout } from '../table/layout';
 import { FEEL, feelMs } from '../ui/feel';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
-import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
+import { CHROME_GOLD, CHROME_GOLD_TEXT, fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi } from '../verification/debug-api';
 import type { GameSceneConfig } from './GameScene';
 
@@ -103,7 +103,7 @@ export class WinScene extends Phaser.Scene {
       duration: Math.max(1, feelMs('major')),
       ease: FEEL.major.ease,
     });
-    label(this, cx(), vy(48) + off, t(data.stalemate ? 'win.titleStalemate' : 'win.title'), 24, '#f7d23e');
+    label(this, cx(), vy(48) + off, t(data.stalemate ? 'win.titleStalemate' : 'win.title'), 24, CHROME_GOLD_TEXT);
     label(
       this,
       cx(),
@@ -178,7 +178,7 @@ export class WinScene extends Phaser.Scene {
       // RESULT-03: exactly one label for how the match went, above the move that decided it.
       const chip = this.add.text(cx(), y, t(storyKey), { ...fontStyle(9, '#1a0f0a'), align: 'center' }).setOrigin(0.5, 0);
       const plate = this.add
-        .rectangle(cx(), y + chip.height / 2, chip.width + 12, chip.height + 2, 0xf7d23e, 0.92)
+        .rectangle(cx(), y + chip.height / 2, chip.width + 12, chip.height + 2, CHROME_GOLD, 0.92)
         .setStrokeStyle(1, 0x8a6b1f, 1);
       this.children.moveBelow(plate, chip);
       story.push(chip, plate);
@@ -219,6 +219,19 @@ export class WinScene extends Phaser.Scene {
         debugApi.online = null;
         gotoScene(this, 'menu');
       }, { textureBase: 'btn-comprar', w: 130, h: 18, size: 7 }));
+      // D15: nothing in GameScene or this scene otherwise listens for the room_state the server
+      // broadcasts after the opponent's leave_room, so the survivor never learned they left and
+      // silently walked into a solo lobby via REMATCH. REMATCH itself stays offered — the room
+      // (and its host authority, see server/rooms.ts leaveRoom) still works once someone else
+      // joins — but the player is told what actually happened.
+      const leftNotice = this.add
+        .text(cx(), buttonY0 + 44, '', { ...fontStyle(7, '#ff6b5e'), align: 'center', wordWrap: { width: panelW(360) } })
+        .setOrigin(0.5, 0);
+      tail.push(leftNotice);
+      const unsub = client.on('room_state', (msg) => {
+        if (msg.players.length < 2) leftNotice.setText(t('online.opponentLeftAfterMatch'));
+      });
+      this.events.once('shutdown', unsub);
     } else {
       // RESULT-04/11/12: one dominant CTA that deals the next hand with the same lineup and
       // settings, a secondary path to change who is playing, menu last. The same-seed replay
@@ -288,8 +301,8 @@ export class WinScene extends Phaser.Scene {
       // gold-tinted and opaque for the winner, neutral and opaque for everyone else — gives the
       // text a clean surface regardless of what meld happens to sit behind that seat.
       objects.push(this.add
-        .rectangle(x, rowY + extra / 2, slotW - 6, 32 + extra, r.isWinner ? 0xf7d23e : 0x1a0f0a, r.isWinner ? 0.85 : 0.72)
-        .setStrokeStyle(1, r.isWinner ? 0xf7d23e : 0x4a3a28, r.isWinner ? 0.9 : 0.6));
+        .rectangle(x, rowY + extra / 2, slotW - 6, 32 + extra, r.isWinner ? CHROME_GOLD : 0x1a0f0a, r.isWinner ? 0.85 : 0.72)
+        .setStrokeStyle(1, r.isWinner ? CHROME_GOLD : 0x4a3a28, r.isWinner ? 0.9 : 0.6));
       if (this.textures.exists(r.avatarKey)) objects.push(this.add.image(x, rowY - 8, r.avatarKey).setDisplaySize(16, 16));
       if (r.personality) {
         const emote = r.isWinner ? PERSONALITY_STYLE[r.personality].emoteBig : PERSONALITY_STYLE[r.personality].emoteDraw;
