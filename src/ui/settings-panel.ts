@@ -6,7 +6,7 @@ import { settings } from '../core/settings';
 import { getLocale, setLocale, t } from '../localization/i18n';
 import { debugApi } from '../verification/debug-api';
 import { panelW } from './menu-layout';
-import { buildOverlay } from './overlay';
+import { buildOverlay, onEscape } from './overlay';
 import {
   AccessRow, ACCESS_ROWS, AdvancedRow, ADVANCED_ROWS, AiRow, AI_ROWS, AudioRow, AUDIO_ROWS,
   cosmeticsPanelH, cosmeticsRowOffset, GameRow, GAME_ROWS, MAIN_ROWS,
@@ -60,14 +60,19 @@ function copyPlaylog(onDone: (ok: boolean) => void): void {
  * Advanced) over one sub-panel each. Returns a close() fn. */
 export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): () => void {
   let objs: Phaser.GameObjects.GameObject[] = [];
+  // Esc backs out one level: a sub-panel returns to the section menu, the section menu closes.
+  let escBack: () => void = () => close();
+  const offEsc = onEscape(scene, () => escBack());
   const close = (): void => {
     for (const o of objs) o.destroy();
     objs = [];
+    offEsc();
     onClosed();
   };
 
   /** Shared chrome for every panel in this overlay: frame, title, and a row-y helper. */
   const openPanel = (rows: number, title: string): { cx: number; rowY: (i: number) => number } => {
+    escBack = showMain; // sub-panels back out to the section menu; showMain overrides this to close
     for (const o of objs) o.destroy();
     objs = [];
     const h = panelHForRows(rows);
@@ -117,6 +122,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
    */
   const showMain = (): void => {
     const { cx, rowY } = openPanel(MAIN_ROWS, t('settings.title'));
+    escBack = close;
 
     const muteCaption = (): string => (settings.get().muted ? t('settings.unmute') : t('settings.mute'));
     const muteBtn = rowBtn(cx, rowY(SettingsRow.Mute), muteCaption(), () => {
@@ -124,10 +130,10 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       muteBtn.setLabel(muteCaption());
     }, { w: 150, size: 7 });
 
+    rowBtn(cx, rowY(SettingsRow.Cosmetics), t('cosmetics.title'), showCosmetics, { w: 150, size: 7, color: 0xf7d23e });
     rowBtn(cx, rowY(SettingsRow.Game), t('settings.section.game'), showGame, { w: 150, size: 7 });
     rowBtn(cx, rowY(SettingsRow.Audio), t('settings.section.audio'), showAudio, { w: 150, size: 7 });
     rowBtn(cx, rowY(SettingsRow.Access), t('settings.section.access'), showAccess, { w: 150, size: 7 });
-    rowBtn(cx, rowY(SettingsRow.Cosmetics), t('cosmetics.title'), showCosmetics, { w: 150, size: 7 });
     rowBtn(cx, rowY(SettingsRow.Ai), t('settings.section.ai'), showAi, { w: 150, size: 7 });
     // Replay seed, test-log export and the destructive reset all sit behind this one row: they
     // are testing affordances, and mixing them into the player-facing list made the whole screen
@@ -140,10 +146,14 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     const { cx, rowY } = openPanel(GAME_ROWS, t('settings.section.game'));
 
     const helperCaption = (): string => `${t('settings.helperMode')}: ${t(`settings.helperMode.${settings.helperMode()}`)}`;
-    const helperBtn = rowBtn(cx, rowY(GameRow.HelperMode), helperCaption(), () => {
+    // ACCESS-09: the tooltip names exactly what this mode changes (and that it never touches AI
+    // difficulty) so BEGINNER/NORMAL/MINIMAL never read as a hidden difficulty dial. Rebuilt via
+    // showGame() rather than setLabel() — a PixelButton's tooltip text is fixed at construction,
+    // and each mode has its own description.
+    rowBtn(cx, rowY(GameRow.HelperMode), helperCaption(), () => {
       settings.update({ helperMode: cycleHelperMode(settings.helperMode()) });
-      helperBtn.setLabel(helperCaption());
-    });
+      showGame();
+    }, { tooltip: t(`settings.helperModeHint.${settings.helperMode()}`) });
 
     rowBtn(cx, rowY(GameRow.Lang), t('menu.language'), () => {
       const next = getLocale() === 'pt' ? 'en' : 'pt';
@@ -219,6 +229,12 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     toggleBtn(cx, rowY(AccessRow.LargeText), 'settings.largeText',
       () => settings.get().largeText, (v) => settings.update({ largeText: v }), { rebuild: showAccess });
 
+    // Inert on any browser without the Vibration API (all of iOS), so the row explains itself
+    // rather than looking broken when nothing happens.
+    toggleBtn(cx, rowY(AccessRow.Haptics), 'settings.haptics',
+      () => settings.get().haptics, (v) => settings.update({ haptics: v }),
+      { tooltip: t('settings.hapticsHint') });
+
     rowBtn(cx, rowY(AccessRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
   };
 
@@ -246,6 +262,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
 
   /** Replaces the main panel content with a Yes/No confirm — Yes wipes the save and reloads, No returns to the main panel. */
   const showResetConfirm = (): void => {
+    escBack = showMain;
     for (const o of objs) o.destroy();
     objs = [];
     const w = panelW(170);
@@ -280,6 +297,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
    * shipped yet (see cosmeticTextureKey), so a missing asset never shows a broken image.
    */
   const showCosmetics = (): void => {
+    escBack = showMain;
     for (const o of objs) o.destroy();
     objs = [];
     const w = panelW(210);
@@ -301,8 +319,10 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     ): void => {
       objs.push(label(scene, cx - 84, y, categoryLabel, 8, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
       const previewKey = cosmeticTextureKey(list, getId(), defaultId, debugApi.missingAssets);
+      // Left of the button, not under it: the widest preview (the 40-unit table swatch) used to
+      // run beneath the button plate and read as a rendering glitch.
       const preview = scene.add
-        .image(cx + 4, y, previewKey)
+        .image(cx - 16, y, previewKey)
         .setDisplaySize(previewSize.w, previewSize.h)
         .setDepth(510);
       objs.push(preview);

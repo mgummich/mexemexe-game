@@ -36,6 +36,22 @@ async function boot(page: Page, url = '/?seed=42&showcase=game'): Promise<void> 
   await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null, undefined, {
     timeout: 30_000,
   });
+  // D13: hand cards have no `.input` at all (sprite not built interactive) until the opening deal's
+  // flight animation lands — every test in this file taps/drags real cards straight after boot(),
+  // so wait here once rather than in each test (mirrors waitForSettledBoard in e2e/screenshot.spec.ts).
+  await page.waitForFunction(() => window.__MEXE__.dealing === false, undefined, { timeout: 10_000 });
+  // `dealing === false` only means the delayedCall that flips it (and the renderAll() right after,
+  // which is what actually calls setInteractive() on the hand sprites) has run — Phaser's
+  // InputPlugin only moves a newly-interactive object out of its pending-insertion queue into the
+  // list it hit-tests against on the *next* preUpdate (see InputPlugin.preUpdate/queueForInsertion),
+  // i.e. one more real frame later. tapWorld/dragCardOnto below already wait a rendered frame after
+  // *their own* dispatched input so a following tap never races the previous one, but nothing
+  // previously did that for the very first tap of a test, right after boot() — a click dispatched
+  // before that next frame's preUpdate can miss a freshly-dealt card's hit area entirely. Observed
+  // on the WebKit touch projects (ios safari, ios safari portrait, ipad), which is consistent with
+  // this being a frame-timing race rather than a game-logic bug: same predicate, same wait, just no
+  // barrier before the first real interaction.
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
 }
 
 /** World -> screen for whichever world is live, mirrors e2e/screenshot.spec.ts's toCanvasPoint. */

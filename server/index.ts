@@ -7,7 +7,7 @@ import type { IncomingMessage } from 'node:http';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { DEFAULT_ROOM_SETTINGS, parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
-import { RoomManager, HOST_SEAT } from './rooms';
+import { RoomManager } from './rooms';
 import { config } from './config';
 import { createLogger, errorFields } from './log';
 import { counters, renderMetrics } from './metrics';
@@ -110,33 +110,37 @@ function broadcastGameOver(code: string): void {
         winnerId: room.state.winnerId,
         stalemate,
         view,
+        // Public summary only (seat + card count) — see WinningMove in protocol.ts.
+        winningMove: stalemate ? null : rooms.getWinningMove(code),
       });
     }
   }
 }
 
-/** A finished match needs no room: free the slot and detach every socket right after the
- * game_over broadcast, with an explicit close notice, instead of leaving the room pinned
- * until its players leave or the idle sweep reaps it (#6). */
-function closeFinishedRoom(code: string): void {
+/**
+ * A finished match hands its room back to the lobby instead of destroying it (ONLINE-23/24), so
+ * the same group can play again on the code they already shared. Sockets stay attached and get a
+ * fresh `room_state` — an unlocked room with every seat back to not-ready, which is the "rematch
+ * ready" step of the lifecycle. Nobody is dragged into a new deal: the host still has to start it.
+ *
+ * The room is not pinned forever: it is an ordinary idle room from here, so the normal sweep
+ * reaps it once its seats are gone.
+ */
+function recycleFinishedRoom(code: string): void {
   counters.gamesFinishedTotal++;
-  rooms.deleteRoom(code);
-  closeRoomSockets(sockets, connections, code, {
-    v: PROTOCOL_VERSION,
-    type: 'error',
-    code: 'room_closed',
-    message: 'match finished',
-  } satisfies ServerMessage);
+  rooms.recycleForRematch(code);
+  broadcastRoomState(code);
 }
 
 function broadcastRoomState(code: string): void {
   const bySeat = sockets.get(code);
   const info = rooms.getRoomInfo(code);
   if (!bySeat || !info) return;
+  const hostSeat = rooms.getHostSeat(code);
   for (const ws of bySeat.values()) {
     send(ws, {
       v: PROTOCOL_VERSION, type: 'room_state',
-      players: info.players, settings: info.settings, hostSeat: HOST_SEAT, locked: info.locked,
+      players: info.players, settings: info.settings, hostSeat, locked: info.locked,
     });
   }
 }
@@ -149,7 +153,7 @@ function roomJoined(code: string, seat: number, token: string): ServerMessage {
     v: PROTOCOL_VERSION, type: 'room_joined', code, seat, token,
     players: info?.players ?? [],
     settings: info?.settings ?? DEFAULT_ROOM_SETTINGS,
-    hostSeat: HOST_SEAT,
+    hostSeat: rooms.getHostSeat(code),
   };
 }
 
@@ -282,7 +286,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       broadcastStateSync(code);
       if (result.gameOver) {
         broadcastGameOver(code);
-        closeFinishedRoom(code);
+        recycleFinishedRoom(code);
       }
       return;
     }
@@ -300,7 +304,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       broadcastStateSync(code);
       if (result.gameOver) {
         broadcastGameOver(code);
-        closeFinishedRoom(code);
+        recycleFinishedRoom(code);
       }
       return;
     }
@@ -358,11 +362,25 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       if (info) {
         send(ws, {
           v: PROTOCOL_VERSION, type: 'room_state',
-          players: info.players, settings: info.settings, hostSeat: HOST_SEAT, locked: info.locked,
+          players: info.players, settings: info.settings, hostSeat: rooms.getHostSeat(conn.code), locked: info.locked,
         });
       }
       const view = rooms.getView(conn.code, conn.seat);
       if (view) send(ws, { v: PROTOCOL_VERSION, type: 'state_sync', view });
+      return;
+    }
+    case 'reaction': {
+      if (conn.code === null || conn.seat === null) {
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
+        return;
+      }
+      // Silently dropped inside the cooldown: a reaction refused for going too fast is not a
+      // failure the player needs an error screen for, and answering would itself be a channel.
+      if (!rooms.claimReaction(conn.code, conn.seat)) return;
+      const seat = conn.seat;
+      for (const sock of sockets.get(conn.code)?.values() ?? []) {
+        send(sock, { v: PROTOCOL_VERSION, type: 'player_reaction', seat, reaction: msg.reaction });
+      }
       return;
     }
     case 'ping':
@@ -551,7 +569,7 @@ const turnTickTimer = setInterval(() => {
     }
     if (gameOver) {
       broadcastGameOver(code);
-      closeFinishedRoom(code);
+      recycleFinishedRoom(code);
     }
   }
 }, TURN_TICK_MS).unref();

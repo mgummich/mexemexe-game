@@ -39,6 +39,18 @@ export const settings = {
     save = { ...save, progress: { ...save.progress, lastSeed: seed } };
     persist();
   },
+  /** Counts a real match starting. See `Progress.gamesStarted` — a count, never an identifier. */
+  noteGameStarted(): void {
+    save = { ...save, progress: { ...save.progress, gamesStarted: save.progress.gamesStarted + 1 } };
+    persist();
+  },
+  /** Tallies one finished local match against a built-in character. A count, never a score. */
+  recordMatchResult(personality: string, won: boolean): void {
+    const previous = save.progress.headToHead[personality] ?? { wins: 0, losses: 0 };
+    const next = { wins: previous.wins + (won ? 1 : 0), losses: previous.losses + (won ? 0 : 1) };
+    save = { ...save, progress: { ...save.progress, headToHead: { ...save.progress.headToHead, [personality]: next } } };
+    persist();
+  },
   setTutorialCompleted(): void {
     if (save.progress.tutorialCompleted) return;
     save = { ...save, progress: { ...save.progress, tutorialCompleted: true } };

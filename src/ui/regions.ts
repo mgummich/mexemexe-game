@@ -241,7 +241,11 @@ function portrait(p: ViewProfile): GameRegions {
     zoomIn: { x: 220, y: 412, w: 32, h: 28, size: 7 },
     zoomOut: { x: 254, y: 412, w: 32, h: 28, size: 7 },
 
-    reason: { x: 135, y: 374, wrap: 250, originY: 0, size: 9 },
+    // Bottom-anchored, just above the control row. Growing downward from y374 meant a long reason
+    // plus the beginner checklist drew straight over the undo/redo/reset buttons and made them
+    // unreadable; growing upward puts any overflow over quiet table felt instead, and the
+    // backdrop GameScene draws behind it keeps it legible there.
+    reason: { x: 135, y: 392, wrap: 250, originY: 1, size: 9 },
     selectHint: { x: 135, y: 366 },
 
     tooltip: { maxW: 150, minX: 0, maxX: 270 - 6, maxY: 480 - 170 },

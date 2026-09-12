@@ -43,6 +43,18 @@ export const TIMER_PRESETS: Record<'off' | 'casual' | 'fast', RoomSettings> = {
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = TIMER_PRESETS.casual;
 
+/**
+ * The complete set of things one player can say to another online. A fixed preset list instead
+ * of free text: nothing here can carry an insult, a link or a real name, so no moderation
+ * surface is created. The server validates against this exact list and rate-limits per seat.
+ */
+export const REACTIONS = ['nice', 'oops', 'hurry', 'wow'] as const;
+export type ReactionId = (typeof REACTIONS)[number];
+
+/** Minimum gap between two reactions from the same seat. Enforced by the server — a client-side
+ * cooldown alone would be one `devtools` call away from a spam channel. */
+export const REACTION_COOLDOWN_MS = 3_000;
+
 /** Inclusive bounds for a `custom` timer. A value outside its range is clamped, not rejected —
  * a hostile payload must not be able to create a 1 ms turn or a room that never times out. */
 const CUSTOM_BOUNDS = {
@@ -115,6 +127,18 @@ export interface GameView {
    * has no timer. Display only: the client counts down from it, and the server alone decides
    * when a turn has actually expired. A client's own countdown reaching zero changes nothing. */
   turnMsLeft: number | null;
+  /**
+   * Consecutive turns each seat has let expire. Public by nature — every seat watched the clock
+   * run out — and the client needs it to warn that a match is about to end on `missedTurnLimit`
+   * rather than having it end without explanation. Never part of the hash: it is presentation
+   * state the server owns, not something a client reconstructs.
+   */
+  missedTurns: number[];
+  /** Whether the active seat has already claimed this turn's one-off Mexe extension. Public
+   * (every seat can see the clock move) and presentation state like `missedTurns` — the client
+   * uses the false->true edge to show a one-time "extension granted" notice, never part of the
+   * hash. Resets to false at the start of each turn. */
+  mexeBonusClaimed: boolean;
   /** Digest of the parts of the authoritative state every seat can see. A client recomputes it
    * from its own reconstruction and asks for a resync on mismatch (docs/archive/PHASE7_AUDIT.md #3). */
   hash: string;
@@ -187,6 +211,8 @@ export function buildView(
   rev: number,
   settings: RoomSettings = DEFAULT_ROOM_SETTINGS,
   turnMsLeft: number | null = null,
+  missedTurns: number[] = [],
+  mexeBonusClaimed = false,
 ): GameView {
   const view: GameView = {
     seat,
@@ -207,6 +233,8 @@ export function buildView(
     config: state.config,
     settings,
     turnMsLeft,
+    missedTurns: state.players.map((_, i) => missedTurns[i] ?? 0),
+    mexeBonusClaimed,
     hash: '',
   };
   view.hash = stateHash(digestOfView(view));
@@ -298,6 +326,15 @@ export interface ResyncMsg {
   reqId: string;
 }
 
+/** One preset reaction, addressed to the room. Carries no text: `reaction` must be one of
+ * REACTIONS, and the server drops anything else plus anything inside the per-seat cooldown. */
+export interface ReactionMsg {
+  v: number;
+  type: 'reaction';
+  reqId: string;
+  reaction: ReactionId;
+}
+
 export type ClientMessage =
   | CreateRoomMsg
   | JoinRoomMsg
@@ -310,7 +347,8 @@ export type ClientMessage =
   | DrawEndTurnMsg
   | ReconnectMsg
   | PingMsg
-  | ResyncMsg;
+  | ResyncMsg
+  | ReactionMsg;
 
 // ---------------------------------------------------------------------------
 // Server -> client messages
@@ -331,7 +369,9 @@ export interface RoomJoinedMsg {
   token: string;
   players: RoomPlayerSummary[];
   settings: RoomSettings;
-  /** Seat 0 is the host: the only seat whose settings proposals and start are accepted. */
+  /** The current host seat: the only seat whose settings proposals and start are accepted.
+   * Starts as seat 0 (the creator) but moves to the next-lowest occupied seat if seat 0 leaves
+   * (D15) — never assume it is 0. */
   hostSeat: number;
 }
 export interface RoomStateMsg {
@@ -378,12 +418,29 @@ export interface PlayerReconnectedMsg {
   type: 'player_reconnected';
   seat: number;
 }
+/** How the winner actually finished, in public terms only: which seat, and how many cards they
+ * put down on that last turn. Hand *counts* are already public in every GameView, so this
+ * discloses nothing new — deliberately no card identities, which would leak the winner's hand. */
+export interface WinningMove {
+  seat: number;
+  cardsPlayed: number;
+}
 export interface GameOverMsg {
   v: number;
   type: 'game_over';
   winnerId: string | null;
   stalemate: boolean;
   view: GameView;
+  /** Null on a stalemate, or when the match ended on a move the server did not attribute. */
+  winningMove: WinningMove | null;
+}
+/** A preset reaction relayed from `seat` to the rest of the room. The server re-emits its own
+ * validated value — a client's payload is never echoed through. */
+export interface PlayerReactionMsg {
+  v: number;
+  type: 'player_reaction';
+  seat: number;
+  reaction: ReactionId;
 }
 export interface ErrorMsg {
   v: number;
@@ -410,7 +467,8 @@ export type ServerMessage =
   | PlayerReconnectedMsg
   | GameOverMsg
   | ErrorMsg
-  | PongMsg;
+  | PongMsg
+  | PlayerReactionMsg;
 
 // ---------------------------------------------------------------------------
 // Boundary validator — the only place untrusted socket text becomes a typed
@@ -514,6 +572,14 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
       return { v: PROTOCOL_VERSION, type: 'ping', reqId };
     case 'resync':
       return { v: PROTOCOL_VERSION, type: 'resync', reqId };
+    case 'reaction': {
+      // Membership of the preset list is the whole validation: an id that is not in it never
+      // becomes a message, so nothing downstream has to re-check it.
+      if (!isStr(o.reaction, 16) || !(REACTIONS as readonly string[]).includes(o.reaction)) {
+        return { error: 'bad reaction' };
+      }
+      return { v: PROTOCOL_VERSION, type: 'reaction', reqId, reaction: o.reaction as ReactionId };
+    }
     default:
       return { error: 'unknown type' };
   }

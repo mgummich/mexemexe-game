@@ -184,8 +184,23 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
   // shows "reconnecting...", B reconnects and receives a genuine state_sync (not just a stale
   // local cache) that resyncs it to the SAME revision A is on, and the match can continue
   // afterwards (proven by the illegal-proposal + draw-round steps that follow). ---
+  // D14: input must be visibly locked while the socket isn't open, not left editable until a
+  // doomed FEITO/COMPRAR fails after the fact. It's B's own turn right now (A's confirmed turn
+  // above flipped active to seat 1) and the socket is open, so B's hand is draggable — the
+  // control this defect leaves live straight through a disconnect.
+  const myHandCardId = await pageB.evaluate(() => {
+    const seat = window.__MEXE__.online!.seat()!;
+    return window.__MEXE__.state!()!.players[seat]!.hand[0]!.id;
+  });
+  expect(await pageB.evaluate((id) => window.__MEXE__.mexe!.cardInteractive(id), myHandCardId)).toBe(true);
+
   const traceLenBeforeDrop = await pageB.evaluate(() => window.__MEXE__.online!.trace().length);
   await pageB.evaluate(() => window.__MEXE__.online!.forceDrop());
+
+  // D14: the moment the socket is no longer open, the same hand card must stop accepting input —
+  // proves both the `interactive` gate and the on-status-change re-render that applies it live.
+  await pageB.waitForFunction(() => window.__MEXE__.online!.status() !== 'open', undefined, { timeout: 5000 });
+  expect(await pageB.evaluate((id) => window.__MEXE__.mexe!.cardInteractive(id), myHandCardId)).toBe(false);
 
   await pageA.waitForFunction(() => window.__MEXE__.online!.notice().length > 0, undefined, { timeout: 10_000 });
   const disconnectNotice = await pageA.evaluate(() => window.__MEXE__.online!.notice());
@@ -216,6 +231,10 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
   expect(revBReconnected).toBe(revA1);
   expect(revBReconnected).toBe(revAReconnected);
   await shot({ b: pageB }, 'reconnected', screenshots);
+
+  // D14: once genuinely reconnected (a real resync landed, not just status flipping back), it's
+  // still B's turn — the lock releases and the same card accepts input again.
+  expect(await pageB.evaluate((id) => window.__MEXE__.mexe!.cardInteractive(id), myHandCardId)).toBe(true);
 
   // --- V1b: a full page reload resumes the match. sessionStorage keeps the reconnect token, so
   // re-entering Online must land straight back in the running game with the room context intact

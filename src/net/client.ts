@@ -6,11 +6,17 @@
 import { playlog } from '../core/playlog';
 import { resolveWsUrl } from '../config';
 import { PROTOCOL_VERSION } from './protocol';
-import type { ClientMessage, RoomSettings, ServerMessage, SubmitTurnMeld } from './protocol';
+import type { ClientMessage, ReactionId, RoomSettings, ServerMessage, SubmitTurnMeld } from './protocol';
 
 export type ConnStatus = 'connecting' | 'open' | 'closed' | 'error' | 'reconnecting';
 
 const TOKEN_KEY = 'mexe.online.token';
+/** localStorage (not sessionStorage): a display name is meant to survive the tab, the reconnect
+ * token deliberately is not. */
+const NAME_KEY = 'mexe.online.name';
+/** Long enough for a real nickname, short enough to fit a seat row — and the server trims to 64
+ * regardless, so this is presentation, not a trust boundary. */
+export const MAX_NAME_LENGTH = 12;
 const PING_INTERVAL_MS = 20_000;
 const TRACE_CAP = 80;
 const STATUS_TRACE_CAP = 40;
@@ -42,6 +48,24 @@ function clearToken(): void {
     sessionStorage.removeItem(TOKEN_KEY);
   } catch {
     // ignore
+  }
+}
+
+/** The name this device plays under online, or null if the player never set one. Stored locally
+ * only — it is sent with create_room/join_room like any other name and the server sanitizes it. */
+export function readDisplayName(): string | null {
+  try {
+    return localStorage.getItem(NAME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function writeDisplayName(name: string): void {
+  try {
+    localStorage.setItem(NAME_KEY, name.slice(0, MAX_NAME_LENGTH));
+  } catch {
+    // storage blocked — the name just won't survive a reload
   }
 }
 
@@ -251,6 +275,12 @@ export class NetClient {
   drawEndTurn(rev: number): string | null {
     const reqId = this.nextReqId();
     return this.sendRaw({ v: PROTOCOL_VERSION, type: 'draw_end_turn', reqId, rev }) ? reqId : null;
+  }
+
+  /** Send one preset reaction to the room. The server owns the cooldown and silently drops
+   * anything sent too soon, so a caller never has to handle a refusal. */
+  sendReaction(reaction: ReactionId): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'reaction', reqId: this.nextReqId(), reaction });
   }
 
   /** Ask the server to re-send authoritative state. Used when the local reconstruction's hash

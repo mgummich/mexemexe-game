@@ -13,6 +13,8 @@ import {
   cosmeticsPanelTop,
   cosmeticsRowY,
   ROW_PITCH,
+  rulesBox,
+  rulesBtnH,
   SETTINGS_PANEL_H,
   settingsPanelTop,
   settingsRowY,
@@ -81,5 +83,24 @@ describe('cosmetics sub-panel row geometry', () => {
     for (let row = 1; row < rowCount; row++) {
       expect(cosmeticsRowY(row) - cosmeticsRowY(row - 1)).toBe(COSMETICS_ROW_PITCH);
     }
+  });
+});
+
+// The rules panel lays itself out from rulesBox() and the e2e clicks read the same formulas, so a
+// drift here shows up as a click landing on nothing. Guard the invariants a reader of the panel
+// assumes: every band sits inside the frame, the content area is real, and nothing overlaps the footer.
+describe.each([[false], [true]])('rules panel geometry (secondary footer button: %s)', (hasSecondary) => {
+  it('title, tabs, content and footer stack inside the panel without overlapping', () => {
+    const b = rulesBox(hasSecondary);
+    const btnH = rulesBtnH();
+    expect(b.h).toBeLessThanOrEqual(270);
+    expect(b.tabY).toBeGreaterThan(b.top);
+    expect(b.contentTop).toBeGreaterThan(b.tabY);
+    expect(b.contentAreaH).toBeGreaterThan(0);
+    // the content area stops above the first footer button
+    const firstFooterTop = (hasSecondary ? b.secondaryY : b.closeY) - btnH / 2;
+    expect(b.contentTop + b.contentAreaH).toBeLessThanOrEqual(firstFooterTop + 0.5);
+    if (hasSecondary) expect(b.closeY - b.secondaryY).toBeGreaterThanOrEqual(btnH);
+    expect(b.closeY + btnH / 2).toBeLessThanOrEqual(b.top + b.h);
   });
 });

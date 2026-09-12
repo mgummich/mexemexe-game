@@ -22,10 +22,32 @@ export interface SnapTarget {
   jokerAssignments: JokerAssignment[];
 }
 
-function statusFor(reason: ReasonCode | null): SnapStatus {
+/**
+ * The single classifier for "is this meld incomplete or illegal", shared by every renderer
+ * (layoutMelds, renderMexeEditor, renderMeldFocus, showMeldReasonTooltip, drag-time zone
+ * highlighting) so they can never disagree about a reason's severity. `reason.runGap` (a run
+ * missing exactly one step) is a normal mid-edit state, not a contradiction — it belongs in
+ * 'incomplete' alongside `reason.meldTooSmall`, not in 'illegal' alongside duplicate-suit /
+ * second-joker / unassignable-joker.
+ */
+export function meldStatus(reason: ReasonCode | null): SnapStatus {
   if (reason === null) return 'legal';
-  return reason === 'reason.meldTooSmall' ? 'incomplete' : 'illegal';
+  return reason === 'reason.meldTooSmall' || reason === 'reason.runGap' ? 'incomplete' : 'illegal';
 }
+
+/**
+ * R2: the single status-to-colour mapping. Every renderer (meld outline, ✗/✓ verdict badge,
+ * reason text/tooltip) reads its colour from here, keyed by the one meldStatus() result for the
+ * same meld — so a meld's outline and its reason text can never be painted from two different
+ * ideas of what colour "incomplete" or "illegal" means. `fill` is for translucent glow/stroke
+ * fills (Phaser numeric colour); `text` is a higher-contrast hex string for text/tooltips — they
+ * are deliberately not identical values, only the same three-way classification.
+ */
+export const STATUS_COLOR: Record<SnapStatus, { fill: number; text: string }> = {
+  legal: { fill: 0x3ec06a, text: '#7ee0a0' },
+  incomplete: { fill: 0xf7d23e, text: '#f0c040' },
+  illegal: { fill: 0xd83a3a, text: '#ff6b5e' },
+};
 
 function targetFor(meldId: string | null, cards: readonly Card[], card: Card, config: RulesConfig): SnapTarget {
   const next = [...cards, card].map((c) => ({ ...c }));
@@ -33,7 +55,7 @@ function targetFor(meldId: string | null, cards: readonly Card[], card: Card, co
   const reason = analysis.valid ? null : analysis.reason;
   return {
     meldId,
-    status: statusFor(reason),
+    status: meldStatus(reason),
     reason,
     preview: sortMeldCards(next, config),
     jokerAssignments: analysis.valid ? analysis.assignments : [],

@@ -473,12 +473,15 @@ export type EmoteKey = 'excited' | 'thinking' | 'annoyed' | 'happy' | 'sleepy' |
  * (presentation-only, capped, skipped under reducedMotion/headless — see GameScene.aiThinkDelay). */
 export const PERSONALITY_STYLE: Record<
   Personality,
-  { thinkMs: number; emoteBig: EmoteKey; emoteSmall: EmoteKey; emoteDraw: EmoteKey }
+  { thinkMs: number; emoteBig: EmoteKey; emoteSmall: EmoteKey; emoteDraw: EmoteKey; thinkEmote: EmoteKey }
 > = {
-  cida: { thinkMs: 900, emoteBig: 'happy', emoteSmall: 'thinking', emoteDraw: 'thinking' },
-  juninho: { thinkMs: 250, emoteBig: 'confident', emoteSmall: 'excited', emoteDraw: 'annoyed' },
-  bia: { thinkMs: 600, emoteBig: 'happy', emoteSmall: 'excited', emoteDraw: 'thinking' },
-  ze: { thinkMs: 700, emoteBig: 'confident', emoteSmall: 'happy', emoteDraw: 'sleepy' },
+  // AI-02: `thinkEmote` is the pre-move "considering the table" tell (GameScene.onTurnStart),
+  // distinct per personality instead of one generic pause — calm patience for Cida, eager fidget
+  // for Juninho, quiet calculation for Bia, half-asleep for Zé, matching each one's `ai.line.*`.
+  cida: { thinkMs: 900, emoteBig: 'happy', emoteSmall: 'thinking', emoteDraw: 'thinking', thinkEmote: 'thinking' },
+  juninho: { thinkMs: 250, emoteBig: 'confident', emoteSmall: 'excited', emoteDraw: 'annoyed', thinkEmote: 'excited' },
+  bia: { thinkMs: 600, emoteBig: 'happy', emoteSmall: 'excited', emoteDraw: 'thinking', thinkEmote: 'confident' },
+  ze: { thinkMs: 700, emoteBig: 'confident', emoteSmall: 'happy', emoteDraw: 'sleepy', thinkEmote: 'sleepy' },
 };
 
 /** Presentation-only multiplier on an AI's pre-move "thinking" pause. Never touches the search

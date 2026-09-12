@@ -33,6 +33,13 @@ export interface Settings {
   aiSpeed: AiSpeed;
   /** Whether an AI move is described in the last-move line, and how fully. */
   aiExplain: AiExplain;
+  /**
+   * Short vibration on touch actions, where the browser supports it (Android Chrome does; iOS
+   * Safari has no Vibration API at all, so this is simply inert there). On by default and easy to
+   * turn off — it is a third confirmation channel alongside the visual and the sound, not a
+   * replacement for either.
+   */
+  haptics: boolean;
   /** Ticking cue over the last seconds of an online turn timer. Mixed through the SFX volume. */
   timerTickSound: boolean;
 }
@@ -40,6 +47,20 @@ export interface Settings {
 export interface Progress {
   lastSeed: number | null;
   tutorialCompleted: boolean;
+  /**
+   * How many real (non-tutorial) games this browser has started. A count, never an identifier:
+   * it lets the local playtest log say "this was the player's second game" without knowing who
+   * the player is. Storing a session id or timestamp here would trip tests/no-telemetry.test.ts,
+   * and rightly so.
+   */
+  gamesStarted: number;
+  /**
+   * Wins and losses against each of the four built-in characters, for local matches. A plain
+   * tally so the results screen can say "you are 3-1 against Dona Cida" — never a score, a streak
+   * bonus, an unlock or a currency (see RESULT-14). Keyed by personality id, so it holds nothing
+   * about any person.
+   */
+  headToHead: Record<string, { wins: number; losses: number }>;
 }
 
 export interface Cosmetics {
@@ -55,7 +76,7 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: true, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
 export const AI_DIFFICULTIES: readonly Difficulty[] = ['beginner', 'casual', 'smart', 'expert'];
 export const AI_SPEEDS: readonly AiSpeed[] = ['instant', 'fast', 'normal', 'slow'];
@@ -66,7 +87,7 @@ export const AI_EXPLAIN_MODES: readonly AiExplain[] = ['off', 'simple', 'detaile
 function oneOf<T extends string>(allowed: readonly T[], value: unknown, fallback: T): T {
   return allowed.includes(value as T) ? (value as T) : fallback;
 }
-export const DEFAULT_PROGRESS: Progress = { lastSeed: null, tutorialCompleted: false };
+export const DEFAULT_PROGRESS: Progress = { lastSeed: null, tutorialCompleted: false, gamesStarted: 0, headToHead: {} };
 export const DEFAULT_COSMETICS: Cosmetics = { tableTheme: DEFAULT_TABLE_THEME, cardBack: DEFAULT_CARD_BACK, avatar: DEFAULT_AVATAR };
 const DEFAULT_SAVE: Save = { version: 1, settings: { ...DEFAULT_SETTINGS }, progress: { ...DEFAULT_PROGRESS }, cosmetics: { ...DEFAULT_COSMETICS } };
 
@@ -91,6 +112,7 @@ function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
     aiSpeed: oneOf(AI_SPEEDS, merged.aiSpeed, DEFAULT_SETTINGS.aiSpeed),
     aiExplain: oneOf(AI_EXPLAIN_MODES, merged.aiExplain, DEFAULT_SETTINGS.aiExplain),
     timerTickSound: typeof merged.timerTickSound === 'boolean' ? merged.timerTickSound : DEFAULT_SETTINGS.timerTickSound,
+    haptics: typeof merged.haptics === 'boolean' ? merged.haptics : DEFAULT_SETTINGS.haptics,
   };
 }
 

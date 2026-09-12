@@ -2,7 +2,7 @@ import type { DraftState, GameState } from '../rules/types';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { ConnStatus } from '../net/client';
-import type { RoomPlayerSummary, RoomSettings, SubmitTurnMeld } from '../net/protocol';
+import type { ReactionId, RoomPlayerSummary, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import type { HelperMode } from '../ui/helpers';
 import { view, type ViewProfile } from '../ui/viewport';
 
@@ -48,6 +48,11 @@ export interface MexeOnlineDebugApi {
   desyncs: () => number;
   /** Verification-only: ask the server for a fresh authoritative snapshot. */
   requestResync: () => void;
+  /** Verification-only: the display name this device joins rooms under (lobby only). */
+  displayName?: () => string;
+  /** Verification-only: send one preset reaction to the room. The server still owns the
+   * cooldown, so a call inside it is dropped there, not here. */
+  react?: (reaction: ReactionId) => void;
 }
 
 /** Results-screen summary (see WinScene) — e2e can assert on it since the win/loss row text and
@@ -57,6 +62,11 @@ export interface MexeResultsSummary {
   stalemate: boolean;
   /** Localized readback of the final confirmed play (e.g. "X played 2 card(s)"); empty on a stalemate. */
   winningMoveText: string;
+  /** i18n key of the single match-story label (see core/results-summary.matchStoryKey), or null
+   * when the match had no story worth labelling. */
+  storyKey: string | null;
+  /** The rendered character reaction line, or '' when no seat has a personality. */
+  reactionText: string;
   results: {
     name: string;
     cardsLeft: number;
@@ -87,6 +97,10 @@ export interface MexeDebugApi {
   /** Verification-only (Phase 16): ?crowd=N — minTableCards passed to buildShowcaseState for the
    * 80+ card crowded-table stress test. Null when the param is absent (default path, unchanged). */
   crowd: number | null;
+  /** True while the opening deal is still flying cards to their places. Card sprites are not yet
+   * where they will settle, so anything reading a live coordinate (e2e taps, drags) must wait for
+   * this to clear. */
+  dealing: boolean;
   /** Current interactive-tutorial step index (0-based), or null outside tutorial mode. */
   tutorialStep: number | null;
   /** Explanation text of the most recent AI decision (`ai:thought`), or null before any AI turn. */
@@ -102,6 +116,17 @@ export interface MexeDebugApi {
   /** Verification-only: every reason string currently displayed for each invalid meld (Phase 14
    * Wave B — a meld can carry more than one, e.g. an analysis reason plus reason.duplicateCard). */
   invalidMeldReasons: () => { meldId: string; reasons: string[] }[];
+  /** R1 verification: the three-way status (`legal` / `incomplete` / `illegal`) the board actually
+   * PAINTED for each meld on the last render, as classified by `meldStatus()` in src/table/snap.ts.
+   * Drag-time status comes from `mexe.snapTargets()`; this is its resting-board counterpart, so a
+   * test can assert the two agree for the same meld. Reason STRINGS cannot prove this — a run with
+   * a gap reports `reason.runGap` whether it is classified incomplete or illegal; only the status
+   * distinguishes gold from red.
+   *
+   * NOT test-only any more (MOBILE-13): `src/main.ts`'s portrait rotate-hint reads `.length` off
+   * this as its "is the table dense" gate — do not remove or restrict this field without updating
+   * that call site too. */
+  renderedMeldStatus: () => { meldId: string; status: 'legal' | 'incomplete' | 'illegal' }[];
   /** Active layout world + input mode (see src/ui/viewport.ts). Lets e2e map world coordinates
    * onto the canvas without assuming an orientation or a scale factor. */
   viewport: () => ViewProfile;
@@ -139,6 +164,9 @@ export interface MexeDebugApi {
     editorMeldId: () => string | null;
     /** Verification-only: the editor's meld-list vertical scroll offset. */
     editorScroll: () => number;
+    /** Verification-only (MOBILE-15/16): the hand strip's horizontal scroll offset — 0 unless the
+     * hand overflows its span (see enableHandScroll in GameScene.ts). */
+    handScroll: () => number;
     /** Verification-only (Phase 14 Wave D): current table zoom level — index into ZOOM_FLOORS,
      * 0 is "auto" (today's shrink-to-fit, no zoom applied). */
     zoomLevel: () => number;
@@ -148,9 +176,23 @@ export interface MexeDebugApi {
     /** Verification-only (Phase 14 Wave D): the meld id shown in the landscape meld-focus
      * overlay, or null when it's closed. */
     focusedMeldId: () => string | null;
+    /** Verification-only (R3/R4 remediation): the meld id cycleProblem() last pointed the
+     * non-modal "show problem" ring at, or null. Deliberately separate from focusedMeldId — see
+     * GameScene's problemHighlightMeldId doc comment. */
+    problemHighlightMeldId: () => string | null;
     /** Verification-only (Phase 14 Wave E): whether a table card sprite currently carries the
      * zoomed-table geometry mask, or null if the card isn't on screen. */
     cardMasked: (cardId: string) => boolean | null;
+    /** Verification-only (D4): count of drag-time visual objects still alive (drop-zone shadow,
+     * zone highlights, table-boundary outline) — 0 whenever nothing is being actively dragged. A
+     * stray non-zero reading with no drag in progress is the orphaned-drag-layer bug (an
+     * orientation flip mid-drag used to leave these behind since renderAll's normal sprite
+     * teardown never owned them). */
+    dragArtifactCount: () => number;
+    /** Verification-only (D13): whether the given card's sprite currently accepts pointer input
+     * (drag/click) at all — null if it isn't on screen. False during the opening deal (and any
+     * other `presentingUntil` hold) while the card is still flying to its place. */
+    cardInteractive: (cardId: string) => boolean | null;
   } | null;
   online: MexeOnlineDebugApi | null;
   /** Results-screen summary — see MexeResultsSummary. Null outside WinScene. */
@@ -188,12 +230,14 @@ export const debugApi: MexeDebugApi = {
   state: null,
   showcase: null,
   crowd: null,
+  dealing: false,
   tutorialStep: null,
   lastAiThought: null,
   a11y: { invalidBadges: 0 },
   offline: false,
   analyzeCount: 0,
   invalidMeldReasons: () => [],
+  renderedMeldStatus: () => [],
   viewport: () => view(),
   music: () => ({ track: '', playing: false, volume: 0, context: 'menu' }),
   mexe: null,

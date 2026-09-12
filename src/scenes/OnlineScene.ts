@@ -4,9 +4,12 @@ import { bus } from '../core/events';
 import { onAppVisible } from '../core/lifecycle';
 import { isOffline, onConnectivityChange } from '../core/pwa';
 import { t } from '../localization/i18n';
-import { NetClient, type ConnStatus } from '../net/client';
+import { MAX_NAME_LENGTH, NetClient, readDisplayName, writeDisplayName, type ConnStatus } from '../net/client';
 import { errorMessage } from '../net/errors';
-import { DEFAULT_ROOM_SETTINGS, TIMER_PRESETS, type GameView, type RoomPlayerSummary, type RoomSettings, type TimerMode } from '../net/protocol';
+import {
+  DEFAULT_ROOM_SETTINGS, REACTION_COOLDOWN_MS, REACTIONS, TIMER_PRESETS,
+  type GameView, type ReactionId, type RoomPlayerSummary, type RoomSettings, type TimerMode,
+} from '../net/protocol';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
@@ -19,9 +22,28 @@ const CODE_LENGTH = 5;
  * not a lobby control — there is no screen space for six number pickers, and the three presets
  * cover what a room of friends actually chooses between. */
 const PRESET_CYCLE = ['casual', 'fast', 'off'] as const;
+
+/** Seats never move, so seat N always gets badge colour N — the badge is a *secondary* cue on a
+ * row that already spells out the name and the status word, never the only one. */
+const SEAT_COLORS = [0xc8543a, 0x3a7fc8, 0x3ea05a, 0xc8a33a];
+
+/** Highest seat index the server will ever hand out — server/rooms.ts MAX_PLAYERS. */
+const MAX_SEATS = 4;
+
 function nextTimerPreset(current: TimerMode): (typeof PRESET_CYCLE)[number] {
   const i = PRESET_CYCLE.indexOf(current as (typeof PRESET_CYCLE)[number]);
   return PRESET_CYCLE[(i + 1) % PRESET_CYCLE.length]!;
+}
+
+/** Only characters the room alphabet can produce, so the buffer is always a candidate code. */
+function sanitizeCode(raw: string): string {
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH);
+}
+
+/** A display name is shown to strangers, so it stays letters/digits/spaces — no markup, no
+ * lookalike control characters, nothing that could impersonate the game's own UI text. */
+function sanitizeName(raw: string): string {
+  return raw.replace(/[^\p{L}\p{N} ]/gu, '').replace(/\s+/g, ' ').slice(0, MAX_NAME_LENGTH);
 }
 
 /**
@@ -31,7 +53,7 @@ function nextTimerPreset(current: TimerMode): (typeof PRESET_CYCLE)[number] {
  */
 export class OnlineScene extends Phaser.Scene {
   private client!: NetClient;
-  private phase: 'idle' | 'join' | 'lobby' | 'error' = 'idle';
+  private phase: 'idle' | 'join' | 'name' | 'lobby' | 'error' = 'idle';
   /** In-canvas join-code buffer. Replaces the Phase 5 `window.prompt`, which could not be
    * styled, localized, or driven by the verification suite. */
   private codeInput = '';
@@ -61,15 +83,46 @@ export class OnlineScene extends Phaser.Scene {
   /** Offscreen DOM input that opens the soft keyboard on touch devices — see ensureJoinInput().
    * The keyboard-only handler below (wireCodeEntry) stays as the desktop path. */
   private joinInputEl: HTMLInputElement | null = null;
+  /** Which buffer the hidden DOM input is currently mirroring, so switching screens rebuilds it
+   * with the right length/sanitizer instead of typing a name into the code buffer. */
+  private inputFor: 'code' | 'name' = 'code';
+  /** Name-entry buffer, mirrored the same way `codeInput` is. */
+  private nameInput = '';
+  /** Set when this scene was entered from a finished match (ONLINE-23): same room, same code,
+   * everyone back to not-ready. Cleared as soon as the player readies up. */
+  private rematch = false;
+  /** Room code taken from a share link (`?room=`), joined automatically once the socket opens. */
+  private autoJoinCode: string | null = null;
+  /** Last reaction the room sent, shown briefly in the lobby. */
+  private lastReaction: { seat: number; reaction: ReactionId } | null = null;
+  private resume: { client: NetClient; code: string; seat: number } | null = null;
 
   constructor() {
     super('online');
   }
 
+  /**
+   * Re-entry from a finished online match (ONLINE-23/24): the server keeps the room alive and
+   * hands it back as a lobby, so this scene adopts the live client/seat instead of opening a new
+   * socket and making the group re-create and re-share a room. Without all three fields it is an
+   * ordinary fresh visit.
+   */
+  init(data?: { client?: NetClient; code?: string; seat?: number }): void {
+    this.resume =
+      data?.client && typeof data.code === 'string' && typeof data.seat === 'number'
+        ? { client: data.client, code: data.code, seat: data.seat }
+        : null;
+  }
+
+  /** Name this device plays under. Falls back to the generic "you" until the player sets one. */
+  private playerName(): string {
+    return readDisplayName() ?? t('menu.you');
+  }
+
   create(): void {
     setMusicContext('menu');
     debugApi.scene = 'online';
-    this.client = new NetClient();
+    this.client = this.resume?.client ?? new NetClient();
     this.phase = 'idle';
     this.code = null;
     this.seat = null;
@@ -77,7 +130,18 @@ export class OnlineScene extends Phaser.Scene {
     this.ready = false;
     this.errorMsg = null;
     this.codeInput = '';
+    this.nameInput = '';
+    this.lastReaction = null;
+    this.rematch = false;
     this.inFlight.clear();
+    // Field initializer, not reset here, is exactly the class of bug this run's worst defect
+    // (D1) came from — a restart must never inherit a scene's previous life's state.
+    this.offlineError = false;
+    // ONLINE-03: a shared link carries the room code, so the invited player lands in the lobby
+    // instead of transcribing five characters. Still a normal join — the server validates the
+    // code exactly as it does a typed one.
+    const linked = new URLSearchParams(location.search).get('room');
+    this.autoJoinCode = linked ? linked.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH) || null : null;
     this.wireCodeEntry();
     this.wireClient();
     this.installDebugHooks();
@@ -110,7 +174,15 @@ export class OnlineScene extends Phaser.Scene {
         this.rebuild();
       }),
     );
-    if (isOffline()) {
+    if (this.resume) {
+      // The room is already ours; the server's answer to `resync` is what repopulates the seats.
+      this.code = this.resume.code;
+      this.seat = this.resume.seat;
+      this.phase = 'lobby';
+      this.rematch = true;
+      if (this.client.getStatus() === 'open') this.client.requestResync();
+      else this.client.connect();
+    } else if (isOffline()) {
       // Skip the connect attempt entirely — a clear "you're offline" beats a connection timeout.
       this.offlineError = true;
       this.phase = 'error';
@@ -128,35 +200,41 @@ export class OnlineScene extends Phaser.Scene {
     });
   }
 
-  /** Mobile JOIN fix: OnlineScene's keyboard handler never opens a soft keyboard, so a touch
-   * player had no way to type a room code. A visually hidden real `<input>` does — focusing it
-   * is what makes the OS show the keyboard — and its sanitized value mirrors into `codeInput`,
-   * same as every keystroke the desktop path already produces. Idempotent: safe to call on
-   * every rebuild(). */
-  private ensureJoinInput(): void {
-    if (this.joinInputEl) return;
+  /** Mobile text-entry fix: OnlineScene's keyboard handler never opens a soft keyboard, so a
+   * touch player had no way to type a room code (or a name). A visually hidden real `<input>`
+   * does — focusing it is what makes the OS show the keyboard — and its sanitized value mirrors
+   * into the matching buffer, same as every keystroke the desktop path already produces.
+   * Idempotent per mode: safe to call on every rebuild(). */
+  private ensureTextInput(mode: 'code' | 'name'): void {
+    if (this.joinInputEl && this.inputFor === mode) return;
+    this.destroyJoinInput();
+    const isCode = mode === 'code';
     const el = document.createElement('input');
     el.type = 'text';
     el.inputMode = 'text';
-    el.autocapitalize = 'characters';
+    el.autocapitalize = isCode ? 'characters' : 'words';
     el.autocomplete = 'off';
     el.spellcheck = false;
-    el.maxLength = CODE_LENGTH;
-    el.value = this.codeInput;
+    el.maxLength = isCode ? CODE_LENGTH : MAX_NAME_LENGTH;
+    el.value = isCode ? this.codeInput : this.nameInput;
     // 1px, off-canvas but still focusable/tappable — a display:none input never opens a
     // soft keyboard on iOS/Android.
     el.style.cssText = 'position:fixed;left:-1px;top:-1px;width:1px;height:1px;opacity:0;border:0;padding:0;';
     el.addEventListener('input', () => {
-      const sanitized = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH);
+      const sanitized = isCode ? sanitizeCode(el.value) : sanitizeName(el.value);
       if (el.value !== sanitized) el.value = sanitized;
-      this.codeInput = sanitized;
+      if (isCode) this.codeInput = sanitized;
+      else this.nameInput = sanitized;
       this.rebuild();
     });
     el.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') this.fireOnce('join', 3000, () => this.submitJoin());
+      if (ev.key !== 'Enter') return;
+      if (isCode) this.fireOnce('join', 3000, () => this.submitJoin());
+      else this.commitName();
     });
     document.body.appendChild(el);
     this.joinInputEl = el;
+    this.inputFor = mode;
     el.focus();
   }
 
@@ -169,6 +247,12 @@ export class OnlineScene extends Phaser.Scene {
     this.unsubs.push(
       this.client.onStatus((s, message) => {
         this.status = s;
+        // The shared link's code is only useful once there is a socket to send it on.
+        if (s === 'open' && this.autoJoinCode !== null && this.phase === 'idle' && this.code === null) {
+          const code = this.autoJoinCode;
+          this.autoJoinCode = null;
+          this.fireOnce('join', 3000, () => this.client.joinRoom(code, this.playerName()));
+        }
         // 'error' with the 'unreachable' marker means the initial connection never opened at
         // all (server down/refused) — distinct from a mid-session drop, which uses the normal
         // 'reconnecting'/'closed' status copy instead.
@@ -195,11 +279,25 @@ export class OnlineScene extends Phaser.Scene {
       }),
       this.client.on('room_state', (msg) => {
         this.inFlight.delete('ready');
+        // The room re-opened as a lobby: seats are back to not-ready, so our own flag must be too,
+        // or READY would render as already pressed and its next tap would send `false`.
+        if (msg.locked === false && this.settingsLocked) this.ready = false;
         this.players = msg.players;
         this.roomSettings = msg.settings;
         this.hostSeat = msg.hostSeat;
         this.settingsLocked = msg.locked;
         this.rebuild();
+      }),
+      this.client.on('player_reaction', (msg) => {
+        this.lastReaction = { seat: msg.seat, reaction: msg.reaction };
+        this.rebuild();
+        // Same lifetime as the server cooldown, so the line never outlives the next one.
+        this.time.delayedCall(REACTION_COOLDOWN_MS, () => {
+          if (this.lastReaction?.seat === msg.seat) {
+            this.lastReaction = null;
+            this.rebuild();
+          }
+        });
       }),
       this.client.on('game_started', (msg) => this.enterMatch(msg.view)),
       // Resuming after a reload: the server answers `reconnect` with `room_joined` (which set
@@ -240,8 +338,10 @@ export class OnlineScene extends Phaser.Scene {
       lastRejections: () => [],
       trace: () => this.client.trace,
       statusTrace: () => this.client.statusTrace,
-      createRoom: (name) => this.client.createRoom(name ?? t('menu.you')),
-      joinRoom: (code, name) => this.client.joinRoom(code, name ?? t('menu.you')),
+      createRoom: (name) => this.client.createRoom(name ?? this.playerName()),
+      joinRoom: (code, name) => this.client.joinRoom(code, name ?? this.playerName()),
+      displayName: () => this.playerName(),
+      react: (reaction) => this.client.sendReaction(reaction),
       setReady: (ready) => {
         this.ready = ready;
         this.client.setReady(ready);
@@ -264,17 +364,19 @@ export class OnlineScene extends Phaser.Scene {
     gotoScene(this, 'menu');
   }
 
-  /** Keyboard-driven code entry: only characters the room alphabet can produce are accepted, so
-   * the buffer is always a candidate code and never needs sanitizing on submit. */
+  /** Keyboard-driven text entry for the code and name screens. Every keystroke goes through the
+   * same sanitizer the DOM input uses, so a buffer is always a submittable value. */
   private wireCodeEntry(): void {
     const onKey = (ev: KeyboardEvent): void => {
-      if (this.phase !== 'join') return;
-      // The DOM join input (see ensureJoinInput) owns its own value edits and Enter handling
-      // while focused — this global path is desktop-only and would otherwise double-process
-      // every keystroke a touch player types into it.
+      const naming = this.phase === 'name';
+      if (this.phase !== 'join' && !naming) return;
+      // The DOM input (see ensureTextInput) owns its own value edits and Enter handling while
+      // focused — this global path is desktop-only and would otherwise double-process every
+      // keystroke a touch player types into it.
       if (this.joinInputEl && document.activeElement === this.joinInputEl) return;
       if (ev.key === 'Enter') {
-        this.fireOnce('join', 3000, () => this.submitJoin());
+        if (naming) this.commitName();
+        else this.fireOnce('join', 3000, () => this.submitJoin());
         return;
       }
       if (ev.key === 'Escape') {
@@ -284,15 +386,16 @@ export class OnlineScene extends Phaser.Scene {
         return;
       }
       if (ev.key === 'Backspace') {
-        this.codeInput = this.codeInput.slice(0, -1);
+        if (naming) this.nameInput = this.nameInput.slice(0, -1);
+        else this.codeInput = this.codeInput.slice(0, -1);
         this.rebuild();
         return;
       }
-      const ch = ev.key.toUpperCase();
-      if (ch.length === 1 && /[A-Z0-9]/.test(ch) && this.codeInput.length < CODE_LENGTH) {
-        this.codeInput += ch;
-        this.rebuild();
-      }
+      if (ev.key.length !== 1) return;
+      const next = naming ? sanitizeName(this.nameInput + ev.key) : sanitizeCode(this.codeInput + ev.key);
+      if (naming) this.nameInput = next;
+      else this.codeInput = next;
+      this.rebuild();
     };
     this.input.keyboard?.on('keydown', onKey);
     this.unsubs.push(() => this.input.keyboard?.off('keydown', onKey));
@@ -319,38 +422,72 @@ export class OnlineScene extends Phaser.Scene {
   /** Transient reason line shown when a disabled CRIAR SALA/ENTRAR is tapped while offline. */
   private flashOfflineReason(): void {
     if (!isOffline()) return;
-    const el = label(this, cx(), view().portrait ? vy(270) : vy(260), t('offline.online'), 7, '#ff6b5e');
+    // vy(270) is the bottom edge itself in portrait — the reason was drawn off-screen there.
+    const el = label(this, cx(), view().portrait ? vy(248) : vy(260), t('offline.online'), 7, '#ff6b5e');
     this.time.delayedCall(2000, () => el.destroy());
   }
 
   private submitJoin(): void {
     if (this.codeInput.length === 0) return;
-    this.client.joinRoom(this.codeInput, t('menu.you'));
+    this.client.joinRoom(this.codeInput, this.playerName());
   }
 
-  /** Transient "code copied" confirmation, tracked so a second press replaces it instead of stacking. */
+  /** Store the typed name and go back to the entry screen. An empty buffer just leaves the
+   * previous name alone — there is nothing to confirm and nothing to warn about. */
+  private commitName(): void {
+    const name = sanitizeName(this.nameInput).trim();
+    if (name) writeDisplayName(name);
+    this.phase = 'idle';
+    this.rebuild();
+  }
+
+  /** The invite link for this room — the current URL with the code attached, so a deployment
+   * running on a custom host (or an e2e run carrying `?ws=`) shares a link that actually works. */
+  private inviteUrl(): string {
+    const url = new URL(location.href);
+    url.searchParams.set('room', this.code ?? '');
+    url.hash = '';
+    return url.toString();
+  }
+
+  /** Transient confirmation shown after COPIAR/COMPARTILHAR, tracked so a second press replaces
+   * it instead of stacking. */
   private copiedLabel: Phaser.GameObjects.Text | null = null;
+
+  private flashCopied(key: string): void {
+    if (this.copiedLabel?.active) this.copiedLabel.destroy();
+    const el = label(this, cx(), vy(106), t(key), 7, '#3ec06a');
+    this.copiedLabel = el;
+    this.time.delayedCall(1500, () => {
+      if (el.active) el.destroy(); // rebuild() may have already torn it down
+    });
+  }
 
   private copyCode(): void {
     if (!this.code) return;
-    navigator.clipboard?.writeText(this.code).then(() => {
-      // Mashing COPY would otherwise stack a new label on top of the last one every press.
-      if (this.copiedLabel?.active) this.copiedLabel.destroy();
-      const el = label(this, cx(), vy(112), t('online.copied'), 7, '#3ec06a');
-      this.copiedLabel = el;
-      this.time.delayedCall(1500, () => {
-        if (el.active) el.destroy(); // rebuild() may have already torn it down
-      });
-    }).catch(() => {
+    navigator.clipboard?.writeText(this.code).then(() => this.flashCopied('online.copied')).catch(() => {
       // clipboard denied/unavailable — the code is already shown on screen, nothing else to do
     });
+  }
+
+  /** ONLINE-02: hand the invite to whatever the device already uses to share things. Only offered
+   * where the browser actually has a share sheet; everywhere else COPIAR is the whole path. */
+  private shareCode(): void {
+    if (!this.code || !navigator.share) return;
+    navigator
+      .share({ text: t('online.shareText', { code: this.code }), url: this.inviteUrl() })
+      .then(() => this.flashCopied('online.shared'))
+      .catch(() => {
+        // the player dismissed the share sheet — not an error, nothing to say
+      });
   }
 
   private rebuild(): void {
     this.tweens.killAll();
     this.children.removeAll(true);
-    if (this.phase === 'join' && view().touch) this.ensureJoinInput();
-    else this.destroyJoinInput();
+    if (view().touch && (this.phase === 'join' || this.phase === 'name')) {
+      this.ensureTextInput(this.phase === 'join' ? 'code' : 'name');
+    } else this.destroyJoinInput();
     coverBackground(this, 'bg-menu');
     this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.45);
     // backdrop panel so lobby text reads against the busy boteco scene, same treatment MenuScene
@@ -358,9 +495,13 @@ export class OnlineScene extends Phaser.Scene {
     this.add.rectangle(cx(), vy(138), panelW(280), vy(236), 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
     label(this, cx(), vy(26), t('online.title'), 15, '#f7d23e');
 
-    const statusColor =
-      this.status === 'open' ? '#3ec06a' : this.status === 'connecting' || this.status === 'reconnecting' ? '#f7d23e' : '#d83a3a';
-    label(this, cx(), vy(44), t(`online.status.${this.status}`), 8, statusColor);
+    // ONLINE-10: a working connection is the expected case and says nothing worth a line of the
+    // player's attention. Only the states they can act on — connecting, reconnecting, dropped —
+    // get promoted to a visible status.
+    if (this.status !== 'open') {
+      const statusColor = this.status === 'connecting' || this.status === 'reconnecting' ? '#f7d23e' : '#d83a3a';
+      label(this, cx(), vy(44), t(`online.status.${this.status}`), 8, statusColor);
+    }
 
     if (this.phase === 'error') {
       this.add
@@ -379,30 +520,53 @@ export class OnlineScene extends Phaser.Scene {
       }, { textureBase: 'btn-comprar', w: 140, h: 20, size: 8 });
     } else if (this.phase === 'join') {
       this.renderJoin();
+    } else if (this.phase === 'name') {
+      this.renderName();
     } else if (this.phase === 'lobby' && this.code !== null) {
       this.renderLobby();
     } else {
-      const createBtn = new PixelButton(
-        this, cx(), vy(110), t('online.create'),
-        () => this.fireOnce('create', 3000, () => this.client.createRoom(t('menu.you'))),
-        { textureBase: 'btn-feito', w: 140, h: 24, size: 9, onBlocked: () => this.flashOfflineReason() },
-      );
-      createBtn.setEnabled(this.canAct('create'));
-      new PixelButton(this, cx(), vy(145), t('online.join'), () => {
-        this.phase = 'join';
-        this.codeInput = '';
-        this.rebuild();
-      }, { textureBase: 'btn-comprar', w: 140, h: 22, size: 8 });
+      this.renderEntry();
     }
 
     // Portrait stacks START (and its reason line) under READY, so VOLTAR moves down to clear them.
-    new PixelButton(this, cx(), view().portrait ? vy(256) : vy(245), t('online.back'), () => {
+    new PixelButton(this, cx(), view().portrait ? vy(260) : vy(245), t('online.back'), () => {
       // No cooldown/rebuild needed: backToMenu() leaves this scene immediately, so the guard
       // only needs to stop a second click before that happens.
       if (this.inFlight.has('leave')) return;
       this.inFlight.add('leave');
       this.backToMenu();
     }, { textureBase: 'btn-comprar', w: 110, h: view().portrait ? 24 : 18, size: 7 });
+  }
+
+  /** ONLINE-22: the entry screen says who you will show up as before you commit to a room, and
+   * lets you change it there — an identity you can see is worth more than one you have to guess. */
+  private renderEntry(): void {
+    const nameLine = label(this, cx(), vy(82), t('online.playingAs', { name: this.playerName() }), 8, '#f7f2e7');
+    nameLine
+      // A text line's own bounds are a thin strip; a coarse pointer needs a real target, so the
+      // hit area is grown to the touch floor without moving the text.
+      .setInteractive(
+        new Phaser.Geom.Rectangle(-20, -16, nameLine.width + 40, Math.max(nameLine.height + 16, 34)),
+        Phaser.Geom.Rectangle.Contains,
+      )
+      .on('pointerup', () => {
+        this.phase = 'name';
+        this.nameInput = readDisplayName() ?? '';
+        this.rebuild();
+      });
+    label(this, cx(), vy(93), t('online.changeName'), 6, '#8a7f6e');
+
+    const createBtn = new PixelButton(
+      this, cx(), vy(110), t('online.create'),
+      () => this.fireOnce('create', 3000, () => this.client.createRoom(this.playerName())),
+      { textureBase: 'btn-feito', w: 140, h: 24, size: 9, primary: true, onBlocked: () => this.flashOfflineReason() },
+    );
+    createBtn.setEnabled(this.canAct('create'));
+    new PixelButton(this, cx(), vy(145), t('online.join'), () => {
+      this.phase = 'join';
+      this.codeInput = '';
+      this.rebuild();
+    }, { textureBase: 'btn-comprar', w: 140, h: 22, size: 8 });
   }
 
   private renderJoin(): void {
@@ -418,6 +582,19 @@ export class OnlineScene extends Phaser.Scene {
       textureBase: 'btn-feito', w: 120, h: 22, size: 8, onBlocked: () => this.flashOfflineReason(),
     });
     confirm.setEnabled(this.codeInput.length > 0 && this.canAct('join'));
+  }
+
+  /** Name entry, deliberately the same shape as the code screen so there is one thing to learn. */
+  private renderName(): void {
+    label(this, cx(), vy(86), t('online.namePrompt'), 9, '#f7f2e7');
+    const shown = this.nameInput || '_';
+    label(this, cx(), vy(118), shown, 16, this.nameInput ? '#f7d23e' : '#8a7f6e')
+      .setInteractive({ useHandCursor: true })
+      .on('pointerup', () => this.joinInputEl?.focus());
+    label(this, cx(), vy(148), t(view().touch ? 'online.nameHintTouch' : 'online.nameHint'), 7, '#c0b8a8');
+    new PixelButton(this, cx(), vy(180), t('online.nameOk'), () => this.commitName(), {
+      textureBase: 'btn-feito', w: 120, h: 22, size: 8,
+    });
   }
 
   /**
@@ -446,54 +623,130 @@ export class OnlineScene extends Phaser.Scene {
     label(this, cx(), vy(121), t('online.timerTapHint'), 6, '#8a7f6e');
   }
 
-  private renderLobby(): void {
-    label(this, cx(), vy(76), this.code ?? '', 20, '#f7f2e7');
-    // room-code text and the copy button must stay comfortably tappable in portrait
-    const copyH = view().portrait ? 24 : 16;
-    new PixelButton(this, cx(), vy(100), t('online.copy'), () => this.copyCode(), {
-      textureBase: 'btn-comprar', w: 90, h: copyH, size: 7,
+  /** Display name for a seat, or the generic placeholder when the seat is still empty. */
+  private seatName(seat: number): string {
+    return this.players.find((p) => p.seat === seat)?.name ?? t('online.emptySeat');
+  }
+
+  /**
+   * ONLINE-04/05/07: one row per seat at the table — a coloured badge with the seat's initial, the
+   * name, the host marker, and the ready state spelled out in words. Colour is never the only
+   * carrier: every row states READY/WAITING (and OFFLINE) as text.
+   */
+  private renderSeatRow(y: number, player: RoomPlayerSummary | null, seat: number): void {
+    const rowW = Math.min(panelW(240), view().w - 30);
+    const left = cx() - rowW / 2;
+    const filled = player !== null;
+    const badge = this.add.circle(left + 8, y, 7, filled ? SEAT_COLORS[seat % SEAT_COLORS.length]! : 0x3a2c20);
+    badge.setStrokeStyle(1, 0xc0a878, filled ? 0.9 : 0.4);
+    const name = filled ? player.name : t('online.emptySeat');
+    label(this, badge.x, y, filled ? name.slice(0, 1).toUpperCase() : '+', 8, '#f7f2e7');
+
+    const isMe = filled && player.seat === this.seat;
+    const nameText = seat === this.hostSeat && filled ? `${name} · ${t('online.host')}` : name;
+    this.add
+      .text(left + 20, y, nameText, fontStyle(8, filled ? (isMe ? '#f7d23e' : '#f7f2e7') : '#8a7f6e'))
+      .setOrigin(0, 0.5);
+
+    if (!filled) return;
+    const statusText = !player.connected
+      ? t('online.status.closed')
+      : player.ready
+        ? `✓ ${t('online.playerReady')}`
+        : t('online.playerWaiting');
+    const statusColor = !player.connected ? '#d83a3a' : player.ready ? '#3ec06a' : '#c0b8a8';
+    this.add.text(left + rowW, y, statusText, fontStyle(7, statusColor)).setOrigin(1, 0.5);
+  }
+
+  /** ONLINE-21: four preset things to say, and nothing else — no free text to moderate. The
+   * server owns the real cooldown; this only greys the row out so the tap feels answered. */
+  private renderReactions(y: number): void {
+    const w = view().portrait ? 56 : 50;
+    const gap = 4;
+    const total = REACTIONS.length * w + (REACTIONS.length - 1) * gap;
+    REACTIONS.forEach((id, i) => {
+      const btn = new PixelButton(
+        this, cx() - total / 2 + w / 2 + i * (w + gap), y, t(`online.reaction.${id}`),
+        () => this.fireOnce('react', REACTION_COOLDOWN_MS, () => this.client.sendReaction(id)),
+        { textureBase: 'btn-comprar', w, h: view().portrait ? 18 : 14, size: 7 },
+      );
+      btn.setEnabled(!this.inFlight.has('react'));
     });
+  }
+
+  private renderLobby(): void {
+    label(this, cx(), vy(74), this.code ?? '', 20, '#f7f2e7');
+    // room-code text and its buttons must stay comfortably tappable in portrait
+    const btnH = view().portrait ? 24 : 16;
+    const canShare = typeof navigator.share === 'function';
+    const offset = canShare ? 48 : 0;
+    new PixelButton(this, cx() - offset, vy(94), t('online.copy'), () => this.copyCode(), {
+      textureBase: 'btn-comprar', w: 88, h: btnH, size: 7,
+    });
+    if (canShare) {
+      new PixelButton(this, cx() + offset, vy(94), t('online.share'), () => this.shareCode(), {
+        textureBase: 'btn-comprar', w: 88, h: btnH, size: 7,
+      });
+    }
 
     this.renderRoomSummary();
 
-    // Player rows start below the summary line and its host hint, not at a fixed 128 — the two
-    // lines above would otherwise sit on top of the first seat.
-    let y = vy(136);
-    for (const p of this.players) {
-      const mark = p.ready ? t('online.playerReady') : t('online.playerWaiting');
-      const offline = p.connected ? '' : ` (${t('online.status.closed')})`;
-      label(this, cx(), y, `${p.name} — ${mark}${offline}`, 9, p.ready ? '#3ec06a' : '#c0b8a8');
-      y += vy(16);
+    // Seat rows start below the summary line and its host hint, not at a fixed 128 — the two
+    // lines above would otherwise sit on top of the first seat. One spare row is drawn while the
+    // table is not full, so "someone else can still join" is visible rather than implied.
+    const seatCount = Math.min(MAX_SEATS, this.players.length + (this.players.length < MAX_SEATS ? 1 : 0));
+    for (let seat = 0; seat < seatCount; seat++) {
+      this.renderSeatRow(vy(132 + seat * 13), this.players.find((p) => p.seat === seat) ?? null, seat);
     }
-    if (this.players.length < 2) {
-      label(this, cx(), y + vy(4), t('online.waiting'), 8, '#c0b8a8');
+
+    if (this.rematch) {
+      label(this, cx(), vy(180), t('online.rematch'), 6, '#f7d23e');
+    } else if (this.lastReaction) {
+      label(
+        this, cx(), vy(180),
+        t('online.reactionFrom', {
+          name: this.seatName(this.lastReaction.seat),
+          reaction: t(`online.reaction.${this.lastReaction.reaction}`),
+        }),
+        7, '#f7d23e',
+      );
     }
+    this.renderReactions(view().portrait ? vy(192) : vy(194));
 
     // READY stays a real toggle: every click still sends exactly one `ready` message. The
     // short cooldown only blocks a second click before the first one's frame goes out.
     const stacked = view().portrait;
-    const readyBtn = new PixelButton(this, cx(), stacked ? vy(202) : vy(215), this.ready ? t('online.readyOn') : t('online.ready'), () => {
+    const readyBtn = new PixelButton(this, cx(), stacked ? vy(208) : vy(216), this.ready ? t('online.readyOn') : t('online.ready'), () => {
       this.fireOnce('ready', 300, () => {
         this.ready = !this.ready;
+        this.rematch = false;
         this.client.setReady(this.ready);
       });
-    }, { textureBase: 'btn-feito', w: 100, h: 20, size: 8 });
+    }, { textureBase: 'btn-feito', w: 100, h: 20, size: 8, primary: true });
     readyBtn.setEnabled(!this.inFlight.has('ready'));
 
-    if (this.seat === 0) {
+    if (this.seat === this.hostSeat) {
       const enoughPlayers = this.players.length >= 2;
-      const allReady = enoughPlayers && this.players.every((p) => p.ready);
+      const notReady = this.players.filter((p) => !p.ready);
+      const allReady = enoughPlayers && notReady.length === 0;
       // Landscape seats START beside READY; a 270-wide portrait world has no room beside anything,
       // so it stacks underneath instead of running off the right edge.
       const startX = stacked ? cx() : cx() + (350 - 240);
-      const start = new PixelButton(this, startX, stacked ? vy(230) : vy(215), t('online.start'), () => this.fireOnce('start', 3000, () => this.client.startGame()), {
+      const start = new PixelButton(this, startX, stacked ? vy(231) : vy(216), t('online.start'), () => this.fireOnce('start', 3000, () => this.client.startGame()), {
         textureBase: 'btn-feito', w: stacked ? 110 : 82, h: stacked ? 24 : 20, size: 7,
       });
       start.setEnabled(allReady && !this.inFlight.has('start'));
-      // A greyed-out button with no stated reason is the single most common lobby complaint —
-      // always say which condition is missing.
+      // ONLINE-06: a greyed-out button with no stated reason is the single most common lobby
+      // complaint, and "someone isn't ready" is barely better — name the seats being waited on.
       if (!allReady) {
-        label(this, startX, stacked ? vy(244) : vy(233), t(enoughPlayers ? 'online.startNeedReady' : 'online.startNeedPlayers'), 6, '#c0b8a8');
+        const reason = enoughPlayers
+          ? t('online.startNeedReadyNames', { names: notReady.map((p) => p.name).join(', ') })
+          : t('online.startNeedPlayers');
+        this.add
+          .text(startX, stacked ? vy(243) : vy(232), reason, {
+            ...fontStyle(6, '#c0b8a8'), align: 'center', wordWrap: { width: panelW(200) },
+          })
+          .setOrigin(0.5);
       }
     }
   }

@@ -37,8 +37,8 @@ describe('parseSave', () => {
   it('round-trips a valid v1 save', () => {
     const save: Save = {
       version: 1,
-      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner', batterySaver: true, aiDifficulty: 'expert', aiSpeed: 'slow', aiExplain: 'detailed', timerTickSound: false },
-      progress: { lastSeed: 1234, tutorialCompleted: true },
+      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner', batterySaver: true, aiDifficulty: 'expert', aiSpeed: 'slow', aiExplain: 'detailed', timerTickSound: false, haptics: false },
+      progress: { lastSeed: 1234, tutorialCompleted: true, gamesStarted: 3, headToHead: { cida: { wins: 2, losses: 1 } } },
       cosmetics: { tableTheme: 'quintal', cardBack: 'back-4', avatar: 'bia' },
     };
     expect(parseSave(JSON.stringify(save))).toEqual(save);
@@ -120,7 +120,7 @@ describe('loadSave', () => {
     const oldSettings = { muted: true, sfxVolume: 33, musicVolume: 44, reducedMotion: true, locale: 'en' };
     const storage = memoryStorage({ [OLD_SETTINGS_KEY]: JSON.stringify(oldSettings) });
     const result = loadSave(storage);
-    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: true, musicContextAware: true, largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
+    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: true, musicContextAware: true, largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
     expect(storage.getItem(SAVE_KEY)).toBe(JSON.stringify(result));
     expect(storage.getItem(OLD_SETTINGS_KEY)).toBeNull();
   });
@@ -133,7 +133,7 @@ describe('loadSave', () => {
   });
 
   it('ignores the old key once a v1 save exists', () => {
-    const save: Save = { version: 1, settings: DEFAULT_SETTINGS, progress: { lastSeed: 5, tutorialCompleted: true }, cosmetics: DEFAULT_COSMETICS };
+    const save: Save = { version: 1, settings: DEFAULT_SETTINGS, progress: { lastSeed: 5, tutorialCompleted: true, gamesStarted: 1, headToHead: {} }, cosmetics: DEFAULT_COSMETICS };
     const storage = memoryStorage({ [SAVE_KEY]: JSON.stringify(save), [OLD_SETTINGS_KEY]: JSON.stringify({ muted: true }) });
     expect(loadSave(storage)).toEqual(save);
     expect(storage.getItem(OLD_SETTINGS_KEY)).not.toBeNull(); // untouched — no migration needed
