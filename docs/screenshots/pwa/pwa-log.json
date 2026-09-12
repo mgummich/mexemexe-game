@@ -43,7 +43,7 @@
     "offline": true,
     "scene": "menu",
     "swController": true,
-    "fps": 55,
+    "fps": 56,
     "viewport": {
       "width": 1280,
       "height": 720

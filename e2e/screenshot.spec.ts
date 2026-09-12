@@ -948,11 +948,19 @@ test('stress-table: many melds on the table still hold fps >= 50 @perf', async (
     await waitForSettledBoard(p);
     await p.waitForTimeout(3000);
     const fps = await p.evaluate(() => window.__MEXE__.fps);
-    // CI gets its own floor, from measurement, not aspiration: measured 42 (right after a
-    // 4-minute saturating pass, i.e. hot) and 57 (cold) on ubuntu-latest 2026-09-11, both under
-    // the same >=50 bar the dev machine holds comfortably (55). The CI floor guards against a
-    // catastrophic regression; the dev-machine 50 is the real quality bar.
-    expect(fps).toBeGreaterThanOrEqual(process.env.CI ? 35 : 50);
+    // CI gets its own floor, from measurement, not aspiration. The 35 floor here was set from a
+    // 42/57 measurement taken under the *old* 1s settle window; b03fce5 widened the window to
+    // waitForSettledBoard()+3s for a truer steady-state read (see comment above) without
+    // re-measuring CI against it. Two later CI runs on this branch (34724299446, 34724491678),
+    // with *no rendering-path source change* between them and the prior green run (diff is
+    // e2e-only waits — see be4a6c9), both read 31 under the new window — reproducible, not a
+    // one-off blip. A same-machine branch-vs-merge-base(2632b0b) comparison, repeated and also
+    // under CPU throttling up to 8x via CDP, found no systematic fps gap between the two, so the
+    // drop is the CI runner/measurement window, not a rendering regression. Floor rebased below
+    // that reproducible 31 with headroom for run-to-run runner variance; still comfortably above
+    // zero so a genuine catastrophic regression still fails. The dev-machine 50 is unchanged and
+    // remains the real quality bar.
+    expect(fps).toBeGreaterThanOrEqual(process.env.CI ? 25 : 50);
   });
 });
 
@@ -1002,11 +1010,17 @@ test('crowded-table-max: highest reachable committed table (44) plus a full hand
     // Floor set from measurement, not aspiration: 49 fps measured on the dev machine 2026-09-10
     // at a combined visible total of 107 cards (see comment above), consistent across repeat runs.
     //
-    // CI gets its own floor because the runner is not the thing under test. Measured CI value
-    // 34 on 2026-09-11 — the previous 30 floor had no headroom above that. Split by environment
-    // rather than lowered outright, so a real drop on the dev machine still fails instead of
-    // hiding behind the CI number; the CI floor only guards against a catastrophic regression.
-    expect(fps).toBeGreaterThanOrEqual(process.env.CI ? 25 : 45);
+    // CI gets its own floor because the runner is not the thing under test. The 25 floor above
+    // was measured (34) under the *old* 1s settle window, same as stress-table's — see that
+    // test's comment for why the window widened to waitForSettledBoard()+3s and why that alone
+    // (not a rendering regression) explains the drop. Two later CI runs on this branch, with no
+    // rendering-path source change between them and a prior green run, both reproducibly read 20
+    // under the new window. A same-machine branch-vs-merge-base(2632b0b) comparison, including
+    // under CPU throttling up to 8x via CDP, found no systematic fps gap, confirming the code is
+    // innocent. Floor rebased below that reproducible 20 with headroom for runner variance; a
+    // real drop on the dev machine still fails instead of hiding behind the CI number, and the CI
+    // floor still only guards against a catastrophic regression.
+    expect(fps).toBeGreaterThanOrEqual(process.env.CI ? 15 : 45);
   });
 });
 
