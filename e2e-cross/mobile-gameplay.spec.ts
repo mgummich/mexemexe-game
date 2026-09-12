@@ -36,6 +36,10 @@ async function boot(page: Page, url = '/?seed=42&showcase=game'): Promise<void> 
   await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null, undefined, {
     timeout: 30_000,
   });
+  // D13: hand cards have no `.input` at all (sprite not built interactive) until the opening deal's
+  // flight animation lands — every test in this file taps/drags real cards straight after boot(),
+  // so wait here once rather than in each test (mirrors waitForSettledBoard in e2e/screenshot.spec.ts).
+  await page.waitForFunction(() => window.__MEXE__.dealing === false, undefined, { timeout: 10_000 });
 }
 
 /** World -> screen for whichever world is live, mirrors e2e/screenshot.spec.ts's toCanvasPoint. */

@@ -186,7 +186,11 @@ test('offline AI match runs with 4 players', async () => {
 
 test('offline tutorial runs', async () => {
   await boot('/?showcase=menu');
-  const [tx, ty] = toScreen(240, 207); // TUTORIAL button
+  // This suite's context never completes the tutorial, so MenuScene.rebuild() is always in its
+  // firstRun layout: the PRIMARY button (vy(168)) is "learn" (tutorial) and the secondary one at
+  // (240, 207) is "play direct" — the reverse of a returning player's layout. Clicking (240, 207)
+  // here landed on setup ("MONTE A MESA"), not the tutorial, which is what this test actually needs.
+  const [tx, ty] = toScreen(240, 168); // TUTORIAL button (firstRun primary button)
   await page.mouse.click(tx, ty);
   await page.waitForFunction(() => window.__MEXE__.scene === 'tutorial', undefined, { timeout: 10_000 });
   await snap('offline-tutorial');

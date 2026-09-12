@@ -1132,6 +1132,10 @@ async function meldIdOf(p: Page, cardId: string): Promise<string> {
  * (ponytail: no explicit mouse-up cleanup needed for a single-shot e2e test).
  */
 async function dragCardOnto(p: Page, cardId: string, toLogical: { x: number; y: number }): Promise<void> {
+  // D13: a real drag over a card is real pointer input — the sprite has no `.input` at all until
+  // the opening deal lands (see makeCardSprite/interactive), so a drag issued mid-deal is silently
+  // a no-op rather than a wrong-position drag. Same reasoning as tapCard/tapMeld below.
+  await waitForSettledBoard(p);
   const from = await p.evaluate((id) => window.__MEXE__.mexe!.cardPos(id), cardId);
   if (!from) throw new Error(`card ${cardId} not on screen`);
   const [fx, fy] = toScreen(from.x, from.y);
@@ -2486,6 +2490,10 @@ test('invalid-reason-badge: an invalid meld reports its reason(s) through the de
 /** Tap the meld-list row for `meldId` (null = the trailing "new meld" row), computed from the
  * same pure editor-layout math GameScene draws from — never a hardcoded pixel guess. */
 async function tapMeldListRow(p: Page, meldId: string | null): Promise<void> {
+  // D13: the meld-list background only calls setInteractive() while `interactive` is true (see
+  // renderMexeEditor) — a tap mid-deal lands on a hit zone that doesn't exist yet and is silently
+  // dropped, leaving editorMeldId() at whatever it was before. Same reasoning as tapCard/tapMeld.
+  await waitForSettledBoard(p);
   const meldIds = await p.evaluate(() => window.__MEXE__.mexe!.getDraft()!.melds.map((m) => m.id));
   const rows = meldListRows(meldIds);
   const row = rows.find((r) => r.meldId === meldId);
