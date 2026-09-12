@@ -3,7 +3,16 @@
  * stay a thin caller. Meld-specific invalid reasons still show on hover over the offending meld
  * (see GameScene.showMeldReasonTooltip); this only covers the three whole-turn phases.
  */
-export type ObjectivePhase = 'start' | 'selectCard' | 'invalidEdit' | 'playedConfirm' | 'readyToConfirm';
+export type ObjectivePhase =
+  | 'start'
+  | 'selectCard'
+  | 'invalidEdit'
+  | 'playedConfirm'
+  | 'readyToConfirm'
+  /** Hand empty but the table is not legal yet — close to winning, not winning. */
+  | 'handEmptyInvalid'
+  /** Hand empty and the table is legal: the next press ends the match. */
+  | 'canBater';
 
 /**
  * `null` means "no generic phase fits" — the caller should fall back to the specific
@@ -15,7 +24,12 @@ export function objectivePhase(
   hasInvalidMelds: boolean,
   hasPlayedCards: boolean,
   hasSelection = false,
+  handEmpty = false,
 ): ObjectivePhase | null {
+  // An empty hand is the single most loaded state in the game, and it means two completely
+  // different things depending on the table. Emptying your hand does not win — the table still has
+  // to be legal — so these two get their own wording rather than the generic invalid/ready lines.
+  if (handEmpty) return canConfirm ? 'canBater' : 'handEmptyInvalid';
   if (hasInvalidMelds) return 'invalidEdit';
   if (canConfirm) return 'readyToConfirm';
   // A card is in hand-limbo: the next thing to do is pick a destination, not "play or draw".
@@ -34,6 +48,8 @@ export function objectiveKey(phase: ObjectivePhase): string {
 export interface ChecklistItem {
   key: string;
   ok: boolean;
+  /** Interpolation values for `key`, e.g. how many melds are still unresolved. */
+  params?: Record<string, string | number>;
 }
 
 /**
@@ -49,12 +65,19 @@ export function doneChecklist(
 ): ChecklistItem[] {
   return [
     { key: 'check.handCard', ok: handCardsPlayed > 0 && !reasons.includes('reason.noHandCard') },
-    { key: 'check.meldsValid', ok: invalidMeldCount === 0 && !reasons.includes('reason.notAMeld') },
+    // Counting what is left to resolve, rather than repeating "invalid", is the difference between
+    // a checklist that reads as progress and one that reads as a verdict.
+    invalidMeldCount > 0
+      ? { key: invalidMeldCount === 1 ? 'check.meldsUnresolved.one' : 'check.meldsUnresolved.many', ok: false, params: { n: invalidMeldCount } }
+      : { key: 'check.meldsValid', ok: !reasons.includes('reason.notAMeld') },
     { key: 'check.noReturn', ok: !reasons.includes('reason.cardMissing') },
   ];
 }
 
 /** Renders a checklist as "✓ text" / "✕ text" lines — the tick is the non-color cue. */
-export function formatChecklist(items: ChecklistItem[], translate: (key: string) => string): string {
-  return items.map((i) => `${i.ok ? '✓' : '✕'} ${translate(i.key)}`).join('\n');
+export function formatChecklist(
+  items: ChecklistItem[],
+  translate: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  return items.map((i) => `${i.ok ? '✓' : '✕'} ${translate(i.key, i.params)}`).join('\n');
 }

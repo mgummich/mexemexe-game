@@ -7,7 +7,7 @@ import { editorZones, meldListRows, meldListRowY, MELD_LIST_ROW_H } from '../src
 import { computeMeldLayout } from '../src/table/layout';
 import { ZOOM_FLOORS } from '../src/table/zoom';
 import { gameRegions, type GameRegions } from '../src/ui/regions';
-import { advancedRowY, AdvancedRow, aiRowY, AiRow, audioRowY, AudioRow, cosmeticsRowY, settingsRowY, SettingsRow } from '../src/ui/settings-layout';
+import { advancedRowY, AdvancedRow, aiRowY, AiRow, audioRowY, AudioRow, cosmeticsRowY, rulesBox, RULES_TAB_DX, settingsRowY, SettingsRow } from '../src/ui/settings-layout';
 import { pickProfile } from '../src/ui/viewport';
 
 const OUT_DIR = 'docs/screenshots';
@@ -99,8 +99,9 @@ const toScreen = (lx: number, ly: number): [number, number] => [lx * SCALE, ly *
 
 test('tutorial', async ({ page }) => {
   await capture(page, '/?seed=42&showcase=menu', 'tutorial', async (p) => {
-    // canvas game — click the tutorial button by logical coords (240, 207) scaled to viewport
-    await p.mouse.click(640, 552);
+    // canvas game — first run leads with the tutorial, so the primary CTA at logical (240, 168) is
+    // APRENDER A JOGAR. Scaled to the 1280x720 viewport.
+    await p.mouse.click(640, 448);
     await p.waitForFunction(() => window.__MEXE__.scene === 'tutorial', undefined, { timeout: 5000 });
     await p.waitForFunction(() => window.__MEXE__.tutorialStep === 0);
   });
@@ -108,7 +109,7 @@ test('tutorial', async ({ page }) => {
 
 test('tutorial step 2: lay a set of three nines', async ({ page }) => {
   await capture(page, '/?seed=42&showcase=menu', 'tutorial-step2', async (p) => {
-    await p.mouse.click(640, 552);
+    await p.mouse.click(640, 448);
     await p.waitForFunction(() => window.__MEXE__.scene === 'tutorial' && window.__MEXE__.mexe !== null);
     await p.waitForFunction(() => window.__MEXE__.tutorialStep === 0);
 
@@ -134,6 +135,41 @@ test('setup: seat/personality picker', async ({ page }) => {
   await capture(page, '/?seed=42&showcase=setup', 'setup', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'setup');
   });
+  // 4 seats, then step the first AI seat forward: the lineup must stay three distinct
+  // characters (no duplicate opponent), and the new one answers with their own line.
+  await page.mouse.click(...toScreen(290, 70));
+  await page.mouse.click(...toScreen(354, 126));
+  await snap(page, 'setup-4players');
+  // Settings round-trip: the gear opens over this scene, and closing it must leave the seat
+  // count and the chosen characters exactly as they were (SETUP-13).
+  await page.mouse.click(...toScreen(462, 10));
+  await page.keyboard.press('Escape');
+  await snap(page, 'setup-after-settings');
+  // PLAY deals out of the middle of the table before switching scenes — the scene change has to
+  // survive that animation, not just the old straight fade.
+  await page.mouse.click(...toScreen(300, 248));
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 5000 });
+});
+
+test('setup-large-text: the lineup still fits the panel at +25% font scale', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=setup&textscale=125', 'setup-large-text', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'setup');
+  });
+});
+
+test('setup-en: the lineup reads in English', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=setup&lang=en', 'setup-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'setup');
+  });
+});
+
+test('mobile-portrait-setup: the lineup reflows into the 270x480 portrait world', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=setup', 'mobile-portrait-setup', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'setup');
+  });
+  const v = await page.evaluate(() => window.__MEXE__.viewport());
+  expect(v).toMatchObject({ w: 270, h: 480, portrait: true });
 });
 
 test('settings overlay', async ({ page }) => {
@@ -145,6 +181,7 @@ test('settings overlay', async ({ page }) => {
 test('win screen', async ({ page }) => {
   await capture(page, '/?seed=42&showcase=win', 'win', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'win');
+    await p.waitForTimeout(600); // staged reveal (RESULT-01) finishes inside ~1s
   });
   // results summary (Phase 9): debugApi.results is canvas text's only e2e-readable source.
   const results = await page.evaluate(() => window.__MEXE__.results);
@@ -154,6 +191,9 @@ test('win screen', async ({ page }) => {
   expect(results!.winningMoveText.length).toBeGreaterThan(0);
   expect(results!.results).toHaveLength(2);
   expect(results!.results.filter((r) => r.isWinner)).toHaveLength(1);
+  // RESULT-03/13: exactly one match-story label, and the opponent reacts in character.
+  expect(results!.storyKey).toBe('win.story.runaway');
+  expect(results!.reactionText).toContain(translate('ai.line.juninho.lostMatch'));
 });
 
 test('mexe mode: break a meld, see invalid glow and exact reason, undo restores', async ({ page }) => {
@@ -255,22 +295,24 @@ for (const p of PERSONALITIES) {
   });
 }
 
-test('rematch: WinScene MESMA PARTIDA starts a new game with the same seed', async ({ page }) => {
+test('rematch: WinScene REVANCHE deals a fresh match with the same lineup', async ({ page }) => {
   trackConsoleErrors(page);
   await page.goto('/?seed=555&showcase=win');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   await page.waitForFunction(() => window.__MEXE__.scene === 'win');
-  // WinScene "MESMA PARTIDA" button — y drifts with the results-summary content above it, so
-  // read the real position from debugApi.winButtonY instead of a hardcoded coordinate.
+  await page.waitForTimeout(1200); // the button stack is the last group of the staged reveal
+  // WinScene's dominant CTA — y drifts with the results-summary content above it, so read the
+  // real position from debugApi.winButtonY instead of a hardcoded coordinate.
   const buttonY = await page.evaluate(() => window.__MEXE__.winButtonY);
   expect(buttonY).not.toBeNull();
   const [rx, ry] = toScreen(240, buttonY!);
   await page.mouse.click(rx, ry);
   await page.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 10_000 });
   const seed = await page.evaluate(() => window.__MEXE__.seed);
-  expect(seed).toBe(555);
+  expect(seed).not.toBe(555); // RESULT-12: the rematch is a new deal, not the same-seed replay
   const state = await page.evaluate(() => window.__MEXE__.state!()!);
   expect(state.turn).toBe(1); // fresh game (createNewGame), not a continuation of the showcase win state
+  expect(state.players.map((p) => p.name)).toEqual(['Você', 'Juninho']); // same lineup, no setup detour
   const errs = await page.evaluate(() => window.__MEXE__.errors);
   expect(errs).toEqual([]);
 });
@@ -343,8 +385,184 @@ test('help-en: rules panel (English) opened from the pause menu', async ({ page 
   });
 });
 
+// ---------- Rules quick reference, Esc nesting, and pause over a live draft ----------
+
+// Pause menu rows (src/ui/pause-menu.ts, desktop btnH 18 / pitch 24, panel h 160 centred on 135):
+// Continue 113, Settings 137, REGRAS 161, Quit 185.
+const PAUSE_SETTINGS_Y = 137;
+const PAUSE_RULES_Y = 161;
+const PAUSE_QUIT_Y = 185;
+
+/** Opens the board's rules panel with the H shortcut — no panel geometry involved, so this works
+ * in every world (landscape, portrait, large text) the captures below run in. */
+async function openRules(p: Page): Promise<void> {
+  await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+  await p.keyboard.press('h');
+  await p.waitForFunction(() => window.__MEXE__.rulesOpen === true, undefined, { timeout: 5_000 });
+}
+
+test('rules: quick reference, the CONTROLS tab and the full-text drill-down', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=42&showcase=game');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await openRules(page);
+  await snap(page, 'rules-basics');
+  // Panel geometry comes from src/ui/settings-layout.ts's rulesBox — the same formulas the panel
+  // itself lays out with, so these clicks cannot drift from it. `true`: both the quick reference
+  // and the full text carry a secondary footer button (drill-down / back).
+  const [fx, fy] = toScreen(240, rulesBox(true).secondaryY); // VER REGRAS COMPLETAS
+  await page.mouse.click(fx, fy);
+  await page.waitForTimeout(150);
+  await snap(page, 'rules-full');
+  await page.mouse.click(fx, fy); // same slot, now VOLTAR
+  await page.waitForTimeout(150);
+  const [tx, ty] = toScreen(240 + RULES_TAB_DX, rulesBox(true).tabY); // CONTROLES tab
+  await page.mouse.click(tx, ty);
+  await page.waitForTimeout(150);
+  await snap(page, 'rules-controls');
+});
+
+test('esc: backs out one level at a time — nested view, panel, pause menu, board', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=77&showcase=mexe');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  await openRules(page);
+  const [tx, ty] = toScreen(240 + RULES_TAB_DX, rulesBox(true).tabY);
+  await page.mouse.click(tx, ty); // CONTROLS tab
+  await page.waitForTimeout(150);
+  await page.keyboard.press('Escape'); // back to the quick reference, panel still open
+  await page.waitForTimeout(150);
+  expect(await page.evaluate(() => window.__MEXE__.rulesOpen)).toBe(true);
+  await page.keyboard.press('Escape'); // now the panel itself closes
+  await page.waitForFunction(() => window.__MEXE__.rulesOpen === false, undefined, { timeout: 5_000 });
+
+  await page.keyboard.press('Escape'); // pause menu
+  await page.waitForTimeout(150);
+  await page.keyboard.press('Escape'); // and back to the board
+  await page.waitForTimeout(150);
+  // Board shortcuts are ignored while a panel is up, so a working C proves the overlay really closed.
+  const before = await page.evaluate(() => window.__MEXE__.state!()!.turn);
+  await page.keyboard.press('c');
+  await page.waitForFunction((t) => window.__MEXE__.state!()!.turn > t, before, { timeout: 10_000 });
+});
+
+test('pause-draft: a mid-Mexe draft survives pause -> Settings -> Rules -> resume', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=77&showcase=mexe');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  // A draft with real history: a card pulled off a table meld and a card played from hand into it.
+  const before = await page.evaluate(() => {
+    const api = window.__MEXE__;
+    const state = api.state!()!;
+    const meld = state.table[0]!;
+    api.mexe!.moveTableCard(meld.cards[meld.cards.length - 1]!.id, null);
+    const hand = state.players[state.activePlayerIndex]!.hand;
+    api.mexe!.playHandCard(hand[0]!.id, meld.id);
+    return JSON.stringify(api.mexe!.getDraft());
+  });
+
+  await page.keyboard.press('Escape'); // pause
+  await page.waitForTimeout(150);
+  const [sx, sy] = toScreen(240, PAUSE_SETTINGS_Y);
+  await page.mouse.click(sx, sy);
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Escape'); // settings -> back to the pause menu
+  await page.waitForTimeout(200);
+  const [hx, hy] = toScreen(240, PAUSE_RULES_Y);
+  await page.mouse.click(hx, hy);
+  await page.waitForFunction(() => window.__MEXE__.rulesOpen === true, undefined, { timeout: 5_000 });
+  await page.keyboard.press('Escape'); // rules -> back to the pause menu
+  await page.waitForFunction(() => window.__MEXE__.rulesOpen === false, undefined, { timeout: 5_000 });
+  await snap(page, 'pause-draft');
+  await page.keyboard.press('Escape'); // resume
+  await page.waitForTimeout(200);
+
+  const after = await page.evaluate(() => JSON.stringify(window.__MEXE__.mexe!.getDraft()));
+  expect(after).toBe(before);
+  // undo history survived too — the draft is still editable, not just still drawn
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.undo())).toBe(true);
+});
+
+test('pause-quit-confirm: the quit step asks in sentences, and Esc cancels it', async ({ page }) => {
+  trackConsoleErrors(page);
+  await page.goto('/?seed=42&showcase=game');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  await page.mouse.click(...toScreen(240, PAUSE_QUIT_Y));
+  await page.waitForTimeout(150);
+  await snap(page, 'pause-quit-confirm');
+  // Esc cancels the confirm back to the pause menu — it must not quit, and must not close the
+  // whole overlay. Proof: the REGRAS row is clickable again and the scene never changed.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  await page.mouse.click(...toScreen(240, PAUSE_RULES_Y));
+  await page.waitForFunction(() => window.__MEXE__.rulesOpen === true, undefined, { timeout: 5_000 });
+  expect(await page.evaluate(() => window.__MEXE__.scene)).toBe('game');
+});
+
+test('rules-large-text: the quick reference at 125% text scale', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=game&textscale=125', 'rules-large-text', openRules);
+});
+
+test('rules-portrait: the quick reference in the 270x480 portrait world', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=game', 'rules-portrait', openRules);
+});
+
+test('pause-large-text: the pause menu at 125% text scale', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=game&textscale=125', 'pause-large-text', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(150);
+  });
+});
+
+test('pause-portrait: the pause menu in the 270x480 portrait world', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=game', 'pause-portrait', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game');
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(150);
+  });
+});
+
+test('settings-large-text: the settings menu at 125% text scale', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=settings&textscale=125', 'settings-large-text', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'menu');
+  });
+});
+
+test('settings-portrait: the settings menu in the 270x480 portrait world', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await capture(page, '/?seed=42&showcase=settings', 'settings-portrait', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'menu');
+  });
+});
+
+test('settings-en: the settings menu in English', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=settings&lang=en', 'settings-en', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'menu');
+  });
+});
+
 test('menu-en: English UI on the main menu', async ({ page }) => {
   await capture(page, '/?seed=42&showcase=menu&lang=en', 'menu-en');
+});
+
+test('menu-returning: once the tutorial is done, JOGAR takes the primary slot back', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('mexe-save', JSON.stringify({ version: 1, progress: { tutorialCompleted: true } }));
+  });
+  await capture(page, '/?seed=42&showcase=menu', 'menu-returning');
+  // First run puts the tutorial in the primary slot; once it is done the pair swaps back. Assert
+  // on where the primary button actually goes, which a reversed swap cannot fake.
+  const [px, py] = toScreen(240, 168);
+  await page.mouse.click(px, py);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'setup', undefined, { timeout: 5000 });
 });
 
 test('game-en: English UI in a game', async ({ page }) => {
@@ -385,7 +603,12 @@ test('stress-table: many melds on the table still hold fps >= 50 @perf', async (
       const hand = window.__MEXE__.state!()!.players[0]!.hand.map((c) => c.id);
       for (const cardId of hand) mexe.playHandCard(cardId, null);
     });
-    await p.waitForTimeout(1000); // let fps settle
+    // actualFps is a *lifetime* running average, not an instantaneous rate, so it has to be given
+    // time to converge on the steady state after the one-off opening deal — otherwise this measures
+    // the deal animation rather than the crowded board it claims to. The floor below is unchanged;
+    // only the measurement window is, because the metric needs it to mean what the test says.
+    await waitForSettledBoard(p);
+    await p.waitForTimeout(3000);
     const fps = await p.evaluate(() => window.__MEXE__.fps);
     // CI gets its own floor, from measurement, not aspiration: measured 42 (right after a
     // 4-minute saturating pass, i.e. hot) and 57 (cold) on ubuntu-latest 2026-09-11, both under
@@ -434,7 +657,9 @@ test('crowded-table-max: highest reachable committed table (44) plus a full hand
     });
     expect(total).toBeGreaterThanOrEqual(80);
 
-    await p.waitForTimeout(1000); // let fps settle
+    // See the note in stress-table on why the window is 3s: actualFps is a lifetime average.
+    await waitForSettledBoard(p);
+    await p.waitForTimeout(3000);
     const fps = await p.evaluate(() => window.__MEXE__.fps);
     // Floor set from measurement, not aspiration: 49 fps measured on the dev machine 2026-09-10
     // at a combined visible total of 107 cards (see comment above), consistent across repeat runs.
@@ -612,13 +837,21 @@ async function tapWorld(p: Page, wx: number, wy: number): Promise<void> {
 }
 
 /** Tap a rendered card by id — the touch path, no drag involved. */
+/** Cards are still flying to their places during the opening deal, so a live coordinate read then
+ * points at where a card *was*. Every tap helper waits this out before measuring. */
+async function waitForSettledBoard(p: Page): Promise<void> {
+  await p.waitForFunction(() => window.__MEXE__.dealing === false, undefined, { timeout: 10_000 });
+}
+
 async function tapCard(p: Page, cardId: string): Promise<void> {
+  await waitForSettledBoard(p);
   const pos = await p.evaluate((id) => window.__MEXE__.mexe!.cardPos(id), cardId);
   if (!pos) throw new Error(`card ${cardId} not on screen`);
   await tapWorld(p, pos.x, pos.y);
 }
 
 async function tapMeld(p: Page, meldId: string): Promise<void> {
+  await waitForSettledBoard(p);
   const pos = await p.evaluate((id) => window.__MEXE__.mexe!.meldPos(id), meldId);
   if (!pos) throw new Error(`meld ${meldId} not on screen`);
   await tapWorld(p, pos.x, pos.y);
@@ -739,8 +972,8 @@ test('tutorial: first-run 12-step completion, including the trinca-limit and jok
   trackConsoleErrors(page);
   await page.goto('/?seed=42&showcase=menu');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  // MenuScene TUTORIAL button, logical (240, 207)
-  const [tx, ty] = toScreen(240, 207);
+  // First run leads with the tutorial: the primary CTA at logical (240, 168) is APRENDER A JOGAR.
+  const [tx, ty] = toScreen(240, 168);
   await page.mouse.click(tx, ty);
   await page.waitForFunction(() => window.__MEXE__.scene === 'tutorial' && window.__MEXE__.mexe !== null);
   await page.waitForFunction(() => window.__MEXE__.tutorialStep === 0);
@@ -878,7 +1111,7 @@ test('tutorial: skipping mid-tutorial records the furthest step reached', async 
   trackConsoleErrors(page);
   await page.goto('/?seed=42&showcase=menu');
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  const [tx, ty] = toScreen(240, 207);
+  const [tx, ty] = toScreen(240, 168); // first-run primary CTA: APRENDER A JOGAR
   await page.mouse.click(tx, ty);
   await page.waitForFunction(() => window.__MEXE__.scene === 'tutorial' && window.__MEXE__.mexe !== null);
   await page.waitForFunction(() => window.__MEXE__.tutorialStep === 0);
@@ -1788,14 +2021,17 @@ test.describe('portrait beginner', () => {
   // The DONE checklist only renders where the reason line has room to wrap (portrait and the
   // touch-landscape strip — see GameScene.reasonLineText); desktop landscape's 72-unit reason
   // column would stack three lines into mush, so it keeps the single top reason.
-  test('mobile-done-checklist: beginner mode spells out the three DONE conditions', async ({ page }) => {
+  test('mobile-done-checklist: beginner mode lists what is still outstanding', async ({ page }) => {
     await capture(page, '/?seed=37&showcase=mexe&helper=beginner', 'mobile-done-checklist', async (p) => {
       await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
       await buildMeld(p, ['diamonds-2-d1', 'diamonds-2-d0', 'clubs-2-d1']); // invalid: duplicate suit
       const line = await p.evaluate(() => window.__MEXE__.reasonLine);
-      // one tick/cross per condition, plus the top blocking reason above them
-      expect(line.split('\n').filter((l) => l.startsWith('\u2713') || l.startsWith('\u2715')).length).toBe(3);
-      expect(line).toContain('\u2715'); // the invalid meld line is failing
+      // Portrait's band fits the blocking reason plus the outstanding conditions only: listing the
+      // satisfied ones too overran it and covered either the action bar or the player's own hand.
+      const checks = line.split('\n').filter((l) => l.startsWith('\u2713') || l.startsWith('\u2715'));
+      expect(checks.length).toBeGreaterThan(0);
+      expect(checks.every((l) => l.startsWith('\u2715'))).toBe(true);
+      expect(line).toContain('\u2715');
     });
   });
 });
@@ -1813,7 +2049,7 @@ test.describe('portrait', () => {
 
     await page.goto('/?seed=42&showcase=menu');
     await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-    await tap(135, (207 / 270) * 480); // MenuScene TUTORIAL button, portrait-remapped
+    await tap(135, (168 / 270) * 480); // MenuScene first-run primary CTA, portrait-remapped
     await page.waitForFunction(() => window.__MEXE__.scene === 'tutorial' && window.__MEXE__.tutorialStep === 0);
 
     await tap(93, 150); // tutorial NEXT, portrait panel (r.tutorialPanel band over the table)

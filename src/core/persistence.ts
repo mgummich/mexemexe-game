@@ -40,6 +40,20 @@ export interface Settings {
 export interface Progress {
   lastSeed: number | null;
   tutorialCompleted: boolean;
+  /**
+   * How many real (non-tutorial) games this browser has started. A count, never an identifier:
+   * it lets the local playtest log say "this was the player's second game" without knowing who
+   * the player is. Storing a session id or timestamp here would trip tests/no-telemetry.test.ts,
+   * and rightly so.
+   */
+  gamesStarted: number;
+  /**
+   * Wins and losses against each of the four built-in characters, for local matches. A plain
+   * tally so the results screen can say "you are 3-1 against Dona Cida" — never a score, a streak
+   * bonus, an unlock or a currency (see RESULT-14). Keyed by personality id, so it holds nothing
+   * about any person.
+   */
+  headToHead: Record<string, { wins: number; losses: number }>;
 }
 
 export interface Cosmetics {
@@ -66,7 +80,7 @@ export const AI_EXPLAIN_MODES: readonly AiExplain[] = ['off', 'simple', 'detaile
 function oneOf<T extends string>(allowed: readonly T[], value: unknown, fallback: T): T {
   return allowed.includes(value as T) ? (value as T) : fallback;
 }
-export const DEFAULT_PROGRESS: Progress = { lastSeed: null, tutorialCompleted: false };
+export const DEFAULT_PROGRESS: Progress = { lastSeed: null, tutorialCompleted: false, gamesStarted: 0, headToHead: {} };
 export const DEFAULT_COSMETICS: Cosmetics = { tableTheme: DEFAULT_TABLE_THEME, cardBack: DEFAULT_CARD_BACK, avatar: DEFAULT_AVATAR };
 const DEFAULT_SAVE: Save = { version: 1, settings: { ...DEFAULT_SETTINGS }, progress: { ...DEFAULT_PROGRESS }, cosmetics: { ...DEFAULT_COSMETICS } };
 

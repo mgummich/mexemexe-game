@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-11T18:57:16.964Z",
-  "roomCode": "75FTQ",
+  "generatedAt": "2026-09-12T07:13:18.609Z",
+  "roomCode": "W3W9B",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-11T18:57:09.106Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":4,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-12T07:13:10.519Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":4,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -133,7 +133,7 @@
   "reconnect": {
     "revisionBefore": 2,
     "revisionAfter": 2,
-    "noticeObserved": "Adversário desconectou. Esperando reconectar...",
+    "noticeObserved": "B caiu. Esperando voltar...",
     "screenshots": {
       "opponentDisconnected": "docs/screenshots/mp-opponent-disconnected-a.png",
       "reconnecting": "docs/screenshots/mp-reconnecting-b.png",
@@ -181,7 +181,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "3JWZ6",
+    "code": "3RQJR",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {
@@ -198,7 +198,7 @@
     }
   },
   "mobileTouchJoin": {
-    "code": "S95BK",
+    "code": "CJKMB",
     "screenshot": "docs/screenshots/mp-mobile-join-input.png"
   }
 }

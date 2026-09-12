@@ -21,8 +21,8 @@ import type { Card, DraftState, GameState, Meld, PlayerState, ReasonCode } from 
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import { timerExpireTurn } from '../src/rules/rules';
 import {
-  buildView, DEFAULT_ROOM_SETTINGS, normalizeRoomSettings,
-  type GameView, type RoomPlayerSummary, type RoomSettings, type SubmitTurnMeld,
+  buildView, DEFAULT_ROOM_SETTINGS, normalizeRoomSettings, REACTION_COOLDOWN_MS,
+  type GameView, type RoomPlayerSummary, type RoomSettings, type SubmitTurnMeld, type WinningMove,
 } from '../src/net/protocol';
 
 // No vowels, no 0/O/1/I/L — unambiguous when read aloud or typed.
@@ -71,6 +71,8 @@ interface Seat {
   /** Consecutive turns this seat has lost to the timer or to being absent. Reset by any turn the
    * seat actually takes; `settings.missedTurnLimit` of them ends the match. */
   missedTurns: number;
+  /** When this seat's last accepted reaction was relayed, for the server-side cooldown. */
+  lastReactionAt: number;
 }
 
 interface RoomInternal {
@@ -93,6 +95,9 @@ interface RoomInternal {
   turnBudgetMs: number;
   /** Whether this turn's one-off Mexe extension has already been granted. */
   mexeBonusClaimed: boolean;
+  /** Public summary of the play that ended the match, set the moment it finishes. Read once by
+   * the game_over broadcast and cleared when the room is recycled for a rematch. */
+  winningMove: WinningMove | null;
 }
 
 export type CreateRoomResult =
@@ -170,6 +175,7 @@ export class RoomManager {
       connected: true,
       disconnectedAt: null,
       missedTurns: 0,
+      lastReactionAt: 0,
     };
     const room: RoomInternal = {
       code,
@@ -185,6 +191,7 @@ export class RoomManager {
       turnStartedAt: null,
       turnBudgetMs: 0,
       mexeBonusClaimed: false,
+      winningMove: null,
     };
     this.rooms.set(code, room);
     return { ok: true, code, seat: 0, token };
@@ -206,6 +213,7 @@ export class RoomManager {
       connected: true,
       disconnectedAt: null,
       missedTurns: 0,
+      lastReactionAt: 0,
     };
     room.lastActivityAt = this.now();
     return { ok: true, seat: freeSeat, token, players: this.summarize(room) };
@@ -364,6 +372,11 @@ export class RoomManager {
 
       const next = applyConfirmedTurn(state, draft);
       assertConservation(next);
+      // Hand counts are public in every view, so their difference is public too — this is the
+      // whole "how did they finish" summary, with no card identity in it.
+      if (next.phase === 'finished') {
+        room.winningMove = { seat, cardsPlayed: state.players[seat]!.hand.length - next.players[seat]!.hand.length };
+      }
       room.state = next;
       room.rev += 1;
       room.lastActivityAt = this.now();
@@ -458,6 +471,50 @@ export class RoomManager {
     return advanced;
   }
 
+  /** The public summary of the move that ended `code`'s match, or null (stalemate, or a match
+   * that ended by timeout rather than by a play). */
+  getWinningMove(code: string): WinningMove | null {
+    return this.rooms.get(code)?.winningMove ?? null;
+  }
+
+  /**
+   * ONLINE-23/24: a finished match returns its room to the lobby instead of deleting it, so the
+   * same group can play again on the same code without anyone re-creating and re-sharing a room.
+   * Everything match-scoped is cleared — state, revision, clocks, missed-turn streaks — and every
+   * seat goes back to not-ready, which is what makes the next start an explicit, agreed one
+   * rather than an instant re-deal. The room is still subject to the normal sweep, so an
+   * abandoned table is reaped exactly as before.
+   */
+  recycleForRematch(code: string): boolean {
+    const room = this.rooms.get(code);
+    if (!room) return false;
+    room.state = null;
+    room.rev = 0;
+    room.winningMove = null;
+    room.turnStartedAt = null;
+    room.turnBudgetMs = 0;
+    room.mexeBonusClaimed = false;
+    room.lastActivityAt = this.now();
+    for (const s of room.seats) {
+      if (!s) continue;
+      s.ready = false;
+      s.missedTurns = 0;
+    }
+    return true;
+  }
+
+  /**
+   * Server-side reaction cooldown. The only gate on the relay: a seat that reacted less than
+   * REACTION_COOLDOWN_MS ago is refused, whatever its client believes its own cooldown to be.
+   */
+  claimReaction(code: string, seat: number): boolean {
+    const s = this.rooms.get(code)?.seats[seat];
+    const t = this.now();
+    if (!s || t - s.lastReactionAt < REACTION_COOLDOWN_MS) return false;
+    s.lastReactionAt = t;
+    return true;
+  }
+
   disconnect(code: string, seat: number): void {
     const room = this.rooms.get(code);
     const s = room?.seats[seat];
@@ -476,7 +533,7 @@ export class RoomManager {
         // A reconnecting seat receives the *current* remaining time, not a fresh budget: the
         // clock kept running while it was away, which is what stops a reconnect loop from
         // extending a turn indefinitely.
-        const view = room.state ? buildView(room.state, seat.seat, room.rev, room.settings, this.msLeft(room)) : null;
+        const view = room.state ? buildView(room.state, seat.seat, room.rev, room.settings, this.msLeft(room), room.seats.map((s) => s?.missedTurns ?? 0)) : null;
         return { ok: true, code: room.code, seat: seat.seat, view, players: this.summarize(room) };
       }
     }
@@ -486,7 +543,7 @@ export class RoomManager {
   getView(code: string, seat: number): GameView | null {
     const room = this.rooms.get(code);
     if (!room || !room.state) return null;
-    return buildView(room.state, seat, room.rev, room.settings, this.msLeft(room));
+    return buildView(room.state, seat, room.rev, room.settings, this.msLeft(room), room.seats.map((s) => s?.missedTurns ?? 0));
   }
 
   getPlayers(code: string): RoomPlayerSummary[] | null {

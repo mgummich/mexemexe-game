@@ -13,6 +13,7 @@ import { debugApi, urlSeed } from '../verification/debug-api';
 
 export class MenuScene extends Phaser.Scene {
   private onlineBtn?: PixelButton;
+  private ambience?: Phaser.Sound.BaseSound & { volume: number };
 
   constructor() {
     super('menu');
@@ -33,6 +34,8 @@ export class MenuScene extends Phaser.Scene {
     // a full rebuild/restart the way an orientation flip needs.
     const unsubConn = onConnectivityChange(() => this.onlineBtn?.setEnabled(!isOffline()));
     this.events.once('shutdown', unsubConn);
+    this.startAmbience();
+    this.events.once('shutdown', () => this.ambience?.stop());
     this.rebuild();
     this.markReady();
     const showcase = debugApi.showcase;
@@ -83,62 +86,210 @@ export class MenuScene extends Phaser.Scene {
     return ms * settings.motionScale();
   }
 
+  /** The same boteco room tone GameScene runs, so the menu isn't a silent waiting room. */
+  private startAmbience(): void {
+    if (!this.cache.audio.exists('ambience')) return;
+    try {
+      this.ambience = this.sound.add('ambience', { loop: true, volume: settings.musicVolume() * 0.6 }) as Phaser.Sound.BaseSound & { volume: number };
+      this.ambience.play();
+    } catch {
+      // audio blocked — silent no-op
+    }
+  }
+
   private rebuild(): void {
     this.tweens.killAll();
+    // Idle/teaser/flicker timers from the previous build. The language button rebuilds in place,
+    // so without this each toggle would stack another copy of every repeating timer.
+    this.time.removeAllEvents();
     this.children.removeAll(true);
+    const firstRun = !settings.progress().tutorialCompleted;
+
     coverBackground(this, 'bg-menu');
     this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.35);
+    this.addBulbFlicker();
     // Backdrop so controls read against the busy boteco scene. A near-transparent rectangle with
-    // a hairline stroke read as a debug overlay in playtests — this is a real warm wooden panel:
+    // a hairline stroke (what this replaced) read as a debug overlay in playtests — this is a real warm wooden panel:
     // opaque fill, rounded corners, a tan edge plus a darker inner line for depth.
     // Wide enough to contain the rules/language row (x 146..334) and the online button.
     woodPanel(this, cx(), vy(200), panelW(212), vy(142));
+
+    const brand: Phaser.GameObjects.GameObject[] = [];
+    const tagline: Phaser.GameObjects.GameObject[] = [];
     if (this.textures.exists('logo') && !debugApi.missingAssets.includes('logo')) {
       // logo.png ships at 3x (600x240) like every other sprite — pin it to its logical size
       const logo = this.add.image(cx(), vy(62), 'logo').setDisplaySize(200, 80);
-      // idle bob so the title screen doesn't sit dead still — instant (no tween) under reduced motion
-      this.tweens.add({ targets: logo, y: '+=3', duration: Math.max(1, this.motion(1400)), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+      brand.push(logo);
+      this.idleBob(logo);
+      // The tagline is the brand line, not a stand-in for a missing logo, so it belongs under the
+      // real logo too — which is where the fallback branch always put it.
+      tagline.push(label(this, cx(), vy(106), t('menu.tagline'), 8, '#f7f2e7'));
     } else {
       const title = label(this, cx(), vy(52), t('menu.title'), 32, '#f7d23e');
-      this.tweens.add({ targets: title, y: '+=3', duration: Math.max(1, this.motion(1400)), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
-      label(this, cx(), vy(84), t('menu.tagline'), 8, '#f7f2e7');
+      brand.push(title);
+      this.idleBob(title);
+      tagline.push(label(this, cx(), vy(84), t('menu.tagline'), 8, '#f7f2e7'));
     }
+    this.scheduleCardTeaser();
 
-    new PixelButton(this, cx(), vy(168), t('menu.play'), () => gotoScene(this, 'setup'), {
-      textureBase: 'btn-feito', w: 90, h: 24, size: 10,
-    });
+    // First run leads with the tutorial: a new player who presses the big green button should
+    // land in the 3-minute lesson, not in a match whose rules they have not met. Once the
+    // tutorial is done the pair swaps back, so a returning player's big button is JOGAR again.
+    const primary: Phaser.GameObjects.GameObject[] = [];
+    const secondary: Phaser.GameObjects.GameObject[] = [];
+    const playDirect = (): void => gotoScene(this, 'setup');
+    const learn = (): void => gotoScene(this, 'tutorial');
+    primary.push(new PixelButton(
+      this,
+      cx(),
+      vy(168),
+      firstRun ? t('menu.learn') : t('menu.play'),
+      firstRun ? learn : playDirect,
+      { textureBase: 'btn-feito', w: firstRun ? 128 : 90, h: 24, size: firstRun ? 9 : 10, primary: true },
+    ));
+    if (firstRun) primary.push(label(this, cx(), vy(186), t('menu.learnTime'), 6, '#cbe8bb'));
     // kept at its original logical coords (240, 207) in landscape — e2e clicks this position directly
-    new PixelButton(this, cx(), vy(207), t('menu.tutorial'), () => gotoScene(this, 'tutorial'), {
-      textureBase: 'btn-comprar', w: 90, h: 20, size: 9,
-    });
-    if (!settings.progress().tutorialCompleted) {
-      label(this, cx(), vy(219), t('menu.firstRunHint'), 6, '#c0b8a8');
-    }
+    secondary.push(new PixelButton(
+      this,
+      cx(),
+      vy(207),
+      firstRun ? t('menu.playDirect') : t('menu.tutorial'),
+      firstRun ? playDirect : learn,
+      { textureBase: 'btn-comprar', w: 90, h: 20, size: 9 },
+    ));
 
-    new PixelButton(this, cx() + (182 - 240), vy(234), t('menu.rules'), () => openRulesPanel(this, () => { /* noop */ }), {
+    const utilities: Phaser.GameObjects.GameObject[] = [];
+    utilities.push(new PixelButton(this, cx() + (182 - 240), vy(234), t('menu.rules'), () => openRulesPanel(this, () => { /* noop */ }), {
       textureBase: 'btn-comprar', w: 72, h: 18, size: 6,
-    });
-    new PixelButton(this, cx() + (298 - 240), vy(234), t('menu.language'), () => {
+    }));
+    utilities.push(new PixelButton(this, cx() + (298 - 240), vy(234), t('menu.language'), () => {
       const next = getLocale() === 'pt' ? 'en' : 'pt';
       setLocale(next);
       settings.update({ locale: next });
       this.rebuild();
-    }, { textureBase: 'btn-comprar', w: 72, h: 18, size: 6 });
+    }, { textureBase: 'btn-comprar', w: 72, h: 18, size: 6 }));
 
     // anchored to the top-right corner, not the 480-wide landscape grid
-    new PixelButton(this, view().w - 18, 10, '⚙', () => openSettingsPanel(this, () => { /* noop */ }), {
+    utilities.push(new PixelButton(this, view().w - 18, 10, '⚙', () => openSettingsPanel(this, () => { /* noop */ }), {
       textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.settings'),
-    });
+    }));
 
     // Visually subordinate to JOGAR: smaller, muted, tucked below the rules/language row. The
-    // alpha caveat is a separate small line rather than "(ALPHA)" shouted inside the label —
-    // the old caption read like a warning not to press it.
+    // alpha caveat rides as a small badge beside the button plus the caption line — "(ALPHA)"
+    // shouted inside the label read as a warning not to press it.
     this.onlineBtn = new PixelButton(this, cx(), vy(254), t('menu.online'), () => gotoScene(this, 'online'), {
       textureBase: 'btn-comprar', w: 104, h: 14, size: 6, color: 0x8a7f68,
       onBlocked: () => this.flashOnlineBlocked(),
     });
     this.onlineBtn.setEnabled(!isOffline());
-    label(this, cx(), vy(264), t('menu.onlineTag'), 6, '#a89e8c');
+    utilities.push(this.onlineBtn, ...this.alphaBadge(cx() + 66, vy(254)));
+    utilities.push(label(this, cx(), vy(264), t('menu.onlineTag'), 6, '#a89e8c'));
+
+    this.playEntrance([brand, tagline, primary, secondary, utilities]);
+  }
+
+  /**
+   * Staggered arrival for the menu stack: logo, then tagline, then the main CTA, then everything
+   * else — about 600 ms end to end, so the eye lands on the brand before the buttons exist.
+   * Instant under reduced motion.
+   *
+   * Two things the entrance must not do, both of which cost a player their first press:
+   * the background is present from the first frame rather than camera-faded, because a running
+   * camera fade makes Phaser ignore the fadeOut `gotoScene` starts; and arriving objects start
+   * at ALMOST zero alpha rather than zero, because Phaser skips input hit-testing on fully
+   * transparent objects. Both left every button dead for the length of the entrance.
+   */
+  private playEntrance(groups: Phaser.GameObjects.GameObject[][]): void {
+    const step = this.motion(110);
+    if (step <= 0) return;
+    groups.forEach((group, i) => {
+      for (const obj of group) {
+        const o = obj as Phaser.GameObjects.Image; // every member carries alpha and y
+        const restY = o.y;
+        o.setAlpha(0.01);
+        this.tweens.add({
+          targets: o,
+          alpha: 1,
+          y: { from: restY + 6, to: restY },
+          delay: Math.round(i * step),
+          duration: Math.round(this.motion(200)),
+          ease: 'Quad.out',
+        });
+      }
+    });
+  }
+
+  /**
+   * An occasional nudge rather than a permanent one. The endless yoyo this replaced made the logo
+   * read as a loading spinner; a short dip every few seconds reads as the sign swinging.
+   */
+  private idleBob(target: Phaser.GameObjects.Image | Phaser.GameObjects.Text): void {
+    const dur = this.motion(420);
+    if (dur <= 0) return; // reduced motion: dead still, and no timer left running
+    this.time.addEvent({
+      delay: 5200,
+      loop: true,
+      callback: () => this.tweens.add({ targets: target, y: '+=4', duration: dur, yoyo: true, repeat: 1, ease: 'Sine.inOut' }),
+    });
+  }
+
+  /**
+   * The boteco's string lights, as a warm wash that dips for a moment now and then. A screen-wide
+   * tint rather than per-bulb sprites because the landscape and portrait paintings put their
+   * lights in completely different places — hand-placed glows would miss on one of them.
+   */
+  private addBulbFlicker(): void {
+    if (this.motion(1) <= 0) return;
+    const wash = this.add.rectangle(cx(), cy(), view().w, view().h, 0xffb35c, 0.06)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.time.addEvent({
+      delay: 3400,
+      loop: true,
+      callback: () => {
+        if (Phaser.Math.Between(0, 2) !== 0) return; // most ticks pass quietly
+        this.tweens.add({ targets: wash, alpha: 0.015, duration: 70, yoyo: true, repeat: 1 });
+      },
+    });
+  }
+
+  /** Small gold plate marking ONLINE as work in progress, beside the button rather than inside its label. */
+  private alphaBadge(x: number, y: number): Phaser.GameObjects.GameObject[] {
+    const txt = label(this, x, y, t('menu.alpha'), 6, '#2a1a10');
+    const plate = this.add.rectangle(x, y, txt.width + 6, txt.height, 0xf7d23e, 0.92);
+    txt.setDepth(plate.depth + 1);
+    return [plate, txt];
+  }
+
+  /**
+   * A silent look at what the game is about: three cards sitting as a run regroup into a set and
+   * back. No game state and no input — it plays occasionally in the empty margin beside the
+   * control panel and fades out. Landscape only: portrait has no margin to spare.
+   */
+  private scheduleCardTeaser(): void {
+    const run = ['card-diamonds-5', 'card-diamonds-6', 'card-diamonds-7'];
+    const set = ['card-clubs-7', 'card-hearts-7', 'card-diamonds-7'];
+    if (this.motion(1) <= 0 || view().portrait || !run.every((k) => this.textures.exists(k))) return;
+    this.time.addEvent({ delay: 11_000, loop: true, startAt: 8_000, callback: () => this.playCardTeaser(run, set) });
+  }
+
+  private playCardTeaser(run: string[], set: string[]): void {
+    const originX = (cx() - panelW(212) / 2) / 2; // centre of the free margin left of the panel
+    const cards = run.map((key, i) => this.add.image(originX + (i - 1) * 15, vy(196), key).setDisplaySize(17, 23).setAlpha(0));
+    const flip = (to: string[]): void => {
+      cards.forEach((c, i) => {
+        if (c.texture.key === to[i]) return;
+        this.tweens.add({
+          targets: c, scaleX: 0, duration: this.motion(130), yoyo: true, ease: 'Quad.in',
+          onYoyo: () => c.setTexture(to[i]!).setDisplaySize(17, 23),
+        });
+      });
+    };
+    this.tweens.add({ targets: cards, alpha: 1, duration: this.motion(220) });
+    this.time.delayedCall(1400, () => flip(set));
+    this.time.delayedCall(3000, () => flip(run));
+    this.time.delayedCall(4400, () => this.tweens.add({
+      targets: cards, alpha: 0, duration: this.motion(300), onComplete: () => cards.forEach((c) => c.destroy()),
+    }));
   }
 
   /** Transient reason line under ONLINE when it's tapped while offline — same "always say why"

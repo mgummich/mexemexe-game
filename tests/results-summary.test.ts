@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { playerStats, summarizeMoveKey } from '../src/core/results-summary';
+import { matchStoryKey, playerStats, summarizeMoveKey } from '../src/core/results-summary';
 import type { PlaylogSummary } from '../src/core/playlog';
 import { cardId } from '../src/rules/rules';
 import type { Card, Meld, Rank, Suit } from '../src/rules/types';
@@ -53,5 +53,49 @@ describe('summarizeMoveKey', () => {
     const { key, params } = summarizeMoveKey(before, after, 1);
     expect(key).toBe('game.lastMove.mexeu');
     expect(params).toEqual({ n: 1, m: 1 });
+  });
+});
+
+describe('matchStoryKey', () => {
+  const win = (over: Partial<Parameters<typeof matchStoryKey>[0][number]> = {}) => ({
+    isWinner: true, cardsLeft: 0, cardsPlayed: 7, draws: 1, turnsPlayed: 6, ...over,
+  });
+  const rival = (over: Partial<Parameters<typeof matchStoryKey>[0][number]> = {}) => ({
+    isWinner: false, cardsLeft: 3, cardsPlayed: 4, draws: 1, turnsPlayed: 6, ...over,
+  });
+
+  it('a stalemate is always the pile-out story', () => {
+    expect(matchStoryKey([win({ cardsLeft: 2 }), rival()], true)).toBe('win.story.pileOut');
+  });
+
+  it('a winner who drew far more than the table still won: comeback', () => {
+    expect(matchStoryKey([win({ draws: 5 }), rival({ draws: 1 })], false)).toBe('win.story.comeback');
+  });
+
+  it('a rival left holding one card: close finish', () => {
+    expect(matchStoryKey([win(), rival({ cardsLeft: 1 })], false)).toBe('win.story.close');
+  });
+
+  it('many cards played in few turns: stylish', () => {
+    expect(matchStoryKey([win({ cardsPlayed: 8, turnsPlayed: 4 }), rival()], false)).toBe('win.story.stylish');
+  });
+
+  it('rival still holding most of a hand: runaway', () => {
+    expect(matchStoryKey([win({ cardsPlayed: 7, turnsPlayed: 7 }), rival({ cardsLeft: 5 })], false)).toBe('win.story.runaway');
+  });
+
+  it('an ordinary finish gets no label at all', () => {
+    expect(matchStoryKey([win({ cardsPlayed: 7, turnsPlayed: 7 }), rival({ cardsLeft: 3 })], false)).toBeNull();
+  });
+
+  it('online results (all counters zero) fall back to cards left, never to a made-up story', () => {
+    const zero = { cardsPlayed: 0, draws: 0, turnsPlayed: 0 };
+    expect(matchStoryKey([win(zero), rival({ ...zero, cardsLeft: 5 })], false)).toBe('win.story.runaway');
+    expect(matchStoryKey([win(zero), rival({ ...zero, cardsLeft: 3 })], false)).toBeNull();
+  });
+
+  it('returns null when the results list has no winner or no rival', () => {
+    expect(matchStoryKey([win()], false)).toBeNull();
+    expect(matchStoryKey([], false)).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import type { DraftState, GameState } from '../rules/types';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { ConnStatus } from '../net/client';
-import type { RoomPlayerSummary, RoomSettings, SubmitTurnMeld } from '../net/protocol';
+import type { ReactionId, RoomPlayerSummary, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import type { HelperMode } from '../ui/helpers';
 import { view, type ViewProfile } from '../ui/viewport';
 
@@ -48,6 +48,11 @@ export interface MexeOnlineDebugApi {
   desyncs: () => number;
   /** Verification-only: ask the server for a fresh authoritative snapshot. */
   requestResync: () => void;
+  /** Verification-only: the display name this device joins rooms under (lobby only). */
+  displayName?: () => string;
+  /** Verification-only: send one preset reaction to the room. The server still owns the
+   * cooldown, so a call inside it is dropped there, not here. */
+  react?: (reaction: ReactionId) => void;
 }
 
 /** Results-screen summary (see WinScene) — e2e can assert on it since the win/loss row text and
@@ -57,6 +62,11 @@ export interface MexeResultsSummary {
   stalemate: boolean;
   /** Localized readback of the final confirmed play (e.g. "X played 2 card(s)"); empty on a stalemate. */
   winningMoveText: string;
+  /** i18n key of the single match-story label (see core/results-summary.matchStoryKey), or null
+   * when the match had no story worth labelling. */
+  storyKey: string | null;
+  /** The rendered character reaction line, or '' when no seat has a personality. */
+  reactionText: string;
   results: {
     name: string;
     cardsLeft: number;
@@ -87,6 +97,10 @@ export interface MexeDebugApi {
   /** Verification-only (Phase 16): ?crowd=N — minTableCards passed to buildShowcaseState for the
    * 80+ card crowded-table stress test. Null when the param is absent (default path, unchanged). */
   crowd: number | null;
+  /** True while the opening deal is still flying cards to their places. Card sprites are not yet
+   * where they will settle, so anything reading a live coordinate (e2e taps, drags) must wait for
+   * this to clear. */
+  dealing: boolean;
   /** Current interactive-tutorial step index (0-based), or null outside tutorial mode. */
   tutorialStep: number | null;
   /** Explanation text of the most recent AI decision (`ai:thought`), or null before any AI turn. */
@@ -188,6 +202,7 @@ export const debugApi: MexeDebugApi = {
   state: null,
   showcase: null,
   crowd: null,
+  dealing: false,
   tutorialStep: null,
   lastAiThought: null,
   a11y: { invalidBadges: 0 },

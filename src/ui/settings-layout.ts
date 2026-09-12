@@ -26,10 +26,11 @@ export const ROW_PITCH = 17;
 /** Row order in the main settings panel. Keep in sync with settings-panel.ts's showMain. */
 export enum SettingsRow {
   Mute = 0,
-  Game = 1,
-  Audio = 2,
-  Access = 3,
-  Cosmetics = 4,
+  /** Table theme / card back / avatar — fun, not configuration, so it sits at the top of the list. */
+  Cosmetics = 1,
+  Game = 2,
+  Audio = 3,
+  Access = 4,
   Ai = 5,
   Advanced = 6,
   Close = 7,
@@ -175,4 +176,45 @@ export function cosmeticsRowOffset(index: number): number {
 /** y of cosmetics sub-panel row `index` (0 = table theme, 1 = card back, 2 = avatar). */
 export function cosmeticsRowY(index: number): number {
   return cosmeticsPanelTop() + cosmeticsRowOffset(index);
+}
+
+/**
+ * Rules panel geometry (src/ui/rules-panel.ts). Same rule as the settings rows above: the panel
+ * and the e2e clicks read these formulas instead of each hardcoding a layout snapshot. The
+ * content area is a fixed box (scaled with large text) that scrolls when the copy is taller —
+ * that is what keeps `top` derivable from Node, where measuring rendered text is impossible.
+ */
+const RULES_TITLE_H = 22;
+const RULES_CONTENT_H = 140;
+
+/** Horizontal offset of each rules tab from the panel centre (BASICS left, CONTROLS right). */
+export const RULES_TAB_DX = 46;
+
+/** Button height in the rules panel — a real 24-unit tap target on a coarse pointer. */
+export function rulesBtnH(): number {
+  return view().touch ? 24 : 16;
+}
+
+/** Rules panel box; `hasSecondary` is the extra footer button (full-rules drill-down / back). */
+export function rulesBox(hasSecondary: boolean): {
+  h: number; top: number; tabY: number; contentTop: number; contentAreaH: number;
+  secondaryY: number; closeY: number;
+} {
+  const btnH = rulesBtnH();
+  const tabsH = btnH + 6;
+  const footerH = btnH + 10 + (hasSecondary ? btnH + 4 : 0);
+  const h = Math.round(Math.min(
+    view().h - 16,
+    RULES_TITLE_H + tabsH + RULES_CONTENT_H * settings.fontScale() + footerH,
+  ));
+  const top = cy() - h / 2;
+  return {
+    h,
+    top,
+    tabY: top + RULES_TITLE_H + tabsH / 2 - 3,
+    contentTop: top + RULES_TITLE_H + tabsH,
+    contentAreaH: h - RULES_TITLE_H - tabsH - footerH,
+    secondaryY: top + h - footerH + btnH / 2 + 2,
+    closeY: top + h - btnH / 2 - 6,
+  };
 }

@@ -57,6 +57,19 @@ describe('doneChecklist', () => {
     expect(doneChecklist(1, 0, ['reason.notAMeld'])[1]!.ok).toBe(false);
   });
 
+  it('gives an emptied hand its own two phases, because empty does not mean won', () => {
+    // Rules: the hand emptying never wins on its own — the table must be legal too (END-07).
+    expect(objectivePhase(false, true, true, false, true)).toBe('handEmptyInvalid');
+    expect(objectivePhase(true, false, true, false, true)).toBe('canBater');
+    // ...and an empty hand outranks every other phase it could otherwise be confused with.
+    expect(objectivePhase(false, false, true, true, true)).toBe('handEmptyInvalid');
+  });
+
+  it('leaves a non-empty hand on the ordinary phases', () => {
+    expect(objectivePhase(true, false, true, false, false)).toBe('readyToConfirm');
+    expect(objectivePhase(false, true, true, false, false)).toBe('invalidEdit');
+  });
+
   it('marks the returned-table-card line failed only on reason.cardMissing', () => {
     expect(doneChecklist(1, 0, ['reason.cardMissing'])[2]!.ok).toBe(false);
     expect(doneChecklist(1, 0, ['reason.runGap'])[2]!.ok).toBe(true);
@@ -64,6 +77,17 @@ describe('doneChecklist', () => {
 
   it('formats with a tick/cross per line — the non-color cue', () => {
     const out = formatChecklist(doneChecklist(0, 1, ['reason.noHandCard']), (k) => k);
-    expect(out).toBe('✕ check.handCard\n✕ check.meldsValid\n✓ check.noReturn');
+    expect(out).toBe('✕ check.handCard\n✕ check.meldsUnresolved.one\n✓ check.noReturn');
+  });
+
+  it('counts what is left to close rather than repeating "invalid"', () => {
+    expect(doneChecklist(1, 3, [])[1]!).toEqual({ key: 'check.meldsUnresolved.many', ok: false, params: { n: 3 } });
+    expect(doneChecklist(1, 1, [])[1]!.key).toBe('check.meldsUnresolved.one'); // never "1 melds"
+    expect(doneChecklist(1, 0, [])[1]!.key).toBe('check.meldsValid');
+  });
+
+  it('passes the count through to the translator', () => {
+    const out = formatChecklist(doneChecklist(1, 2, []), (k, p) => `${k}:${p?.n ?? ''}`);
+    expect(out).toContain('✕ check.meldsUnresolved.many:2');
   });
 });

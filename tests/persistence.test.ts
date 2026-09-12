@@ -38,7 +38,7 @@ describe('parseSave', () => {
     const save: Save = {
       version: 1,
       settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner', batterySaver: true, aiDifficulty: 'expert', aiSpeed: 'slow', aiExplain: 'detailed', timerTickSound: false },
-      progress: { lastSeed: 1234, tutorialCompleted: true },
+      progress: { lastSeed: 1234, tutorialCompleted: true, gamesStarted: 3, headToHead: { cida: { wins: 2, losses: 1 } } },
       cosmetics: { tableTheme: 'quintal', cardBack: 'back-4', avatar: 'bia' },
     };
     expect(parseSave(JSON.stringify(save))).toEqual(save);
@@ -133,7 +133,7 @@ describe('loadSave', () => {
   });
 
   it('ignores the old key once a v1 save exists', () => {
-    const save: Save = { version: 1, settings: DEFAULT_SETTINGS, progress: { lastSeed: 5, tutorialCompleted: true }, cosmetics: DEFAULT_COSMETICS };
+    const save: Save = { version: 1, settings: DEFAULT_SETTINGS, progress: { lastSeed: 5, tutorialCompleted: true, gamesStarted: 1, headToHead: {} }, cosmetics: DEFAULT_COSMETICS };
     const storage = memoryStorage({ [SAVE_KEY]: JSON.stringify(save), [OLD_SETTINGS_KEY]: JSON.stringify({ muted: true }) });
     expect(loadSave(storage)).toEqual(save);
     expect(storage.getItem(OLD_SETTINGS_KEY)).not.toBeNull(); // untouched — no migration needed

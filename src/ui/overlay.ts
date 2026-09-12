@@ -26,3 +26,25 @@ export function buildOverlay(
   g.strokeRoundedRect(px - pw / 2, py - h / 2, pw, h, 4);
   return { objs: [dim, g], cx: px, cy: py, top: py - h / 2 };
 }
+
+/**
+ * Overlays currently listening for Esc, innermost last. Only the innermost one reacts, so Esc
+ * backs out one level at a time (quit confirm -> pause menu -> board) instead of every open
+ * overlay closing at once — GameScene's own Esc handler already no-ops while a panel is open.
+ */
+const escStack: { back: () => void }[] = [];
+
+/** Registers `back` as this overlay's Esc action. Returns a dispose fn — call it on close. */
+export function onEscape(scene: Phaser.Scene, back: () => void): () => void {
+  const entry = { back };
+  escStack.push(entry);
+  const onKey = (): void => {
+    if (escStack[escStack.length - 1] === entry) entry.back();
+  };
+  scene.input.keyboard?.on('keydown-ESC', onKey);
+  return () => {
+    scene.input.keyboard?.off('keydown-ESC', onKey);
+    const i = escStack.indexOf(entry);
+    if (i >= 0) escStack.splice(i, 1);
+  };
+}

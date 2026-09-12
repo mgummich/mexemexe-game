@@ -68,6 +68,12 @@ export interface PixelButtonOpts {
   color?: number;
   /** Small dark label shown above the button 400ms after hover starts. */
   tooltip?: string;
+  /**
+   * Main call-to-action of its screen: lifts further on hover, presses deeper, and pops back on
+   * release, so it outweighs the secondary buttons beside it. Purely a feel difference — the
+   * click fires at exactly the same moment either way.
+   */
+  primary?: boolean;
   /** Fires when the button is tapped/clicked while disabled — no sfx, no onClick, just this. */
   onBlocked?: () => void;
 }
@@ -170,8 +176,18 @@ export class PixelButton extends Phaser.GameObjects.Container {
     this.setInteractive({ useHandCursor: true });
     this.setBtnTexture('normal'); // apply palette tint immediately, not just on first hover
 
-    this.on('pointerover', () => this.enabledState && this.setBtnTexture('hover'));
-    this.on('pointerout', () => this.enabledState && this.setBtnTexture('normal'));
+    const hoverScale = opts.primary ? 1.05 : 1;
+    const pressScale = opts.primary ? 0.9 : 0.94;
+    this.on('pointerover', () => {
+      if (!this.enabledState) return;
+      this.setBtnTexture('hover');
+      this.setScale(hoverScale);
+    });
+    this.on('pointerout', () => {
+      if (!this.enabledState) return;
+      this.setBtnTexture('normal');
+      this.setScale(1);
+    });
     if (opts.tooltip) {
       this.on('pointerover', () => {
         this.tooltipTimer = scene.time.delayedCall(400, () => this.showTooltip(opts.tooltip!, h));
@@ -192,7 +208,7 @@ export class PixelButton extends Phaser.GameObjects.Container {
     this.on('pointerdown', () => {
       if (!this.enabledState) return;
       this.setBtnTexture('pressed');
-      this.setScale(0.94);
+      this.setScale(pressScale);
     });
     this.on('pointerup', () => {
       if (!this.enabledState) {
@@ -200,8 +216,15 @@ export class PixelButton extends Phaser.GameObjects.Container {
         return;
       }
       this.setBtnTexture('hover');
-      this.setScale(1);
-      playSfx(scene, 'sfx-click', 0.4);
+      this.setScale(hoverScale);
+      // A primary button springs back instead of snapping, so the press reads as impact. The
+      // click still fires on this same frame — the pop plays over whatever happens next.
+      const pop = opts.primary ? Math.round(140 * settings.motionScale()) : 0;
+      if (pop > 0) {
+        this.setScale(pressScale);
+        scene.tweens.add({ targets: this, scale: hoverScale, duration: pop, ease: 'Back.out' });
+      }
+      playSfx(scene, 'sfx-click', opts.primary ? 0.55 : 0.4);
       onClick();
     });
     scene.add.existing(this);

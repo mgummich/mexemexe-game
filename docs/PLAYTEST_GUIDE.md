@@ -85,6 +85,54 @@ even if nothing broke.
 17. Repeat a short local game with `?lang=en`. Any untranslated or overflowing text? Cosmetics
     labels and AI personality lines included.
 
+## After the session — ask these out loud
+
+Do not skip this part. The log counts *what* happened; only the player can say what it felt like.
+Ask every question, even the ones that look answered, and write the answers down verbatim.
+
+1. **Where did you stop knowing what the game wanted?** (Point at the moment, not the feeling.)
+2. **When did the match start to feel slow?** Which turn, roughly — and was it waiting on the
+   opponent, waiting on an animation, or your own turn taking long? (This is the one question
+   that no counter in the log can answer, and the answer decides whether pacing work is real.)
+3. **Did you ever mean to put a card somewhere and it went somewhere else?** How often?
+4. **Was there a rule you had to be told, that the game should have told you?**
+5. **Would you play a second game right now?** If no, why not? If yes — play it, and note
+   whether the second game started faster than the first.
+
+Attach the session log with the answers. `playlog.summary()` has counters for hesitations, how
+long the table sat unresolved, mis-drop rates and draw streaks; the counters are only readable
+next to what the player said.
+
+## Recording the session
+
+A full-match recording is what makes frame-by-frame review possible after the tester goes home.
+Either of these is fine — pick the one you can start in ten seconds:
+
+- **Any OS screen recorder** (QuickTime, OBS, `⊞`+`G`). Record the browser window only, keep the
+  console closed, and stop recording before the tester types anything personal.
+- **Playwright video**, for a scripted walkthrough rather than a human session. Playwright records
+  video per test when the config asks for it:
+
+  ```ts
+  // playwright.config.ts — use: { ..., video: 'on' }
+  ```
+
+  Videos land in `test-results/` next to the trace. This is **off by default on purpose**: it
+  slows every e2e run and fills the workspace, so turn it on for the run you want to watch and
+  turn it back off. `npx playwright test --trace on` plus `npx playwright show-trace` gives you a
+  step-by-step replay with DOM snapshots without recording video at all.
+
+Recordings stay on the machine that made them. Nothing here uploads anything.
+
+## Repeatable visual checkpoints
+
+The deterministic showcase states are the same board every time, so they double as visual
+regression checkpoints: `?showcase=mexe&seed=77` (and the other showcase values used in
+`e2e/screenshot.spec.ts`) render an identical frame on every run. Capture them before and after a
+visual change and compare the two images — today the e2e suite captures these screenshots but
+does **not** diff them against a stored baseline, so the comparison is a human one for now. See
+"Known limitations".
+
 ## Rule summary
 
 Full rules with worked examples: [GAME_RULES.md](GAME_RULES.md). The short version:
@@ -127,6 +175,11 @@ These are known and in scope for a later phase. Reporting them again is not usef
   and move explanations are separate settings under ADVERSÁRIOS / OPPONENTS.
 - Rate limiting is per connection, not per IP.
 - Pointer-drag is verified in tests through editor hooks rather than synthetic pointer drags.
+- Screenshots of the showcase states are captured by the e2e suite but never diffed against a
+  stored baseline, so they document the UI rather than guard it.
+- The session log is wiped on reload, so timings that span two sessions cannot be measured. The
+  summary does carry `session.gamesStarted` / `session.tutorialCompleted` — counts saved by the
+  browser — so a log can still say "this was their second match, and they did the tutorial first".
 - Cosmetic issues already logged under **Known limitations** in `README.md`.
 
 ## How to report a bug
@@ -168,7 +221,13 @@ Read this before attaching a log — you are the one deciding to send it.
   machine unless you personally export the file and attach it.
 - It records **game events only**: turn numbers and durations, cards-played counts, which rule
   reason codes rejected a play, undo/redo/reset counts, how far you got in the tutorial, and
-  disconnect/reconnect/desync counts.
+  disconnect/reconnect/desync counts. It also records pauses of three seconds or more inside your
+  own turn, how long the table sat in an invalid state and against which rule reasons, the outcome
+  of each card drop (played / moved / returned / rejected / cancelled), hand size, cards left in
+  the deck and how many melds were on the table, and zoom/orientation changes.
+- A drop also records whether the pointer was **coarse or fine** — finger versus mouse, so touch
+  and desktop mis-drop rates can be compared. That is the only thing recorded about your device:
+  no model, no screen size, no browser, no fingerprint.
 - It records **no personal data**. Player names, reconnect tokens and session tokens are stripped
   by an explicit key filter before anything is exported, and this is covered by a test. Timestamps
   are milliseconds since the page loaded, not wall-clock times, so the log cannot say when you
