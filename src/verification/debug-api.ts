@@ -183,6 +183,16 @@ export interface MexeDebugApi {
     /** Verification-only (Phase 14 Wave E): whether a table card sprite currently carries the
      * zoomed-table geometry mask, or null if the card isn't on screen. */
     cardMasked: (cardId: string) => boolean | null;
+    /** Verification-only (D4): count of drag-time visual objects still alive (drop-zone shadow,
+     * zone highlights, table-boundary outline) — 0 whenever nothing is being actively dragged. A
+     * stray non-zero reading with no drag in progress is the orphaned-drag-layer bug (an
+     * orientation flip mid-drag used to leave these behind since renderAll's normal sprite
+     * teardown never owned them). */
+    dragArtifactCount: () => number;
+    /** Verification-only (D13): whether the given card's sprite currently accepts pointer input
+     * (drag/click) at all — null if it isn't on screen. False during the opening deal (and any
+     * other `presentingUntil` hold) while the card is still flying to its place. */
+    cardInteractive: (cardId: string) => boolean | null;
   } | null;
   online: MexeOnlineDebugApi | null;
   /** Results-screen summary — see MexeResultsSummary. Null outside WinScene. */

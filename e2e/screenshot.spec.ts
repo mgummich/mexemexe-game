@@ -2302,6 +2302,73 @@ test('mobile-zoom-survives-flip: zoom level survives an orientation flip mid-dra
   expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
 });
 
+// D4: an orientation flip WHILE a card is actively being dragged (not merely mid-draft, which
+// mobile-zoom-survives-flip above already covers) — relayout()'s renderAll() destroys the dragged
+// sprite outright, so Phaser's own dragend never fires and the drag-time visual layer (shadow,
+// drop-zone highlights, table-boundary outline) used to survive the render as permanent stray UI.
+test('mobile-rotate-mid-drag: an orientation flip while a card is being dragged leaves no orphaned drag layer (D4)', async ({ page }) => {
+  await page.setViewportSize(PHONE_PORTRAIT);
+  await page.goto('/?seed=77&showcase=mexe');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+  await waitForSettledBoard(page);
+
+  const cardId = await page.evaluate(() => window.__MEXE__.state!()!.players[0]!.hand[0]!.id);
+  const from = await page.evaluate((id) => window.__MEXE__.mexe!.cardPos(id), cardId);
+  const [fx, fy] = await toCanvasPoint(page, from!.x, from!.y);
+  await page.mouse.move(fx, fy);
+  await page.mouse.down();
+  // A few small steps to clear Phaser's drag threshold and land the pointer somewhere else on the
+  // table, so this reads as an actual in-flight drag, not a press that never moved.
+  await page.mouse.move(fx, fy - 30, { steps: 8 });
+  // Confirm the drag actually started (shadow + drop-zone highlights live) before flipping —
+  // otherwise a 0 after the flip would prove nothing.
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.dragArtifactCount())).toBeGreaterThan(0);
+
+  await page.setViewportSize(PHONE_LANDSCAPE);
+  await page.waitForFunction(() => window.__MEXE__.viewport().portrait === false, undefined, { timeout: 5000 });
+
+  // The dragged sprite is gone (renderAll rebuilt the board) and Phaser's own dragend never fired
+  // for it — without cancelActiveDrag() in renderAll, the shadow/highlights/outline it created
+  // have no other teardown path and read as a permanent black smear over the relaid-out board.
+  expect(await page.evaluate(() => window.__MEXE__.mexe!.dragArtifactCount())).toBe(0);
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  await page.mouse.up();
+});
+
+// D13: nothing was gated on the opening deal — onTurnStart() (which builds the human's editor and
+// renders the hand as draggable) ran before dealIn() had even computed how long the deal's flight
+// animation takes, so a hand card was draggable and COMPRAR was live while animateBoardFrom was
+// still tweening the just-dealt cards into place. Checked in one browser-side poll (no Node
+// round-trip between the two reads) so the assertion can't race the deal's own ~400-900ms window.
+test('deal-not-interactive: hand cards do not accept input until the opening deal animation lands (D13)', async ({ page }) => {
+  // showcase=game boots straight into a real human-vs-AI match (no ?motion=0 — reduced motion
+  // would make dealIn() return 0 and skip the very window this test has to observe).
+  await page.goto('/?seed=77&showcase=game');
+  const duringDeal = await page.evaluate(
+    () =>
+      new Promise<{ dealing: boolean; interactive: boolean | null; cardId: string }>((resolve) => {
+        const check = (): void => {
+          const api = window.__MEXE__;
+          if (api?.ready && api.mexe) {
+            const cardId = api.state!()!.players[0]!.hand[0]!.id;
+            resolve({ dealing: api.dealing, interactive: api.mexe.cardInteractive(cardId), cardId });
+            return;
+          }
+          requestAnimationFrame(check);
+        };
+        check();
+      }),
+  );
+  // Sanity: this test only proves something if it actually caught the deal in flight.
+  expect(duringDeal.dealing).toBe(true);
+  expect(duringDeal.interactive).toBe(false);
+
+  await waitForSettledBoard(page);
+  expect(await page.evaluate((id) => window.__MEXE__.mexe!.cardInteractive(id), duringDeal.cardId)).toBe(true);
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
 // MOBILE-16: a press that lands on an actual card must still drag that card, never the strip
 // underneath it — proven by watching handScroll stay exactly 0 through a full press-drag-release
 // on a known on-screen card centre (never the shrunk margin enableHandScroll's fix uses).
@@ -2421,6 +2488,9 @@ test('mobile-mexe-editor: tapping the toggle opens the editor; tapping again clo
   await page.setViewportSize(PHONE_PORTRAIT);
   await capture(page, '/?seed=37&showcase=mexe', 'mobile-mexe-editor', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    // D13: the toggle (like every other board control) is disabled until the opening deal's flight
+    // animation actually lands.
+    await waitForSettledBoard(p);
     expect(await p.evaluate(() => window.__MEXE__.mexe!.editorOpen())).toBe(false);
     const meldsBefore = await p.evaluate(() => window.__MEXE__.mexe!.getDraft()!.melds);
     await tapWorld(p, PORTRAIT_REGIONS.mexeToggle.x, PORTRAIT_REGIONS.mexeToggle.y);
@@ -2685,6 +2755,10 @@ test('table-zoomed: a crowded table zoomed in holds fps, and panning the empty t
 test('pan-perf: a multi-tick pan gesture never re-runs the legality analysis mid-drag', async ({ page }) => {
   await capture(page, '/?seed=77&showcase=mexe', 'pan-perf', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    // D13: settle the opening deal first — its own one-shot re-render (which flips hand cards from
+    // non-interactive to interactive once the deal lands, see GameScene.create/dealIn) must not be
+    // mistaken for a mid-gesture analysis re-run if it happens to land during the pan below.
+    await waitForSettledBoard(p);
     await crowdTheTable(p);
 
     const [inX, inY] = toScreen(DESKTOP_REGIONS.zoomIn.x, DESKTOP_REGIONS.zoomIn.y);

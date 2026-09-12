@@ -196,6 +196,13 @@ export class GameScene extends Phaser.Scene {
   private sortMode: SortMode = 'suit';
   private ambienceSound: (Phaser.Sound.BaseSound & { volume: number }) | null = null;
   private pauseOpen = false;
+  /** D12: close() handle for the currently open pause overlay, so relayout() can rebuild it
+   * centred on the new world instead of leaving it stranded over a relaid-out board. */
+  private pauseMenuClose: (() => void) | null = null;
+  /** D12: {locale, largeText, tableTheme} the static UI/board were last built with, so the one
+   * settings.onChange subscriber can tell a layout-affecting change from a volume tweak and only
+   * pay for a relayout() when the board/HUD would actually look wrong otherwise. */
+  private layoutSettingsKey = '';
   private tutorialCompletedRecorded = false;
 
   // online mode — 0 for every local/AI/tutorial game, the server-assigned seat when online
@@ -259,8 +266,17 @@ export class GameScene extends Phaser.Scene {
   /** Kept so a refused FEITO can briefly point at Undo — see checkMyWork. */
   private undoBtn?: PixelButton;
   private resetBtn?: PixelButton;
-  /** While an opponent's move is still being shown, the board is read-only — see presentAiMove. */
+  /** While an opponent's move is still being shown (or the initial deal is still flying in), the
+   * board is read-only — see presentAiMove and dealIn/create. An absolute time.now deadline, so it
+   * must be reset in create() same as every other field a restart must not inherit. */
   private presentingUntil = 0;
+  /** D6: the online turn-clock ticker's handle, so relayout() (buildStaticUi on every
+   * viewport:changed) removes the previous one instead of leaking a second 250ms looper. */
+  private onlineTimerEvent: Phaser.Time.TimerEvent | null = null;
+  /** D16: per-seat handle for the currently on-screen think/emote bubble, so a fast personality
+   * (or an `aiSpeed: instant` / reduced-motion match) never stacks a second bubble on the same
+   * seat before the first's 900ms timer clears it. */
+  private activeEmotes = new Map<number, { objs: Phaser.GameObjects.GameObject[]; timer: Phaser.Time.TimerEvent }>();
   /** Seats whose last card has already been announced, so the moment fires once, not every render. */
   private lastCardAnnounced = new Set<number>();
   /** END-15: seats already given the subtle 2-cards tension cue, so it plays once per entry into
@@ -383,6 +399,14 @@ export class GameScene extends Phaser.Scene {
     this.sceneGone = false;
     this.guardTimer = null;
     this.onlineResyncing = false;
+    // Absolute time.now deadlines from the previous match — a reused scene instance must not
+    // start the next one still "presenting" a stale beat (it always is, in practice, since these
+    // are a few hundred ms and long expired by the time a second match begins, but a field
+    // initializer runs once per page load, not per create()).
+    this.presentingUntil = 0;
+    this.onlineTimerEvent = null;
+    for (const e of this.activeEmotes.values()) e.timer.remove();
+    this.activeEmotes.clear();
     this.resetZoomPan();
     debugApi.scene = config.tutorial ? 'tutorial' : 'game';
     debugApi.seed = config.seed;
@@ -432,36 +456,31 @@ export class GameScene extends Phaser.Scene {
 
     this.r = this.regionsForMode();
 
-    const playerCount = this.store.get().players.length;
-    // Local cosmetic choice — purely visual, never affects rules/protocol. Missing art (theme
-    // not shipped yet) degrades to the default table rather than a broken/blank image.
-    const tableKey = cosmeticTextureKey(TABLE_THEMES, settings.cosmetics().tableTheme, DEFAULT_TABLE_THEME, debugApi.missingAssets);
-    // Cover-fit, not stretch: the table art is authored 480x270, and squashing it into the
-    // 270x480 portrait world smears the baked-in props. Identity in landscape.
-    coverBackground(this, tableKey);
-    // calm the busy tablecloth/props so cards and HUD stay readable
-    this.add.rectangle(this.r.w / 2, this.r.h / 2, this.r.w, this.r.h, 0x1a0f0a, playerCount > 2 ? 0.22 : 0.08);
-    // near-opaque top bar: baked-in table props (mug/etc.) sit right behind this strip in some
-    // backgrounds — keep it solid enough that avatars/names never fight prop art for legibility.
-    this.add.rectangle(this.r.w / 2, this.r.barH / 2, this.r.w, this.r.barH, 0x1a0f0a, 0.88);
-    if (!this.r.portrait) {
-      // Landscape-only felt dressing, both keyed to the 480x270 art: a dim patch behind the
-      // right-hand action column, and a prop covering a paint smudge on the boteco felt. Portrait
-      // reframes that art entirely (and puts the action bar along the bottom), so neither lands
-      // where it was drawn for — the portrait board dims the whole table instead.
-      this.add.rectangle(this.r.w - 36, 226, 72, 96, 0x1a0f0a, 0.55);
-      if (playerCount <= 2) {
-        this.add.image(60, 60, 'prop-dominoes').setDisplaySize(32, 24).setDepth(1);
-      }
-    }
-
+    // D5: the background/dim/top-bar/landscape-dressing chrome used to be built once here in
+    // create() and never touched again — relayout() (buildStaticUi + renderAll on every
+    // viewport:changed) had no handle on it, so a rotation left a cover-fit background sized for
+    // the wrong world, a dim rect centred on the old world's midpoint, and landscape-only felt
+    // dressing stranded in portrait. It now lives in buildStaticUi() itself, tracked in staticUi
+    // like every other piece of chrome, so a flip destroys and rebuilds it same as the buttons.
     this.buildStaticUi();
     this.startAmbience();
+    this.layoutSettingsKey = this.layoutKey();
     this.unsubs.push(
       bus.on('game:won', () => this.onWin()),
       bus.on('turn:start', () => this.onTurnStart()),
       settings.onChange(() => {
         if (this.ambienceSound) this.ambienceSound.volume = settings.musicVolume();
+        // D12: large text, language and table theme are all read once at build time (regionsForMode
+        // sizing, buildStaticUi's t()-built captions, the cover-fit background) and never applied
+        // mid-match before this — the settings panel showed the new value while the board quietly
+        // kept the old scale/locale/felt until some unrelated action happened to trigger a relayout.
+        // relayout() already rebuilds all of that from current settings; only pay for it when one of
+        // those three actually changed, not on every sfx/volume tweak this same handler also fires for.
+        const key = this.layoutKey();
+        if (key !== this.layoutSettingsKey) {
+          this.layoutSettingsKey = key;
+          this.relayout();
+        }
       }),
       bus.on('viewport:changed', () => this.relayout()),
       // App sleep/resume (phone lock, tab switch, app switch): a stranded mid-drag card or a
@@ -497,6 +516,9 @@ export class GameScene extends Phaser.Scene {
       this.unsubs = [];
       this.aiTimer?.remove();
       this.onlinePendingTimer?.remove();
+      this.onlineTimerEvent?.remove();
+      for (const e of this.activeEmotes.values()) e.timer.remove();
+      this.activeEmotes.clear();
       this.ambienceSound?.stop();
       this.resetZoomPan();
       this.game.canvas.removeEventListener('pointercancel', cancelDragOnPointerCancel);
@@ -521,17 +543,31 @@ export class GameScene extends Phaser.Scene {
     setMusicContext('game');
     playSfx(this, 'sfx-deal');
     this.dealPending = true;
+    // D13: onTurnStart() below (which builds the DraftEditor and renders the hand as draggable,
+    // if this is the human's turn) runs before dealIn() even exists to report how long the deal's
+    // flight animation takes — the exact duration used to only become known, and only get applied
+    // to `interactive`, after that first render had already made every hand card draggable and
+    // COMPRAR live mid-tween. A conservative upper bound (worst case ~380ms flight + 24 cards *
+    // 22ms stagger ~= 900ms, see dealIn/MAX_ANIMATED_CARDS/DEAL_STAGGER_MS) gates that first render
+    // correctly; it is corrected to the real duration a few lines down, all inside the same
+    // synchronous tick, so no input can land in between.
+    this.presentingUntil = this.time.now + 1000;
     this.onTurnStart();
     const dealMs = this.dealIn();
     this.dealPending = false;
     // The deal and SUA VEZ are two separate beats: landing them together reads as noise, so the
     // turn announcement waits for the cards to arrive. Reduced motion collapses this to nothing,
-    // because dealIn() then has no flight time to wait for.
+    // because dealIn() then has no flight time to wait for (dealMs === 0 here expires the gate
+    // immediately, same as the announcement).
+    this.presentingUntil = this.time.now + dealMs;
     debugApi.dealing = dealMs > 0;
     if (dealMs > 0) {
       this.time.delayedCall(dealMs, () => {
         this.announceTurn();
         debugApi.dealing = false;
+        // Cards were built non-interactive for the flight above — re-render once it actually lands
+        // so a still-human turn picks up dragging/COMPRAR now that presentingUntil has passed.
+        if (!this.sceneGone && this.store.get().phase === 'playing') this.renderAll();
       });
     }
     debugApi.ready = true;
@@ -1037,6 +1073,15 @@ export class GameScene extends Phaser.Scene {
         if (!s) return null;
         return this.tableContainer != null && s.parentContainer === this.tableContainer;
       },
+      // D4: proves a mid-drag orientation flip (or any other render) never orphans the drag
+      // layer — see cancelActiveDrag's call inside renderAll().
+      dragArtifactCount: () => this.dragZoneHighlights.length + (this.dragShadow ? 1 : 0) + (this.dragTableOutline ? 1 : 0),
+      // D13: sprite.input only exists once makeCardSprite() was told `interactive: true` — the
+      // one true readout of whether a card actually accepts pointer input right now.
+      cardInteractive: (cardId: string) => {
+        const s = this.cardSprites.find((c) => c.getData('cardId') === cardId);
+        return s ? s.input != null : null;
+      },
     };
   }
 
@@ -1215,6 +1260,32 @@ export class GameScene extends Phaser.Scene {
   private buildStaticUi(): void {
     this.staticUi = [];
     this.mexeToggleBtn = undefined; // stale handle after a relayout destroys the previous build
+
+    const playerCount = this.store.get().players.length;
+    // Local cosmetic choice — purely visual, never affects rules/protocol. Missing art (theme
+    // not shipped yet) degrades to the default table rather than a broken/blank image. Read here
+    // (not cached) so a mid-match table-theme change (D12) picks it up on the next relayout.
+    const tableKey = cosmeticTextureKey(TABLE_THEMES, settings.cosmetics().tableTheme, DEFAULT_TABLE_THEME, debugApi.missingAssets);
+    // Cover-fit, not stretch: the table art is authored 480x270, and squashing it into the
+    // 270x480 portrait world smears the baked-in props. Identity in landscape.
+    const bg = coverBackground(this, tableKey);
+    // calm the busy tablecloth/props so cards and HUD stay readable
+    const dim = this.add.rectangle(this.r.w / 2, this.r.h / 2, this.r.w, this.r.h, 0x1a0f0a, playerCount > 2 ? 0.22 : 0.08);
+    // near-opaque top bar: baked-in table props (mug/etc.) sit right behind this strip in some
+    // backgrounds — keep it solid enough that avatars/names never fight prop art for legibility.
+    const topBar = this.add.rectangle(this.r.w / 2, this.r.barH / 2, this.r.w, this.r.barH, 0x1a0f0a, 0.88);
+    this.staticUi.push(bg, dim, topBar);
+    if (!this.r.portrait) {
+      // Landscape-only felt dressing, both keyed to the 480x270 art: a dim patch behind the
+      // right-hand action column, and a prop covering a paint smudge on the boteco felt. Portrait
+      // reframes that art entirely (and puts the action bar along the bottom), so neither lands
+      // where it was drawn for — the portrait board dims the whole table instead.
+      this.staticUi.push(this.add.rectangle(this.r.w - 36, 226, 72, 96, 0x1a0f0a, 0.55));
+      if (playerCount <= 2) {
+        this.staticUi.push(this.add.image(60, 60, 'prop-dominoes').setDisplaySize(32, 24).setDepth(1));
+      }
+    }
+
     // opaque backdrop behind the whole FEITO/COMPRAR/undo cluster: table backgrounds bake props
     // (e.g. a cookie plate in the 4p kitchen) right under this column, and the disabled-reason
     // tooltip must stay readable regardless of what's drawn there.
@@ -1328,7 +1399,11 @@ export class GameScene extends Phaser.Scene {
       this.staticUi.push(this.onlineTimerText);
       // 250 ms, not a per-frame update: the readout has one-second resolution, and a timer event
       // stops with the scene instead of outliving it the way a bare setInterval would.
-      this.time.addEvent({ delay: 250, loop: true, callback: () => this.updateTurnTimer() });
+      // D6: buildStaticUi() re-runs on every viewport:changed (relayout) — without removing the
+      // previous ticker first, each rotation left the old one running forever alongside the new
+      // one, one extra 250ms loop per flip.
+      this.onlineTimerEvent?.remove();
+      this.onlineTimerEvent = this.time.addEvent({ delay: 250, loop: true, callback: () => this.updateTurnTimer() });
       // Backing strip, not bare text: the notice sits over baked-in table props (napkin, mug) and
       // the longer connection sentences were unreadable against them. Hidden entirely while empty,
       // so the strip never shows as a stray blob (see setOnlineNotice).
@@ -1418,6 +1493,13 @@ export class GameScene extends Phaser.Scene {
     this.onlineNoticeText?.setText(message).setVisible(message !== '');
   }
 
+  /** D12: the subset of settings that change how the board/HUD are built (as opposed to how they
+   * sound) — see the settings.onChange subscriber in create(). */
+  private layoutKey(): string {
+    const s = settings.get();
+    return `${s.locale}|${s.largeText}|${settings.cosmetics().tableTheme}`;
+  }
+
   /** Re-lays-out the live scene on an orientation/pointer flip (bus 'viewport:changed') without
    * restarting it — this.store/this.editor/the online client all hold live match state. */
   private relayout(): void {
@@ -1441,6 +1523,15 @@ export class GameScene extends Phaser.Scene {
     this.buildStaticUi();
     this.setOnlineNotice(savedNotice);
     this.renderAll();
+    // D12: the pause overlay (and any panel nested in it) is centred on the world size current at
+    // the moment it was built and never told about a later viewport:changed — left open, it sat
+    // off-centre (and its dim backdrop mis-sized) over the board relayout() just rebuilt. Rebuilding
+    // it fresh is simplest: it drops back to the main pause page, which is a fair trade against
+    // shipping a stranded panel.
+    if (this.pauseOpen && this.pauseMenuClose) {
+      this.pauseMenuClose();
+      this.togglePause();
+    }
   }
 
   /**
@@ -1467,7 +1558,9 @@ export class GameScene extends Phaser.Scene {
     if (!this.editor || this.config.tutorial) return;
     this.hesitationTimer = this.time.delayedCall(HESITATION_MS, () => {
       if (!this.editor) return;
-      const untouched = this.editor.historyLength() === 0;
+      // D10: historyLength() is seeded with one snapshot at construction (the turn's starting
+      // position), so it is never 0 — "untouched" means only that seed snapshot, i.e. length 1.
+      const untouched = this.editor.historyLength() === 1;
       const text = untouched ? t('game.hint.noPlay') : this.blockingReasonText();
       if (!text) return;
       this.hesitationHint = this.add
@@ -1490,8 +1583,9 @@ export class GameScene extends Phaser.Scene {
     this.pauseOpen = true;
     const wasPaused = this.aiTimer?.paused ?? false;
     if (this.aiTimer) this.aiTimer.paused = true;
-    openPauseMenu(this, { onQuit: () => this.quitToMenu(), online: this.online !== null }, () => {
+    this.pauseMenuClose = openPauseMenu(this, { onQuit: () => this.quitToMenu(), online: this.online !== null }, () => {
       this.pauseOpen = false;
+      this.pauseMenuClose = null;
       if (this.aiTimer) this.aiTimer.paused = wasPaused;
     });
   }
@@ -2068,7 +2162,24 @@ export class GameScene extends Phaser.Scene {
 
   private renderAll(): void {
     if (this.tutorialDirector) this.checkTutorialProgress();
+    // D4: every caller that changes the board routes through here, and this destroys and rebuilds
+    // every card sprite below — including one mid-drag (e.g. an orientation flip while dragging).
+    // Phaser's drag plugin only cleans up on its own dragend/pointerup, which a destroyed sprite
+    // can never fire, so without this the drag layer (dragShadow, drop-zone highlights,
+    // snapTargets) survived the render as permanent stray UI. Same restore onAppHidden already
+    // does on backgrounding — cancelActiveDrag() is a no-op when nothing is dragging.
+    this.cancelActiveDrag();
     this.clearGhostPreview();
+    // D7: any real edit (undo/redo/drag/drop) re-renders and would otherwise silently overwrite
+    // the reset-confirm warning text below while leaving resetArmedUntil (and the button's armed
+    // ring) still live — the next single tap on Reset would then wipe the draft with no visible
+    // warning. Disarm here, in the one place every such render passes through: the guard's own
+    // expiry (onReset's delayedCall) and a committed reset both already zero resetArmedUntil
+    // before calling renderAll, so this never fires for those.
+    if (this.resetArmedUntil > this.time.now) {
+      this.resetArmedUntil = 0;
+      this.resetBtn?.setSelected(false);
+    }
     // The tooltip's objects live outside `hud`, and a latched (tapped) one has no pointerout to
     // close it — a re-render must not leave it floating over a board it no longer describes.
     this.hideMeldReasonTooltip();
@@ -2197,7 +2308,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     // buttons + reason
-    if (interactive && this.editor && analysis) {
+    // D13 follow-up: this used to be gated on `interactive` too, which made debugApi.validation/
+    // reasonLine (and the e2e/debug-API mutation helpers that read them right after a
+    // debug-triggered renderAll) go dark for the whole deal-lock window, not just the real
+    // FEITO/COMPRAR buttons the lock is actually about — those two are still gated below.
+    if (this.editor && analysis) {
       const check = analysis.check;
       const becameValid = check.ok && !this.lastValidOk;
       if (becameValid) this.validSince = this.time.now;
@@ -2216,8 +2331,8 @@ export class GameScene extends Phaser.Scene {
         });
       }
       if (becameValid) this.playTableResolved();
-      this.setFeitoEnabled(check.ok && heldLongEnough && this.tutorialAllows({ type: 'feito' }), hand.length === 0);
-      this.comprarBtn.setEnabled(this.tutorialAllows({ type: 'comprar' }));
+      this.setFeitoEnabled(interactive && check.ok && heldLongEnough && this.tutorialAllows({ type: 'feito' }), hand.length === 0);
+      this.comprarBtn.setEnabled(interactive && this.tutorialAllows({ type: 'comprar' }));
       // Always live, in every helper mode: "why is DONE greyed out" is the single question the
       // old expert mode left unanswered, and the button no longer carries a ✕ of its own. Expert
       // still gets less than the others — no legal-target glow, no auto-opened badge tooltip, no
@@ -2428,7 +2543,9 @@ export class GameScene extends Phaser.Scene {
     // A short horizontal shake, not a red flash: the press registered, it just cannot go through.
     const x = this.feitoBtn.x;
     this.tweens.add({ targets: this.feitoBtn, x: x + 2, duration: Math.max(1, Math.round(dur / 4)), yoyo: true, repeat: 2, onComplete: () => this.feitoBtn.setX(x) });
-    if ((this.editor?.historyLength() ?? 0) > 0) {
+    // D10: historyLength() starts at 1 (the turn's seed snapshot) — never 0 — so this always fired
+    // even when undo had nothing to undo. > 1 means at least one real edit has been pushed.
+    if ((this.editor?.historyLength() ?? 1) > 1) {
       this.undoBtn?.setScale(1);
       this.tweens.add({ targets: this.undoBtn, scale: 1.18, duration: dur, yoyo: true, repeat: 1, ease: FEEL.fast.ease });
     }
@@ -2448,7 +2565,8 @@ export class GameScene extends Phaser.Scene {
    */
   private setFeitoEnabled(on: boolean, winning = false): void {
     this.feitoBtn.setEnabled(on);
-    const dormant = !on && (this.editor?.historyLength() ?? 0) === 0;
+    // D10: same historyLength() baseline as above — 1, not 0, means "nothing played yet".
+    const dormant = !on && (this.editor?.historyLength() ?? 1) === 1;
     this.feitoBtn.setAlpha(dormant ? 0.45 : on ? 1 : 0.75);
     this.feitoBtn.setLabel(winning && on ? t('game.bater') : t('game.feito'));
   }
@@ -3268,6 +3386,13 @@ export class GameScene extends Phaser.Scene {
     this.mexeHandPanTargets = [];
     const zones = editorZones(this.r);
     const meldIds = melds.map((m) => m.id);
+    // D8: mirrors renderMeldFocus's own guard for the landscape magnifier — an undo/redo/reset can
+    // make the workspace's meld vanish out from under it. Without this, the workspace kept
+    // pointing at the dead id and DraftEditor.insert (unknown meldId) silently created a brand new
+    // meld the moment the player tried to place a card into what looked like the old one.
+    if (this.mexeEditorMeldId !== undefined && this.mexeEditorMeldId !== null && !meldIds.includes(this.mexeEditorMeldId)) {
+      this.mexeEditorMeldId = undefined;
+    }
     const rows = meldListRows(meldIds);
     const contentH = meldListContentHeight(rows.length);
     this.mexeEditorScroll = clampScroll(this.mexeEditorScroll, contentH, zones.meldList.h);
@@ -4114,6 +4239,17 @@ export class GameScene extends Phaser.Scene {
     const sayLine = lineText !== null && lineText !== previous?.line;
     if (!skipCooldown) this.lastEmoteBySeat.set(playerIndex, { line: sayLine ? lineText : (previous?.line ?? null), at: now });
 
+    // D16: the pre-move "thinking" tell (skipCooldown=true) and the post-move emote share this
+    // same call with independent 900ms self-destroy timers and no handle kept — at `aiSpeed:
+    // instant` or reduced motion the AI can decide before the tell has cleared, stacking a second
+    // bubble on the same seat. Clear whatever is still showing there first.
+    const existing = this.activeEmotes.get(playerIndex);
+    if (existing) {
+      existing.timer.remove();
+      for (const o of existing.objs) o.destroy();
+      this.activeEmotes.delete(playerIndex);
+    }
+
     const x = this.r.opponentX0 + (playerIndex - 1) * this.r.opponentStep;
     const bubble = this.add.image(x + 16, -2, 'emote-bubble').setDisplaySize(18, 16).setDepth(400);
     const icon = this.add.image(x + 16, -3, `emote-${emote}`).setDisplaySize(12, 12).setDepth(401);
@@ -4127,11 +4263,13 @@ export class GameScene extends Phaser.Scene {
       targets.push(line);
     }
     this.tweens.add({ targets, y: '+=28', duration: Math.max(1, this.motion(180)), ease: 'Back.out' });
-    this.time.delayedCall(900, () => {
+    const timer = this.time.delayedCall(900, () => {
       bubble.destroy();
       icon.destroy();
       line?.destroy();
+      this.activeEmotes.delete(playerIndex);
     });
+    this.activeEmotes.set(playerIndex, { objs: targets, timer });
   }
 
 }
