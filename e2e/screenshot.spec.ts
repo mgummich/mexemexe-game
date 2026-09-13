@@ -523,6 +523,53 @@ test('comprar passes turn to AI and game continues', async ({ page }) => {
   });
 });
 
+/**
+ * Two bugs made the board go dead mid-match, both only after enough turns had passed, and both
+ * with the same workaround (tap a card first, then the button answers again):
+ *   - the presentation hold's wake-up timer could fire a frame short of its own `presentingUntil`
+ *     deadline, so the re-render it triggered still built every control disabled and nothing was
+ *     left scheduled to try again (see GameScene.endPresentation);
+ *   - an overflowing hand drew its tail outside the hand strip, straight over the action cluster,
+ *     where a card sprite beats a button in the hit test (see GameScene.clipToHandStrip).
+ * Neither is reachable by a fixture: both need a real match played far enough that the hold, the
+ * clock drift and a 40-card hand actually happen. So this plays one, clicking the real button.
+ */
+test('long-match: COMPRAR stays clickable turn after turn', async ({ page }) => {
+  test.setTimeout(180_000); // a real match played out turn by turn, not a fixture
+  trackConsoleErrors(page);
+  await page.goto('/?seed=77&showcase=mexe');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'game');
+  const r = gameRegions(pickProfile(1280, 720, false));
+  const [cx, cy] = toScreen(r.comprar.x, r.comprar.y);
+
+  for (let turn = 0; turn < 40; turn++) {
+    if (!(await page.evaluate(() => window.__MEXE__.state?.()?.phase === 'playing'))) break;
+    await page.waitForFunction(() => {
+      const s = window.__MEXE__.state?.();
+      return !!s && s.phase === 'playing' && window.__MEXE__.mexe !== null && !window.__MEXE__.dealing;
+    }, undefined, { timeout: 20_000 });
+    // Long enough for the AI-move presentation hold to have expired on its own, which is exactly
+    // the window in which the board used to stay locked.
+    await page.waitForTimeout(700);
+    const before = await page.evaluate(() => window.__MEXE__.state!()!.turn);
+    await page.mouse.click(cx, cy);
+    let advanced = true;
+    try {
+      await page.waitForFunction((t) => (window.__MEXE__.state?.()?.turn ?? t) > t, before, { timeout: 3000 });
+    } catch {
+      advanced = false;
+    }
+    if (!advanced) {
+      // The match can end on the click itself (empty draw pile) — that is not a dead button.
+      const phase = await page.evaluate(() => window.__MEXE__.state!()!.phase);
+      expect(phase, `COMPRAR did nothing on human turn ${turn}`).not.toBe('playing');
+      break;
+    }
+  }
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
+
 test('ai-showcase: comprar hands the turn to the AI, which moves and thinks aloud', async ({ page }) => {
   trackConsoleErrors(page);
   await page.goto('/?seed=77&showcase=mexe');

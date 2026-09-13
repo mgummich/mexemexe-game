@@ -616,6 +616,7 @@ export class GameScene extends Phaser.Scene {
     // because dealIn() then has no flight time to wait for (dealMs === 0 here expires the gate
     // immediately, same as the announcement).
     this.presentingUntil = this.time.now + dealMs;
+    const dealUntil = this.presentingUntil;
     debugApi.dealing = dealMs > 0;
     if (dealMs > 0) {
       this.time.delayedCall(dealMs, () => {
@@ -623,6 +624,7 @@ export class GameScene extends Phaser.Scene {
         debugApi.dealing = false;
         // Cards were built non-interactive for the flight above — re-render once it actually lands
         // so a still-human turn picks up dragging/COMPRAR now that presentingUntil has passed.
+        this.endPresentation(dealUntil);
         if (!this.sceneGone && this.store.get().phase === 'playing') this.renderAll();
       });
     }
@@ -2063,9 +2065,27 @@ export class GameScene extends Phaser.Scene {
     const hold = feelMs(WEIGHT_BAND[weight]);
     if (hold <= 0) return;
     this.presentingUntil = this.time.now + hold * 2;
+    const until = this.presentingUntil;
     this.time.delayedCall(hold * 2, () => {
+      this.endPresentation(until);
       if (!this.sceneGone && this.store.get().phase === 'playing') this.renderAll();
     });
+  }
+
+  /**
+   * Ends the presentation hold a just-fired timer was scheduled for.
+   *
+   * `presentingUntil` is an absolute `time.now` deadline, but the timer that wakes the board up
+   * counts smoothed frame deltas instead — the two clocks drift, so the wake-up can land a frame
+   * *short* of its own deadline. The re-render then still reads the board as presenting, leaves
+   * FEITO/COMPRAR and every card disabled, and nothing is left scheduled to try again: the turn
+   * stays dead until some unrelated input happens to force another render (tapping a card was the
+   * workaround players found). Clearing the deadline in the waker removes the race instead of
+   * re-comparing two clocks that disagree. Guarded on the deadline this timer was created for, so
+   * a newer, longer hold set in the meantime is never cut short.
+   */
+  private endPresentation(until: number): void {
+    if (this.presentingUntil === until) this.presentingUntil = 0;
   }
 
   /**
@@ -2415,6 +2435,10 @@ export class GameScene extends Phaser.Scene {
       if (check.ok && !heldLongEnough && !this.guardTimer) {
         this.guardTimer = this.time.delayedCall(CONFIRM_GUARD_MS, () => {
           this.guardTimer = null;
+          // Same clock drift endPresentation() documents: this can fire a frame short of
+          // `validSince + CONFIRM_GUARD_MS`, which would re-render FEITO still disabled with
+          // nothing left to wake it. Backdate the mark so the guard is unambiguously up.
+          if (this.validSince !== null) this.validSince = Math.min(this.validSince, this.time.now - CONFIRM_GUARD_MS);
           if (this.editor) this.renderAll();
         });
       }
@@ -3426,8 +3450,28 @@ export class GameScene extends Phaser.Scene {
         sprite.setDisplaySize(Number(sprite.getData('baseW')) * 1.18, Number(sprite.getData('baseH')) * 1.18);
         sprite.setData({ ...(sprite.data?.getAll() ?? {}), lastCard: true });
       }
+      this.clipToHandStrip(sprite);
       this.cardSprites.push(sprite);
     });
+  }
+
+  /**
+   * Hides (and un-clicks) a hand card that has scrolled past the ends of the hand strip.
+   *
+   * An overflowing hand keeps MIN_HAND_GAP between cards and scrolls instead of compressing, so
+   * the row is wider than the strip by design — but nothing clipped it, and the tail simply kept
+   * drawing to the right of the strip. In landscape that is exactly where the action cluster
+   * lives, and a hand card (depth 10+) beats a button (depth 0) in the hit test: past roughly
+   * forty cards the spill sat on top of COMPRAR/FEITO and swallowed every click on them, which
+   * looked like the whole board had gone dead. Tapping the spilled card and placing it moved it
+   * off the button again — the workaround players found.
+   */
+  private clipToHandStrip(sprite: Phaser.GameObjects.Image): void {
+    const zone = this.r.handZone;
+    const half = sprite.displayWidth / 2;
+    const inside = sprite.x - half >= zone.x && sprite.x + half <= zone.x + zone.w;
+    sprite.setVisible(inside);
+    if (sprite.input) sprite.input.enabled = inside;
   }
 
   /**
@@ -3457,7 +3501,9 @@ export class GameScene extends Phaser.Scene {
       this.handScroll = next;
       // Reposition only — a re-render mid-gesture would destroy the sprites under the finger.
       for (const sprite of this.cardSprites) {
-        if (sprite.getData('origin') === 'hand') sprite.x -= delta;
+        if (sprite.getData('origin') !== 'hand') continue;
+        sprite.x -= delta;
+        this.clipToHandStrip(sprite);
       }
     });
     this.hud.push(strip);
