@@ -4,6 +4,35 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
+## Unreleased
+
+### Fixed: the board could go dead mid-match
+
+Two independent bugs, both reachable only after a match had run a while, both
+with the same player-visible symptom — no button answers a click until you tap
+a card on the table first.
+
+- **The presentation hold could never end.** `presentingUntil` is an absolute
+  `time.now` deadline, but the `delayedCall` that wakes the board up counts
+  smoothed frame deltas: the wake-up can land a frame short of its own deadline.
+  The re-render it triggered then still read the board as presenting, built
+  FEITO, COMPRAR and every card disabled, and left nothing scheduled to try
+  again — so the turn stayed locked until some unrelated input forced another
+  render. The waker now clears the deadline it was scheduled for
+  (`endPresentation`) instead of re-comparing two clocks that disagree. The
+  FEITO confirm guard had the same shape and the same fix.
+- **A long hand drew on top of the action buttons.** An overflowing hand keeps
+  `MIN_HAND_GAP` between cards and scrolls rather than compressing, so the row
+  is wider than the hand strip by design — but nothing clipped it. In landscape
+  the tail spilled straight over the action cluster, and a card sprite beats a
+  button in the hit test, so past roughly forty cards the spill swallowed every
+  click on COMPRAR/FEITO. Cards outside the strip are now hidden and
+  un-clickable (`clipToHandStrip`), at layout and while scrolling.
+
+Neither is reachable from a fixture, so the regression test plays a real match
+and clicks the real button turn after turn (`long-match: COMPRAR stays
+clickable turn after turn`). It fails on the old code at the third human turn.
+
 ## 1.9.1 — 2026-09-13
 
 ### Repository simplification
