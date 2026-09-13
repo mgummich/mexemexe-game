@@ -825,12 +825,7 @@ export class GameScene extends Phaser.Scene {
           ? t('online.roomClosed')
           : t('online.connectionLost'),
     );
-    this.time.delayedCall(2000, () => {
-      if (!this.online) return; // scene already moved on
-      this.online.client.disconnect();
-      debugApi.online = null;
-      gotoScene(this, 'menu');
-    });
+    this.leaveOnlineToMenu(2000);
   }
 
   private onOnlineOpponentEvent(seat: number, disconnected: boolean): void {
@@ -880,13 +875,19 @@ export class GameScene extends Phaser.Scene {
     if (status === 'closed' || status === 'error') {
       this.setOnlineNotice(t('online.connectionLost'));
       playSfx(this, 'sfx-invalid', 0.5);
-      this.time.delayedCall(2500, () => {
-        if (!this.online) return; // scene already moved on
-        this.online.client.disconnect();
-        debugApi.online = null;
-        gotoScene(this, 'menu');
-      });
+      this.leaveOnlineToMenu(2500);
     }
+  }
+
+  /** Reading the notice takes a moment, so the drop back to the menu is delayed — and skipped
+   * entirely if the scene has already moved on by then. */
+  private leaveOnlineToMenu(delayMs: number): void {
+    this.time.delayedCall(delayMs, () => {
+      if (!this.online) return;
+      this.online.client.disconnect();
+      debugApi.online = null;
+      gotoScene(this, 'menu');
+    });
   }
 
   private startAmbience(): void {
@@ -1650,15 +1651,28 @@ export class GameScene extends Phaser.Scene {
 
   /** Esc key or gear button: pauses the AI turn timer (guarded — tutorial's own timer just resumes when closed) while the pause overlay (Continue/Settings/Help/Quit) is open. */
   private togglePause(): void {
-    if (this.pauseOpen) return;
+    const resume = this.holdForOverlay();
+    if (!resume) return;
+    this.pauseMenuClose = openPauseMenu(this, { onQuit: () => this.quitToMenu(), online: this.online !== null }, () => {
+      this.pauseMenuClose = null;
+      resume();
+    });
+  }
+
+  /**
+   * Opening a full-screen overlay: refuses a second one, and freezes the AI turn timer for as
+   * long as it is up (guarded — the tutorial's own timer just resumes when the overlay closes).
+   * Returns the resume fn to call on close, or null if an overlay is already open.
+   */
+  private holdForOverlay(): (() => void) | null {
+    if (this.pauseOpen) return null;
     this.pauseOpen = true;
     const wasPaused = this.aiTimer?.paused ?? false;
     if (this.aiTimer) this.aiTimer.paused = true;
-    this.pauseMenuClose = openPauseMenu(this, { onQuit: () => this.quitToMenu(), online: this.online !== null }, () => {
+    return () => {
       this.pauseOpen = false;
-      this.pauseMenuClose = null;
       if (this.aiTimer) this.aiTimer.paused = wasPaused;
-    });
+    };
   }
 
   /**
@@ -1814,18 +1828,13 @@ export class GameScene extends Phaser.Scene {
 
   /** H shortcut: opens the rules panel directly (same AI-timer pause/resume dance as the gear/Esc pause menu). */
   private openHelp(): void {
-    if (this.pauseOpen) return;
-    this.pauseOpen = true;
-    const wasPaused = this.aiTimer?.paused ?? false;
-    if (this.aiTimer) this.aiTimer.paused = true;
+    const resume = this.holdForOverlay();
+    if (!resume) return;
     // Someone opening Help in the middle of their own turn almost always has one specific
     // question, and the game already knows the answer — lead with it instead of making them find
     // the right paragraph.
     const hint = this.editor ? this.blockingReasonText() : '';
-    openRulesPanel(this, () => {
-      this.pauseOpen = false;
-      if (this.aiTimer) this.aiTimer.paused = wasPaused;
-    }, hint ? { hint } : undefined);
+    openRulesPanel(this, resume, hint ? { hint } : undefined);
   }
 
   /**
@@ -3728,12 +3737,7 @@ export class GameScene extends Phaser.Scene {
     if (this.selectedCardId !== null) {
       const heldSprite = this.cardSprites.find((s) => s.getData('cardId') === this.selectedCardId);
       if (heldSprite) {
-        this.hud.push(
-          this.add
-            .rectangle(heldSprite.x, heldSprite.y, heldSprite.displayWidth + 4, heldSprite.displayHeight + 4)
-            .setStrokeStyle(2, CHROME_GOLD, 1)
-            .setDepth(260),
-        );
+        this.hud.push(this.selectionRing(heldSprite));
       }
     }
 
@@ -3817,13 +3821,26 @@ export class GameScene extends Phaser.Scene {
     this.dragShadow = null;
     this.clearDropZoneHighlights();
     this.snapTargets = [];
+    this.tweenSpriteHome(sprite);
+    if (this.tableContainer && sprite.active) this.tableContainer.add(sprite);
+  }
+
+  /** Gold ring around the selected card, drawn wherever the card currently is. */
+  private selectionRing(sprite: Phaser.GameObjects.Image): Phaser.GameObjects.Rectangle {
+    return this.add
+      .rectangle(sprite.x, sprite.y, sprite.displayWidth + 4, sprite.displayHeight + 4)
+      .setStrokeStyle(2, CHROME_GOLD, 1)
+      .setDepth(260);
+  }
+
+  /** Springs a card back to the position the last layout gave it — a refused or cancelled drag. */
+  private tweenSpriteHome(sprite: Phaser.GameObjects.Image): void {
     this.tweens.add({
       targets: sprite,
       x: sprite.getData('homeX') as number,
       y: sprite.getData('homeY') as number,
       displayWidth: CARD_W, displayHeight: CARD_H, ease: 'Back.out', duration: 140,
     });
-    if (this.tableContainer && sprite.active) this.tableContainer.add(sprite);
   }
 
   private wireDrag(sprite: Phaser.GameObjects.Image): void {
@@ -4125,12 +4142,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.tutorialAllows(action)) {
       playSfx(this, 'sfx-invalid', 0.15);
       playlog.recordDrop('blocked', origin);
-      this.tweens.add({
-        targets: sprite,
-        x: sprite.getData('homeX') as number,
-        y: sprite.getData('homeY') as number,
-        displayWidth: CARD_W, displayHeight: CARD_H, ease: 'Back.out', duration: 140,
-      });
+      this.tweenSpriteHome(sprite);
       return;
     }
 
@@ -4268,12 +4280,7 @@ export class GameScene extends Phaser.Scene {
         this.hud.push(zone);
       }
       if (heldSprite) {
-        this.hud.push(
-          this.add
-            .rectangle(heldSprite.x, heldSprite.y, heldSprite.displayWidth + 4, heldSprite.displayHeight + 4)
-            .setStrokeStyle(2, CHROME_GOLD, 1)
-            .setDepth(260),
-        );
+        this.hud.push(this.selectionRing(heldSprite));
       }
     }
 

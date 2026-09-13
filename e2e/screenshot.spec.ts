@@ -838,6 +838,17 @@ test('second-match: after quitting to the menu, a new match still lets the AI ta
     before,
     { timeout: 10_000 },
   ); // the AI's turn completed and control returned to the human — the board is interactive again
+
+  // The pause overlay must still open in the second match. `pauseOpen` is a latch: if any exit
+  // path leaves it set, Esc and the gear button do nothing for the rest of the match, and the
+  // board looks fine while being unpausable. Quitting through it is the proof it opened.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  await page.mouse.click(...toScreen(240, PAUSE_QUIT_Y));
+  await page.waitForTimeout(150);
+  await page.mouse.click(...toScreen(240, 172));
+  await page.waitForFunction(() => window.__MEXE__.scene === 'menu', undefined, { timeout: 10_000 });
+
   const errs = await page.evaluate(() => window.__MEXE__.errors);
   expect(errs).toEqual([]);
 });
