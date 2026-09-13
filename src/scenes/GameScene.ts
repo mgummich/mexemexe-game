@@ -360,6 +360,71 @@ export class GameScene extends Phaser.Scene {
   /** Same idea, for the portrait Mexe editor's hand-strip horizontal scroll. */
   private mexeHandPanTargets: Array<Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Transform> = [];
 
+  /**
+   * Everything a reused scene instance must not inherit from the match before it.
+   *
+   * Phaser keeps ONE GameScene instance for the whole page load and calls create() again on every
+   * `scene.start`, so a field initializer runs once per page — not once per match. Any field whose
+   * initial value matters is reset here, and this is the only place that does it, so the list can
+   * be read against the declarations above. Shipped bugs from getting this wrong include a dead
+   * board on every second match (`sceneGone`) and silent last-card/threat moments (the announce
+   * latches below, which had never been cleared at all).
+   *
+   * Deliberately NOT reset: `sortMode`, the player's hand-sort choice, which is a preference and
+   * survives for the session.
+   */
+  private resetForNewMatch(): void {
+    this.sceneGone = false;
+    this.hoverKey = undefined;
+    this.validSince = null;
+    this.lastValidOk = false;
+    this.resetArmedUntil = 0;
+    this.pauseOpen = false;
+    this.pauseMenuClose = null;
+    this.tutorialCompletedRecorded = false;
+
+    // online
+    this.localSeat = this.config.online ? this.config.online.seat : 0;
+    this.pendingMissedLimitClose = false;
+    this.setOnlinePending(false);
+    this.onlineDesyncs = 0;
+    this.onlineResyncing = false;
+    this.lastRejections = [];
+    this.lastTickSecond = -1;
+    this.lastOnlineStatus = null;
+    this.onlineTimerEvent = null;
+
+    // opponent presentation
+    this.lastMoveIds = new Set();
+    this.lastEmoteBySeat.clear();
+    this.lastRenderedActiveSeat = -1;
+    this.lastConfirmedMoveText = null;
+    this.lastAiReason = null;
+    for (const e of this.activeEmotes.values()) e.timer.remove();
+    this.activeEmotes.clear();
+    this.lastCardAnnounced.clear();
+    this.threatAnnounced.clear();
+    // An absolute this.time.now deadline: always long expired by the next match in practice, but
+    // "in practice" is not an invariant.
+    this.presentingUntil = 0;
+    this.guardTimer = null;
+
+    // selection, focus and the portrait Mexe editor
+    this.selectedCardId = null;
+    this.focusIndex = 0;
+    this.focusVisible = false;
+    this.mexeEditorOpen = false;
+    this.mexeEditorMeldId = undefined;
+    this.mexeEditorScroll = 0;
+    this.mexeHandScroll = 0;
+    this.handScroll = 0;
+
+    // table view
+    this.renderedMeldStatus.clear();
+    this.problemHighlightMeldId = null;
+    this.resetZoomPan();
+  }
+
   constructor() {
     super('game');
   }
@@ -381,32 +446,7 @@ export class GameScene extends Phaser.Scene {
           missedTurns: config.online.view.missedTurns,
         }
       : null;
-    this.pendingMissedLimitClose = false;
-    this.localSeat = config.online ? config.online.seat : 0;
-    this.setOnlinePending(false);
-    this.lastRejections = [];
-    this.lastMoveIds = new Set();
-    this.selectedCardId = null;
-    this.focusIndex = 0;
-    this.focusVisible = false;
-    this.mexeEditorOpen = false;
-    this.mexeEditorMeldId = undefined;
-    this.mexeEditorScroll = 0;
-    this.mexeHandScroll = 0;
-    this.resetArmedUntil = 0;
-    this.handScroll = 0;
-    this.sceneGone = false;
-    this.guardTimer = null;
-    this.onlineResyncing = false;
-    // Absolute time.now deadlines from the previous match — a reused scene instance must not
-    // start the next one still "presenting" a stale beat (it always is, in practice, since these
-    // are a few hundred ms and long expired by the time a second match begins, but a field
-    // initializer runs once per page load, not per create()).
-    this.presentingUntil = 0;
-    this.onlineTimerEvent = null;
-    for (const e of this.activeEmotes.values()) e.timer.remove();
-    this.activeEmotes.clear();
-    this.resetZoomPan();
+    this.resetForNewMatch();
     debugApi.scene = config.tutorial ? 'tutorial' : 'game';
     debugApi.seed = config.seed;
     if (!config.tutorial && !config.online) {
@@ -423,7 +463,6 @@ export class GameScene extends Phaser.Scene {
         tutorialCompleted: settings.progress().tutorialCompleted,
       });
     }
-    this.tutorialCompletedRecorded = false;
 
     if (config.online) {
       // Online: never construct AI seats. State comes from the server's redacted view only —
