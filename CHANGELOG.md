@@ -4,6 +4,73 @@ All notable changes to MEXEMEXE!. See `docs/STATUS.json` for the current project
 status, and `docs/archive/STATUS-history.json` for the phase-by-phase log this
 summarizes.
 
+## Unreleased — Online, rotation and late-review fixes
+
+- **Fixed: input is locked while disconnected.** An online client whose socket
+  had dropped still accepted taps, queueing moves against a server that would
+  never see them.
+- **Fixed: the room host is no longer hardcoded to seat 0.** If the host left
+  after a match the lobby became permanently unstartable, because nobody else
+  could ever be host.
+- **Fixed: online results reported a previous local match's numbers.** The
+  results screen read the local match record rather than the online one.
+- **Changed: the reason line and problem cycle sort illegal before incomplete.**
+  The game now names the real contradiction instead of a trivially-fixable lone
+  card.
+- **Changed: chrome gold is separated from status gold.** `#f7d23e` was
+  simultaneously `STATUS_COLOR.incomplete.fill` and the banner, reason line,
+  active-seat ring and win title, so meld status and page furniture were
+  indistinguishable.
+- **Fixed: rotation no longer orphans the drag layer.** A flip mid-drag left a
+  permanent black shadow ellipse and stale drop zones behind, and board chrome
+  is now rebuilt on rotation — the background was cover-fit to the wrong world
+  and a 480x270 dim rect sat inside a 270x480 one.
+- **Fixed: input is gated on the opening deal.** Plus the online timer leaking a
+  ticker per rotation, a reset arm that could desync from its own warning, a
+  portrait workspace pointing at a deleted meld, three branches dead because
+  `historyLength()` is seeded with one snapshot and so is never 0, and
+  layout-affecting settings not applying until some later unrelated action.
+
+## Unreleased — Experience improvement backlog (280/280)
+
+- **Fixed: one meld classifier, one status-to-colour map.** `src/table/snap.ts`
+  now owns `meldStatus` and `STATUS_COLOR`. Two classifiers previously
+  disagreed about `reason.runGap`: dragging a card over a gapped run painted the
+  zone red, and releasing it rendered the same meld gold. An under-length
+  work-in-progress meld no longer carries the same red alarm as a genuine
+  contradiction.
+- **Added: spatial invalid explanations.** A reserved column and dashed
+  placeholder mark a run's missing card, and a ring marks the cards actually in
+  conflict.
+- **Fixed: scene lifecycle state survived shutdown.** `sceneGone`, `guardTimer`
+  and `onlineResyncing` (GameScene) and `dealing` (SetupScene) were field
+  initializers that shutdown mutated and `create()` never restored. Since
+  Phaser reuses one scene instance, `sceneGone` made every second match of a
+  page load hang on the AI's turn with all controls disabled — reachable from
+  rematch, replay and the tutorial handoff.
+- **Changed: the tutorial is Dona Cida's.** Steps cut to a two-sentence bar, a
+  phase name beside the step counter, undo taught at the point of failure, and
+  completion leading into a real first match with beginner helpers.
+- **Added: AI tells, pacing and a visible endgame.** Per-personality pre-move
+  tells, a comeback moment, `matchIntensity` wired to emote cooldown and sfx,
+  and an opponent's winning move shown instead of the board freezing before
+  results.
+- **Fixed: hand scroll for oversized hands.** The gesture existed but was
+  unreachable — the touch hit-pad left no bare strip to grab. Zoom is preserved
+  across an orientation flip, and a density-gated rotate hint was added.
+- **Fixed: results copy competed with the dimmed table behind it.** Opaque
+  backing plates now sit under it; a Mexe time-extension notice and missed-turn
+  warning are wired to server state that already carried them.
+- **Changed: haptics default to off.** They were shipping on by default while
+  documented as opt-in.
+
+## Unreleased — Test and documentation upkeep
+
+- **Fixed: a tap race on WebKit, and CI fps floors rebased.**
+- **Fixed: real-input e2e helpers wait for the opening deal.**
+- **Docs: cross-browser and PWA screenshots refreshed.**
+- **Docs: `AGENTS.md` condensed** from prose lists into the rules themselves.
+
 ## 1.8.0 — 2026-09-11
 
 ### privacy-first production monitoring
