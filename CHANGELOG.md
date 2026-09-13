@@ -4,6 +4,44 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
+## 1.9.1 — 2026-09-13
+
+### Repository simplification
+
+- **Fixed: the second match of a session lost its escalation cues.** The seats
+  whose last-card and 2-cards moments had already fired were remembered across
+  matches, so in a rematch those seats got no cue at all. Phaser reuses one
+  GameScene instance for the whole page load, so a field initializer runs once
+  per page, not once per match — every per-match field now resets in one
+  `resetForNewMatch()`, placed under the declarations it mirrors.
+- **Fixed: a rematch could show the previous match's winning move.** The same
+  cause: `lastConfirmedMoveText` and the AI's explanation line carried over.
+- **Fixed: the pause overlay could be left permanently unopenable.** `pauseOpen`
+  latches; if the scene leaves while the overlay is open by any path other than
+  Quit, the pause button and ESC silently do nothing for the rest of the next
+  match. The second-match e2e now quits through the pause overlay, so a latch
+  fails the suite.
+- **Fixed: "reset all data" left the pre-v1 save key behind.** `resetData()`
+  promised to wipe both keys and wiped one, so `loadSave`'s migration restored
+  the old settings on the next boot. Save storage now has one owner
+  (`src/core/persistence.ts`); `src/core/settings.ts` no longer reaches for
+  `localStorage` itself.
+- **Changed: RulesConfig says only what a game is dealt from.** Seven of its ten
+  fields were read by nothing — group bounds, the unique-suit rule and the
+  needs-a-natural rule are fixed in `analyzeMeld`. Removing them made the
+  `config` argument inert in nine rules and table functions, so it is gone from
+  all of them. Meld legality is unchanged.
+- **Changed: 75 exported symbols are module-private.** Including 22 wire-message
+  interfaces that exist only to build the ClientMessage/ServerMessage unions.
+  Three symbols nothing used at all are deleted, as are six duplicated blocks —
+  among them the server's turn preconditions and publish, now `claimTurn` and
+  `commitTurn`.
+- **Docs: 76 tracked Markdown files (9694 lines) down to 18 (3615).** Completed
+  phase audits, the finished improvements backlog and a status file that
+  restated the changelog are readable in git history instead of in the way of
+  every task. `AGENTS.md` is now a permanent rules file naming one canonical
+  document per concept.
+
 ## 1.9.0 — 2026-09-13
 
 ### Online, rotation and late-review fixes
