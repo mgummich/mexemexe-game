@@ -4,7 +4,9 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased — Repository simplification
+## 1.9.1 — 2026-09-13
+
+### Repository simplification
 
 - **Fixed: the second match of a session lost its escalation cues.** The seats
   whose last-card and 2-cards moments had already fired were remembered across
