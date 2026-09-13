@@ -1,6 +1,6 @@
 import type { DraftState, GameState, Meld } from '../rules/types';
 
-export type StepActionType = 'next' | 'playHandCard' | 'moveTableCard' | 'feito' | 'comprar';
+type StepActionType = 'next' | 'playHandCard' | 'moveTableCard' | 'feito' | 'comprar';
 
 /** One allowed interaction for a step. `cardId` narrows drag actions to a single card. */
 export interface StepAction {
@@ -8,7 +8,7 @@ export interface StepAction {
   cardId?: string;
 }
 
-export interface TutorialStepCtx {
+interface TutorialStepCtx {
   state: GameState;
   draft: DraftState | null;
 }
@@ -16,7 +16,7 @@ export interface TutorialStepCtx {
 /** TUTORIAL-15: the four conceptual phases of a turn — BAIXAR (lay melds), MEXE (rearrange),
  * COMPRAR (draw) and BATER (go out) — surfaced next to the step counter so the lesson's 12
  * internal steps read as belonging to a turn's real shape, not just as an opaque "N/12". */
-export type TutorialPhase = 'baixar' | 'mexer' | 'comprar' | 'bater';
+type TutorialPhase = 'baixar' | 'mexer' | 'comprar' | 'bater';
 
 export interface TutorialStep {
   id: string;

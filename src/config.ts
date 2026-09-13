@@ -5,7 +5,7 @@
  */
 
 /** Location fields resolveWsUrl needs — lets tests pass a fake instead of jsdom. */
-export type LocationLike = Pick<Location, 'protocol' | 'hostname' | 'host' | 'search'>;
+type LocationLike = Pick<Location, 'protocol' | 'hostname' | 'host' | 'search'>;
 
 /**
  * Resolves the game server WebSocket URL. Order, see docs/SELF_HOSTING.md

@@ -7,7 +7,7 @@ import type { HelperMode } from '../ui/helpers';
 import { view, type ViewProfile } from '../ui/viewport';
 
 /** Online-alpha e2e surface — present from OnlineScene entry through the online match, null otherwise. */
-export interface MexeOnlineDebugApi {
+interface MexeOnlineDebugApi {
   status: () => ConnStatus;
   code: () => string | null;
   seat: () => number | null;
@@ -57,7 +57,7 @@ export interface MexeOnlineDebugApi {
 
 /** Results-screen summary (see WinScene) — e2e can assert on it since the win/loss row text and
  * winning-move readback are canvas text, unreadable to Playwright otherwise. Null outside WinScene. */
-export interface MexeResultsSummary {
+interface MexeResultsSummary {
   winnerName: string;
   stalemate: boolean;
   /** Localized readback of the final confirmed play (e.g. "X played 2 card(s)"); empty on a stalemate. */
@@ -78,7 +78,7 @@ export interface MexeResultsSummary {
 }
 
 /** Exposed on window.__MEXE__ for Playwright verification. */
-export interface MexeDebugApi {
+interface MexeDebugApi {
   ready: boolean;
   /** Verification-only: true while the rules panel is open. A screenshot that is *named* for a
    * panel has to be able to prove that panel is the one on screen — the capture used to click a

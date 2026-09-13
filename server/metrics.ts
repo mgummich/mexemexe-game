@@ -19,7 +19,7 @@ export const counters = {
   socketErrorsTotal: 0,
 };
 
-export interface MetricsSnapshot {
+interface MetricsSnapshot {
   connections: number;
   rooms: number;
   maxConnections: number;

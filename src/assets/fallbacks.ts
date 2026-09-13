@@ -13,7 +13,7 @@ export const SUIT_CHAR: Record<Suit, string> = {
   spades: '♠',
 };
 
-export const RANK_LABEL: Record<number, string> = {
+const RANK_LABEL: Record<number, string> = {
   1: 'A', 11: 'J', 12: 'Q', 13: 'K',
 };
 

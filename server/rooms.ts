@@ -31,14 +31,14 @@ const CODE_LENGTH = 5;
 const DEFAULT_DISCONNECT_GRACE_MS = 30_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_ROOMS = 500;
-export const MIN_PLAYERS = 2;
+const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 4;
 /** A fresh room's host is seat 0 (its creator). Host authority is otherwise tracked per-room in
  * `RoomInternal.hostSeat` and moves to the next-occupied seat if the current host leaves (D15) —
  * this constant is only the fallback for a nonexistent room. */
-export const HOST_SEAT = 0;
+const HOST_SEAT = 0;
 
-export interface RoomManagerDeps {
+interface RoomManagerDeps {
   /** Injectable clock, for deterministic tests. */
   now?: () => number;
   /** Injectable room-code generator, for deterministic tests. */
@@ -106,31 +106,31 @@ interface RoomInternal {
   winningMove: WinningMove | null;
 }
 
-export type CreateRoomResult =
+type CreateRoomResult =
   | { ok: true; code: string; seat: number; token: string }
   | { ok: false; error: 'room_limit' };
 
-export type JoinRoomResult =
+type JoinRoomResult =
   | { ok: true; seat: number; token: string; players: RoomPlayerSummary[] }
   | { ok: false; error: 'room_not_found' | 'room_full' | 'game_started' };
 
-export type ReconnectResult =
+type ReconnectResult =
   | { ok: true; code: string; seat: number; view: GameView | null; players: RoomPlayerSummary[] }
   | { ok: false; error: 'invalid_token' };
 
-export type ReadyResult =
+type ReadyResult =
   | { ok: true; started: boolean; players: RoomPlayerSummary[] }
   | { ok: false; error: 'room_not_found' | 'not_member' | 'game_started' };
 
-export type StartResult =
+type StartResult =
   | { ok: true; started: true; players: RoomPlayerSummary[] }
   | { ok: false; error: 'room_not_found' | 'not_host' | 'not_ready' | 'seat_gap' | 'game_started' };
 
-export type RoomSettingsResult =
+type RoomSettingsResult =
   | { ok: true; settings: RoomSettings }
   | { ok: false; error: 'room_not_found' | 'not_host' | 'game_started' };
 
-export type TurnResult =
+type TurnResult =
   | { ok: true; gameOver: boolean }
   | { ok: false; reasons: ReasonCode[] };
 

@@ -3,11 +3,11 @@ import { isValidMeld, isValidRun } from '../rules/rules';
 import type { AiSpeed } from '../core/persistence';
 import type { Card, DraftState, GameState } from '../rules/types';
 
-export type AiDecision =
+type AiDecision =
   | { kind: 'confirm'; draft: DraftState; explanation: string }
   | { kind: 'draw'; explanation: string };
 
-export interface AiPlayer {
+interface AiPlayer {
   decide(state: GameState): AiDecision;
   /** Same decision, but computed in event-loop slices so a long search never blocks a whole
    * frame (see RearrangerAi). Absent on engines whose decide() is already cheap. */

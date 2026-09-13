@@ -32,7 +32,7 @@ const GAP_STEPS = [17, 14, 12, 10]; // CARD_GAP candidates at scale 1, most spac
 export const SCALE_STEPS = [1, 0.85, 0.7, 0.55, 0.45];
 const ROW_GAP_STEPS = [8, 6, 4, 2, 0];
 
-export interface MeldLayoutOptions {
+interface MeldLayoutOptions {
   /** Table zoom (Phase 14 Wave D): stop shrinking at this card scale and let rows run past areaH
    * instead of compressing further. The caller (GameScene) reads the real content height back off
    * the returned positions (max of y + height) and pans a clamped window over it. */

@@ -54,7 +54,7 @@ export function gotoScene(scene: Phaser.Scene, key: string, data?: object): void
   scene.cameras.main.once('camerafadeoutcomplete', () => scene.scene.start(key, data));
 }
 
-export interface PixelButtonOpts {
+interface PixelButtonOpts {
   textureBase?: string; // e.g. 'btn-feito' → uses -normal/-hover/-pressed/-disabled
   w?: number;
   h?: number;

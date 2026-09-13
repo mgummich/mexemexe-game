@@ -401,12 +401,12 @@ export function checkWinner(state: GameState): string | null {
 }
 
 /** Fewest hand cards wins; ties broken by earliest seat index (players array order). */
-export function fewestCardsWinner(state: GameState): string {
+function fewestCardsWinner(state: GameState): string {
   return [...state.players].sort((a, b) => a.hand.length - b.hand.length)[0]!.id;
 }
 
 /** Wire/save envelope version. Bump when GameState's shape changes incompatibly. */
-export const GAME_STATE_VERSION = 2;
+const GAME_STATE_VERSION = 2;
 
 interface GameStateEnvelopeV2 {
   version: 2;

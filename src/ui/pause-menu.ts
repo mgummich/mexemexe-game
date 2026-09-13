@@ -7,7 +7,7 @@ import { openSettingsPanel } from './settings-panel';
 import { view } from './viewport';
 import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
 
-export interface PauseMenuOpts {
+interface PauseMenuOpts {
   onQuit: () => void;
   /** Online match: the server clock keeps running, so this overlay must not claim the game is paused. */
   online?: boolean;

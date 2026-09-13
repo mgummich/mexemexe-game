@@ -1,5 +1,5 @@
 import { helperFlags as computeHelperFlags, type HelperFlags } from '../ui/helpers';
-import { loadSave, SAVE_KEY, type Cosmetics, type HelperMode, type Progress, type Save, type Settings } from './persistence';
+import { clearSave, loadSave, storeSave, type Cosmetics, type HelperMode, type Progress, type Save, type Settings } from './persistence';
 
 export type { Settings };
 
@@ -7,11 +7,7 @@ let save: Save = loadSave();
 const listeners = new Set<() => void>();
 
 function persist(): void {
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  } catch {
-    // storage blocked/full — state just won't survive reload
-  }
+  storeSave(save);
 }
 
 /** Small persisted-state singleton: settings (mute, volumes, reduced motion, language) plus progress (last seed, tutorial completion), backed by the versioned `mexe-save` envelope. */
@@ -58,11 +54,7 @@ export const settings = {
   },
   /** Wipes the save (both keys) and reloads the page with defaults. */
   resetData(): void {
-    try {
-      localStorage.removeItem(SAVE_KEY);
-    } catch {
-      // ignore — nothing to clear
-    }
+    clearSave();
     location.reload();
   },
   onChange(fn: () => void): () => void {

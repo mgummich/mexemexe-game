@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_COSMETICS, DEFAULT_PROGRESS, DEFAULT_SETTINGS, loadSave, OLD_SETTINGS_KEY, parseSave, SAVE_KEY, type Save } from '../src/core/persistence';
+import { clearSave, DEFAULT_COSMETICS, DEFAULT_PROGRESS, DEFAULT_SETTINGS, loadSave, OLD_SETTINGS_KEY, parseSave, SAVE_KEY, storeSave, type Save } from '../src/core/persistence';
 
 /** Minimal in-memory Storage stand-in — avoids pulling jsdom into the node test env. */
 function memoryStorage(initial: Record<string, string> = {}): Storage {
@@ -190,5 +190,25 @@ describe('AI and timer settings', () => {
     const out = parseSave(JSON.stringify({ version: 1, settings: { muted: true } })).settings;
     expect(out.aiDifficulty).toBe(DEFAULT_SETTINGS.aiDifficulty);
     expect(out.timerTickSound).toBe(DEFAULT_SETTINGS.timerTickSound);
+  });
+});
+
+describe('storeSave / clearSave', () => {
+  it('round-trips through storage', () => {
+    const storage = memoryStorage();
+    const save: Save = { version: 1, settings: { ...DEFAULT_SETTINGS, muted: true }, progress: { ...DEFAULT_PROGRESS }, cosmetics: { ...DEFAULT_COSMETICS } };
+    storeSave(save, storage);
+    expect(loadSave(storage)).toEqual(save);
+  });
+
+  it('clearing removes the pre-v1 key too, so the migration cannot resurrect wiped settings', () => {
+    const storage = memoryStorage({
+      [SAVE_KEY]: JSON.stringify({ version: 1, settings: DEFAULT_SETTINGS, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS }),
+      [OLD_SETTINGS_KEY]: JSON.stringify({ muted: true }),
+    });
+    clearSave(storage);
+    expect(storage.getItem(SAVE_KEY)).toBeNull();
+    expect(storage.getItem(OLD_SETTINGS_KEY)).toBeNull();
+    expect(loadSave(storage).settings.muted).toBe(false);
   });
 });

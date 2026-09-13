@@ -35,7 +35,7 @@ export function feelMs(band: FeelBand): number {
 }
 
 /** How much a finished turn changed, as a presentation weight. */
-export type MoveWeight = 'draw' | 'simple' | 'big' | 'huge';
+type MoveWeight = 'draw' | 'simple' | 'big' | 'huge';
 
 /**
  * Weighs a turn from the committed before/after difference only — never from how much was dragged

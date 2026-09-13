@@ -9,10 +9,10 @@ import type { GameState } from '../rules/types';
  * how much draw pile is left), so it can never disagree with what is on screen, and it never
  * touches legality — nothing here can change what is or is not a legal move.
  */
-export type Intensity = 'calm' | 'active' | 'hot';
+type Intensity = 'calm' | 'active' | 'hot';
 
 /** How close a hand is to going out, as a presentation state. */
-export type Threat = 'none' | 'watch' | 'threat' | 'last';
+type Threat = 'none' | 'watch' | 'threat' | 'last';
 
 /** Deck sizes at or below which the pile reads as running out. */
 const DECK_LOW = 12;
@@ -30,7 +30,7 @@ export function threatOf(handSize: number): Threat {
   return 'none';
 }
 
-export interface MatchIntensity {
+interface MatchIntensity {
   level: Intensity;
   /** The smallest hand anyone holds — the thing the whole table is racing against. */
   lowestHand: number;
