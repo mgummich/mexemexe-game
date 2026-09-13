@@ -4,7 +4,9 @@ All notable changes to MEXEMEXE!. See `docs/STATUS.json` for the current project
 status, and `docs/archive/STATUS-history.json` for the phase-by-phase log this
 summarizes.
 
-## Unreleased — Online, rotation and late-review fixes
+## 1.9.0 — 2026-09-13
+
+### Online, rotation and late-review fixes
 
 - **Fixed: input is locked while disconnected.** An online client whose socket
   had dropped still accepted taps, queueing moves against a server that would
@@ -31,7 +33,7 @@ summarizes.
   `historyLength()` is seeded with one snapshot and so is never 0, and
   layout-affecting settings not applying until some later unrelated action.
 
-## Unreleased — Experience improvement backlog (280/280)
+### Experience improvement backlog (280/280)
 
 - **Fixed: one meld classifier, one status-to-colour map.** `src/table/snap.ts`
   now owns `meldStatus` and `STATUS_COLOR`. Two classifiers previously
@@ -64,7 +66,7 @@ summarizes.
 - **Changed: haptics default to off.** They were shipping on by default while
   documented as opt-in.
 
-## Unreleased — Test and documentation upkeep
+### Test and documentation upkeep
 
 - **Fixed: a tap race on WebKit, and CI fps floors rebased.**
 - **Fixed: real-input e2e helpers wait for the opening deal.**
