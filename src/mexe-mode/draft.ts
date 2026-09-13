@@ -166,7 +166,7 @@ export class DraftEditor {
   }
 
   invalidMelds(): MeldReason[] {
-    return getInvalidMeldReasons(this.melds, this.committed.config);
+    return getInvalidMeldReasons(this.melds);
   }
 
   /** invalidMelds() + canConfirm() in one meld-analysis pass — each analyzes every meld

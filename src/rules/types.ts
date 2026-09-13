@@ -25,31 +25,19 @@ export interface PlayerState {
   hand: Card[];
 }
 
-/** House-rule configuration for one game. `DEFAULT_RULES` is the only enabled variant today. */
+/**
+ * What a game is dealt from. Meld legality is NOT configurable — Classic's run and group rules
+ * are fixed in `analyzeMeld`, which is why nothing here reaches the validator.
+ */
 export interface RulesConfig {
-  deckCount: number; // default 2
-  jokersPerDeck: number; // default 2
-  /** Compatibility-only legacy field. Group size is always 3-4. */
-  maxGroupSize: number;
-  groupUniqueSuits: boolean; // default true; retained for saved-config compatibility
-  groupMinSize: number; // default 3; groups always enforce this hard floor
-  groupMaxSize: number; // default 4; groups always enforce this hard ceiling
-  allowAllJokerGroups: boolean; // default false; retained for saved-config compatibility
-  firstMeldMinPoints: number; // default 0 = off (hook only, not enforced by the validator)
-  turnTimerSeconds: number; // default 0 = off
-  handSize: number; // default 7
+  deckCount: number;
+  jokersPerDeck: number;
+  handSize: number;
 }
 
 export const DEFAULT_RULES: RulesConfig = {
   deckCount: 2,
   jokersPerDeck: 2,
-  maxGroupSize: 4,
-  groupUniqueSuits: true,
-  groupMinSize: 3,
-  groupMaxSize: 4,
-  allowAllJokerGroups: false,
-  firstMeldMinPoints: 0,
-  turnTimerSeconds: 0,
   handSize: 7,
 };
 
@@ -107,18 +95,7 @@ export interface JokerAssignment {
 }
 
 export type MeldAnalysis =
-  | { valid: true; kind: 'run'; assignments: JokerAssignment[] }
-  | {
-      valid: true;
-      kind: 'group';
-      assignments: JokerAssignment[];
-      rank: Rank;
-      naturalSuits: Suit[];
-      jokerCount: number;
-      assignedJokers: JokerAssignment[];
-      isValid: true;
-      reasons: [];
-    }
+  | { valid: true; kind: 'run' | 'group'; assignments: JokerAssignment[] }
   | { valid: false; reason: ReasonCode };
 
 export class RulesError extends Error {

@@ -1,6 +1,5 @@
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
-import type { Card, DraftState, JokerAssignment, ReasonCode, RulesConfig } from '../rules/types';
-import { DEFAULT_RULES } from '../rules/types';
+import type { Card, DraftState, JokerAssignment, ReasonCode } from '../rules/types';
 
 export type SnapStatus = 'legal' | 'incomplete' | 'illegal';
 
@@ -49,30 +48,26 @@ export const STATUS_COLOR: Record<SnapStatus, { fill: number; text: string }> = 
   illegal: { fill: 0xd83a3a, text: '#ff6b5e' },
 };
 
-function targetFor(meldId: string | null, cards: readonly Card[], card: Card, config: RulesConfig): SnapTarget {
+function targetFor(meldId: string | null, cards: readonly Card[], card: Card): SnapTarget {
   const next = [...cards, card].map((c) => ({ ...c }));
-  const analysis = analyzeMeld(next, config);
+  const analysis = analyzeMeld(next);
   const reason = analysis.valid ? null : analysis.reason;
   return {
     meldId,
     status: meldStatus(reason),
     reason,
-    preview: sortMeldCards(next, config),
+    preview: sortMeldCards(next),
     jokerAssignments: analysis.valid ? analysis.assignments : [],
   };
 }
 
-export function computeSnapTargets(
-  draft: DraftState,
-  card: Card,
-  config: RulesConfig = DEFAULT_RULES,
-): SnapTarget[] {
+export function computeSnapTargets(draft: DraftState, card: Card): SnapTarget[] {
   const targets: SnapTarget[] = [];
   for (const meld of draft.melds) {
     if (meld.cards.some((c) => c.id === card.id)) continue;
-    targets.push(targetFor(meld.id, meld.cards, card, config));
+    targets.push(targetFor(meld.id, meld.cards, card));
   }
-  targets.push(targetFor(null, [], card, config));
+  targets.push(targetFor(null, [], card));
   return targets;
 }
 

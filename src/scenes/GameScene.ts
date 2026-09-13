@@ -130,9 +130,9 @@ function jokerLabelsOf(assignments: readonly JokerAssignment[]): Map<string, str
  * that this meld is worth asking about (an illegal meld has no role to show); analyzeMeld stays
  * the only thing that ever decides what a joker is standing in for.
  */
-function jokerLabelsForMeld(meld: Meld, config: RulesConfig, resolvable: boolean): Map<string, string> {
+function jokerLabelsForMeld(meld: Meld, resolvable: boolean): Map<string, string> {
   if (!resolvable || !meld.cards.some((c) => c.isJoker)) return new Map();
-  const analysis = analyzeMeld(meld.cards, config);
+  const analysis = analyzeMeld(meld.cards);
   return analysis.valid ? jokerLabelsOf(analysis.assignments) : new Map();
 }
 
@@ -1165,7 +1165,7 @@ export class GameScene extends Phaser.Scene {
       draft.melds.flatMap((m) => m.cards).find((c) => c.id === cardId) ??
       this.editor.getRemainingHand().find((c) => c.id === cardId);
     if (!card) return [];
-    return computeSnapTargets(draft, card, this.store.get().config);
+    return computeSnapTargets(draft, card);
   }
 
   /**
@@ -2852,10 +2852,6 @@ export class GameScene extends Phaser.Scene {
     return p ? `avatar-${p}` : 'avatar-player';
   }
 
-  private sortedForDisplay(meld: Meld, config: RulesConfig): Card[] {
-    return sortMeldCards(meld.cards, config);
-  }
-
   /** R8: the one call site for invalidMeldDetail — layoutMelds (landscape) and renderMexeEditor's
    * workspace (touch editor) both route through this instead of each calling the pure function
    * directly, so the two can never quietly drift apart on what "the conflicting card(s)"/"the
@@ -2884,7 +2880,7 @@ export class GameScene extends Phaser.Scene {
     const detailByMeld = new Map<string, InvalidDetail>();
     for (const m of melds) {
       const raw = rawInvalid.find((r) => r.meldId === m.id)?.reason;
-      const detail = this.meldDetailFor(this.sortedForDisplay(m, config), raw);
+      const detail = this.meldDetailFor(sortMeldCards(m.cards), raw);
       if (detail) detailByMeld.set(m.id, detail);
     }
     const inputs: MeldLayoutInput[] = melds.map((m) => ({
@@ -2963,7 +2959,7 @@ export class GameScene extends Phaser.Scene {
       const pad = MELD_PAD * scale;
       const cx = this.r.tableLeft + pos.x;
       const cy = this.r.tableTop + 6 + pos.y - this.tablePan;
-      const cards = this.sortedForDisplay(meld, config);
+      const cards = sortMeldCards(meld.cards);
 
       const zoneRect = new Phaser.Geom.Rectangle(cx, cy - pad, pos.width, pos.height);
       this.meldZones.push({ meldId: meld.id, rect: zoneRect });
@@ -3011,7 +3007,7 @@ export class GameScene extends Phaser.Scene {
       // Joker hint: never derive this ourselves — analyzeMeld is the single source of truth for
       // what a joker stands for. Skipped only on a genuine contradiction (task requirement: never
       // invent an assignment there) — an incomplete meld can still legitimately resolve one.
-      const jokerLabels = jokerLabelsForMeld(meld, config, status !== 'illegal');
+      const jokerLabels = jokerLabelsForMeld(meld, status !== 'illegal');
       // colorblind-safe shape channel: solid stroke for valid, dashed for incomplete/illegal — not hue alone.
       const glow = applyMask(
         this.add
@@ -3257,13 +3253,13 @@ export class GameScene extends Phaser.Scene {
       this.focusedMeldId = null;
       return;
     }
-    const cards = this.sortedForDisplay(meld, config);
+    const cards = sortMeldCards(meld.cards);
     const isInvalid = invalidReasons.has(meld.id);
     // R1/R2: same single classifier every other renderer now uses — never a second illegal/
     // incomplete judgement of its own.
     const rawReason = rawInvalid.find((r) => r.meldId === meld.id)?.reason ?? null;
     const status: SnapStatus = isInvalid ? meldStatus(rawReason) : 'legal';
-    const jokerLabels = jokerLabelsForMeld(meld, config, !isInvalid);
+    const jokerLabels = jokerLabelsForMeld(meld, !isInvalid);
 
     const cw = CARD_W * 1.6;
     const ch = CARD_H * 1.6;
@@ -3544,7 +3540,7 @@ export class GameScene extends Phaser.Scene {
       }
       const meld = melds.find((m) => m.id === row.meldId);
       if (!meld) continue;
-      const cards = this.sortedForDisplay(meld, config);
+      const cards = sortMeldCards(meld.cards);
       cards.forEach((card, i) => {
         const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
         const img = this.add.image(zones.meldList.x + 8 + cw / 2 + i * (cw * 0.7), y + MELD_LIST_ROW_H / 2, key).setDisplaySize(cw, ch).setDepth(2);
@@ -3579,7 +3575,7 @@ export class GameScene extends Phaser.Scene {
       this.hud.push(label(this, wsRect.centerX, wsRect.centerY + 6, t('mobile.editorSelectMeld'), 8, '#b8b0a0'));
     } else {
       const wsMeld = melds.find((m) => m.id === this.mexeEditorMeldId);
-      const wsCards = wsMeld ? this.sortedForDisplay(wsMeld, config) : [];
+      const wsCards = wsMeld ? sortMeldCards(wsMeld.cards) : [];
       // B1: this workspace card row is the touch editor's only view of a meld — the conflict ring,
       // reserved gap column and missing-slot placeholder previously lived only in layoutMelds()
       // (the landscape/desktop path), so cycleProblem() could step here (mexeEditorMeldId) and show

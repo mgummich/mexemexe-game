@@ -90,7 +90,7 @@ function hasDuplicateIds(cards: readonly Card[]): boolean {
   return new Set(cards.map((c) => c.id)).size !== cards.length;
 }
 
-function analyzeRun(cards: readonly Card[], _config: RulesConfig): MeldAnalysis {
+function analyzeRun(cards: readonly Card[]): MeldAnalysis {
   if (hasDuplicateIds(cards)) return { valid: false, reason: 'reason.duplicateCard' };
   if (cards.length < 3) return { valid: false, reason: 'reason.meldTooSmall' };
   const naturals = cards.filter((c) => !c.isJoker);
@@ -156,7 +156,7 @@ function analyzeRun(cards: readonly Card[], _config: RulesConfig): MeldAnalysis 
 }
 
 /** Group analysis: exactly 3-4 cards, same rank, unique natural suits, at most 1 joker filling an unused suit. */
-function analyzeGroup(cards: readonly Card[], _config: RulesConfig): MeldAnalysis {
+function analyzeGroup(cards: readonly Card[]): MeldAnalysis {
   if (hasDuplicateIds(cards)) return { valid: false, reason: 'reason.duplicateCard' };
   if (cards.length < 3) return { valid: false, reason: 'reason.meldTooSmall' };
   if (cards.length > 4) return { valid: false, reason: 'reason.groupTooLarge' };
@@ -171,51 +171,41 @@ function analyzeGroup(cards: readonly Card[], _config: RulesConfig): MeldAnalysi
   const unusedSuits = SUITS.filter((suit) => !naturalSuits.includes(suit));
   if (jokers.length > unusedSuits.length) return { valid: false, reason: 'reason.jokerUnassignable' };
   const assignments: JokerAssignment[] = jokers.map((j, index) => ({ cardId: j.id, suit: unusedSuits[index]!, rank }));
-  return {
-    valid: true,
-    kind: 'group',
-    assignments,
-    rank,
-    naturalSuits,
-    jokerCount: jokers.length,
-    assignedJokers: assignments,
-    isValid: true,
-    reasons: [],
-  };
+  return { valid: true, kind: 'group', assignments };
 }
 
 /** Single source of truth for meld validity: tries run, then group. */
-export function analyzeMeld(cards: readonly Card[], config: RulesConfig = DEFAULT_RULES): MeldAnalysis {
-  const run = analyzeRun(cards, config);
+export function analyzeMeld(cards: readonly Card[]): MeldAnalysis {
+  const run = analyzeRun(cards);
   if (run.valid) return run;
-  const group = analyzeGroup(cards, config);
+  const group = analyzeGroup(cards);
   if (group.valid) return group;
   const naturals = cards.filter((c) => !c.isJoker);
   const allShareRank = naturals.length > 0 && naturals.every((c) => c.rank === naturals[0]!.rank);
   return allShareRank || naturals.length === 0 ? group : run;
 }
 
-export function isValidRun(cards: readonly Card[], config: RulesConfig = DEFAULT_RULES): boolean {
-  return analyzeRun(cards, config).valid;
+export function isValidRun(cards: readonly Card[]): boolean {
+  return analyzeRun(cards).valid;
 }
 
-export function isValidGroup(cards: readonly Card[], config: RulesConfig = DEFAULT_RULES): boolean {
-  return analyzeGroup(cards, config).valid;
+export function isValidGroup(cards: readonly Card[]): boolean {
+  return analyzeGroup(cards).valid;
 }
 
-export function isValidMeld(cards: readonly Card[], config: RulesConfig = DEFAULT_RULES): boolean {
-  return analyzeMeld(cards, config).valid;
+export function isValidMeld(cards: readonly Card[]): boolean {
+  return analyzeMeld(cards).valid;
 }
 
-export function validateTable(melds: readonly Meld[], config: RulesConfig = DEFAULT_RULES): boolean {
-  return getInvalidMeldReasons(melds, config).length === 0;
+export function validateTable(melds: readonly Meld[]): boolean {
+  return getInvalidMeldReasons(melds).length === 0;
 }
 
-export function getInvalidMeldReasons(melds: readonly Meld[], config: RulesConfig = DEFAULT_RULES): MeldReason[] {
+export function getInvalidMeldReasons(melds: readonly Meld[]): MeldReason[] {
   const out: MeldReason[] = [];
   const seenCardIds = new Set<string>();
   for (const m of melds) {
-    const result = analyzeMeld(m.cards, config);
+    const result = analyzeMeld(m.cards);
     if (!result.valid) out.push({ meldId: m.id, reason: result.reason });
     if (m.cards.some((card) => seenCardIds.has(card.id))) {
       if (!out.some((entry) => entry.meldId === m.id && entry.reason === 'reason.duplicateCard')) {
@@ -239,10 +229,10 @@ function countIds(cards: readonly Card[]): Map<string, number> {
  *  - every draft card comes from committed table or active player's hand (no foreign cards)
  *  - every committed table card is still on the draft table (no return to hand)
  *  - at least one card added from hand
- *  - all draft melds valid (per state.config)
+ *  - all draft melds valid
  *
  * `invalidMeldReasons`, when given, is reused instead of recomputed — pass the caller's own
- * `getInvalidMeldReasons(draft.melds, state.config)` result to avoid analyzing every meld twice.
+ * `getInvalidMeldReasons(draft.melds)` result to avoid analyzing every meld twice.
  */
 export function canConfirmTurn(state: GameState, draft: DraftState, invalidMeldReasons?: MeldReason[]): ConfirmResult {
   const reasons: ReasonCode[] = [];
@@ -277,7 +267,7 @@ export function canConfirmTurn(state: GameState, draft: DraftState, invalidMeldR
   const playedFromHand = draftCards.filter((c) => handIds.has(c.id));
   if (playedFromHand.length === 0) reasons.push('reason.noHandCard');
 
-  for (const r of invalidMeldReasons ?? getInvalidMeldReasons(draft.melds, state.config)) {
+  for (const r of invalidMeldReasons ?? getInvalidMeldReasons(draft.melds)) {
     if (!reasons.includes(r.reason)) reasons.push(r.reason);
   }
 
@@ -301,7 +291,7 @@ export function applyConfirmedTurn(state: GameState, draft: DraftState): GameSta
   const next: GameState = {
     ...state,
     players,
-    table: draft.melds.map((m) => ({ id: m.id, cards: sortMeldCards(m.cards, state.config) })),
+    table: draft.melds.map((m) => ({ id: m.id, cards: sortMeldCards(m.cards) })),
     turn: state.turn + 1,
     activePlayerIndex: nextPlayerIndex(state),
   };
@@ -350,8 +340,8 @@ function runAceMode(naturals: readonly Card[], n: number): AceMode | null {
  * (unchanged — group jokers have no ordering to reveal). Invalid/unanalyzable: fallback sort;
  * must never throw.
  */
-export function sortMeldCards(cards: readonly Card[], config: RulesConfig): Card[] {
-  const analysis = analyzeMeld(cards, config);
+export function sortMeldCards(cards: readonly Card[]): Card[] {
+  const analysis = analyzeMeld(cards);
   if (!analysis.valid || analysis.kind === 'group') return fallbackSort(cards);
 
   const naturals = cards.filter((c) => !c.isJoker);
@@ -457,7 +447,7 @@ export function deserializeGameState(json: string): GameState {
   if (all.length !== expectedTotal || ids.size !== expectedTotal) {
     throw new RulesError('corrupt save: card conservation violated', 'corruptSave');
   }
-  if (!validateTable(s.table, s.config)) {
+  if (!validateTable(s.table)) {
     throw new RulesError('corrupt save: invalid table', 'corruptSave');
   }
   return s;

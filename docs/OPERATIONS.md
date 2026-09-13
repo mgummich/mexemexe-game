@@ -311,8 +311,7 @@ console errors and zero server stderr lines.
 - **No online results summary.** The win screen's per-player stats are local-only; the
   client never observes the other seats' turn history online, so the line is hidden rather
   than faked. Fixing it needs a protocol change.
-- **`turnTimerSeconds` (the rules config) is still a declared, unimplemented, off-by-default
-  hook** — local play is never on a clock. The online turn timer is a separate, server-owned
-  room setting (`MEXE_DISCONNECT_GRACE_MS` seeds a new room's reconnect grace; the host picks
-  the preset in the lobby). See `docs/MULTIPLAYER.md` §7b.
+- **Local play is never on a clock.** The turn timer exists online only: a server-owned room
+  setting (`MEXE_DISCONNECT_GRACE_MS` seeds a new room's reconnect grace; the host picks the
+  preset in the lobby). See `docs/MULTIPLAYER.md` §7b.
 - **No persistence of any kind** — no accounts, no cloud saves, no server-side history.
