@@ -354,8 +354,12 @@ export class RoomManager {
     return { ok: true, started: true, players: this.summarize(room) };
   }
 
-  /** Full validation path per docs/MULTIPLAYER.md §5. */
-  submitTurn(code: string, seat: number, rev: number, melds: SubmitTurnMeld[]): TurnResult {
+  /**
+   * The preconditions every turn action shares: the room exists and is mid-match, no other action
+   * for it is already in flight, and the caller is the active seat at the revision it believes in.
+   * A caller that gets `ok` must set `room.processing` and clear it in a `finally`.
+   */
+  private claimTurn(code: string, seat: number, rev: number): { ok: true; room: RoomInternal; state: GameState } | { ok: false; reasons: ReasonCode[] } {
     const room = this.rooms.get(code);
     if (!room || !room.state) return { ok: false, reasons: ['reason.notYourTurn'] };
     if (room.processing) return { ok: false, reasons: ['reason.alreadySubmitted'] };
@@ -363,6 +367,29 @@ export class RoomManager {
     if (state.phase !== 'playing') return { ok: false, reasons: ['reason.notYourTurn'] };
     if (state.activePlayerIndex !== seat) return { ok: false, reasons: ['reason.notYourTurn'] };
     if (rev !== room.rev) return { ok: false, reasons: ['reason.staleRevision'] };
+    return { ok: true, room, state };
+  }
+
+  /**
+   * Publishes the state a turn action produced. Card conservation is checked before anything is
+   * stored, so a rules bug can never be broadcast as authoritative. A turn actually taken clears
+   * the seat's missed-turn streak, so the limit only fires on *consecutive* misses.
+   */
+  private commitTurn(room: RoomInternal, seat: number, next: GameState): TurnResult {
+    assertConservation(next);
+    room.state = next;
+    room.rev += 1;
+    room.lastActivityAt = this.now();
+    room.seats[seat]!.missedTurns = 0;
+    this.startTurnClock(room);
+    return { ok: true, gameOver: next.phase === 'finished' };
+  }
+
+  /** Full validation path per docs/MULTIPLAYER.md §5. */
+  submitTurn(code: string, seat: number, rev: number, melds: SubmitTurnMeld[]): TurnResult {
+    const claim = this.claimTurn(code, seat, rev);
+    if (!claim.ok) return claim;
+    const { room, state } = claim;
 
     room.processing = true;
     try {
@@ -399,38 +426,21 @@ export class RoomManager {
       if (next.phase === 'finished') {
         room.winningMove = { seat, cardsPlayed: state.players[seat]!.hand.length - next.players[seat]!.hand.length };
       }
-      room.state = next;
-      room.rev += 1;
-      room.lastActivityAt = this.now();
-      // A turn actually taken clears the seat's missed-turn streak, so the limit only ever fires
-      // on *consecutive* misses rather than accumulating over a long match.
-      room.seats[seat]!.missedTurns = 0;
-      this.startTurnClock(room);
-      return { ok: true, gameOver: next.phase === 'finished' };
+      return this.commitTurn(room, seat, next);
     } finally {
       room.processing = false;
     }
   }
 
   drawEndTurn(code: string, seat: number, rev: number): TurnResult {
-    const room = this.rooms.get(code);
-    if (!room || !room.state) return { ok: false, reasons: ['reason.notYourTurn'] };
-    if (room.processing) return { ok: false, reasons: ['reason.alreadySubmitted'] };
-    const state = room.state;
-    if (state.phase !== 'playing') return { ok: false, reasons: ['reason.notYourTurn'] };
-    if (state.activePlayerIndex !== seat) return { ok: false, reasons: ['reason.notYourTurn'] };
-    if (rev !== room.rev) return { ok: false, reasons: ['reason.staleRevision'] };
+    const claim = this.claimTurn(code, seat, rev);
+    if (!claim.ok) return claim;
+    const { room, state } = claim;
 
     room.processing = true;
     try {
       const next = drawAndEndTurn(state);
-      assertConservation(next);
-      room.state = next;
-      room.rev += 1;
-      room.lastActivityAt = this.now();
-      room.seats[seat]!.missedTurns = 0;
-      this.startTurnClock(room);
-      return { ok: true, gameOver: next.phase === 'finished' };
+      return this.commitTurn(room, seat, next);
     } finally {
       room.processing = false;
     }

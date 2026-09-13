@@ -22,7 +22,7 @@ import { digestOfState, stateHash } from '../net/protocol';
 import type { ErrorMsg, GameOverMsg, GameView, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
-import type { Card, GameState, Meld, MeldReason, ReasonCode, RulesConfig } from '../rules/types';
+import type { Card, GameState, JokerAssignment, Meld, MeldReason, ReasonCode, RulesConfig } from '../rules/types';
 import {
   clampScroll,
   editorZones,
@@ -117,6 +117,24 @@ const HESITATION_MS = 18_000;
 const RESET_CONFIRM_EDITS = 4;
 /** How long a confirm-armed Reset stays armed before it quietly disarms again. */
 const RESET_ARM_MS = 3000;
+
+/** What each joker in a resolved meld is standing in for, keyed by card id, for the hint badge. */
+function jokerLabelsOf(assignments: readonly JokerAssignment[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const a of assignments) out.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
+  return out;
+}
+
+/**
+ * The same labels resolved from a meld on the table. `resolvable` is the caller's own judgement
+ * that this meld is worth asking about (an illegal meld has no role to show); analyzeMeld stays
+ * the only thing that ever decides what a joker is standing in for.
+ */
+function jokerLabelsForMeld(meld: Meld, config: RulesConfig, resolvable: boolean): Map<string, string> {
+  if (!resolvable || !meld.cards.some((c) => c.isJoker)) return new Map();
+  const analysis = analyzeMeld(meld.cards, config);
+  return analysis.valid ? jokerLabelsOf(analysis.assignments) : new Map();
+}
 
 interface MeldZone {
   meldId: string;
@@ -1810,6 +1828,20 @@ export class GameScene extends Phaser.Scene {
     }, hint ? { hint } : undefined);
   }
 
+  /**
+   * Shared FEITO gate for both the local and the online path. The draft must be confirmable AND
+   * have been confirmable for CONFIRM_GUARD_MS, so a card landing under an already-moving finger
+   * cannot complete a turn the player never chose to end.
+   */
+  private feitoAccepted(editor: DraftEditor): boolean {
+    const check = editor.canConfirm();
+    const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
+    if (check.ok && heldLongEnough) return true;
+    playSfx(this, 'sfx-invalid');
+    if (!check.ok) playlog.record('feito:blocked', { reasons: check.reasons.join(',') });
+    return false;
+  }
+
   private onFeito(): void {
     if (!this.editor) return;
     if (this.online) {
@@ -1820,13 +1852,7 @@ export class GameScene extends Phaser.Scene {
       playSfx(this, 'sfx-invalid', 0.15);
       return;
     }
-    const check = this.editor.canConfirm();
-    const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
-    if (!check.ok || !heldLongEnough) {
-      playSfx(this, 'sfx-invalid');
-      if (!check.ok) playlog.record('feito:blocked', { reasons: check.reasons.join(',') });
-      return;
-    }
+    if (!this.feitoAccepted(this.editor)) return;
     playSfx(this, 'sfx-feito');
     haptic('thud');
     this.clearLastMove();
@@ -1905,13 +1931,7 @@ export class GameScene extends Phaser.Scene {
   /** FEITO online: submit-and-wait. Never mutates the store locally — only a server state_sync does. */
   private onFeitoOnline(): void {
     if (!this.editor || !this.online || this.onlinePending) return;
-    const check = this.editor.canConfirm();
-    const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
-    if (!check.ok || !heldLongEnough) {
-      playSfx(this, 'sfx-invalid');
-      if (!check.ok) playlog.record('feito:blocked', { reasons: check.reasons.join(',') });
-      return;
-    }
+    if (!this.feitoAccepted(this.editor)) return;
     playSfx(this, 'sfx-feito');
     const draft = this.editor.getDraft();
     const melds: SubmitTurnMeld[] = draft.melds.map((m) => ({ id: m.id, cardIds: m.cards.map((c) => c.id) }));
@@ -2991,15 +3011,7 @@ export class GameScene extends Phaser.Scene {
       // Joker hint: never derive this ourselves — analyzeMeld is the single source of truth for
       // what a joker stands for. Skipped only on a genuine contradiction (task requirement: never
       // invent an assignment there) — an incomplete meld can still legitimately resolve one.
-      const jokerLabels = new Map<string, string>();
-      if (status !== 'illegal' && meld.cards.some((c) => c.isJoker)) {
-        const analysis = analyzeMeld(meld.cards, config);
-        if (analysis.valid) {
-          for (const a of analysis.assignments) {
-            jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
-          }
-        }
-      }
+      const jokerLabels = jokerLabelsForMeld(meld, config, status !== 'illegal');
       // colorblind-safe shape channel: solid stroke for valid, dashed for incomplete/illegal — not hue alone.
       const glow = applyMask(
         this.add
@@ -3251,15 +3263,7 @@ export class GameScene extends Phaser.Scene {
     // incomplete judgement of its own.
     const rawReason = rawInvalid.find((r) => r.meldId === meld.id)?.reason ?? null;
     const status: SnapStatus = isInvalid ? meldStatus(rawReason) : 'legal';
-    const jokerLabels = new Map<string, string>();
-    if (!isInvalid && meld.cards.some((c) => c.isJoker)) {
-      const analysis = analyzeMeld(meld.cards, config);
-      if (analysis.valid) {
-        for (const a of analysis.assignments) {
-          jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
-        }
-      }
-    }
+    const jokerLabels = jokerLabelsForMeld(meld, config, !isInvalid);
 
     const cw = CARD_W * 1.6;
     const ch = CARD_H * 1.6;
@@ -4020,12 +4024,7 @@ export class GameScene extends Phaser.Scene {
     const cardGap = Math.min(cw + 3, cards.length > 1 ? maxSpread / (cards.length - 1) : cw);
     const cardsW = cards.length > 0 ? (cards.length - 1) * cardGap + cw : cw;
 
-    const jokerLabels = new Map<string, string>();
-    if (target.status === 'legal') {
-      for (const a of target.jokerAssignments) {
-        jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
-      }
-    }
+    const jokerLabels = target.status === 'legal' ? jokerLabelsOf(target.jokerAssignments) : new Map<string, string>();
     const hasJokerHint = cards.some((c) => jokerLabels.has(c.id));
     const cardRowH = ch + (hasJokerHint ? 8 : 0);
 
