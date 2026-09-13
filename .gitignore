@@ -14,3 +14,9 @@ test/
 monitoring/metrics_token
 monitoring/grafana_password
 .env
+
+# Session scratch: run prompts and state snapshots, not part of the project.
+RUN_PROMPT.md
+STATE.md
+STATE.template.md
+mexe_improvements_plan_and_prompt.md
