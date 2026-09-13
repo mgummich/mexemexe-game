@@ -2492,10 +2492,11 @@ export class GameScene extends Phaser.Scene {
     return [...reasons].sort((a, b) => rank(a) - rank(b));
   }
 
-  /** What's blocking FEITO right now: top invalid-meld reason, else the objective-phase text, else
-   * the raw canConfirm() reason. Single source for both the on-screen reasonText and the disabled
-   * FEITO button's tap feedback, so the two can never disagree. */
   /**
+   * What's blocking FEITO right now: top invalid-meld reason, else the objective-phase text, else
+   * the raw canConfirm() reason. Single source for both the on-screen reasonText and the disabled
+   * FEITO button's tap feedback, so the two can never disagree.
+   *
    * @param known the render pass's own analysis, when there is one. Analysing is the expensive part
    * of a frame, so the reason line, the checklist and the unresolved count all share the single
    * pass renderAll already made rather than each recomputing it.
@@ -2527,11 +2528,6 @@ export class GameScene extends Phaser.Scene {
     return topInvalidReason ? t(topInvalidReason) : phase ? t(objectiveKey(phase)) : check.ok ? '' : t(check.reasons[0] ?? '');
   }
 
-  /**
-   * How much is left to close, for the reason line. A player mid-Mexe wants to know they are two
-   * melds from done, not just that something is currently not a meld — the count turns a verdict
-   * into progress, which is the point of temporary invalidity being normal here.
-   */
   /** Matches the reason backdrop to the text currently in it, and hides it when there is none. */
   private fitReasonBackdrop(): void {
     const shown = this.reasonText.text.length > 0;
@@ -2539,6 +2535,11 @@ export class GameScene extends Phaser.Scene {
     if (shown) this.reasonBg.setSize(this.reasonText.width + 8, this.reasonText.height + 4);
   }
 
+  /**
+   * How much is left to close, for the reason line. A player mid-Mexe wants to know they are two
+   * melds from done, not just that something is currently not a meld — the count turns a verdict
+   * into progress, which is the point of temporary invalidity being normal here.
+   */
   private unresolvedCountText(open: number): string {
     if (open === 0) return '';
     return t(open === 1 ? 'objective.unresolved.one' : 'objective.unresolved.many', { n: open });

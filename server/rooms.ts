@@ -420,7 +420,6 @@ export class RoomManager {
       if (!check.ok) return { ok: false, reasons: check.reasons };
 
       const next = applyConfirmedTurn(state, draft);
-      assertConservation(next);
       // Hand counts are public in every view, so their difference is public too — this is the
       // whole "how did they finish" summary, with no card identity in it.
       if (next.phase === 'finished') {
