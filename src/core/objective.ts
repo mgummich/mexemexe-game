@@ -3,7 +3,7 @@
  * stay a thin caller. Meld-specific invalid reasons still show on hover over the offending meld
  * (see GameScene.showMeldReasonTooltip); this only covers the three whole-turn phases.
  */
-export type ObjectivePhase =
+type ObjectivePhase =
   | 'start'
   | 'selectCard'
   | 'invalidEdit'
@@ -45,7 +45,7 @@ export function objectiveKey(phase: ObjectivePhase): string {
 }
 
 /** One line of the DONE checklist: an i18n key plus whether that condition is already satisfied. */
-export interface ChecklistItem {
+interface ChecklistItem {
   key: string;
   ok: boolean;
   /** Interpolation values for `key`, e.g. how many melds are still unresolved. */

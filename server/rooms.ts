@@ -5,7 +5,7 @@
  * Uses the shared rules functions directly (`applyConfirmedTurn`,
  * `drawAndEndTurn`, `canConfirmTurn`) instead of `GameStore` — a room is one
  * of potentially many in a single process, and `GameStore` emits on a global
- * event bus, which would cross-talk between rooms (see docs/archive/PHASE5_AUDIT.md §4).
+ * event bus, which would cross-talk between rooms.
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import { createRng } from '../src/core/rng';
@@ -31,14 +31,14 @@ const CODE_LENGTH = 5;
 const DEFAULT_DISCONNECT_GRACE_MS = 30_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_ROOMS = 500;
-export const MIN_PLAYERS = 2;
+const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 4;
 /** A fresh room's host is seat 0 (its creator). Host authority is otherwise tracked per-room in
  * `RoomInternal.hostSeat` and moves to the next-occupied seat if the current host leaves (D15) —
  * this constant is only the fallback for a nonexistent room. */
-export const HOST_SEAT = 0;
+const HOST_SEAT = 0;
 
-export interface RoomManagerDeps {
+interface RoomManagerDeps {
   /** Injectable clock, for deterministic tests. */
   now?: () => number;
   /** Injectable room-code generator, for deterministic tests. */
@@ -106,31 +106,31 @@ interface RoomInternal {
   winningMove: WinningMove | null;
 }
 
-export type CreateRoomResult =
+type CreateRoomResult =
   | { ok: true; code: string; seat: number; token: string }
   | { ok: false; error: 'room_limit' };
 
-export type JoinRoomResult =
+type JoinRoomResult =
   | { ok: true; seat: number; token: string; players: RoomPlayerSummary[] }
   | { ok: false; error: 'room_not_found' | 'room_full' | 'game_started' };
 
-export type ReconnectResult =
+type ReconnectResult =
   | { ok: true; code: string; seat: number; view: GameView | null; players: RoomPlayerSummary[] }
   | { ok: false; error: 'invalid_token' };
 
-export type ReadyResult =
+type ReadyResult =
   | { ok: true; started: boolean; players: RoomPlayerSummary[] }
   | { ok: false; error: 'room_not_found' | 'not_member' | 'game_started' };
 
-export type StartResult =
+type StartResult =
   | { ok: true; started: true; players: RoomPlayerSummary[] }
   | { ok: false; error: 'room_not_found' | 'not_host' | 'not_ready' | 'seat_gap' | 'game_started' };
 
-export type RoomSettingsResult =
+type RoomSettingsResult =
   | { ok: true; settings: RoomSettings }
   | { ok: false; error: 'room_not_found' | 'not_host' | 'game_started' };
 
-export type TurnResult =
+type TurnResult =
   | { ok: true; gameOver: boolean }
   | { ok: false; reasons: ReasonCode[] };
 
@@ -354,8 +354,12 @@ export class RoomManager {
     return { ok: true, started: true, players: this.summarize(room) };
   }
 
-  /** Full validation path per docs/MULTIPLAYER.md §5. */
-  submitTurn(code: string, seat: number, rev: number, melds: SubmitTurnMeld[]): TurnResult {
+  /**
+   * The preconditions every turn action shares: the room exists and is mid-match, no other action
+   * for it is already in flight, and the caller is the active seat at the revision it believes in.
+   * A caller that gets `ok` must set `room.processing` and clear it in a `finally`.
+   */
+  private claimTurn(code: string, seat: number, rev: number): { ok: true; room: RoomInternal; state: GameState } | { ok: false; reasons: ReasonCode[] } {
     const room = this.rooms.get(code);
     if (!room || !room.state) return { ok: false, reasons: ['reason.notYourTurn'] };
     if (room.processing) return { ok: false, reasons: ['reason.alreadySubmitted'] };
@@ -363,6 +367,29 @@ export class RoomManager {
     if (state.phase !== 'playing') return { ok: false, reasons: ['reason.notYourTurn'] };
     if (state.activePlayerIndex !== seat) return { ok: false, reasons: ['reason.notYourTurn'] };
     if (rev !== room.rev) return { ok: false, reasons: ['reason.staleRevision'] };
+    return { ok: true, room, state };
+  }
+
+  /**
+   * Publishes the state a turn action produced. Card conservation is checked before anything is
+   * stored, so a rules bug can never be broadcast as authoritative. A turn actually taken clears
+   * the seat's missed-turn streak, so the limit only fires on *consecutive* misses.
+   */
+  private commitTurn(room: RoomInternal, seat: number, next: GameState): TurnResult {
+    assertConservation(next);
+    room.state = next;
+    room.rev += 1;
+    room.lastActivityAt = this.now();
+    room.seats[seat]!.missedTurns = 0;
+    this.startTurnClock(room);
+    return { ok: true, gameOver: next.phase === 'finished' };
+  }
+
+  /** Full validation path per docs/MULTIPLAYER.md §5. */
+  submitTurn(code: string, seat: number, rev: number, melds: SubmitTurnMeld[]): TurnResult {
+    const claim = this.claimTurn(code, seat, rev);
+    if (!claim.ok) return claim;
+    const { room, state } = claim;
 
     room.processing = true;
     try {
@@ -393,44 +420,26 @@ export class RoomManager {
       if (!check.ok) return { ok: false, reasons: check.reasons };
 
       const next = applyConfirmedTurn(state, draft);
-      assertConservation(next);
       // Hand counts are public in every view, so their difference is public too — this is the
       // whole "how did they finish" summary, with no card identity in it.
       if (next.phase === 'finished') {
         room.winningMove = { seat, cardsPlayed: state.players[seat]!.hand.length - next.players[seat]!.hand.length };
       }
-      room.state = next;
-      room.rev += 1;
-      room.lastActivityAt = this.now();
-      // A turn actually taken clears the seat's missed-turn streak, so the limit only ever fires
-      // on *consecutive* misses rather than accumulating over a long match.
-      room.seats[seat]!.missedTurns = 0;
-      this.startTurnClock(room);
-      return { ok: true, gameOver: next.phase === 'finished' };
+      return this.commitTurn(room, seat, next);
     } finally {
       room.processing = false;
     }
   }
 
   drawEndTurn(code: string, seat: number, rev: number): TurnResult {
-    const room = this.rooms.get(code);
-    if (!room || !room.state) return { ok: false, reasons: ['reason.notYourTurn'] };
-    if (room.processing) return { ok: false, reasons: ['reason.alreadySubmitted'] };
-    const state = room.state;
-    if (state.phase !== 'playing') return { ok: false, reasons: ['reason.notYourTurn'] };
-    if (state.activePlayerIndex !== seat) return { ok: false, reasons: ['reason.notYourTurn'] };
-    if (rev !== room.rev) return { ok: false, reasons: ['reason.staleRevision'] };
+    const claim = this.claimTurn(code, seat, rev);
+    if (!claim.ok) return claim;
+    const { room, state } = claim;
 
     room.processing = true;
     try {
       const next = drawAndEndTurn(state);
-      assertConservation(next);
-      room.state = next;
-      room.rev += 1;
-      room.lastActivityAt = this.now();
-      room.seats[seat]!.missedTurns = 0;
-      this.startTurnClock(room);
-      return { ok: true, gameOver: next.phase === 'finished' };
+      return this.commitTurn(room, seat, next);
     } finally {
       room.processing = false;
     }
@@ -439,7 +448,7 @@ export class RoomManager {
   /**
    * The server's turn clock, driven by the caller on an interval. Two things end a turn the
    * active seat did not: the room's turn timer running out, and the seat having been gone past
-   * the room's reconnect grace (docs/archive/PHASE7_AUDIT.md #4). Both resolve to the same
+   * the room's reconnect grace. Both resolve to the same
    * always-legal move — `timerExpireTurn`, i.e. discard whatever draft the client had, draw one
    * card and pass.
    *

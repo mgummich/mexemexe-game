@@ -9,10 +9,10 @@ const UNDO_AFTER_DROP_MS = 3000;
 /** Player-typed data must never leak into an export — strip these keys wherever a caller passes them. */
 const BANNED_KEYS = new Set(['name', 'playerName', 'token', 'sessionToken']);
 
-export type PlaylogValue = string | number | boolean;
+type PlaylogValue = string | number | boolean;
 /** What happened to a dragged/tapped card. `rejected` = the editor refused it, `blocked` = the
  * tutorial refused it, `cancelled` = the drag was abandoned (pointercancel). */
-export type DropOutcome = 'played' | 'moved' | 'returned' | 'rejected' | 'blocked' | 'cancelled';
+type DropOutcome = 'played' | 'moved' | 'returned' | 'rejected' | 'blocked' | 'cancelled';
 export interface PlaylogEntry {
   /** ms since this module was loaded — `performance.now()`, never a wall clock. */
   t: number;
@@ -22,13 +22,13 @@ export interface PlaylogEntry {
 
 /** Cross-session continuity, read from saved progress by GameScene and handed in — counts only,
  * never an identifier (TELEMETRY-12, TELEMETRY-13). */
-export interface PlaylogSessionContext {
+interface PlaylogSessionContext {
   /** How many real matches this browser has started, including this one. */
   gamesStarted: number;
   tutorialCompleted: boolean;
 }
 
-export interface PlaylogPlayerStats {
+interface PlaylogPlayerStats {
   cardsPlayed: number;
   draws: number;
   confirms: number;

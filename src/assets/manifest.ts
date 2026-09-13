@@ -1,6 +1,6 @@
 import { SUITS } from '../rules/types';
 
-export interface AssetDef {
+interface AssetDef {
   key: string;
   path: string;
   w: number; // logical display size

@@ -120,11 +120,6 @@ export function settingsPanelTop(): number {
   return panelTopForRows(MAIN_ROWS);
 }
 
-/** Row offset from the main panel's own top edge. */
-export function settingsRowOffset(row: SettingsRow): number {
-  return rowOffset(row);
-}
-
 /** y of a main-panel row (see SettingsRow). */
 export function settingsRowY(row: SettingsRow): number {
   return subRowY(MAIN_ROWS, row);
@@ -138,11 +133,6 @@ export function gameRowY(row: GameRow): number {
 /** y of an Audio sub-panel row. */
 export function audioRowY(row: AudioRow): number {
   return subRowY(AUDIO_ROWS, row);
-}
-
-/** y of an Accessibility sub-panel row. */
-export function accessRowY(row: AccessRow): number {
-  return subRowY(ACCESS_ROWS, row);
 }
 
 /** y of an AI sub-panel row. */

@@ -3,11 +3,11 @@ import { isValidMeld, isValidRun } from '../rules/rules';
 import type { AiSpeed } from '../core/persistence';
 import type { Card, DraftState, GameState } from '../rules/types';
 
-export type AiDecision =
+type AiDecision =
   | { kind: 'confirm'; draft: DraftState; explanation: string }
   | { kind: 'draw'; explanation: string };
 
-export interface AiPlayer {
+interface AiPlayer {
   decide(state: GameState): AiDecision;
   /** Same decision, but computed in event-loop slices so a long search never blocks a whole
    * frame (see RearrangerAi). Absent on engines whose decide() is already cheap. */
@@ -414,16 +414,19 @@ export class RearrangerAi implements AiPlayer {
     this.budgetMs = wide ? EXPERT_SEARCH_BUDGET_MS : SEARCH_BUDGET_MS;
   }
 
+  /** Both search paths start from the same place: the plain play SimpleAi would have made (if
+   * any) as the first candidate, plus the sorted hand every rearrange search works from. */
+  private seedFromSimplePlay(state: GameState): { candidates: Candidate[]; hand: Card[] } {
+    const candidates: Candidate[] = [];
+    const simple = this.simple.decide(state);
+    if (simple.kind === 'confirm') addCandidate(candidates, simple.draft, simple.explanation);
+    return { candidates, hand: sortCards(state.players[state.activePlayerIndex]!.hand) };
+  }
+
   decide(state: GameState): AiDecision {
     const cap = this.cap;
     const deadline = performance.now() + this.budgetMs;
-    const candidates: Candidate[] = [];
-    const hand = sortCards(state.players[state.activePlayerIndex]!.hand);
-
-    const simple = this.simple.decide(state);
-    if (simple.kind === 'confirm') {
-      addCandidate(candidates, simple.draft, simple.explanation);
-    }
+    const { candidates, hand } = this.seedFromSimplePlay(state);
 
     for (const search of REARRANGE_SEARCHES) {
       if (candidates.length >= cap || timeUp(deadline)) break;
@@ -438,13 +441,7 @@ export class RearrangerAi implements AiPlayer {
    * without ever holding the main thread for more than one slice. */
   async decideSliced(state: GameState, sliceMs = this.budgetMs / REARRANGE_SEARCHES.length): Promise<AiDecision> {
     const cap = this.cap;
-    const candidates: Candidate[] = [];
-    const hand = sortCards(state.players[state.activePlayerIndex]!.hand);
-
-    const simple = this.simple.decide(state);
-    if (simple.kind === 'confirm') {
-      addCandidate(candidates, simple.draft, simple.explanation);
-    }
+    const { candidates, hand } = this.seedFromSimplePlay(state);
 
     for (const search of REARRANGE_SEARCHES) {
       if (candidates.length >= cap) break;

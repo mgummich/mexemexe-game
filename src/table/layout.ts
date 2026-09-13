@@ -32,7 +32,7 @@ const GAP_STEPS = [17, 14, 12, 10]; // CARD_GAP candidates at scale 1, most spac
 export const SCALE_STEPS = [1, 0.85, 0.7, 0.55, 0.45];
 const ROW_GAP_STEPS = [8, 6, 4, 2, 0];
 
-export interface MeldLayoutOptions {
+interface MeldLayoutOptions {
   /** Table zoom (Phase 14 Wave D): stop shrinking at this card scale and let rows run past areaH
    * instead of compressing further. The caller (GameScene) reads the real content height back off
    * the returned positions (max of y + height) and pans a clamped window over it. */
@@ -94,30 +94,16 @@ export function computeMeldLayout(
 ): MeldPosition[] {
   if (melds.length === 0) return [];
 
+  // Zoomed: pin the scale, take the most spacious gap/row-gap (no height budget to compress
+  // against), and let rows run to whatever total height they need — the caller pans a clamped
+  // window over it instead of this function ever shrinking below the floor. Vertical centring is
+  // for the fitting path only; a zoomed layout always starts at the top of the pan window.
   if (options?.minCardScale) {
-    // Zoomed: pin the scale, take the most spacious gap/row-gap (no height budget to compress
-    // against), and let rows run to whatever total height they need — the caller pans a clamped
-    // window over it instead of this function ever shrinking below the floor.
     const scale = options.minCardScale;
-    const cw = CARD_W * scale;
-    const ch = CARD_H * scale;
     const pad = MELD_PAD * scale;
-    const meldGap = MELD_GAP * scale;
     const gap = GAP_STEPS[0]! * scale;
-    const rowGap = ROW_GAP_STEPS[0]!;
-    const rows = packRows(melds, areaW, gap, cw, pad, meldGap);
-    const rowH = ch + pad * 2;
-    const pitch = rowH + rowGap;
-    const positions: MeldPosition[] = [];
-    rows.forEach((row, rowIndex) => {
-      const y = rowIndex * pitch;
-      const indent = rowIndent(row, areaW);
-      for (const item of row) {
-        const x = Math.min(item.x + indent, Math.max(0, areaW - item.width));
-        positions.push({ meldId: item.meldId, x, y, width: item.width, height: rowH, cardGap: gap, cardScale: scale });
-      }
-    });
-    return positions;
+    const rows = packRows(melds, areaW, gap, CARD_W * scale, pad, MELD_GAP * scale);
+    return emitPositions({ rows, scale, gap, cw: CARD_W * scale, ch: CARD_H * scale, pad, rowGap: ROW_GAP_STEPS[0]! }, areaW, 0);
   }
 
   let best: Candidate | null = null;
@@ -152,23 +138,25 @@ export function computeMeldLayout(
     best = { rows, scale, gap, cw, ch, pad, rowGap: 0 };
   }
 
-  const { rows, scale, gap, ch, pad } = best;
-  const rowH = ch + pad * 2;
-  const pitch = rowH + best.rowGap;
-
   // Vertical centring: an early-game table holds one or two melds, and left-top-aligning them in
   // a ~100-unit-tall area read as "the game forgot to draw the table". Only applied when the
   // block genuinely fits — an overflowing table keeps y0 so nothing is pushed off the top.
-  const totalH = rows.length * rowH + Math.max(0, rows.length - 1) * best.rowGap;
-  const yOffset = totalH < areaH ? Math.round((areaH - totalH) / 2) : 0;
+  const rowH = best.ch + best.pad * 2;
+  const totalH = best.rows.length * rowH + Math.max(0, best.rows.length - 1) * best.rowGap;
+  return emitPositions(best, areaW, totalH < areaH ? Math.round((areaH - totalH) / 2) : 0);
+}
 
+/** One position per meld, rows stacked at the candidate's pitch from `yOffset` down. */
+function emitPositions(best: Candidate, areaW: number, yOffset: number): MeldPosition[] {
+  const rowH = best.ch + best.pad * 2;
+  const pitch = rowH + best.rowGap;
   const positions: MeldPosition[] = [];
-  rows.forEach((row, rowIndex) => {
+  best.rows.forEach((row, rowIndex) => {
     const y = rowIndex * pitch + yOffset;
     const indent = rowIndent(row, areaW);
     for (const item of row) {
       const x = Math.min(item.x + indent, Math.max(0, areaW - item.width));
-      positions.push({ meldId: item.meldId, x, y, width: item.width, height: rowH, cardGap: gap, cardScale: scale });
+      positions.push({ meldId: item.meldId, x, y, width: item.width, height: rowH, cardGap: best.gap, cardScale: best.scale });
     }
   });
   return positions;

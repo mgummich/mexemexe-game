@@ -13,32 +13,8 @@ they are missing the comforts listed in [MULTIPLAYER.md](MULTIPLAYER.md).
 
 ## Completed
 
-- Pure, fully-tested rules engine: two 54-card decks, jokers with a one-per-meld
-  limit, ace low/high without wrap, trincas with unique natural suits, shared
-  table, draw-pile exhaustion ending.
-- Mexe Mode draft editor with undo/redo/reset and a FEITO gate that explains
-  itself in both locales.
-- 2–4 seats, hot-seat and AI; two AI levels across four personalities;
-  deterministic and budgeted.
-- 12-step interactive tutorial.
-- pt-BR and en-US localization with key parity enforced by a test.
-- Cosmetics: 4 table themes, 5 card backs, 9 avatars.
-- Audio: procedural SFX plus a context-aware streamed music playlist.
-- Mobile: portrait and landscape layouts, tap-to-move, a full-screen Mexe
-  editor, table zoom, meld focus view.
-- Accessibility: non-color validity signals, +25% large text, reduced motion.
-- PWA: installable, offline local play, versioned cache, opt-in update handover.
-- Online alpha: private rooms, server-authoritative turns, hand privacy,
-  reconnect, desync detection and resync.
-- Server-owned turn timer: Casual/Fast/Off lobby presets, a once-per-turn Mexe
-  bonus, a warning window, per-room reconnect grace and a missed-turn limit.
-  The client only ever renders `turnMsLeft`; the server decides every expiry.
-- Lobby room summary: the agreed timer terms are shown to every seat and the
-  host taps the line to cycle presets, frozen the moment the match starts.
-- AI difficulty (Beginner / Casual / Smart / Expert), pace and move-explanation
-  settings, on top of the four existing personalities.
-- Verification: unit + server + screenshot/perf + cross-browser + multiplayer +
-  PWA suites, all gated in CI.
+The shipped feature set is described in [the README](../README.md) and, per
+release, in [CHANGELOG.md](../CHANGELOG.md). This document does not repeat it.
 
 ## In progress
 

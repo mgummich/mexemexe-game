@@ -13,7 +13,7 @@ export interface Rect {
   h: number;
 }
 
-export interface EditorZones {
+interface EditorZones {
   /** Meld list: one row per table meld + a trailing "new meld" row. Vertically scrollable. */
   meldList: Rect;
   /** The focused meld, drawn large. */

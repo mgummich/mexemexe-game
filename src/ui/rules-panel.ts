@@ -33,7 +33,7 @@ const EX_GAP = 2;
  * knows the rules; only the scene knows why FEITO is greyed out or which meld is invalid, so the
  * sentence arrives already written and already localized.
  */
-export interface RulesContext {
+interface RulesContext {
   /** One line naming the current blocker, e.g. "FEITO is off: the trinca has two jokers." */
   hint: string;
 }

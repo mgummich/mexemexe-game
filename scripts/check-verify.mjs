@@ -109,20 +109,3 @@ for (const name of EXPECTED_SHOTS) {
 
 if (failed) process.exit(1);
 console.log('verify: OK');
-
-// Merge perf/coverage metrics into docs/STATUS.json (never clobber other keys).
-const STATUS = 'docs/STATUS.json';
-if (fs.existsSync(STATUS)) {
-  const status = JSON.parse(fs.readFileSync(STATUS, 'utf8'));
-  const viewports = [...new Set(shots.map((s) => (s.viewport ? `${s.viewport.width}x${s.viewport.height}` : 'unknown')))];
-  status.metrics = {
-    generatedAt: new Date().toISOString(),
-    perShotFps: Object.fromEntries(shots.map((s) => [s.name, s.fps])),
-    viewports,
-    unitTests: status.tests?.unit ?? null,
-    // Screenshot captures, not the e2e test count — a spec file can assert without capturing.
-    e2eScreenshots: shots.length,
-  };
-  fs.writeFileSync(STATUS, JSON.stringify(status, null, 2) + '\n');
-  console.log('verify: wrote metrics to', STATUS);
-}

@@ -22,7 +22,7 @@ import { digestOfState, stateHash } from '../net/protocol';
 import type { ErrorMsg, GameOverMsg, GameView, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
-import type { Card, GameState, Meld, MeldReason, ReasonCode, RulesConfig } from '../rules/types';
+import type { Card, GameState, JokerAssignment, Meld, MeldReason, ReasonCode, RulesConfig } from '../rules/types';
 import {
   clampScroll,
   editorZones,
@@ -117,6 +117,24 @@ const HESITATION_MS = 18_000;
 const RESET_CONFIRM_EDITS = 4;
 /** How long a confirm-armed Reset stays armed before it quietly disarms again. */
 const RESET_ARM_MS = 3000;
+
+/** What each joker in a resolved meld is standing in for, keyed by card id, for the hint badge. */
+function jokerLabelsOf(assignments: readonly JokerAssignment[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const a of assignments) out.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
+  return out;
+}
+
+/**
+ * The same labels resolved from a meld on the table. `resolvable` is the caller's own judgement
+ * that this meld is worth asking about (an illegal meld has no role to show); analyzeMeld stays
+ * the only thing that ever decides what a joker is standing in for.
+ */
+function jokerLabelsForMeld(meld: Meld, resolvable: boolean): Map<string, string> {
+  if (!resolvable || !meld.cards.some((c) => c.isJoker)) return new Map();
+  const analysis = analyzeMeld(meld.cards);
+  return analysis.valid ? jokerLabelsOf(analysis.assignments) : new Map();
+}
 
 interface MeldZone {
   meldId: string;
@@ -360,6 +378,71 @@ export class GameScene extends Phaser.Scene {
   /** Same idea, for the portrait Mexe editor's hand-strip horizontal scroll. */
   private mexeHandPanTargets: Array<Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Transform> = [];
 
+  /**
+   * Everything a reused scene instance must not inherit from the match before it.
+   *
+   * Phaser keeps ONE GameScene instance for the whole page load and calls create() again on every
+   * `scene.start`, so a field initializer runs once per page — not once per match. Any field whose
+   * initial value matters is reset here, and this is the only place that does it, so the list can
+   * be read against the declarations above. Shipped bugs from getting this wrong include a dead
+   * board on every second match (`sceneGone`) and silent last-card/threat moments (the announce
+   * latches below, which had never been cleared at all).
+   *
+   * Deliberately NOT reset: `sortMode`, the player's hand-sort choice, which is a preference and
+   * survives for the session.
+   */
+  private resetForNewMatch(): void {
+    this.sceneGone = false;
+    this.hoverKey = undefined;
+    this.validSince = null;
+    this.lastValidOk = false;
+    this.resetArmedUntil = 0;
+    this.pauseOpen = false;
+    this.pauseMenuClose = null;
+    this.tutorialCompletedRecorded = false;
+
+    // online
+    this.localSeat = this.config.online ? this.config.online.seat : 0;
+    this.pendingMissedLimitClose = false;
+    this.setOnlinePending(false);
+    this.onlineDesyncs = 0;
+    this.onlineResyncing = false;
+    this.lastRejections = [];
+    this.lastTickSecond = -1;
+    this.lastOnlineStatus = null;
+    this.onlineTimerEvent = null;
+
+    // opponent presentation
+    this.lastMoveIds = new Set();
+    this.lastEmoteBySeat.clear();
+    this.lastRenderedActiveSeat = -1;
+    this.lastConfirmedMoveText = null;
+    this.lastAiReason = null;
+    for (const e of this.activeEmotes.values()) e.timer.remove();
+    this.activeEmotes.clear();
+    this.lastCardAnnounced.clear();
+    this.threatAnnounced.clear();
+    // An absolute this.time.now deadline: always long expired by the next match in practice, but
+    // "in practice" is not an invariant.
+    this.presentingUntil = 0;
+    this.guardTimer = null;
+
+    // selection, focus and the portrait Mexe editor
+    this.selectedCardId = null;
+    this.focusIndex = 0;
+    this.focusVisible = false;
+    this.mexeEditorOpen = false;
+    this.mexeEditorMeldId = undefined;
+    this.mexeEditorScroll = 0;
+    this.mexeHandScroll = 0;
+    this.handScroll = 0;
+
+    // table view
+    this.renderedMeldStatus.clear();
+    this.problemHighlightMeldId = null;
+    this.resetZoomPan();
+  }
+
   constructor() {
     super('game');
   }
@@ -381,32 +464,7 @@ export class GameScene extends Phaser.Scene {
           missedTurns: config.online.view.missedTurns,
         }
       : null;
-    this.pendingMissedLimitClose = false;
-    this.localSeat = config.online ? config.online.seat : 0;
-    this.setOnlinePending(false);
-    this.lastRejections = [];
-    this.lastMoveIds = new Set();
-    this.selectedCardId = null;
-    this.focusIndex = 0;
-    this.focusVisible = false;
-    this.mexeEditorOpen = false;
-    this.mexeEditorMeldId = undefined;
-    this.mexeEditorScroll = 0;
-    this.mexeHandScroll = 0;
-    this.resetArmedUntil = 0;
-    this.handScroll = 0;
-    this.sceneGone = false;
-    this.guardTimer = null;
-    this.onlineResyncing = false;
-    // Absolute time.now deadlines from the previous match — a reused scene instance must not
-    // start the next one still "presenting" a stale beat (it always is, in practice, since these
-    // are a few hundred ms and long expired by the time a second match begins, but a field
-    // initializer runs once per page load, not per create()).
-    this.presentingUntil = 0;
-    this.onlineTimerEvent = null;
-    for (const e of this.activeEmotes.values()) e.timer.remove();
-    this.activeEmotes.clear();
-    this.resetZoomPan();
+    this.resetForNewMatch();
     debugApi.scene = config.tutorial ? 'tutorial' : 'game';
     debugApi.seed = config.seed;
     if (!config.tutorial && !config.online) {
@@ -423,7 +481,6 @@ export class GameScene extends Phaser.Scene {
         tutorialCompleted: settings.progress().tutorialCompleted,
       });
     }
-    this.tutorialCompletedRecorded = false;
 
     if (config.online) {
       // Online: never construct AI seats. State comes from the server's redacted view only —
@@ -768,12 +825,7 @@ export class GameScene extends Phaser.Scene {
           ? t('online.roomClosed')
           : t('online.connectionLost'),
     );
-    this.time.delayedCall(2000, () => {
-      if (!this.online) return; // scene already moved on
-      this.online.client.disconnect();
-      debugApi.online = null;
-      gotoScene(this, 'menu');
-    });
+    this.leaveOnlineToMenu(2000);
   }
 
   private onOnlineOpponentEvent(seat: number, disconnected: boolean): void {
@@ -823,13 +875,19 @@ export class GameScene extends Phaser.Scene {
     if (status === 'closed' || status === 'error') {
       this.setOnlineNotice(t('online.connectionLost'));
       playSfx(this, 'sfx-invalid', 0.5);
-      this.time.delayedCall(2500, () => {
-        if (!this.online) return; // scene already moved on
-        this.online.client.disconnect();
-        debugApi.online = null;
-        gotoScene(this, 'menu');
-      });
+      this.leaveOnlineToMenu(2500);
     }
+  }
+
+  /** Reading the notice takes a moment, so the drop back to the menu is delayed — and skipped
+   * entirely if the scene has already moved on by then. */
+  private leaveOnlineToMenu(delayMs: number): void {
+    this.time.delayedCall(delayMs, () => {
+      if (!this.online) return;
+      this.online.client.disconnect();
+      debugApi.online = null;
+      gotoScene(this, 'menu');
+    });
   }
 
   private startAmbience(): void {
@@ -1108,7 +1166,7 @@ export class GameScene extends Phaser.Scene {
       draft.melds.flatMap((m) => m.cards).find((c) => c.id === cardId) ??
       this.editor.getRemainingHand().find((c) => c.id === cardId);
     if (!card) return [];
-    return computeSnapTargets(draft, card, this.store.get().config);
+    return computeSnapTargets(draft, card);
   }
 
   /**
@@ -1399,7 +1457,7 @@ export class GameScene extends Phaser.Scene {
     this.staticUi.push(this.reasonBg, this.reasonText, this.bannerBg, this.banner, this.lastMoveText);
 
     if (this.online) {
-      // small corner connection indicator — never a modal, per docs/archive/PHASE5_CLIENT_PLAN.md section A
+      // small corner connection indicator — never a modal
       this.onlineStatusDot = this.add.circle(this.r.onlineDot.x, this.r.onlineDot.y, 3, 0x3ec06a).setDepth(600);
       // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
       // presence — not just its color — is the "you are online" tell (task: never ambiguous).
@@ -1593,15 +1651,28 @@ export class GameScene extends Phaser.Scene {
 
   /** Esc key or gear button: pauses the AI turn timer (guarded — tutorial's own timer just resumes when closed) while the pause overlay (Continue/Settings/Help/Quit) is open. */
   private togglePause(): void {
-    if (this.pauseOpen) return;
+    const resume = this.holdForOverlay();
+    if (!resume) return;
+    this.pauseMenuClose = openPauseMenu(this, { onQuit: () => this.quitToMenu(), online: this.online !== null }, () => {
+      this.pauseMenuClose = null;
+      resume();
+    });
+  }
+
+  /**
+   * Opening a full-screen overlay: refuses a second one, and freezes the AI turn timer for as
+   * long as it is up (guarded — the tutorial's own timer just resumes when the overlay closes).
+   * Returns the resume fn to call on close, or null if an overlay is already open.
+   */
+  private holdForOverlay(): (() => void) | null {
+    if (this.pauseOpen) return null;
     this.pauseOpen = true;
     const wasPaused = this.aiTimer?.paused ?? false;
     if (this.aiTimer) this.aiTimer.paused = true;
-    this.pauseMenuClose = openPauseMenu(this, { onQuit: () => this.quitToMenu(), online: this.online !== null }, () => {
+    return () => {
       this.pauseOpen = false;
-      this.pauseMenuClose = null;
       if (this.aiTimer) this.aiTimer.paused = wasPaused;
-    });
+    };
   }
 
   /**
@@ -1757,18 +1828,27 @@ export class GameScene extends Phaser.Scene {
 
   /** H shortcut: opens the rules panel directly (same AI-timer pause/resume dance as the gear/Esc pause menu). */
   private openHelp(): void {
-    if (this.pauseOpen) return;
-    this.pauseOpen = true;
-    const wasPaused = this.aiTimer?.paused ?? false;
-    if (this.aiTimer) this.aiTimer.paused = true;
+    const resume = this.holdForOverlay();
+    if (!resume) return;
     // Someone opening Help in the middle of their own turn almost always has one specific
     // question, and the game already knows the answer — lead with it instead of making them find
     // the right paragraph.
     const hint = this.editor ? this.blockingReasonText() : '';
-    openRulesPanel(this, () => {
-      this.pauseOpen = false;
-      if (this.aiTimer) this.aiTimer.paused = wasPaused;
-    }, hint ? { hint } : undefined);
+    openRulesPanel(this, resume, hint ? { hint } : undefined);
+  }
+
+  /**
+   * Shared FEITO gate for both the local and the online path. The draft must be confirmable AND
+   * have been confirmable for CONFIRM_GUARD_MS, so a card landing under an already-moving finger
+   * cannot complete a turn the player never chose to end.
+   */
+  private feitoAccepted(editor: DraftEditor): boolean {
+    const check = editor.canConfirm();
+    const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
+    if (check.ok && heldLongEnough) return true;
+    playSfx(this, 'sfx-invalid');
+    if (!check.ok) playlog.record('feito:blocked', { reasons: check.reasons.join(',') });
+    return false;
   }
 
   private onFeito(): void {
@@ -1781,13 +1861,7 @@ export class GameScene extends Phaser.Scene {
       playSfx(this, 'sfx-invalid', 0.15);
       return;
     }
-    const check = this.editor.canConfirm();
-    const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
-    if (!check.ok || !heldLongEnough) {
-      playSfx(this, 'sfx-invalid');
-      if (!check.ok) playlog.record('feito:blocked', { reasons: check.reasons.join(',') });
-      return;
-    }
+    if (!this.feitoAccepted(this.editor)) return;
     playSfx(this, 'sfx-feito');
     haptic('thud');
     this.clearLastMove();
@@ -1866,13 +1940,7 @@ export class GameScene extends Phaser.Scene {
   /** FEITO online: submit-and-wait. Never mutates the store locally — only a server state_sync does. */
   private onFeitoOnline(): void {
     if (!this.editor || !this.online || this.onlinePending) return;
-    const check = this.editor.canConfirm();
-    const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
-    if (!check.ok || !heldLongEnough) {
-      playSfx(this, 'sfx-invalid');
-      if (!check.ok) playlog.record('feito:blocked', { reasons: check.reasons.join(',') });
-      return;
-    }
+    if (!this.feitoAccepted(this.editor)) return;
     playSfx(this, 'sfx-feito');
     const draft = this.editor.getDraft();
     const melds: SubmitTurnMeld[] = draft.melds.map((m) => ({ id: m.id, cardIds: m.cards.map((c) => c.id) }));
@@ -2424,10 +2492,11 @@ export class GameScene extends Phaser.Scene {
     return [...reasons].sort((a, b) => rank(a) - rank(b));
   }
 
-  /** What's blocking FEITO right now: top invalid-meld reason, else the objective-phase text, else
-   * the raw canConfirm() reason. Single source for both the on-screen reasonText and the disabled
-   * FEITO button's tap feedback, so the two can never disagree. */
   /**
+   * What's blocking FEITO right now: top invalid-meld reason, else the objective-phase text, else
+   * the raw canConfirm() reason. Single source for both the on-screen reasonText and the disabled
+   * FEITO button's tap feedback, so the two can never disagree.
+   *
    * @param known the render pass's own analysis, when there is one. Analysing is the expensive part
    * of a frame, so the reason line, the checklist and the unresolved count all share the single
    * pass renderAll already made rather than each recomputing it.
@@ -2459,11 +2528,6 @@ export class GameScene extends Phaser.Scene {
     return topInvalidReason ? t(topInvalidReason) : phase ? t(objectiveKey(phase)) : check.ok ? '' : t(check.reasons[0] ?? '');
   }
 
-  /**
-   * How much is left to close, for the reason line. A player mid-Mexe wants to know they are two
-   * melds from done, not just that something is currently not a meld — the count turns a verdict
-   * into progress, which is the point of temporary invalidity being normal here.
-   */
   /** Matches the reason backdrop to the text currently in it, and hides it when there is none. */
   private fitReasonBackdrop(): void {
     const shown = this.reasonText.text.length > 0;
@@ -2471,6 +2535,11 @@ export class GameScene extends Phaser.Scene {
     if (shown) this.reasonBg.setSize(this.reasonText.width + 8, this.reasonText.height + 4);
   }
 
+  /**
+   * How much is left to close, for the reason line. A player mid-Mexe wants to know they are two
+   * melds from done, not just that something is currently not a meld — the count turns a verdict
+   * into progress, which is the point of temporary invalidity being normal here.
+   */
   private unresolvedCountText(open: number): string {
     if (open === 0) return '';
     return t(open === 1 ? 'objective.unresolved.one' : 'objective.unresolved.many', { n: open });
@@ -2793,10 +2862,6 @@ export class GameScene extends Phaser.Scene {
     return p ? `avatar-${p}` : 'avatar-player';
   }
 
-  private sortedForDisplay(meld: Meld, config: RulesConfig): Card[] {
-    return sortMeldCards(meld.cards, config);
-  }
-
   /** R8: the one call site for invalidMeldDetail — layoutMelds (landscape) and renderMexeEditor's
    * workspace (touch editor) both route through this instead of each calling the pure function
    * directly, so the two can never quietly drift apart on what "the conflicting card(s)"/"the
@@ -2825,7 +2890,7 @@ export class GameScene extends Phaser.Scene {
     const detailByMeld = new Map<string, InvalidDetail>();
     for (const m of melds) {
       const raw = rawInvalid.find((r) => r.meldId === m.id)?.reason;
-      const detail = this.meldDetailFor(this.sortedForDisplay(m, config), raw);
+      const detail = this.meldDetailFor(sortMeldCards(m.cards), raw);
       if (detail) detailByMeld.set(m.id, detail);
     }
     const inputs: MeldLayoutInput[] = melds.map((m) => ({
@@ -2904,7 +2969,7 @@ export class GameScene extends Phaser.Scene {
       const pad = MELD_PAD * scale;
       const cx = this.r.tableLeft + pos.x;
       const cy = this.r.tableTop + 6 + pos.y - this.tablePan;
-      const cards = this.sortedForDisplay(meld, config);
+      const cards = sortMeldCards(meld.cards);
 
       const zoneRect = new Phaser.Geom.Rectangle(cx, cy - pad, pos.width, pos.height);
       this.meldZones.push({ meldId: meld.id, rect: zoneRect });
@@ -2952,15 +3017,7 @@ export class GameScene extends Phaser.Scene {
       // Joker hint: never derive this ourselves — analyzeMeld is the single source of truth for
       // what a joker stands for. Skipped only on a genuine contradiction (task requirement: never
       // invent an assignment there) — an incomplete meld can still legitimately resolve one.
-      const jokerLabels = new Map<string, string>();
-      if (status !== 'illegal' && meld.cards.some((c) => c.isJoker)) {
-        const analysis = analyzeMeld(meld.cards, config);
-        if (analysis.valid) {
-          for (const a of analysis.assignments) {
-            jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
-          }
-        }
-      }
+      const jokerLabels = jokerLabelsForMeld(meld, status !== 'illegal');
       // colorblind-safe shape channel: solid stroke for valid, dashed for incomplete/illegal — not hue alone.
       const glow = applyMask(
         this.add
@@ -3206,21 +3263,13 @@ export class GameScene extends Phaser.Scene {
       this.focusedMeldId = null;
       return;
     }
-    const cards = this.sortedForDisplay(meld, config);
+    const cards = sortMeldCards(meld.cards);
     const isInvalid = invalidReasons.has(meld.id);
     // R1/R2: same single classifier every other renderer now uses — never a second illegal/
     // incomplete judgement of its own.
     const rawReason = rawInvalid.find((r) => r.meldId === meld.id)?.reason ?? null;
     const status: SnapStatus = isInvalid ? meldStatus(rawReason) : 'legal';
-    const jokerLabels = new Map<string, string>();
-    if (!isInvalid && meld.cards.some((c) => c.isJoker)) {
-      const analysis = analyzeMeld(meld.cards, config);
-      if (analysis.valid) {
-        for (const a of analysis.assignments) {
-          jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
-        }
-      }
-    }
+    const jokerLabels = jokerLabelsForMeld(meld, !isInvalid);
 
     const cw = CARD_W * 1.6;
     const ch = CARD_H * 1.6;
@@ -3501,7 +3550,7 @@ export class GameScene extends Phaser.Scene {
       }
       const meld = melds.find((m) => m.id === row.meldId);
       if (!meld) continue;
-      const cards = this.sortedForDisplay(meld, config);
+      const cards = sortMeldCards(meld.cards);
       cards.forEach((card, i) => {
         const key = card.isJoker ? 'card-joker' : `card-${card.suit}-${card.rank}`;
         const img = this.add.image(zones.meldList.x + 8 + cw / 2 + i * (cw * 0.7), y + MELD_LIST_ROW_H / 2, key).setDisplaySize(cw, ch).setDepth(2);
@@ -3536,7 +3585,7 @@ export class GameScene extends Phaser.Scene {
       this.hud.push(label(this, wsRect.centerX, wsRect.centerY + 6, t('mobile.editorSelectMeld'), 8, '#b8b0a0'));
     } else {
       const wsMeld = melds.find((m) => m.id === this.mexeEditorMeldId);
-      const wsCards = wsMeld ? this.sortedForDisplay(wsMeld, config) : [];
+      const wsCards = wsMeld ? sortMeldCards(wsMeld.cards) : [];
       // B1: this workspace card row is the touch editor's only view of a meld — the conflict ring,
       // reserved gap column and missing-slot placeholder previously lived only in layoutMelds()
       // (the landscape/desktop path), so cycleProblem() could step here (mexeEditorMeldId) and show
@@ -3689,12 +3738,7 @@ export class GameScene extends Phaser.Scene {
     if (this.selectedCardId !== null) {
       const heldSprite = this.cardSprites.find((s) => s.getData('cardId') === this.selectedCardId);
       if (heldSprite) {
-        this.hud.push(
-          this.add
-            .rectangle(heldSprite.x, heldSprite.y, heldSprite.displayWidth + 4, heldSprite.displayHeight + 4)
-            .setStrokeStyle(2, CHROME_GOLD, 1)
-            .setDepth(260),
-        );
+        this.hud.push(this.selectionRing(heldSprite));
       }
     }
 
@@ -3778,13 +3822,26 @@ export class GameScene extends Phaser.Scene {
     this.dragShadow = null;
     this.clearDropZoneHighlights();
     this.snapTargets = [];
+    this.tweenSpriteHome(sprite);
+    if (this.tableContainer && sprite.active) this.tableContainer.add(sprite);
+  }
+
+  /** Gold ring around the selected card, drawn wherever the card currently is. */
+  private selectionRing(sprite: Phaser.GameObjects.Image): Phaser.GameObjects.Rectangle {
+    return this.add
+      .rectangle(sprite.x, sprite.y, sprite.displayWidth + 4, sprite.displayHeight + 4)
+      .setStrokeStyle(2, CHROME_GOLD, 1)
+      .setDepth(260);
+  }
+
+  /** Springs a card back to the position the last layout gave it — a refused or cancelled drag. */
+  private tweenSpriteHome(sprite: Phaser.GameObjects.Image): void {
     this.tweens.add({
       targets: sprite,
       x: sprite.getData('homeX') as number,
       y: sprite.getData('homeY') as number,
       displayWidth: CARD_W, displayHeight: CARD_H, ease: 'Back.out', duration: 140,
     });
-    if (this.tableContainer && sprite.active) this.tableContainer.add(sprite);
   }
 
   private wireDrag(sprite: Phaser.GameObjects.Image): void {
@@ -3981,12 +4038,7 @@ export class GameScene extends Phaser.Scene {
     const cardGap = Math.min(cw + 3, cards.length > 1 ? maxSpread / (cards.length - 1) : cw);
     const cardsW = cards.length > 0 ? (cards.length - 1) * cardGap + cw : cw;
 
-    const jokerLabels = new Map<string, string>();
-    if (target.status === 'legal') {
-      for (const a of target.jokerAssignments) {
-        jokerLabels.set(a.cardId, a.suit ? `${SUIT_CHAR[a.suit]}${rankLabel(a.rank)}` : rankLabel(a.rank));
-      }
-    }
+    const jokerLabels = target.status === 'legal' ? jokerLabelsOf(target.jokerAssignments) : new Map<string, string>();
     const hasJokerHint = cards.some((c) => jokerLabels.has(c.id));
     const cardRowH = ch + (hasJokerHint ? 8 : 0);
 
@@ -4023,7 +4075,7 @@ export class GameScene extends Phaser.Scene {
     // card inside the meld itself (under the dragged sprite, gold-tinted on an already-light card
     // face, overlapping both neighbours by half a card) was found illegible in round-2 review and
     // reverted rather than shipped as invisible code. The detached panel above remains the one
-    // preview surface; see docs/improvements/STATUS.md MEXE-05 for the reasoning.
+    // preview surface.
     this.ghostPreview = objs;
   }
 
@@ -4091,12 +4143,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.tutorialAllows(action)) {
       playSfx(this, 'sfx-invalid', 0.15);
       playlog.recordDrop('blocked', origin);
-      this.tweens.add({
-        targets: sprite,
-        x: sprite.getData('homeX') as number,
-        y: sprite.getData('homeY') as number,
-        displayWidth: CARD_W, displayHeight: CARD_H, ease: 'Back.out', duration: 140,
-      });
+      this.tweenSpriteHome(sprite);
       return;
     }
 
@@ -4234,12 +4281,7 @@ export class GameScene extends Phaser.Scene {
         this.hud.push(zone);
       }
       if (heldSprite) {
-        this.hud.push(
-          this.add
-            .rectangle(heldSprite.x, heldSprite.y, heldSprite.displayWidth + 4, heldSprite.displayHeight + 4)
-            .setStrokeStyle(2, CHROME_GOLD, 1)
-            .setDepth(260),
-        );
+        this.hud.push(this.selectionRing(heldSprite));
       }
     }
 

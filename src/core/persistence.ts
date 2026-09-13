@@ -9,7 +9,7 @@ export type HelperMode = 'beginner' | 'standard' | 'expert';
 export type AiSpeed = 'instant' | 'fast' | 'normal' | 'slow';
 
 /** How much an AI move explains itself in the last-move line. */
-export type AiExplain = 'off' | 'simple' | 'detailed';
+type AiExplain = 'off' | 'simple' | 'detailed';
 
 export interface Settings {
   muted: boolean;
@@ -194,4 +194,23 @@ export function loadSave(storage: StorageLike = defaultStorage()): Save {
     // storage blocked/full — migrated save just won't persist
   }
   return migrated;
+}
+
+/** Writes the save. Storage being blocked or full is not fatal — the state just won't survive a reload. */
+export function storeSave(save: Save, storage: StorageLike = defaultStorage()): void {
+  try {
+    storage.setItem(SAVE_KEY, JSON.stringify(save));
+  } catch {
+    // storage blocked/full — state just won't survive reload
+  }
+}
+
+/** Removes both the versioned save and the pre-v1 key, so a reset can't be undone by the migration in `loadSave`. */
+export function clearSave(storage: StorageLike = defaultStorage()): void {
+  try {
+    storage.removeItem(SAVE_KEY);
+    storage.removeItem(OLD_SETTINGS_KEY);
+  } catch {
+    // storage blocked — there was nothing persisted to clear
+  }
 }

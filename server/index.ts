@@ -27,7 +27,7 @@ const log = createLogger(config.logLevel);
 
 const SWEEP_INTERVAL_MS = 30_000;
 /** Liveness probe. A half-open socket (lid closed, dead NAT entry) otherwise holds its seat
- * `connected` until TCP gives up, so the disconnect grace never starts (docs/archive/PHASE7_AUDIT.md #1). */
+ * `connected` until TCP gives up, so the disconnect grace never starts. */
 const HEARTBEAT_INTERVAL_MS = 15_000;
 /** How often the server checks its own turn clocks and stalled matches. One second, because it
  * is now also the resolution of the turn timer: a coarser tick would let a turn run measurably

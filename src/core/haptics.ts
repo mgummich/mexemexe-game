@@ -10,7 +10,7 @@ import { settings } from './settings';
  * Durations are deliberately tiny. A long vibration on a card game reads as an error alert, and
  * the whole point is that placing a card should feel like placing a card.
  */
-export type HapticStrength = 'tick' | 'bump' | 'thud';
+type HapticStrength = 'tick' | 'bump' | 'thud';
 
 const MS: Record<HapticStrength, number> = { tick: 8, bump: 15, thud: 30 };
 

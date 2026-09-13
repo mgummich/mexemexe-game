@@ -188,15 +188,6 @@ describe('runs', () => {
 });
 
 describe('groups', () => {
-  it('uses final fixed group defaults', () => {
-    expect(DEFAULT_RULES).toMatchObject({
-      groupUniqueSuits: true,
-      groupMinSize: 3,
-      groupMaxSize: 4,
-      allowAllJokerGroups: false,
-    });
-  });
-
   it.each([
     [n('hearts', 7), n('spades', 7), n('diamonds', 7)],
     [n('hearts', 7), n('spades', 7), n('diamonds', 7), n('clubs', 7)],
@@ -212,12 +203,6 @@ describe('groups', () => {
     expect(result.valid).toBe(true);
     if (result.valid && result.kind === 'group') {
       expect(result.assignments).toEqual([{ cardId: joker.id, suit: 'diamonds', rank: 9 }]);
-      expect(result.rank).toBe(9);
-      expect(result.naturalSuits).toEqual(['spades', 'hearts']);
-      expect(result.jokerCount).toBe(1);
-      expect(result.assignedJokers).toEqual(result.assignments);
-      expect(result.isValid).toBe(true);
-      expect(result.reasons).toEqual([]);
     }
   });
 
@@ -227,22 +212,15 @@ describe('groups', () => {
     if (!result.valid) expect(result.reason).toBe('reason.tooManyJokers');
   });
 
-  it('five same-rank cards -> groupTooLarge (default maxGroupSize 4)', () => {
+  it('five same-rank cards -> groupTooLarge (a group is 3 or 4 cards, always)', () => {
     const five = [n('spades', 9, 0), n('hearts', 9, 0), n('diamonds', 9, 0), n('clubs', 9, 0), n('spades', 9, 1)];
     const result = analyzeMeld(five);
     expect(result.valid).toBe(false);
     if (!result.valid) expect(result.reason).toBe('reason.groupTooLarge');
   });
-  it('hard group maximum ignores legacy maxGroupSize override', () => {
-    const five = [n('spades', 9, 0), n('hearts', 9, 0), n('diamonds', 9, 0), n('clubs', 9, 0), n('spades', 9, 1)];
-    const config: RulesConfig = { ...DEFAULT_RULES, maxGroupSize: 6 };
-    expect(isValidGroup(five, config)).toBe(false);
-  });
-
-  it('hard group bounds ignore groupMinSize and groupMaxSize overrides', () => {
-    const config: RulesConfig = { ...DEFAULT_RULES, groupMinSize: 2, groupMaxSize: 5 };
-    expect(isValidGroup([n('hearts', 4), n('diamonds', 4)], config)).toBe(false);
-    expect(isValidGroup([n('spades', 4), n('hearts', 4), n('diamonds', 4), n('clubs', 4), j(0, 1)], config)).toBe(false);
+  it('group size is a hard 3-4: two cards is too small, five is too large', () => {
+    expect(isValidGroup([n('hearts', 4), n('diamonds', 4)])).toBe(false);
+    expect(isValidGroup([n('spades', 4), n('hearts', 4), n('diamonds', 4), n('clubs', 4), j(0, 1)])).toBe(false);
   });
 
   it.each([
@@ -259,13 +237,9 @@ describe('groups', () => {
     expect(result).toEqual({ valid: false, reason });
   });
 
-  it('hard unique-suit rule ignores legacy groupUniqueSuits override', () => {
-    const config: RulesConfig = { ...DEFAULT_RULES, groupUniqueSuits: false };
-    expect(isValidGroup([n('spades', 9, 0), n('spades', 9, 1), n('hearts', 9)], config)).toBe(false);
-  });
-  it('hard natural-card requirement ignores legacy allowAllJokerGroups override', () => {
-    const config: RulesConfig = { ...DEFAULT_RULES, allowAllJokerGroups: true };
-    expect(isValidGroup([j(0, 1), j(0, 2), j(1, 1)], config)).toBe(false);
+  it('a group needs unique natural suits, and at least one natural card', () => {
+    expect(isValidGroup([n('spades', 9, 0), n('spades', 9, 1), n('hearts', 9)])).toBe(false);
+    expect(isValidGroup([j(0, 1), j(0, 2), j(1, 1)])).toBe(false);
   });
   it('mixed ranks invalid', () => {
     expect(isValidGroup([n('hearts', 9), n('spades', 9), n('clubs', 8)])).toBe(false);

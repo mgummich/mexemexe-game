@@ -136,7 +136,7 @@ describe('computeSnapTargets', () => {
 
     ed.playHandCard(card.id, 't1');
     const landed = ed.getDraft().melds.find((m) => m.id === 't1')!;
-    expect(sortMeldCards(landed.cards, DEFAULT_RULES)).toEqual(target.preview);
+    expect(sortMeldCards(landed.cards)).toEqual(target.preview);
   });
 
   it('purity: does not mutate the draft or share card objects', () => {

@@ -71,8 +71,9 @@ read to handle jokers. The Mexe Mode draft is a separate structure (melds under
 edit, hand cards played, undo history) and is never serialized into committed
 state.
 
-`RulesConfig` (`src/rules/types.ts`, `DEFAULT_RULES`) is the single balance-knob
-block; its defaults are documented in GAME_RULES.md.
+`RulesConfig` (`src/rules/types.ts`, `DEFAULT_RULES`) says what a game is dealt
+from — deck count, jokers per deck, hand size — and nothing else. Meld legality
+is fixed; see GAME_RULES.md.
 
 ## Rules API (`src/rules/rules.ts`)
 

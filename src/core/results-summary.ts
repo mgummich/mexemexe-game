@@ -1,7 +1,7 @@
 import type { Meld } from '../rules/types';
 import type { PlaylogSummary } from './playlog';
 
-export interface PlayerRoundStats {
+interface PlayerRoundStats {
   turnsPlayed: number;
   cardsPlayed: number;
   draws: number;
@@ -43,7 +43,7 @@ export function summarizeMoveKey(
 }
 
 /** The subset of a results row that the match story is derived from (see WinScene.PlayerResult). */
-export interface MatchStoryPlayer {
+interface MatchStoryPlayer {
   isWinner: boolean;
   cardsLeft: number;
   cardsPlayed?: number;

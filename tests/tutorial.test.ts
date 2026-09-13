@@ -4,7 +4,6 @@ import { TUTORIAL_STEPS } from '../src/tutorial/script';
 import { buildTutorialState } from '../src/tutorial/fixture';
 import { DraftEditor } from '../src/mexe-mode/draft';
 import { analyzeMeld, applyConfirmedTurn, drawAndEndTurn, getInvalidMeldReasons } from '../src/rules/rules';
-import { DEFAULT_RULES } from '../src/rules/types';
 import type { GameState } from '../src/rules/types';
 import { getLocale, setLocale, t } from '../src/localization/i18n';
 
@@ -48,8 +47,8 @@ describe('interactive tutorial script', () => {
     expect(dir.isAllowed({ type: 'playHandCard', cardId: 'hearts-9-d1' })).toBe(true);
     editor.playHandCard('hearts-9-d1', setMeldId);
     const dupMeld = editor.getDraft().melds.find((m) => m.id === setMeldId)!;
-    expect(analyzeMeld(dupMeld.cards, DEFAULT_RULES)).toMatchObject({ valid: false, reason: 'reason.groupDuplicateSuit' });
-    const invalid = getInvalidMeldReasons(editor.getDraft().melds, DEFAULT_RULES);
+    expect(analyzeMeld(dupMeld.cards)).toMatchObject({ valid: false, reason: 'reason.groupDuplicateSuit' });
+    const invalid = getInvalidMeldReasons(editor.getDraft().melds);
     expect(invalid.some((r) => r.meldId === setMeldId && r.reason === 'reason.groupDuplicateSuit')).toBe(true);
     editor.moveTableCard('hearts-9-d1', null);
     const secondSetMeldId = editor.getDraft().melds.find((m) => m.id !== setMeldId)!.id;
@@ -79,7 +78,7 @@ describe('interactive tutorial script', () => {
     advance();
     expect(dir.stepIndex).toBe(6);
     const jokerRun = editor.getDraft().melds.find((m) => m.id === runMeldId)!;
-    const jokerAnalysis = analyzeMeld(jokerRun.cards, DEFAULT_RULES);
+    const jokerAnalysis = analyzeMeld(jokerRun.cards);
     expect(jokerAnalysis.valid).toBe(true);
     expect(jokerAnalysis.valid && jokerAnalysis.assignments.some((a) => a.cardId === 'joker-d0-1')).toBe(true);
 

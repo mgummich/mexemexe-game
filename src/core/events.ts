@@ -1,5 +1,5 @@
 /** Minimal typed event bus. Decouples game logic from Phaser layer. */
-export type EventMap = Record<string, unknown>;
+type EventMap = Record<string, unknown>;
 
 export interface GameEvents extends EventMap {
   'game:ready': { seed: number };

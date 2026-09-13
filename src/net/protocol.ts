@@ -99,7 +99,7 @@ export function normalizeRoomSettings(raw: unknown): RoomSettings {
 // ---------------------------------------------------------------------------
 
 /** One seat's entry in a GameView. `hand` is present only for the viewing seat. */
-export interface PlayerView {
+interface PlayerView {
   seat: number;
   id: string;
   name: string;
@@ -140,13 +140,13 @@ export interface GameView {
    * hash. Resets to false at the start of each turn. */
   mexeBonusClaimed: boolean;
   /** Digest of the parts of the authoritative state every seat can see. A client recomputes it
-   * from its own reconstruction and asks for a resync on mismatch (docs/archive/PHASE7_AUDIT.md #3). */
+   * from its own reconstruction and asks for a resync on mismatch. */
   hash: string;
 }
 
 /** The seat-independent slice of a game that both sides can hash. Deliberately excludes card
  * identities in hands and the draw pile — those differ per view, so they cannot be compared. */
-export interface StateDigestInput {
+interface StateDigestInput {
   rev: number;
   activeSeat: number;
   turn: number;
@@ -245,39 +245,39 @@ export function buildView(
 // Client -> server messages
 // ---------------------------------------------------------------------------
 
-export interface CreateRoomMsg {
+interface CreateRoomMsg {
   v: number;
   type: 'create_room';
   reqId: string;
   name: string;
 }
-export interface JoinRoomMsg {
+interface JoinRoomMsg {
   v: number;
   type: 'join_room';
   reqId: string;
   code: string;
   name: string;
 }
-export interface LeaveRoomMsg {
+interface LeaveRoomMsg {
   v: number;
   type: 'leave_room';
   reqId: string;
 }
-export interface ReadyMsg {
+interface ReadyMsg {
   v: number;
   type: 'ready';
   reqId: string;
   ready: boolean;
 }
 /** Host-only explicit lobby start. Keeps 3P/4P lobbies open until all invited seats are ready. */
-export interface StartGameMsg {
+interface StartGameMsg {
   v: number;
   type: 'start_game';
   reqId: string;
 }
 /** Host-only, lobby-only proposal for the room's settings. The server normalizes and applies —
  * it never echoes the payload back unvalidated. */
-export interface SetRoomSettingsMsg {
+interface SetRoomSettingsMsg {
   v: number;
   type: 'set_room_settings';
   reqId: string;
@@ -285,7 +285,7 @@ export interface SetRoomSettingsMsg {
 }
 /** "I opened Mexe Mode": claims the one-off turn extension. Honoured at most once per turn, for
  * the active seat only, so it cannot be spammed to hold a turn open. */
-export interface MexeStartedMsg {
+interface MexeStartedMsg {
   v: number;
   type: 'mexe_started';
   reqId: string;
@@ -294,33 +294,33 @@ export interface SubmitTurnMeld {
   id: string;
   cardIds: string[];
 }
-export interface SubmitTurnMsg {
+interface SubmitTurnMsg {
   v: number;
   type: 'submit_turn';
   reqId: string;
   rev: number;
   melds: SubmitTurnMeld[];
 }
-export interface DrawEndTurnMsg {
+interface DrawEndTurnMsg {
   v: number;
   type: 'draw_end_turn';
   reqId: string;
   rev: number;
 }
-export interface ReconnectMsg {
+interface ReconnectMsg {
   v: number;
   type: 'reconnect';
   reqId: string;
   token: string;
 }
-export interface PingMsg {
+interface PingMsg {
   v: number;
   type: 'ping';
   reqId: string;
 }
 /** Client-initiated recovery: "I believe my state is wrong, send me the authoritative one."
  * Carries no state — the server never reconciles towards a client, it only re-sends. */
-export interface ResyncMsg {
+interface ResyncMsg {
   v: number;
   type: 'resync';
   reqId: string;
@@ -328,7 +328,7 @@ export interface ResyncMsg {
 
 /** One preset reaction, addressed to the room. Carries no text: `reaction` must be one of
  * REACTIONS, and the server drops anything else plus anything inside the per-seat cooldown. */
-export interface ReactionMsg {
+interface ReactionMsg {
   v: number;
   type: 'reaction';
   reqId: string;
@@ -361,7 +361,7 @@ export interface RoomPlayerSummary {
   connected: boolean;
 }
 
-export interface RoomJoinedMsg {
+interface RoomJoinedMsg {
   v: number;
   type: 'room_joined';
   code: string;
@@ -374,7 +374,7 @@ export interface RoomJoinedMsg {
    * (D15) — never assume it is 0. */
   hostSeat: number;
 }
-export interface RoomStateMsg {
+interface RoomStateMsg {
   v: number;
   type: 'room_state';
   players: RoomPlayerSummary[];
@@ -385,17 +385,17 @@ export interface RoomStateMsg {
 }
 /** Match start. Deliberately carries no shuffle seed: the seed reproduces both hands and the
  * whole draw pile through the shared deal functions, so it must never leave the server. */
-export interface GameStartedMsg {
+interface GameStartedMsg {
   v: number;
   type: 'game_started';
   view: GameView;
 }
-export interface StateSyncMsg {
+interface StateSyncMsg {
   v: number;
   type: 'state_sync';
   view: GameView;
 }
-export interface ProposalRejectedMsg {
+interface ProposalRejectedMsg {
   v: number;
   type: 'proposal_rejected';
   reqId: string;
@@ -403,17 +403,17 @@ export interface ProposalRejectedMsg {
 }
 /** The server ended `seat`'s turn for them: the clock ran out, or they were gone past the
  * reconnect grace. Purely a notice — the authoritative result already arrived as a state_sync. */
-export interface TurnTimeoutMsg {
+interface TurnTimeoutMsg {
   v: number;
   type: 'turn_timeout';
   seat: number;
 }
-export interface PlayerDisconnectedMsg {
+interface PlayerDisconnectedMsg {
   v: number;
   type: 'player_disconnected';
   seat: number;
 }
-export interface PlayerReconnectedMsg {
+interface PlayerReconnectedMsg {
   v: number;
   type: 'player_reconnected';
   seat: number;
@@ -436,7 +436,7 @@ export interface GameOverMsg {
 }
 /** A preset reaction relayed from `seat` to the rest of the room. The server re-emits its own
  * validated value — a client's payload is never echoed through. */
-export interface PlayerReactionMsg {
+interface PlayerReactionMsg {
   v: number;
   type: 'player_reaction';
   seat: number;
@@ -451,7 +451,7 @@ export interface ErrorMsg {
    * server-initiated errors such as `room_closed`. */
   reqId?: string;
 }
-export interface PongMsg {
+interface PongMsg {
   v: number;
   type: 'pong';
 }

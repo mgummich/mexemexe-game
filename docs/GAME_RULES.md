@@ -76,8 +76,8 @@ On your turn:
 **Draw only happens when you pass, cannot play, or will not play.** There is no draw at the start
 of a turn.
 
-**Turn timer — online only.** A local hot-seat or AI match is never on a clock, and
-`turnTimerSeconds` still defaults to 0. Online, the *server* owns the timer (Casual / Fast / Off
+**Turn timer — online only.** A local hot-seat or AI match is never on a clock. Online, the
+*server* owns the timer (Casual / Fast / Off
 presets picked by the host and frozen at match start — see
 [MULTIPLAYER.md](MULTIPLAYER.md) §7b). Expiry runs `timerExpireTurn`: discard whatever draft was
 in progress, draw one card, end the turn. Because a Mexe draft never leaves the client until
@@ -118,18 +118,13 @@ a client cannot confirm a turn the server would reject, and the two can never dr
 
 ## Configuration defaults
 
-The engine carries hooks for these variants; none is enabled in a standard game:
+`RulesConfig` says what a game is dealt from. Nothing else is configurable: run and group
+legality is fixed in `analyzeMeld`, so no setting can change what counts as a valid meld.
 
-| Hook | Default | Variant |
+| Field | Default | Variant |
 |---|---|---|
 | `deckCount` | 2 | one deck |
 | `jokersPerDeck` | 2 | 0 = a 52-card deck with no jokers |
-| `groupMinSize` | 3 | fixed group minimum |
-| `groupMaxSize` | 4 | fixed group maximum |
-| `groupUniqueSuits` | true | fixed: natural group suits are all different |
-| `allowAllJokerGroups` | false | fixed: every group needs a natural card |
-| `firstMeldMinPoints` | 0 (off) | minimum points for a player's first meld |
-| `turnTimerSeconds` | 0 (off) | a local-play hook, still unwired. The online clock is a **room** setting owned by the server, not a rules config — see [MULTIPLAYER.md](MULTIPLAYER.md) §7b |
 | `handSize` | 7 | different deal size |
 
 ## Rejected variants

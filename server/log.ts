@@ -83,8 +83,6 @@ export function createLogger(level: LogLevel, sink: LogSink = defaultSink) {
   };
 }
 
-export type Logger = ReturnType<typeof createLogger>;
-
 /** An error *class* name is a source-code identifier: letters, digits, underscore, and short.
  * Anything else under `err.name` was assigned at runtime and is therefore data, not a type. */
 const ERROR_NAME = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;

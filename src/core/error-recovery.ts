@@ -1,4 +1,4 @@
-export interface RecoverySceneManager {
+interface RecoverySceneManager {
   getActiveScenes(): Array<{ scene: { key: string } }>;
   stop(key: string): void;
   start(key: string): void;

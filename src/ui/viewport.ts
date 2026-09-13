@@ -33,8 +33,8 @@ export const LANDSCAPE_H = 270;
  * allowed to grow horizontally up to this cap instead; anything wider (32:9 monitors) gets bars.
  */
 export const LANDSCAPE_MAX_W = 630;
-export const PORTRAIT_W = 270;
-export const PORTRAIT_H = 480;
+const PORTRAIT_W = 270;
+const PORTRAIT_H = 480;
 
 /**
  * Portrait needs a margin over square (1.05) so a window sitting at almost exactly 1:1 can't
