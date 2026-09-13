@@ -140,7 +140,7 @@ export interface GameView {
    * hash. Resets to false at the start of each turn. */
   mexeBonusClaimed: boolean;
   /** Digest of the parts of the authoritative state every seat can see. A client recomputes it
-   * from its own reconstruction and asks for a resync on mismatch (docs/archive/PHASE7_AUDIT.md #3). */
+   * from its own reconstruction and asks for a resync on mismatch. */
   hash: string;
 }
 

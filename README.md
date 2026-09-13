@@ -107,7 +107,7 @@ tests/          Vitest unit tests (incl. tests/server)
 e2e*/           Playwright suites: screenshots, cross-browser, multiplayer, PWA
 public/         static assets (art, audio, PWA manifest, service worker)
 scripts/        asset/icon generation, verification gates, release tooling
-docs/           documentation (see below); docs/archive holds historical audits
+docs/           documentation (see below)
 ```
 
 ## Documentation

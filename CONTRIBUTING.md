@@ -39,19 +39,17 @@ git config core.hooksPath .githooks
 
 ## Project conventions
 
-- `src/rules` is a **pure** rules engine — no Phaser imports, fully unit-tested.
-  It is the only place legality is decided, and the server calls the same
-  functions.
-- `src/mexe-mode` holds the draft editor (undo/redo/reset). Meld ids are
-  namespaced per turn; never reuse ids across turns.
-- Phaser scenes only render state and forward intents.
-- New game logic needs unit tests in `tests/`; user-visible behavior should be
-  reachable from the `?showcase=` URL params so the screenshot suite can cover it.
-- Keep the docs current with the change: rules → `docs/GAME_RULES.md`, protocol
-  → `docs/MULTIPLAYER.md`, assets → `docs/ASSETS.md`.
+The permanent rules are in [`AGENTS.md`](AGENTS.md) — rules purity, server
+authority, state ownership, error handling, verification. Two habits that only
+show up when you write code here:
 
-The table at the end of [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) says
-where each kind of change belongs.
+- New game logic needs unit tests in `tests/`; user-visible behavior should be
+  reachable from a `?showcase=` URL param so the screenshot suite can cover it.
+- Meld ids in `src/mexe-mode` are namespaced per turn; never reuse ids across
+  turns.
+
+The module table in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) says where
+each kind of change belongs, and which doc it needs to keep current.
 
 ## Releases
 

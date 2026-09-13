@@ -5,7 +5,7 @@
  * Uses the shared rules functions directly (`applyConfirmedTurn`,
  * `drawAndEndTurn`, `canConfirmTurn`) instead of `GameStore` — a room is one
  * of potentially many in a single process, and `GameStore` emits on a global
- * event bus, which would cross-talk between rooms (see docs/archive/PHASE5_AUDIT.md §4).
+ * event bus, which would cross-talk between rooms.
  */
 import { randomInt, randomUUID } from 'node:crypto';
 import { createRng } from '../src/core/rng';
@@ -439,7 +439,7 @@ export class RoomManager {
   /**
    * The server's turn clock, driven by the caller on an interval. Two things end a turn the
    * active seat did not: the room's turn timer running out, and the seat having been gone past
-   * the room's reconnect grace (docs/archive/PHASE7_AUDIT.md #4). Both resolve to the same
+   * the room's reconnect grace. Both resolve to the same
    * always-legal move — `timerExpireTurn`, i.e. discard whatever draft the client had, draw one
    * card and pass.
    *

@@ -70,7 +70,7 @@ shipped bundle.
 
 | Gate | What it adds |
 |---|---|
-| `npm run verify` | `test` + `lint` + `screenshot` + `scripts/check-verify.mjs`: no console/page errors, every expected screenshot present, fps floors met. Also merges perf/test metrics into `STATUS.json`. |
+| `npm run verify` | `test` + `lint` + `screenshot` + `scripts/check-verify.mjs`: no console/page errors, every expected screenshot present, fps floors met. |
 | `npm run verify:multiplayer` | Build + the multiplayer suite + `scripts/check-verify-multiplayer.mjs`: no client console errors, no server stderr, no accepted illegal proposal, hand privacy held, state hashes agree. |
 | `npm run verify:cross` | Build + the cross-browser layout suite. |
 | `npm run verify:pwa` | Build + the offline/update suite. |

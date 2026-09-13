@@ -1,8 +1,8 @@
 # Changelog
 
-All notable changes to MEXEMEXE!. See `docs/STATUS.json` for the current project
-status, and `docs/archive/STATUS-history.json` for the phase-by-phase log this
-summarizes.
+All notable changes to MEXEMEXE!. Entries below are historical and are kept as
+written: some name phase audits and status files that have since been deleted,
+and those remain readable in git history.
 
 ## 1.9.0 — 2026-09-13
 

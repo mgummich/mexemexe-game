@@ -1399,7 +1399,7 @@ export class GameScene extends Phaser.Scene {
     this.staticUi.push(this.reasonBg, this.reasonText, this.bannerBg, this.banner, this.lastMoveText);
 
     if (this.online) {
-      // small corner connection indicator — never a modal, per docs/archive/PHASE5_CLIENT_PLAN.md section A
+      // small corner connection indicator — never a modal
       this.onlineStatusDot = this.add.circle(this.r.onlineDot.x, this.r.onlineDot.y, 3, 0x3ec06a).setDepth(600);
       // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
       // presence — not just its color — is the "you are online" tell (task: never ambiguous).
@@ -4023,7 +4023,7 @@ export class GameScene extends Phaser.Scene {
     // card inside the meld itself (under the dragged sprite, gold-tinted on an already-light card
     // face, overlapping both neighbours by half a card) was found illegible in round-2 review and
     // reverted rather than shipped as invisible code. The detached panel above remains the one
-    // preview surface; see docs/improvements/STATUS.md MEXE-05 for the reasoning.
+    // preview surface.
     this.ghostPreview = objs;
   }
 
