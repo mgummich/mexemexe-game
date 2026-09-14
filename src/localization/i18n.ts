@@ -374,6 +374,8 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.reaction.wow': 'UAU!',
     'online.reactionFrom': '{name}: {reaction}',
     'online.rematch': 'Nova partida na mesma sala. Marque PRONTO de novo quando quiser jogar.',
+    'online.settingsChanged': 'As configurações da sala mudaram — fique pronto novamente.',
+    'online.nameTooShort': 'Escolha um nome com pelo menos 2 letras.',
     'game.onlineBadge': 'ONLINE',
   },
   en: {
@@ -749,6 +751,8 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.reaction.wow': 'WOW!',
     'online.reactionFrom': '{name}: {reaction}',
     'online.rematch': 'New match, same room. Tap READY again when you want to play.',
+    'online.settingsChanged': 'Room settings changed — please ready again.',
+    'online.nameTooShort': 'Pick a name with at least 2 characters.',
     'game.onlineBadge': 'ONLINE',
   },
 };

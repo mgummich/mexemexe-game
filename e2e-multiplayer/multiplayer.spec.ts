@@ -690,8 +690,8 @@ test('room full: a 5th joiner sees a translated room_full error', async ({ brows
 
 /** Same flow as `newClient`, on a portrait phone viewport and addressing the ONLINE button
  *  through the live world size instead of the 1280x720 scale factor. */
-async function newPhoneClient(browser: Browser): Promise<Page> {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+async function newPhoneClient(browser: Browser, viewport = { width: 390, height: 844 }): Promise<Page> {
+  const ctx = await browser.newContext({ viewport });
   const page = await ctx.newPage();
   trackConsoleErrors(page);
   await page.goto(`/?ws=${encodeURIComponent(WS_URL)}&showcase=menu`);
@@ -828,4 +828,48 @@ test('mobile: a touch player can type a room code and join (soft-keyboard input 
   appendLog({ mobileTouchJoin: { code, screenshot: shot }, screenshots });
   await host.context().close();
   await ctx.close();
+});
+
+test('ON-09/ON-20: a host settings change clears every ready bit, on a landscape phone', async ({ browser }) => {
+  // Landscape phone: the third required viewport for the lobby, and the tightest one for a seat
+  // row (name + YOU/HOST badges + status word all on one line).
+  const host = await newPhoneClient(browser, { width: 844, height: 390 });
+  const guest = await newPhoneClient(browser, { width: 844, height: 390 });
+  expect(await host.evaluate(() => window.__MEXE__.viewport().portrait)).toBe(false);
+
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+  await guest.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Joao'), code);
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+
+  for (const p of [host, guest]) await p.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await host.waitForFunction(() => window.__MEXE__.online!.players().every((p) => p.ready), undefined, { timeout: 10_000 });
+
+  const screenshots: string[] = [];
+  await shot({ host, guest }, 'landscape-lobby-ready', screenshots);
+
+  // The host changes the terms every seat just agreed to: the server clears every ready bit and
+  // both lobbies say so, instead of starting a match under settings nobody re-accepted.
+  await host.evaluate(() =>
+    window.__MEXE__.online!.setRoomSettings({
+      timerMode: 'fast', turnMs: 45_000, mexeBonusMs: 20_000, warnMs: 10_000, reconnectGraceMs: 30_000, missedTurnLimit: 2,
+    }),
+  );
+  for (const p of [host, guest]) {
+    await p.waitForFunction(
+      () => window.__MEXE__.online!.roomSettings()?.timerMode === 'fast'
+        && window.__MEXE__.online!.players().every((pl) => !pl.ready),
+      undefined,
+      { timeout: 10_000 },
+    );
+  }
+  await shot({ host, guest }, 'landscape-lobby-settings-changed', screenshots);
+
+  for (const p of [host, guest]) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of [host, guest]) await p.context().close();
 });

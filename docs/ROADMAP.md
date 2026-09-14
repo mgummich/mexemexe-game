@@ -24,7 +24,6 @@ Nothing is mid-flight. The repository is at a released, green state.
 
 - **Custom timer UI** — `custom` timer values are validated end to end on the
   wire but have no lobby control; three presets cover a room of friends.
-- **Online rematch** — still needs the protocol change noted under Deferred.
 - **Tutorial depth** — multi-turn steps: confirm a turn, then watch an opponent
   move.
 - **Rules panel sectioning** — the in-game help is one long panel; split it by
@@ -38,9 +37,10 @@ Nothing is mid-flight. The repository is at a released, green state.
 
 ## Deferred
 
-- **Online rematch and online result stats** — both need a protocol change
-  (the client never observes per-turn state locally). Deliberately postponed
-  rather than faked with zeros.
+- **Online result stats** — needs a protocol change (the client never observes
+  per-turn state locally). Deliberately postponed rather than faked with zeros.
+  Online *rematch* itself is shipped: a finished room is recycled back to its
+  lobby on the same code (see [MULTIPLAYER.md](MULTIPLAYER.md) §3).
 - **Sprite pooling in the render loop** — measured at 59 fps with 21 sprites
   and 20 zones; revisit only if a lower-end target dips below 50.
 - **Continuous responsive layout** — portrait is a second authored layout, not

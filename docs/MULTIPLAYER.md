@@ -13,8 +13,9 @@ ranking, chat, or cosmetics sync. The game labels the entry point
 
 - **No accounts, matchmaking, ranked play, chat or spectators.** Private rooms
   by 5-character code only.
-- **No online rematch** — the win screen offers MENU only; play again by
-  creating or joining another room.
+- **Online rematch keeps the room, not the stats** — a finished match hands its
+  room back to the lobby on the same code (`recycleForRematch`), with every seat
+  kept and every ready bit cleared. The win screen offers REMATCH alongside MENU.
 - **No rematch stats or winning-move text online** — the client never observes
   per-turn state locally, so there is no play log to summarize. The stats line
   is hidden rather than showing zeros. Fixing it needs a protocol change.
@@ -73,15 +74,46 @@ cannot leak an opponent's hand in an online match.
    caller as seat 0, issues a session token, replies `room_joined`.
 2. **join_room** — players fill stable clockwise seats 1–3; a fifth join is
    rejected (`room_full`) and joins after start are rejected (`game_started`).
-3. **ready/start** — each occupied seat toggles ready. Seat 0 sends
+3. **ready/start** — each occupied seat toggles ready. A host settings change
+   clears every ready bit (`setRoomSettings` returns `changed`), because a ready
+   bit is agreement to the terms that were on screen when it was pressed; an
+   idempotent re-send of the same settings changes nothing. Seat 0 sends
    `start_game`; server requires 2–4 occupied ready seats, picks seed, deals,
    sets `rev = 1`, and broadcasts per-seat `game_started` views.
 4. **playing** — alternating turns; every accepted action increments `rev`.
-5. **game_over** — server broadcasts winner (or stalemate result), then closes
-   the room immediately: the slot is freed and every socket is detached with a
-   `room_closed` notice. Clients render the result from the `game_over` payload.
+5. **game_over** — server broadcasts winner (or stalemate result), then
+   *recycles* the room instead of destroying it: match state, revision, clocks,
+   missed-turn streaks and every ready bit are cleared, seats and host authority
+   stay, and a fresh `room_state` goes out with `locked: false`. Clients render
+   the result from the `game_over` payload and can rematch on the same code. An
+   abandoned recycled room is reaped by the normal sweep like any other.
 6. **empty/abandoned** — room is destroyed when both sockets are gone past the
    grace window, or after an absolute idle timeout.
+
+## 3b. Identity, names and invite links
+
+There are no accounts. Three things carry identity, and only one of them is
+trusted:
+
+- **`sessionToken`** — issued per seat at join, stored in `sessionStorage`, and
+  the *only* thing that proves seat ownership. Reconnect and seat reclaim check
+  it and nothing else.
+- **seat index** — stable and clockwise for the life of the room; it never moves
+  once assigned, so turn order and the socket map stay in step.
+- **display name** — cosmetic. Stored in `localStorage` (`mexe.online.name`) so
+  it survives a reload, sanitized client-side to letters/digits/spaces, 2–12
+  visible characters (`MIN_NAME_LENGTH`/`MAX_NAME_LENGTH`), trimmed again
+  server-side with a `Player N` fallback. **Duplicate names are allowed and are
+  never disambiguated with a suffix** — the seat colour, the seat row, and the
+  spelled-out `YOU`/`HOST` badges are what tell two Anas apart. A name never
+  authenticates, authorizes, or reclaims anything.
+
+**Invite links** are `<current url>?room=CODE` and carry nothing else: no
+session token, no player id, no state. `OnlineScene` reads `?room=` on entry,
+sanitizes it to the code alphabet, and sends an ordinary `join_room` once the
+socket opens — the server validates it exactly as it does a typed code. Sharing
+uses the Web Share API where the browser has one, with clipboard copy as the
+universal fallback.
 
 ## 4. Protocol
 

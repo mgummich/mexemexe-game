@@ -4,7 +4,7 @@ import { bus } from '../core/events';
 import { onAppVisible } from '../core/lifecycle';
 import { isOffline, onConnectivityChange } from '../core/pwa';
 import { t } from '../localization/i18n';
-import { MAX_NAME_LENGTH, NetClient, readDisplayName, writeDisplayName, type ConnStatus } from '../net/client';
+import { MAX_NAME_LENGTH, MIN_NAME_LENGTH, NetClient, readDisplayName, writeDisplayName, type ConnStatus } from '../net/client';
 import { errorMessage } from '../net/errors';
 import {
   DEFAULT_ROOM_SETTINGS, REACTION_COOLDOWN_MS, REACTIONS, TIMER_PRESETS,
@@ -93,6 +93,11 @@ export class OnlineScene extends Phaser.Scene {
   private rematch = false;
   /** Room code taken from a share link (`?room=`), joined automatically once the socket opens. */
   private autoJoinCode: string | null = null;
+  /** ON-05: set when the last name submission had too few visible characters to be a name. */
+  private nameError = false;
+  /** ON-09: shown until the player readies again after the host changed the room's fairness
+   * settings and the server cleared everyone's ready bit. */
+  private settingsChangedNotice = false;
   /** Last reaction the room sent, shown briefly in the lobby. */
   private lastReaction: { seat: number; reaction: ReactionId } | null = null;
   private resume: { client: NetClient; code: string; seat: number } | null = null;
@@ -133,6 +138,8 @@ export class OnlineScene extends Phaser.Scene {
     this.nameInput = '';
     this.lastReaction = null;
     this.rematch = false;
+    this.settingsChangedNotice = false;
+    this.nameError = false;
     this.inFlight.clear();
     // Field initializer, not reset here, is exactly the class of bug this run's worst defect
     // (D1) came from — a restart must never inherit a scene's previous life's state.
@@ -282,6 +289,13 @@ export class OnlineScene extends Phaser.Scene {
         // The room re-opened as a lobby: seats are back to not-ready, so our own flag must be too,
         // or READY would render as already pressed and its next tap would send `false`.
         if (msg.locked === false && this.settingsLocked) this.ready = false;
+        // ON-09: the host changed the room's terms, so the server cleared every ready bit. The
+        // server's word is the only source of it — mirror it locally and say why, otherwise READY
+        // renders as still pressed and the player never learns the terms moved.
+        else if (this.ready && msg.players.some((p) => p.seat === this.seat && !p.ready)) {
+          this.ready = false;
+          this.settingsChangedNotice = true;
+        }
         this.players = msg.players;
         this.roomSettings = msg.settings;
         this.hostSeat = msg.hostSeat;
@@ -432,11 +446,21 @@ export class OnlineScene extends Phaser.Scene {
     this.client.joinRoom(this.codeInput, this.playerName());
   }
 
-  /** Store the typed name and go back to the entry screen. An empty buffer just leaves the
-   * previous name alone — there is nothing to confirm and nothing to warn about. */
+  /**
+   * Store the typed name and go back to the entry screen. ON-05: a name that survives the
+   * sanitizer with fewer than MIN_NAME_LENGTH visible characters (empty, spaces only, or a
+   * string that was nothing but emoji/control characters) is refused on the spot and said so —
+   * silently keeping the old name looks like the button did nothing.
+   */
   private commitName(): void {
     const name = sanitizeName(this.nameInput).trim();
-    if (name) writeDisplayName(name);
+    if (name.length < MIN_NAME_LENGTH) {
+      this.nameError = true;
+      this.rebuild();
+      return;
+    }
+    writeDisplayName(name);
+    this.nameError = false;
     this.phase = 'idle';
     this.rebuild();
   }
@@ -551,6 +575,7 @@ export class OnlineScene extends Phaser.Scene {
       )
       .on('pointerup', () => {
         this.phase = 'name';
+        this.nameError = false;
         this.nameInput = readDisplayName() ?? '';
         this.rebuild();
       });
@@ -592,6 +617,7 @@ export class OnlineScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true })
       .on('pointerup', () => this.joinInputEl?.focus());
     label(this, cx(), vy(148), t(view().touch ? 'online.nameHintTouch' : 'online.nameHint'), 7, '#c0b8a8');
+    if (this.nameError) label(this, cx(), vy(160), t('online.nameTooShort'), 7, '#ff6b5e');
     new PixelButton(this, cx(), vy(180), t('online.nameOk'), () => this.commitName(), {
       textureBase: 'btn-feito', w: 120, h: 22, size: 8,
     });
@@ -643,8 +669,15 @@ export class OnlineScene extends Phaser.Scene {
     label(this, badge.x, y, filled ? name.slice(0, 1).toUpperCase() : '+', 8, '#f7f2e7');
 
     const isMe = filled && player.seat === this.seat;
-    const nameText = seat === this.hostSeat && filled ? `${name} · ${t('online.host')}` : name;
-    this.add
+    // Badges are spelled out, never carried by colour alone: the yellow name used to be the only
+    // thing saying which row is yours, which is invisible to a colour-blind player and to anyone
+    // reading a small phone screen in sunlight.
+    const badges = [
+      ...(isMe ? [t('menu.you')] : []),
+      ...(seat === this.hostSeat && filled ? [t('online.host')] : []),
+    ];
+    const nameText = badges.length ? `${name} · ${badges.join(' · ')}` : name;
+    const nameEl = this.add
       .text(left + 20, y, nameText, fontStyle(8, filled ? (isMe ? '#f7d23e' : '#f7f2e7') : '#8a7f6e'))
       .setOrigin(0, 0.5);
 
@@ -655,7 +688,18 @@ export class OnlineScene extends Phaser.Scene {
         ? `✓ ${t('online.playerReady')}`
         : t('online.playerWaiting');
     const statusColor = !player.connected ? '#d83a3a' : player.ready ? '#3ec06a' : '#c0b8a8';
-    this.add.text(left + rowW, y, statusText, fontStyle(7, statusColor)).setOrigin(1, 0.5);
+    const statusEl = this.add.text(left + rowW, y, statusText, fontStyle(7, statusColor)).setOrigin(1, 0.5);
+    // Name plus badges plus status has to fit one row on a 390-wide phone too. The status word is
+    // the one that must never be cut (it is the state of the seat), so the name side gives way —
+    // trimmed character by character, never overlapped.
+    const maxNameW = statusEl.x - statusEl.width - 4 - nameEl.x;
+    if (nameEl.width > maxNameW) {
+      let shown = nameText;
+      while (shown.length > 1 && nameEl.width > maxNameW) {
+        shown = shown.slice(0, -1);
+        nameEl.setText(`${shown}…`);
+      }
+    }
   }
 
   /** ONLINE-21: four preset things to say, and nothing else — no free text to moderate. The
@@ -699,7 +743,13 @@ export class OnlineScene extends Phaser.Scene {
       this.renderSeatRow(vy(132 + seat * 13), this.players.find((p) => p.seat === seat) ?? null, seat);
     }
 
-    if (this.rematch) {
+    if (this.settingsChangedNotice) {
+      this.add
+        .text(cx(), vy(180), t('online.settingsChanged'), {
+          ...fontStyle(6, '#f7d23e'), align: 'center', wordWrap: { width: panelW(240) },
+        })
+        .setOrigin(0.5);
+    } else if (this.rematch) {
       label(this, cx(), vy(180), t('online.rematch'), 6, '#f7d23e');
     } else if (this.lastReaction) {
       label(
@@ -720,6 +770,7 @@ export class OnlineScene extends Phaser.Scene {
       this.fireOnce('ready', 300, () => {
         this.ready = !this.ready;
         this.rematch = false;
+        this.settingsChangedNotice = false;
         this.client.setReady(this.ready);
       });
     }, { textureBase: 'btn-feito', w: 100, h: 20, size: 8, primary: true });
