@@ -33,6 +33,15 @@ Neither is reachable from a fixture, so the regression test plays a real match
 and clicks the real button turn after turn (`long-match: COMPRAR stays
 clickable turn after turn`). It fails on the old code at the third human turn.
 
+### Added: arm64 container images
+
+The published `mexemexe-game-web` and `mexemexe-game-server` images were
+amd64-only, so pulling them on an Apple Silicon Mac or an arm64 Linux host
+(Raspberry Pi, AWS Graviton, Ampere) failed with `no matching manifest for
+linux/arm64/v8 in the manifest list entries`. The release workflow now sets up
+QEMU and builds both images for `linux/amd64,linux/arm64`, so each tag pushes a
+multi-arch manifest list.
+
 ## 1.9.1 — 2026-09-13
 
 ### Repository simplification
