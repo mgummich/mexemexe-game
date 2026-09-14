@@ -17,6 +17,10 @@ const NAME_KEY = 'mexe.online.name';
 /** Long enough for a real nickname, short enough to fit a seat row — and the server trims to 64
  * regardless, so this is presentation, not a trust boundary. */
 export const MAX_NAME_LENGTH = 12;
+/** Fewest visible characters a display name may have. One character is an initial, not a name,
+ * and the seat badge already shows that initial — so a one-character name adds nothing and reads
+ * as a mistake to the rest of the room. */
+export const MIN_NAME_LENGTH = 2;
 const PING_INTERVAL_MS = 20_000;
 const TRACE_CAP = 80;
 const STATUS_TRACE_CAP = 40;

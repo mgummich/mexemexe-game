@@ -127,12 +127,25 @@ type StartResult =
   | { ok: false; error: 'room_not_found' | 'not_host' | 'not_ready' | 'seat_gap' | 'game_started' };
 
 type RoomSettingsResult =
-  | { ok: true; settings: RoomSettings }
+  | { ok: true; settings: RoomSettings; changed: boolean }
   | { ok: false; error: 'room_not_found' | 'not_host' | 'game_started' };
 
 type TurnResult =
   | { ok: true; gameOver: boolean }
   | { ok: false; reasons: ReasonCode[] };
+
+/** Field-by-field equality for a room's fairness terms. Every field of RoomSettings changes what
+ * a turn is worth, so any difference is a real change (see setRoomSettings / ON-09). */
+function sameSettings(a: RoomSettings, b: RoomSettings): boolean {
+  return (
+    a.timerMode === b.timerMode &&
+    a.turnMs === b.turnMs &&
+    a.mexeBonusMs === b.mexeBonusMs &&
+    a.warnMs === b.warnMs &&
+    a.reconnectGraceMs === b.reconnectGraceMs &&
+    a.missedTurnLimit === b.missedTurnLimit
+  );
+}
 
 function idOf(seat: number): string {
   return `p${seat}`;
@@ -270,6 +283,11 @@ export class RoomManager {
    * Host-only, lobby-only. Once `room.state` exists the settings are frozen: they are the terms
    * every seat agreed to when they pressed Ready, so a mid-match change is refused outright
    * rather than applied to the turn in progress.
+   *
+   * ON-09: a ready bit is agreement to the terms that were on screen when it was pressed. When
+   * the host actually changes them, every ready bit stops meaning anything, so they are all
+   * cleared and each seat has to agree again. An idempotent re-send of the same settings is not
+   * a change and leaves the lobby alone.
    */
   setRoomSettings(code: string, seat: number, proposed: RoomSettings): RoomSettingsResult {
     const room = this.rooms.get(code);
@@ -278,9 +296,12 @@ export class RoomManager {
     if (seat !== room.hostSeat) return { ok: false, error: 'not_host' };
     // Normalized again here: `setRoomSettings` is a public manager entry point, not only the
     // socket path, so it must not depend on the caller having gone through the wire parser.
-    room.settings = normalizeRoomSettings(proposed);
+    const next = normalizeRoomSettings(proposed);
+    const changed = !sameSettings(room.settings, next);
+    room.settings = next;
+    if (changed) for (const s of room.seats) if (s) s.ready = false;
     room.lastActivityAt = this.now();
-    return { ok: true, settings: room.settings };
+    return { ok: true, settings: room.settings, changed };
   }
 
   /** Start (or restart) the active seat's clock. A turn with no timer keeps a null start. */

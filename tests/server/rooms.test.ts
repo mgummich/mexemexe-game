@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
-import { DEFAULT_ROOM_SETTINGS, digestOfState, digestOfView, parseClientMessage, PROTOCOL_VERSION, stateHash } from '../../src/net/protocol';
+import { DEFAULT_ROOM_SETTINGS, digestOfState, digestOfView, parseClientMessage, PROTOCOL_VERSION, stateHash, TIMER_PRESETS } from '../../src/net/protocol';
 import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
 import { createRng } from '../../src/core/rng';
 import type { Card } from '../../src/rules/types';
@@ -213,6 +213,35 @@ describe('room lifecycle', () => {
     mgr.setReady(code, 0, true);
     expect(mgr.startGame(code, 1)).toMatchObject({ ok: false, error: 'not_host' });
     expect(mgr.startGame(code, 0)).toMatchObject({ ok: false, error: 'not_ready' });
+  });
+
+  it('ON-09: a host settings change clears every ready bit, and an unchanged re-send does not', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    mgr.setReady(code, 0, true);
+    mgr.setReady(code, 1, true);
+
+    // A fresh room carries the deployment's reconnect grace rather than the preset's, so pick the
+    // preset once first — that IS a change — and only then re-send it.
+    mgr.setRoomSettings(code, 0, TIMER_PRESETS.casual);
+    mgr.setReady(code, 0, true);
+    mgr.setReady(code, 1, true);
+
+    // Same terms re-sent: nobody agreed to anything new, so the lobby is left alone.
+    const unchanged = mgr.setRoomSettings(code, 0, TIMER_PRESETS.casual);
+    expect(unchanged).toMatchObject({ ok: true, changed: false });
+    expect(mgr.getPlayers(code)!.every((p) => p.ready)).toBe(true);
+
+    // Different terms: every ready bit was cast against the old ones, so all of them go.
+    const changed = mgr.setRoomSettings(code, 0, TIMER_PRESETS.fast);
+    expect(changed).toMatchObject({ ok: true, changed: true });
+    expect(mgr.getPlayers(code)!.some((p) => p.ready)).toBe(false);
+    // And the room cannot be started until both seats have agreed again.
+    expect(mgr.startGame(code, 0)).toMatchObject({ ok: false, error: 'not_ready' });
+    mgr.setReady(code, 0, true);
+    mgr.setReady(code, 1, true);
+    expect(mgr.startGame(code, 0)).toMatchObject({ ok: true, started: true });
   });
 
   it('does not compact stable seats after a lobby leave; host must refill the gap before start', () => {
