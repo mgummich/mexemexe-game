@@ -96,8 +96,80 @@ Then build with a matching URL:
 VITE_WS_URL=wss://mexe.example.com/ws docker compose up -d --build mexe
 ```
 
-Traefik/nginx-proxy work the same way — the WebSocket route needs connection
-upgrade headers passed through, which all three do by default for `wss`.
+### Traefik
+
+Traefik needs no WebSocket-specific setting — it passes the upgrade through
+whenever the client asks for it. The only thing that matters is that `/ws`
+routes to `mexe-server` and everything else to `mexe`, with the `/ws` router at
+a higher priority so it wins over the catch-all.
+
+With the Docker provider, add labels to `docker-compose.yml` and put both
+services on Traefik's network (`docker network create proxy` once):
+
+```yaml
+services:
+  mexe:
+    networks: [proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.mexe.rule=Host(`mexe.example.com`)
+      - traefik.http.routers.mexe.entrypoints=websecure
+      - traefik.http.routers.mexe.tls.certresolver=le
+      - traefik.http.services.mexe.loadbalancer.server.port=80
+
+  mexe-server:
+    networks: [proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.mexe-ws.rule=Host(`mexe.example.com`) && PathPrefix(`/ws`)
+      - traefik.http.routers.mexe-ws.priority=100
+      - traefik.http.routers.mexe-ws.entrypoints=websecure
+      - traefik.http.routers.mexe-ws.tls.certresolver=le
+      - traefik.http.services.mexe-ws.loadbalancer.server.port=8787
+
+networks:
+  proxy:
+    external: true
+```
+
+The server ignores the request path, so `/ws` needs no strip-prefix middleware.
+Once Traefik reaches the containers directly you can drop the `ports:` mappings
+for both services — publishing 8080/8787 on the host is only useful for direct
+access.
+
+The same routing as a file-provider config, for a Traefik that is not watching
+Docker:
+
+```yaml
+http:
+  routers:
+    mexe:
+      rule: "Host(`mexe.example.com`)"
+      service: mexe
+      entrypoints: [websecure]
+      tls: {certresolver: le}
+    mexe-ws:
+      rule: "Host(`mexe.example.com`) && PathPrefix(`/ws`)"
+      priority: 100
+      service: mexe-ws
+      entrypoints: [websecure]
+      tls: {certresolver: le}
+  services:
+    mexe:
+      loadBalancer:
+        servers: [{url: "http://127.0.0.1:8080"}]
+    mexe-ws:
+      loadBalancer:
+        servers: [{url: "http://127.0.0.1:8787"}]
+```
+
+Either layout matches the client's HTTPS default (`wss://<host>/ws`), so no
+`VITE_WS_URL` is needed. If the ONLINE menu never connects, check the browser
+console: a `ws://` URL means the page was served over HTTP, and a 404 on the
+upgrade means the `/ws` router lost to the catch-all — raise its priority.
+
+nginx-proxy works the same way as Caddy; the WebSocket route needs connection
+upgrade headers passed through, which it does by default for `wss`.
 
 ## Without Docker
 
