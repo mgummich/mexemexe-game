@@ -71,7 +71,7 @@ jobs:
           push: true
           tags: |
             ${{ steps.prefix.outputs.value }}-web:${{ github.ref_name }}
-            ${{ steps.prefix.outputs.value }}-web:latest
+            ${{ contains(github.ref_name, '-') && '' || format('{0}-web:latest', steps.prefix.outputs.value) }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -83,6 +83,6 @@ jobs:
           push: true
           tags: |
             ${{ steps.prefix.outputs.value }}-server:${{ github.ref_name }}
-            ${{ steps.prefix.outputs.value }}-server:latest
+            ${{ contains(github.ref_name, '-') && '' || format('{0}-server:latest', steps.prefix.outputs.value) }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
