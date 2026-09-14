@@ -4,7 +4,7 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased
+## 1.9.2 — 2026-09-14
 
 ### Fixed: the board could go dead mid-match
 
