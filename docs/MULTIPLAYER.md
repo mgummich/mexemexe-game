@@ -26,9 +26,11 @@ ranking, chat, or cosmetics sync. The game labels the entry point
 - **A seat disconnected past the room's reconnect grace is played for you**:
   the server draws and ends that seat's turn so the match keeps moving. It never
   melds on your behalf. Losing `missedTurnLimit` turns in a row ends the match.
-- **The turn timer has three lobby presets** (Casual / Fast / Off). `custom` is a
-  protocol capability with validated bounds, not a lobby control — there is no
-  screen for six number pickers.
+- **The turn timer has three lobby presets** (Casual / Fast / Off), one tap
+  apart, plus a host-only CUSTOM screen behind them for a room that wants its
+  own numbers. The custom screen's buttons stop at `CUSTOM_BOUNDS`, the same
+  bounds the server clamps to, and send one proposal on APPLY rather than one
+  per field.
 - **Reconnect is a single bounded retry**, not a persistent loop; if it fails
   the client returns you to the local menu with a message.
 
@@ -318,7 +320,12 @@ fairness surface: `timerMode`, `turnMs`, `mexeBonusMs`, `warnMs`,
 A brand-new room starts on Casual, except that its reconnect grace comes from
 the deployment's `MEXE_DISCONNECT_GRACE_MS` until a preset is picked.
 
-**Who owns them.** The seat-0 host proposes, in the lobby only. The server
+**Who owns them.** The host proposes, in the lobby only — one tap on the summary
+line cycles Casual/Fast/Off, and the CUSTOM link opens a five-row screen
+(`OnlineScene.renderCustom`) whose −/+ buttons go dead at `CUSTOM_BOUNDS`, so
+the host never proposes a number the server would silently clamp. APPLY sends
+one `set_room_settings`; a per-field send would clear everyone's ready bit five
+times for one decision. The server
 normalizes (`normalizeRoomSettings` — a named preset ignores every other field;
 `custom` is clamped field by field; anything unrecognizable becomes the default
 preset) and broadcasts. Nothing is ever applied client-side. `startGame` freezes
@@ -339,6 +346,12 @@ state *is* the table it falls back to. There is no half-finished rearrangement
 for a timeout to commit. The same path serves an expired clock and a seat absent
 past the grace; both increment that seat's `missedTurns`, and any turn the seat
 actually takes resets it to zero.
+
+**When there is no clock.** `startTurnClock` refuses to start one for an untimed
+room *and* for a match that just finished, so a finished game reports
+`turnMsLeft: null` rather than counting down to a red 0:00 behind the results
+screen. A rematch (`recycleForRematch`) clears the clock, the bonus flag and
+every missed-turn streak, so the next match starts on a fresh budget.
 
 **The Mexe bonus.** Opening the Mexe editor sends `mexe_started`. The server
 grants `mexeBonusMs` once per turn, to the active seat only, and only while a

@@ -7,7 +7,7 @@ import { t } from '../localization/i18n';
 import { MAX_NAME_LENGTH, MIN_NAME_LENGTH, NetClient, readDisplayName, writeDisplayName, type ConnStatus } from '../net/client';
 import { errorMessage } from '../net/errors';
 import {
-  DEFAULT_ROOM_SETTINGS, REACTION_COOLDOWN_MS, REACTIONS, TIMER_PRESETS,
+  CUSTOM_BOUNDS, DEFAULT_ROOM_SETTINGS, REACTION_COOLDOWN_MS, REACTIONS, TIMER_PRESETS,
   type GameView, type ReactionId, type RoomPlayerSummary, type RoomSettings, type TimerMode,
 } from '../net/protocol';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
@@ -18,10 +18,23 @@ import { debugApi } from '../verification/debug-api';
 /** Room codes are always this long — see server/rooms.ts CODE_LENGTH. */
 const CODE_LENGTH = 5;
 
-/** Lobby preset cycle. `custom` is a protocol capability (bounded values, validated server-side),
- * not a lobby control — there is no screen space for six number pickers, and the three presets
- * cover what a room of friends actually chooses between. */
+/** Lobby preset cycle — one tap moves between the three answers a room of friends actually
+ * chooses between. `custom` is deliberately not in the cycle: it lives behind the CUSTOM screen,
+ * so nobody lands on a six-field configuration by tapping past Fast. */
 const PRESET_CYCLE = ['casual', 'fast', 'off'] as const;
+
+/**
+ * The custom screen's rows, in display order: the setting, how far one tap moves it, and the
+ * unit it is shown in. Bounds come from `CUSTOM_BOUNDS` rather than a second copy here, so the
+ * buttons stop exactly where the server's clamp would have stopped them anyway.
+ */
+const CUSTOM_ROWS = [
+  { key: 'turnMs', stepMs: 15_000, unit: 'seconds' },
+  { key: 'mexeBonusMs', stepMs: 5_000, unit: 'seconds' },
+  { key: 'warnMs', stepMs: 5_000, unit: 'seconds' },
+  { key: 'reconnectGraceMs', stepMs: 10_000, unit: 'seconds' },
+  { key: 'missedTurnLimit', stepMs: 1, unit: 'turns' },
+] as const satisfies readonly { key: keyof typeof CUSTOM_BOUNDS; stepMs: number; unit: 'seconds' | 'turns' }[];
 
 /** Seats never move, so seat N always gets badge colour N — the badge is a *secondary* cue on a
  * row that already spells out the name and the status word, never the only one. */
@@ -53,7 +66,11 @@ function sanitizeName(raw: string): string {
  */
 export class OnlineScene extends Phaser.Scene {
   private client!: NetClient;
-  private phase: 'idle' | 'join' | 'name' | 'lobby' | 'error' = 'idle';
+  private phase: 'idle' | 'join' | 'name' | 'lobby' | 'custom' | 'error' = 'idle';
+  /** The custom screen's working copy. Edited freely while that screen is open and sent as one
+   * proposal on APLICAR — a field-by-field send would clear everyone's ready bit five times for
+   * one decision. Null whenever the screen is closed. */
+  private customDraft: RoomSettings | null = null;
   /** In-canvas join-code buffer. Replaces the Phase 5 `window.prompt`, which could not be
    * styled, localized, or driven by the verification suite. */
   private codeInput = '';
@@ -363,6 +380,7 @@ export class OnlineScene extends Phaser.Scene {
       startGame: () => this.client.startGame(),
       setRoomSettings: (s) => this.client.setRoomSettings(s),
       roomSettings: () => this.roomSettings,
+      openCustomSettings: () => this.openCustomSettings(),
       turnMsLeft: () => null,
       comprar: () => { /* no in-match action while still in the lobby */ },
       submitRaw: () => { /* not applicable in the lobby */ },
@@ -546,6 +564,8 @@ export class OnlineScene extends Phaser.Scene {
       this.renderJoin();
     } else if (this.phase === 'name') {
       this.renderName();
+    } else if (this.phase === 'custom' && this.code !== null) {
+      this.renderCustom();
     } else if (this.phase === 'lobby' && this.code !== null) {
       this.renderLobby();
     } else {
@@ -553,13 +573,22 @@ export class OnlineScene extends Phaser.Scene {
     }
 
     // Portrait stacks START (and its reason line) under READY, so VOLTAR moves down to clear them.
-    new PixelButton(this, cx(), view().portrait ? vy(260) : vy(245), t('online.back'), () => {
+    // On the custom screen the same button means "back to the lobby, change nothing" — leaving the
+    // room from a settings screen would be a trap, and the draft is deliberately thrown away.
+    const leavingRoom = this.phase !== 'custom';
+    new PixelButton(this, cx(), view().portrait ? vy(260) : vy(245), t(leavingRoom ? 'online.back' : 'online.customCancel'), () => {
+      if (!leavingRoom) {
+        this.customDraft = null;
+        this.phase = 'lobby';
+        this.rebuild();
+        return;
+      }
       // No cooldown/rebuild needed: backToMenu() leaves this scene immediately, so the guard
       // only needs to stop a second click before that happens.
       if (this.inFlight.has('leave')) return;
       this.inFlight.add('leave');
       this.backToMenu();
-    }, { textureBase: 'btn-comprar', w: 110, h: view().portrait ? 24 : 18, size: 7 });
+    }, { textureBase: 'btn-comprar', w: leavingRoom ? 110 : 150, h: view().portrait ? 24 : 18, size: 7 });
   }
 
   /** ONLINE-22: the entry screen says who you will show up as before you commit to a room, and
@@ -647,6 +676,92 @@ export class OnlineScene extends Phaser.Scene {
       this.fireOnce('settings', 300, () => this.client.setRoomSettings({ ...TIMER_PRESETS[nextTimerPreset(this.roomSettings.timerMode)] }));
     });
     label(this, cx(), vy(121), t('online.timerTapHint'), 6, '#8a7f6e');
+    // Progressive disclosure: the presets answer the question for almost every room, and the
+    // five-field screen is one deliberate tap away for the room that wants its own numbers.
+    this.openCustomLink(vy(view().portrait ? 122 : 121));
+  }
+
+  /** The host-only way into the custom screen. A separate target from the summary line above it,
+   * so cycling presets and opening the editor can never be the same mis-tap. */
+  private openCustomLink(y: number): void {
+    const link = label(this, cx() + panelW(240) / 2 - 26, y, t('online.customize'), 6, '#f7d23e');
+    link
+      .setInteractive(
+        new Phaser.Geom.Rectangle(-12, -12, link.width + 24, Math.max(link.height + 16, 30)),
+        Phaser.Geom.Rectangle.Contains,
+      )
+      .on('pointerup', () => this.openCustomSettings());
+  }
+
+  /** Opens the custom screen on a copy of whatever the room is playing under now, so the host
+   * edits the real current terms instead of starting from an unrelated default. */
+  private openCustomSettings(): void {
+    if (this.phase !== 'lobby' || this.code === null) return;
+    if (this.seat !== this.hostSeat || this.settingsLocked) return;
+    this.customDraft = { ...this.roomSettings, timerMode: 'custom' };
+    this.phase = 'custom';
+    this.rebuild();
+  }
+
+  /**
+   * Custom timing, one row per setting: name, value, and a −/+ pair that steps within the exact
+   * bounds the server enforces. Nothing here is applied while editing — APLICAR sends a single
+   * proposal, and (like every settings change) the server's answer is what clears ready bits and
+   * redraws the lobby.
+   */
+  private renderCustom(): void {
+    const draft = this.customDraft ?? { ...this.roomSettings, timerMode: 'custom' as const };
+    this.customDraft = draft;
+    const portrait = view().portrait;
+    label(this, cx(), vy(62), t('online.customTitle'), 10, '#f7f2e7');
+
+    const rowW = Math.min(panelW(250), view().w - 30);
+    const left = cx() - rowW / 2;
+    const step = portrait ? 26 : 20;
+    CUSTOM_ROWS.forEach((row, i) => {
+      const y = vy(82 + i * step);
+      const [lo, hi] = CUSTOM_BOUNDS[row.key];
+      const value = draft[row.key];
+      label(this, left + 2, y, t(`online.custom.${row.key}`), 7, '#c0b8a8').setOrigin(0, 0.5);
+      const shown = row.unit === 'seconds'
+        ? t('online.custom.seconds', { n: Math.round(value / 1000) })
+        : t('online.custom.turns', { n: value });
+      label(this, left + rowW - 62, y, shown, 8, '#f7f2e7').setOrigin(1, 0.5);
+      // Each button states its own limit by going dead at it: a host cannot propose a value the
+      // server would silently clamp, so what the screen shows is what the room will play under.
+      const bump = (delta: number): void => {
+        const next = Math.min(hi, Math.max(lo, value + delta));
+        this.customDraft = { ...draft, [row.key]: next };
+        this.rebuild();
+      };
+      const minus = new PixelButton(this, left + rowW - 40, y, '−', () => bump(-row.stepMs), {
+        textureBase: 'btn-comprar', w: portrait ? 22 : 18, h: portrait ? 20 : 16, size: 9,
+      });
+      minus.setEnabled(value > lo);
+      const plus = new PixelButton(this, left + rowW - 14, y, '+', () => bump(row.stepMs), {
+        textureBase: 'btn-comprar', w: portrait ? 22 : 18, h: portrait ? 20 : 16, size: 9,
+      });
+      plus.setEnabled(value < hi);
+    });
+
+    const bottom = vy(82 + CUSTOM_ROWS.length * step + 6);
+    // The one rule the bounds alone cannot express: a warning longer than the turn would render
+    // every turn as "about to end". The server caps it; saying so beats being silently corrected.
+    if (draft.warnMs > draft.turnMs) {
+      this.add
+        .text(cx(), bottom, t('online.customWarnCapped'), {
+          ...fontStyle(6, '#f7d23e'), align: 'center', wordWrap: { width: rowW },
+        })
+        .setOrigin(0.5);
+    }
+    new PixelButton(this, cx(), bottom + (portrait ? 22 : 16), t('online.customApply'), () => {
+      this.fireOnce('settings', 300, () => {
+        this.client.setRoomSettings({ ...draft, timerMode: 'custom' });
+        this.customDraft = null;
+        this.phase = 'lobby';
+        this.rebuild();
+      });
+    }, { textureBase: 'btn-feito', w: 130, h: portrait ? 24 : 20, size: 8, primary: true });
   }
 
   /** Display name for a seat, or the generic placeholder when the seat is still empty. */

@@ -32,6 +32,9 @@ interface MexeOnlineDebugApi {
   setRoomSettings: (settings: RoomSettings) => void;
   /** Verification-only: the room settings as the server last reported them. */
   roomSettings: () => RoomSettings | null;
+  /** Verification-only: open the lobby's custom-timing screen, the way the host's CUSTOM link
+   * does. No-op off the lobby, for a non-host, or once the match has locked the settings. */
+  openCustomSettings: () => void;
   /** Verification-only: ms left on the active seat's turn as of the last state_sync, or null in
    * a room with no timer. Rendered, never authoritative. */
   turnMsLeft: () => number | null;

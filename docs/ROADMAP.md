@@ -22,8 +22,6 @@ Nothing is mid-flight. The repository is at a released, green state.
 
 ## Planned next
 
-- **Custom timer UI** — `custom` timer values are validated end to end on the
-  wire but have no lobby control; three presets cover a room of friends.
 - **Tutorial depth** — multi-turn steps: confirm a turn, then watch an opponent
   move.
 - **Rules panel sectioning** — the in-game help is one long panel; split it by

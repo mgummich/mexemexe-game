@@ -659,6 +659,7 @@ export class GameScene extends Phaser.Scene {
       startGame: () => { /* not applicable mid-match */ },
       setRoomSettings: () => { /* fairness settings are frozen once the match starts */ },
       roomSettings: () => this.onlineSettings,
+      openCustomSettings: () => { /* the lobby owns the settings screen; there is none mid-match */ },
       turnMsLeft: () => (this.turnDeadlineAt === null ? null : Math.max(0, this.turnDeadlineAt - Date.now())),
       comprar: () => this.onComprar(),
       /** Verification-only: submit a raw (possibly illegal) proposal straight to the server,

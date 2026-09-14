@@ -56,8 +56,10 @@ export type ReactionId = (typeof REACTIONS)[number];
 export const REACTION_COOLDOWN_MS = 3_000;
 
 /** Inclusive bounds for a `custom` timer. A value outside its range is clamped, not rejected —
- * a hostile payload must not be able to create a 1 ms turn or a room that never times out. */
-const CUSTOM_BOUNDS = {
+ * a hostile payload must not be able to create a 1 ms turn or a room that never times out.
+ * Exported so the lobby's custom controls stop at the same numbers the server enforces, rather
+ * than keeping a second copy that can drift out of agreement with this one. */
+export const CUSTOM_BOUNDS = {
   turnMs: [15_000, 600_000],
   mexeBonusMs: [0, 300_000],
   warnMs: [0, 60_000],

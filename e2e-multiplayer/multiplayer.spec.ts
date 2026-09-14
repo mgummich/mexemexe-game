@@ -372,6 +372,10 @@ test('room timer: the host sets it in the lobby, it locks at start, and the serv
   expect(secondRead!).toBeLessThan(firstRead!);
   await shot({ active: pageA, waiting: pageB }, 'turn-timer', screenshots);
 
+  // The clock's last seconds: the state a player actually has to read under pressure.
+  await pageA.waitForFunction(() => (window.__MEXE__.online!.turnMsLeft() ?? 99_000) <= 5_000, undefined, { timeout: 20_000 });
+  await shot({ active: pageA }, 'turn-timer-critical', screenshots);
+
   const revBefore = await pageA.evaluate(() => window.__MEXE__.online!.rev());
   const tableBefore = await pageA.evaluate(() => window.__MEXE__.state!()!.table.map((m) => m.cards.map((c) => c.id)));
   const handBefore = await pageA.evaluate(() => window.__MEXE__.state!()!.players[0]!.hand.length);
@@ -830,6 +834,79 @@ test('mobile: a touch player can type a room code and join (soft-keyboard input 
   await ctx.close();
 });
 
+test('custom timing: the host edits the room\'s own numbers and every seat plays under them', async ({ browser }) => {
+  const host = await newClient(browser);
+  const guest = await newClient(browser);
+  const screenshots: string[] = [];
+
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+  await guest.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Joao'), code);
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+  for (const p of [host, guest]) await p.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await host.waitForFunction(() => window.__MEXE__.online!.players().every((p) => p.ready), undefined, { timeout: 10_000 });
+
+  // The custom screen is one deliberate tap behind the presets, host-only, and opens on the
+  // room's current terms rather than on an unrelated default.
+  await host.evaluate(() => window.__MEXE__.online!.openCustomSettings());
+  await shot({ custom: host }, 'custom-settings', screenshots);
+
+  // A guest tapping the same hook gets nothing: settings are host-only wherever they are edited.
+  await guest.evaluate(() => window.__MEXE__.online!.openCustomSettings());
+  await shot({ guest }, 'custom-settings-guest-denied', screenshots);
+
+  const applied = {
+    timerMode: 'custom' as const, turnMs: 60_000, mexeBonusMs: 30_000, warnMs: 15_000,
+    reconnectGraceMs: 90_000, missedTurnLimit: 3,
+  };
+  await host.evaluate((s) => window.__MEXE__.online!.setRoomSettings(s), applied);
+  // Both seats end up on the host's numbers, and the change costs everyone their ready bit.
+  for (const p of [host, guest]) {
+    await p.waitForFunction(
+      () => window.__MEXE__.online!.roomSettings()?.turnMs === 60_000
+        && window.__MEXE__.online!.players().every((pl) => !pl.ready),
+      undefined,
+      { timeout: 10_000 },
+    );
+    expect(await p.evaluate(() => window.__MEXE__.online!.roomSettings())).toMatchObject(applied);
+  }
+
+  for (const p of [host, guest]) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('custom timing: readable on a portrait phone, and its bounds are the server\'s', async ({ browser }) => {
+  const host = await newPhoneClient(browser);
+  const screenshots: string[] = [];
+
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  await host.evaluate(() => window.__MEXE__.online!.openCustomSettings());
+  await shot({ host }, 'mobile-custom-settings', screenshots);
+
+  // The screen cannot propose a value the server would clamp: an out-of-range proposal sent
+  // directly still comes back inside the same bounds the buttons stop at.
+  await host.evaluate(() => window.__MEXE__.online!.setRoomSettings({
+    timerMode: 'custom', turnMs: 5_000, mexeBonusMs: -1, warnMs: 999_000,
+    reconnectGraceMs: 1, missedTurnLimit: 99,
+  }));
+  await host.waitForFunction(() => window.__MEXE__.online!.roomSettings()?.timerMode === 'custom', undefined, { timeout: 10_000 });
+  expect(await host.evaluate(() => window.__MEXE__.online!.roomSettings())).toMatchObject({
+    timerMode: 'custom', turnMs: 15_000, mexeBonusMs: 0, warnMs: 15_000,
+    reconnectGraceMs: 10_000, missedTurnLimit: 10,
+  });
+
+  expect(await host.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  expect(trackConsoleErrors(host)).toEqual([]);
+  appendLog({ screenshots });
+  await host.context().close();
+});
+
 test('ON-09/ON-20: a host settings change clears every ready bit, on a landscape phone', async ({ browser }) => {
   // Landscape phone: the third required viewport for the lobby, and the tightest one for a seat
   // row (name + YOU/HOST badges + status word all on one line).
@@ -865,6 +942,17 @@ test('ON-09/ON-20: a host settings change clears every ready bit, on a landscape
     );
   }
   await shot({ host, guest }, 'landscape-lobby-settings-changed', screenshots);
+
+  // The third required viewport for the in-match clock too: a landscape phone puts the HUD, the
+  // hand and the countdown on the shortest vertical budget the game ever gets.
+  for (const p of [host, guest]) await p.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await host.waitForFunction(() => window.__MEXE__.online!.players().every((p) => p.ready), undefined, { timeout: 10_000 });
+  await host.evaluate(() => window.__MEXE__.online!.startGame());
+  for (const p of [host, guest]) {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 10_000 });
+    await p.waitForFunction(() => (window.__MEXE__.online!.turnMsLeft() ?? 0) > 0, undefined, { timeout: 10_000 });
+  }
+  await shot({ host, guest }, 'landscape-turn-timer', screenshots);
 
   for (const p of [host, guest]) {
     expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);

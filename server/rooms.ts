@@ -304,10 +304,12 @@ export class RoomManager {
     return { ok: true, settings: room.settings, changed };
   }
 
-  /** Start (or restart) the active seat's clock. A turn with no timer keeps a null start. */
+  /** Start (or restart) the active seat's clock. A turn with no timer keeps a null start, and so
+   * does a match that just ended: a finished game has no turn to time, and a clock left running
+   * would keep counting down to a red 0:00 behind the results screen. */
   private startTurnClock(room: RoomInternal): void {
     room.mexeBonusClaimed = false;
-    if (room.settings.turnMs <= 0) {
+    if (room.settings.turnMs <= 0 || room.state?.phase !== 'playing') {
       room.turnStartedAt = null;
       room.turnBudgetMs = 0;
       return;
