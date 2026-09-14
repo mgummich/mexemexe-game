@@ -4,7 +4,7 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased
+## 1.9.2 — 2026-09-14
 
 ### Fixed: the board could go dead mid-match
 
@@ -32,6 +32,25 @@ a card on the table first.
 Neither is reachable from a fixture, so the regression test plays a real match
 and clicks the real button turn after turn (`long-match: COMPRAR stays
 clickable turn after turn`). It fails on the old code at the third human turn.
+
+### Added: arm64 container images
+
+The published `mexemexe-game-web` and `mexemexe-game-server` images were
+amd64-only, so pulling them on an Apple Silicon Mac or an arm64 Linux host
+(Raspberry Pi, AWS Graviton, Ampere) failed with `no matching manifest for
+linux/arm64/v8 in the manifest list entries`. The release workflow now sets up
+QEMU and builds both images for `linux/amd64,linux/arm64`, so each tag pushes a
+multi-arch manifest list.
+
+### Changed: the server image no longer carries the browser bundle's toolchain
+
+The server stage inherited the shared `deps` layer, so its image shipped the
+whole install — phaser, typescript, vite, playwright, eslint, vitest — 305MB of
+`node_modules` for a process that imports `ws`, `tsx` and the pure modules under
+`src/rules`, `src/core` and `src/net`. It now installs its own tree with
+`--omit=dev` and drops phaser, which only the browser bundle needs. The image
+went from 637MB to 298MB, most of what remains being the Node base and the
+esbuild binary that `tsx` ships.
 
 ## 1.9.1 — 2026-09-13
 
