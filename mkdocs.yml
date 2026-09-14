@@ -1,0 +1,59 @@
+site_name: MEXEMEXE!
+site_description: Documentation for MEXEMEXE!, a browser-based pixel-art card game of the Brazilian Mexe-Mexe family.
+site_url: https://mgummich.github.io/mexemexe-game/docs/
+repo_url: https://github.com/mgummich/mexemexe-game
+edit_uri: edit/main/docs/
+copyright: MIT licensed. © 2026 Moreno Gummich.
+
+docs_dir: docs
+site_dir: .site
+strict: true
+
+theme:
+  name: null
+  custom_dir: theme
+  tagline: Arruma. Desarruma. Bate.
+  # Resolved against each page's base_url, so it points at the game at the site root.
+  play_url: '..'
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - fenced_code
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Start here:
+      - Overview: index.md
+      - Game rules: GAME_RULES.md
+      - Roadmap: ROADMAP.md
+  - Develop:
+      - Development: DEVELOPMENT.md
+      - Testing: TESTING.md
+      - Architecture: ARCHITECTURE.md
+      - Contributing: CONTRIBUTING.md
+  - Features:
+      - Multiplayer: MULTIPLAYER.md
+      - PWA & offline: PWA_OFFLINE.md
+      - Assets: ASSETS.md
+      - Art direction: ART_DIRECTION.md
+      - Audio direction: AUDIO_DIRECTION.md
+  - Operate:
+      - Self-hosting: SELF_HOSTING.md
+      - Operations: OPERATIONS.md
+      - Observability & privacy: OBSERVABILITY_PRIVACY.md
+      - Playtest guide: PLAYTEST_GUIDE.md
+  - History:
+      - Changelog: CHANGELOG.md
+
+# Working notes for the not-yet-built marketing page; not part of the published site.
+exclude_docs: |
+  landing-page/

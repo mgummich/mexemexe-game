@@ -1,0 +1,7 @@
+# MEXEMEXE! documentation theme.
+# Defaults for options read by the templates; override them under `theme:` in mkdocs.yml.
+tagline: ''
+play_url: '../'
+repo_url: ''
+static_templates:
+  - 404.html

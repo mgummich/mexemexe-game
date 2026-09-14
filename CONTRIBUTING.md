@@ -10,7 +10,7 @@ npm install
 npm run dev        # dev server at http://localhost:5173
 ```
 
-Setup, scripts, URL parameters and troubleshooting: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+Setup, scripts, URL parameters and troubleshooting: [`docs/DEVELOPMENT.md`](https://github.com/mgummich/mexemexe-game/blob/main/docs/DEVELOPMENT.md).
 
 ## Before opening a pull request
 
@@ -23,7 +23,7 @@ npm run verify
 That is unit tests, lint, a production build, the Playwright screenshot suite
 and its console/asset/fps gate. If you touched online play, mobile layout or
 offline behaviour, also run the matching `verify:multiplayer`, `verify:cross`
-or `verify:pwa`. What each suite covers: [`docs/TESTING.md`](docs/TESTING.md).
+or `verify:pwa`. What each suite covers: [`docs/TESTING.md`](https://github.com/mgummich/mexemexe-game/blob/main/docs/TESTING.md).
 
 Playwright needs its browsers once: `npx playwright install chromium firefox webkit`.
 
@@ -39,7 +39,7 @@ git config core.hooksPath .githooks
 
 ## Project conventions
 
-The permanent rules are in [`AGENTS.md`](AGENTS.md) — rules purity, server
+The permanent rules are in [`AGENTS.md`](https://github.com/mgummich/mexemexe-game/blob/main/AGENTS.md) — rules purity, server
 authority, state ownership, error handling, verification. Two habits that only
 show up when you write code here:
 
@@ -48,7 +48,7 @@ show up when you write code here:
 - Meld ids in `src/mexe-mode` are namespaced per turn; never reuse ids across
   turns.
 
-The module table in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) says where
+The module table in [`docs/ARCHITECTURE.md`](https://github.com/mgummich/mexemexe-game/blob/main/docs/ARCHITECTURE.md) says where
 each kind of change belongs, and which doc it needs to keep current.
 
 ## Releases

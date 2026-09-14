@@ -1,0 +1,14 @@
+{#- Sidebar navigation. Sections render as uppercase labels, pages as links.
+    Nesting is handled by recursion, so mkdocs.yml can group as deep as it likes. -#}
+{% macro render(items, depth) %}
+  {%- for item in items %}
+    {%- if item.children %}
+      <div class="nav-sep nav-sep--{{ depth }}">{{ item.title }}</div>
+      <div class="nav-group">{{ render(item.children, depth + 1) }}</div>
+    {%- elif item.is_page or item.is_link %}
+      <a class="nav-link{% if item.active %} active{% endif %}"
+         href="{{ item.url | url }}"{% if item.active %} aria-current="page"{% endif %}>{{ item.title }}</a>
+    {%- endif %}
+  {%- endfor %}
+{% endmacro %}
+{{ render(nav, 0) }}
