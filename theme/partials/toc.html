@@ -1,0 +1,14 @@
+{#- Right-hand table of contents. Hidden entirely when a page has no headings
+    below the title, so short pages do not grow an empty column. -#}
+{%- set entries = page.toc | list if page and page.toc else [] %}
+{%- set items = entries[0].children | list if entries | length == 1 else entries %}
+{%- if items | length > 1 %}
+<aside class="toc" aria-label="On this page">
+  <div class="toc-title">On this page</div>
+  <ul>
+    {%- for h in items %}
+    <li><a href="{{ h.url }}">{{ h.title }}</a></li>
+    {%- endfor %}
+  </ul>
+</aside>
+{%- endif %}

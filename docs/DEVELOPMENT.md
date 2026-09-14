@@ -58,7 +58,7 @@ reproducing bugs — they are developer tools, not game features.
 | `npm run verify` / `verify:multiplayer` / `verify:cross` / `verify:pwa` / `verify:preview` | Verification gates — see [TESTING.md](TESTING.md) |
 | `npm run gen:cosmetics` | Regenerate procedural table/card-back/emote PNGs (deterministic) |
 | `npm run gen:icons` | Regenerate the PWA manifest icons (deterministic) |
-| `npm run release` | Version bump + CHANGELOG collapse + tag (see [CONTRIBUTING.md](../CONTRIBUTING.md)) |
+| `npm run release` | Version bump + CHANGELOG collapse + tag (see [CONTRIBUTING.md](CONTRIBUTING.md)) |
 
 `node scripts/gen-sfx.mjs` regenerates the synthesized sound effects; there is
 no npm alias for it.
@@ -77,6 +77,25 @@ Where a given change belongs — rules, UI, AI, protocol, assets, settings — i
 tabulated at the end of [ARCHITECTURE.md](ARCHITECTURE.md), along with the
 principles that keep client and server from drifting apart.
 
+## The documentation site
+
+These pages are built with [MkDocs](https://www.mkdocs.org/) and a theme kept in
+`theme/`. GitHub Pages serves the game at the site root and the docs under
+`/docs`, both from `.github/workflows/pages.yml`.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r docs/requirements.txt
+.venv/bin/mkdocs serve            # live reload on :8000
+.venv/bin/mkdocs build --strict   # what CI runs; fails on any broken link
+```
+
+Add a new page under `docs/` and list it in the `nav:` block of `mkdocs.yml` —
+`--strict` fails the build if a page is missing from the navigation or a link
+points at a file that does not exist. `docs/CHANGELOG.md` and
+`docs/CONTRIBUTING.md` are symlinks to the repository root, so those two files
+stay in one place.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -87,3 +106,4 @@ principles that keep client and server from drifting apart.
 | Art is flat-colored placeholders | The asset file is missing; `BootScene` fell back procedurally. Check `window.__MEXE__.missingAssets` and [ASSETS.md](ASSETS.md). |
 | Server refuses to start | Invalid env value — it names the variable and exits rather than silently defaulting. See [OPERATIONS.md](OPERATIONS.md). |
 | A deal is not reproducible | Pass `?seed=`. Without it the seed comes from the clock; it is recorded in state and in the play log. |
+| The docs build fails in CI but not locally | `mkdocs build --strict` treats warnings as errors. Run it with `--strict` locally too. |

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="{{ config.theme.locale | default('en') }}" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if page and page.title and not page.is_homepage %}{{ page.title }} · {% endif %}{{ config.site_name }}</title>
+<meta name="description" content="{{ page.meta.description if page and page.meta and page.meta.description else config.site_description }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🃏</text></svg>">
+{%- if page and page.canonical_url %}
+<link rel="canonical" href="{{ page.canonical_url }}">
+{%- endif %}
+<link rel="stylesheet" href="{{ 'css/mexe.css' | url }}">
+<script>
+  // Applied before first paint so a stored preference never flashes the wrong palette.
+  try {
+    var t = localStorage.getItem('mexe-theme');
+    if (t) document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+
+<header class="topbar">
+  <button class="icon-btn" id="nav-toggle" aria-expanded="false" aria-controls="nav" aria-label="Toggle navigation">☰</button>
+  <span class="topbar-title">{{ config.site_name }}</span>
+  <button class="icon-btn" id="theme-toggle" aria-label="Switch between light and dark">◑</button>
+</header>
+
+<nav id="nav" aria-label="Documentation">
+  <div class="brand">
+    <a class="brand-name" href="{{ nav.homepage.url | url if nav.homepage else base_url }}">{{ config.site_name }}</a>
+    {%- if config.theme.tagline %}
+    <div class="brand-tagline">{{ config.theme.tagline }}</div>
+    {%- endif %}
+  </div>
+
+  <form class="search" role="search" onsubmit="return false">
+    <label class="visually-hidden" for="search-input">Search the documentation</label>
+    <input id="search-input" type="search" placeholder="Search…" autocomplete="off" spellcheck="false">
+  </form>
+  <div id="search-results" class="search-results" hidden></div>
+
+  <div id="nav-tree">
+    <a class="nav-cta" href="{{ config.theme.play_url | url }}">▶ Play the game</a>
+    {% include "partials/nav.html" %}
+    {%- if config.repo_url %}
+    <div class="nav-sep">Project</div>
+    <a class="nav-link" href="{{ config.repo_url }}">Source on GitHub</a>
+    {%- endif %}
+  </div>
+</nav>
+
+<main id="content">
+  {%- block content %}
+  {{ page.content }}
+  {%- endblock %}
+
+  {%- if page and (page.previous_page or page.next_page) %}
+  <nav class="pager" aria-label="Page navigation">
+    {%- if page.previous_page %}<a class="prev" href="{{ page.previous_page.url | url }}">← {{ page.previous_page.title }}</a>{% endif %}
+    {%- if page.next_page %}<a class="next" href="{{ page.next_page.url | url }}">{{ page.next_page.title }} →</a>{% endif %}
+  </nav>
+  {%- endif %}
+
+  <footer class="page-footer">
+    {%- if page and page.edit_url %}<a href="{{ page.edit_url }}">Edit this page</a> · {% endif %}
+    {{ config.copyright | default('', true) }}
+  </footer>
+</main>
+
+{% include "partials/toc.html" %}
+
+<script>window.MEXE_BASE = {{ base_url | default('.', true) | tojson }};</script>
+<script src="{{ 'js/mexe.js' | url }}" defer></script>
+</body>
+</html>

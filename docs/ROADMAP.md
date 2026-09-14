@@ -13,8 +13,8 @@ they are missing the comforts listed in [MULTIPLAYER.md](MULTIPLAYER.md).
 
 ## Completed
 
-The shipped feature set is described in [the README](../README.md) and, per
-release, in [CHANGELOG.md](../CHANGELOG.md). This document does not repeat it.
+The shipped feature set is described in [the README](index.md) and, per
+release, in [CHANGELOG.md](CHANGELOG.md). This document does not repeat it.
 
 ## In progress
 

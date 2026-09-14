@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Page not found</h1>
+<p>That document does not exist here. Try the navigation on the left, or start
+from the <a href="{{ nav.homepage.url | url if nav.homepage else base_url }}">documentation home</a>.</p>
+{% endblock %}
