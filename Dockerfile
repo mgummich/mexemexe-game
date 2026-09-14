@@ -1,11 +1,20 @@
-# Shared install layer: both images need node_modules from the same lockfile.
+# Shared install layer for the browser bundle: vite, typescript and phaser.
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts && npm rebuild esbuild
 
-# Online-alpha WebSocket server (plain Node + ws, run through tsx).
-FROM deps AS server
+# Online-alpha WebSocket server (plain Node + ws, run through tsx). It installs
+# its own tree rather than reusing `deps`: at runtime it needs `ws` and `tsx`
+# and nothing else, so dev tooling is omitted and phaser — a dependency of the
+# browser bundle alone — is dropped. All three in one RUN, since a later layer
+# deleting files cannot shrink an earlier one.
+FROM node:22-alpine AS server
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts \
+ && npm rebuild esbuild \
+ && rm -rf node_modules/phaser
 COPY tsconfig.json ./
 COPY src ./src
 COPY server ./server

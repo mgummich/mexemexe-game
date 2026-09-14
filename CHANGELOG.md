@@ -42,6 +42,16 @@ linux/arm64/v8 in the manifest list entries`. The release workflow now sets up
 QEMU and builds both images for `linux/amd64,linux/arm64`, so each tag pushes a
 multi-arch manifest list.
 
+### Changed: the server image no longer carries the browser bundle's toolchain
+
+The server stage inherited the shared `deps` layer, so its image shipped the
+whole install — phaser, typescript, vite, playwright, eslint, vitest — 305MB of
+`node_modules` for a process that imports `ws`, `tsx` and the pure modules under
+`src/rules`, `src/core` and `src/net`. It now installs its own tree with
+`--omit=dev` and drops phaser, which only the browser bundle needs. The image
+went from 637MB to 298MB, most of what remains being the Node base and the
+esbuild binary that `tsx` ships.
+
 ## 1.9.1 — 2026-09-13
 
 ### Repository simplification
