@@ -1,0 +1,101 @@
+# Production stack for a host that ALREADY runs Traefik. No Traefik service, no build: this
+# file only starts the two published ghcr.io images and attaches them to your existing Traefik
+# network so the running instance picks up their labels.
+#
+#   cp .env.example .env && chmod 600 .env
+#   # set MEXE_HOST, MEXE_VERSION, TRAEFIK_NETWORK, and (if they differ) TRAEFIK_ENTRYPOINT
+#   # and TRAEFIK_CERTRESOLVER
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Your Traefik must already have: the docker provider enabled, an HTTPS entrypoint, and a
+# certificate resolver (or a wildcard cert loaded some other way — then leave
+# TRAEFIK_CERTRESOLVER unset and drop the tls.certresolver labels).
+#
+# Find the network name with `docker network ls` — it is the network your Traefik container is
+# attached to, e.g. `proxy` or `traefik_default`.
+#
+# The published web image is built with an empty VITE_WS_URL, so the client falls back to
+# wss://<host>/ws — exactly what the mexe-ws router below serves.
+services:
+  mexe:
+    # Pin a release tag rather than :latest, so a redeploy can never pull a different build
+    # than the one that was tested. Published by .github/workflows/release.yml.
+    image: ghcr.io/mgummich/mexemexe-game-web:${MEXE_VERSION:?set MEXE_VERSION, e.g. v1.10.0}
+    pull_policy: always
+    networks: [traefik]
+    labels:
+      - traefik.enable=true
+      # Explicit: on a host with several Traefik networks, Traefik otherwise has to guess which
+      # container IP to dial.
+      - traefik.docker.network=${TRAEFIK_NETWORK:?set TRAEFIK_NETWORK}
+      - traefik.http.routers.mexe.rule=Host(`${MEXE_HOST:?set MEXE_HOST}`)
+      - traefik.http.routers.mexe.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.mexe.tls=true
+      - traefik.http.routers.mexe.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le}
+      - traefik.http.services.mexe.loadbalancer.server.port=80
+    depends_on:
+      # Startup order only: the web container is static and local play never needs the
+      # server, but online alpha testers should not reach a page whose server is not up yet.
+      mexe-server:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        # Bounded on purpose: container logs are the only place output lands, and an unbounded
+        # json-file grows until the disk does. See docs/OBSERVABILITY_PRIVACY.md.
+        max-size: "10m"
+        max-file: "3"
+
+  # Online alpha only. Local play never contacts this service. No `ports:` on purpose: the
+  # browser reaches it through Traefik on 443, so 8787 never has to be public.
+  mexe-server:
+    image: ghcr.io/mgummich/mexemexe-game-server:${MEXE_VERSION}
+    pull_policy: always
+    networks: [traefik]
+    environment:
+      # Production mode also makes the server refuse to start if MEXE_TEST_SEED ever leaks
+      # into the environment (see docs/OPERATIONS.md).
+      MEXE_ENV: production
+      # Unset by default, which leaves /metrics returning 404. See docs/OBSERVABILITY_PRIVACY.md.
+      MEXE_METRICS_TOKEN: ${MEXE_METRICS_TOKEN:-}
+      # Browser origins allowed to open a WebSocket, comma-separated — your site's own
+      # origin(s). `*` accepts any origin, which is the right answer only when the server is
+      # reached through someone else's proxy or by non-browser clients. Required in production:
+      # the server refuses to start rather than let an omission pass for a decision.
+      MEXE_ALLOWED_ORIGINS: ${MEXE_ALLOWED_ORIGINS:?set MEXE_ALLOWED_ORIGINS to your site origin(s), or * to accept any}
+      # Rooms one client address may create per minute.
+      MEXE_MAX_ROOM_CREATES_PER_IP: ${MEXE_MAX_ROOM_CREATES_PER_IP:-}
+      # Reverse proxies in front of this server. Traefik terminates and appends the client address to X-Forwarded-For.
+      MEXE_TRUSTED_PROXY_HOPS: ${MEXE_TRUSTED_PROXY_HOPS:-1}
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+      # Higher priority than the catch-all above, or the WebSocket upgrade 404s.
+      - traefik.http.routers.mexe-ws.rule=Host(`${MEXE_HOST}`) && PathPrefix(`/ws`)
+      - traefik.http.routers.mexe-ws.priority=100
+      - traefik.http.routers.mexe-ws.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.mexe-ws.tls=true
+      - traefik.http.routers.mexe-ws.tls.certresolver=${TRAEFIK_CERTRESOLVER:-le}
+      - traefik.http.services.mexe-ws.loadbalancer.server.port=8787
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      # Without these, the first verdict waits a full interval and the web container idles
+      # ~30s after the server is already answering. Needs Docker Engine 25+ / Compose 2.24+.
+      start_period: 30s
+      start_interval: 2s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  # Created and owned by your Traefik stack, not by this one.
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK}

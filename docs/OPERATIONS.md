@@ -268,8 +268,9 @@ just deploying the previous artefacts:
 1. **Client** — re-deploy the previous `dist/` (or check out the previous tag and rebuild).
    Hashed filenames mean old and new assets can coexist; players get the new `index.html`
    on their next load.
-2. **Server** — redeploy the previous image/commit. `docker compose up -d --build` after a
-   `git checkout <previous-tag>`.
+2. **Server** — redeploy the previous image/commit. On a source deployment, `docker compose
+   up -d --build` after a `git checkout <previous-tag>`. On a released-image deployment,
+   point `MEXE_VERSION` at the previous tag and `up -d` again (see `SELF_HOSTING.md`).
 3. **Both together if the protocol version changed.** `PROTOCOL_VERSION` in
    `src/net/protocol.ts` is the coupling point: a client and server on different protocol
    versions refuse each other. Roll both, or neither.
