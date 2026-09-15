@@ -862,8 +862,10 @@ test('second-match: after quitting to the menu, a new match still lets the AI ta
   await page.mouse.click(...toScreen(240, 172)); // pause-menu.ts showQuitConfirm's "leaveMatch" button
   await page.waitForFunction(() => window.__MEXE__.scene === 'menu', undefined, { timeout: 10_000 });
 
-  // Start a second match from the menu — same GameScene instance, second create().
-  await page.mouse.click(...toScreen(240, 207));
+  // Start a second match from the menu — same GameScene instance, second create(). The first
+  // match moved this page past first run (gamesStarted > 0), so the menu has swapped its pair:
+  // JOGAR is now the primary button at vy(168) and the tutorial is the secondary one.
+  await page.mouse.click(...toScreen(240, 168));
   await page.waitForFunction(() => window.__MEXE__.scene === 'setup', undefined, { timeout: 10_000 });
   await page.waitForTimeout(150);
   await page.mouse.click(...toScreen(300, 248)); // SetupScene PLAY
@@ -958,6 +960,22 @@ test('menu-returning: once the tutorial is done, JOGAR takes the primary slot ba
   // on where the primary button actually goes, which a reversed swap cannot fake.
   const [px, py] = toScreen(240, 168);
   await page.mouse.click(px, py);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'setup', undefined, { timeout: 5000 });
+});
+
+test('menu-played: a player who skipped the tutorial but finished a match keeps JOGAR primary', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('mexe-save', JSON.stringify({ version: 1, progress: { tutorialCompleted: false, gamesStarted: 3 } }));
+  });
+  await page.goto('/?seed=42&showcase=menu');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__MEXE__.scene === 'menu');
+  // The menu's staggered entrance runs for ~600ms and a click during it lands on a button that
+  // is still arriving.
+  await page.waitForTimeout(800);
+  // Someone who has played already knows what the game is: the primary button goes to a match,
+  // not back to the lesson they chose to skip.
+  await page.mouse.click(...toScreen(240, 168));
   await page.waitForFunction(() => window.__MEXE__.scene === 'setup', undefined, { timeout: 5000 });
 });
 
