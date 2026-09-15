@@ -35,8 +35,11 @@ accounts, ranking, chat, or cosmetics sync. The game labels the entry point
   is hidden rather than showing zeros. Fixing it needs a protocol change.
 - **Opponent avatars are the generic player icon** — there are no accounts, so
   there is no avatar to show.
-- **Rate limiting is per connection, not per IP** — enough to stop a looping
-  client, not a determined attacker opening many sockets.
+- **Abuse controls are budgets, not protection from a determined attacker** —
+  message rate, failed joins and `resync` are budgeted per connection; sockets
+  and room creation are budgeted per client address (and behind a proxy that
+  address is only trustworthy once `MEXE_TRUSTED_PROXY_HOPS` says so). Enough to
+  stop a looping client or a create-and-drop loop, not a connection farm. See §9.
 - **A seat disconnected past the room's reconnect grace is played for you**:
   the server draws and ends that seat's turn so the match keeps moving. It never
   melds on your behalf. Losing `missedTurnLimit` turns in a row ends the match.
@@ -228,7 +231,13 @@ socket or IP.
 
 **One player, one entry.** A duplicate `join_queue` is answered with the entry
 the session already has (never a second one), and a session already holding a
-seat is refused with `already_in_match`. Exactly one connection speaks for an
+seat is refused with `already_in_match`. The rule holds from the other side too:
+a session that is searching and then creates or joins a room by code leaves the
+queue at that moment and is told so with `queue_state: idle` — the seat it
+actually took wins over the one it was hoping for, the same precedence
+`reconnect` applies. Without that, the next group would form *around* a session
+already sitting somewhere else, leaving the room it left behind holding a seat
+marked connected with no transport on it. Exactly one connection speaks for an
 entry: a second tab that reconnects with the token takes it over and the old
 socket's authority is cleared, so a stale transport cannot cancel a search that
 has moved on.
@@ -709,6 +718,13 @@ seed is server-chosen and never sent. A room code is a public locator, not a
 credential; the session token is the only thing that owns a seat, and exactly
 one transport may hold a seat at a time (a reconnect evicts the previous one).
 
+The token never leaves the tab for anyone but the server that issued it. It
+lives in `sessionStorage` paired with that endpoint, and `NetClient` replays it
+only when the endpoint it is about to connect to matches — which is what makes
+the documented `?ws=` override (§10) unable to turn a crafted link on the real
+origin into seat theft. A token stored by an older build has no endpoint beside
+it and is simply discarded.
+
 Every per-source budget keys on the client address, which behind a proxy means
 `MEXE_TRUSTED_PROXY_HOPS` must state how many proxies are in front: `X-Forwarded-For`
 is client-settable and is ignored at the default of 0, and read only that many
@@ -786,7 +802,9 @@ Files:
   APIs): message types, `buildView` (redaction), `parseClientMessage`
   (boundary validator).
 - `src/net/client.ts` — `NetClient`, the browser WebSocket wrapper: connect/
-  reconnect (single bounded retry), status events, message trace, ping.
+  reconnect (the bounded retry schedule in §0), status events, message trace,
+  ping, and the session token in `sessionStorage` — stored beside the endpoint
+  that issued it, and replayed only to that endpoint (§9).
 - `src/net/viewToState.ts` — projects a `GameView` back into a local-shaped
   `GameState` (placeholder cards for hidden hands/draw pile) so the existing
   offline renderer can draw it unchanged.

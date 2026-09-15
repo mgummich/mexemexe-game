@@ -77,8 +77,8 @@ On your turn:
 of a turn.
 
 **Turn timer — online only.** A local hot-seat or AI match is never on a clock. Online, the
-*server* owns the timer (Casual / Fast / Off
-presets picked by the host and frozen at match start — see
+*server* owns the timer (Casual / Fast / Off presets, or the host-only CUSTOM
+screen behind them, picked by the host and frozen at match start — see
 [MULTIPLAYER.md](MULTIPLAYER.md) §7b). Expiry runs `timerExpireTurn`: discard whatever draft was
 in progress, draw one card, end the turn. Because a Mexe draft never leaves the client until
 FEITO, the table it reverts to is the server's own turn-start table — a timeout can never confirm

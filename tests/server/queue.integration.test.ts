@@ -260,6 +260,46 @@ describe('OM queue over the wire', () => {
     b.close();
   });
 
+  it('OM-04 a queued session that takes a seat by code leaves the queue instead of holding two', async () => {
+    // The mirror of OM-04's "a seated player cannot enter the queue". A session that queued
+    // first and then created or joined a room by code must stop being matchable: otherwise the
+    // next group forms around it, its socket is moved to the matchmade room, and the room it
+    // just sat down in keeps that seat `connected` with nothing attached — invisible to the
+    // sweep, the idle backstop and the stalled-turn check, stranding everyone else in it.
+    const host = await Client.open(PORT);
+    await queued(host, 2, 'Eve');
+    host.clear();
+    host.send({ type: 'create_room', name: 'Eve' });
+    const created = await host.next('room_joined');
+    // Told, not left guessing: the searching screen closes on the server's word.
+    const idle = host.received.find((m) => m.type === 'queue_state');
+    expect(idle && idle.type === 'queue_state' && idle.status).toBe('idle');
+
+    const guest = await Client.open(PORT);
+    guest.send({ type: 'join_room', code: created.code, name: 'Vic' });
+    await guest.next('room_joined');
+
+    // A second searcher arrives. There is no longer an entry to pair it with, so no match forms
+    // and the host is never dragged out of the room it is sitting in.
+    const other = await Client.open(PORT);
+    await queued(other, 2, 'Bob');
+    await new Promise((r) => setTimeout(r, 300));
+    expect(host.received.some((m) => m.type === 'game_started')).toBe(false);
+
+    // And the room is still a real room whose host seat is genuinely occupied.
+    guest.clear();
+    guest.send({ type: 'resync' });
+    const state = await guest.next('room_state');
+    expect(state.players.find((p) => p.seat === 0)?.connected).toBe(true);
+
+    other.send({ type: 'cancel_queue' });
+    await other.next('queue_state');
+    other.close();
+    host.send({ type: 'leave_room' });
+    host.close();
+    guest.close();
+  });
+
   it('the health endpoint reports the queue as a count and nothing else', async () => {
     const c = await Client.open(PORT);
     await queued(c, 3);

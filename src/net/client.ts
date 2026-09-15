@@ -15,6 +15,9 @@ import type {
 export type ConnStatus = 'connecting' | 'open' | 'closed' | 'error' | 'reconnecting';
 
 const TOKEN_KEY = 'mexe.online.token';
+/** Separator between the endpoint a token was issued by and the token itself, inside TOKEN_KEY.
+ * A NUL occurs in neither half: it is not representable in a URL, and a token is randomUUID(). */
+const TOKEN_SEP = '\u0000';
 /** localStorage (not sessionStorage): a display name is meant to survive the tab, the reconnect
  * token deliberately is not. */
 const NAME_KEY = 'mexe.online.name';
@@ -41,19 +44,32 @@ const RECONNECT_JITTER = 0.25;
 
 type ServerListener = (msg: ServerMessage) => void;
 
-/** sessionStorage throws in Safari with site data blocked/webviews with storage disabled —
- * these keep a throw from aborting the socket callback it's called inside of. */
+/**
+ * The reconnect token, but only for the endpoint that issued it. A token reclaims a seat, and
+ * `resolveWsUrl` honours a `?ws=` query override (see src/config.ts) — so without this pairing a
+ * crafted link on the real origin would make the client hand its live seat token to whatever
+ * server the link named. Storing the endpoint beside the token makes that link useless: it opens
+ * a socket to a stranger and says nothing.
+ *
+ * sessionStorage throws in Safari with site data blocked/webviews with storage disabled — the
+ * try/catch keeps a throw from aborting the socket callback this is called inside of.
+ */
 function readToken(): string | null {
+  let stored: string | null = null;
   try {
-    return sessionStorage.getItem(TOKEN_KEY);
+    stored = sessionStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
   }
+  if (stored === null) return null;
+  const sep = stored.indexOf(TOKEN_SEP);
+  if (sep < 0) return null; // pre-pairing value left by an older build — not replayable anywhere
+  return stored.slice(0, sep) === resolveWsUrl() ? stored.slice(sep + 1) : null;
 }
 
 function writeToken(token: string): void {
   try {
-    sessionStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(TOKEN_KEY, `${resolveWsUrl()}${TOKEN_SEP}${token}`);
   } catch {
     // storage blocked — reconnect just won't be possible, not fatal
   }

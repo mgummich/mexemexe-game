@@ -253,3 +253,37 @@ describe('a definitively dead session stops trying', () => {
     expect(client.getStatus()).toBe('closed');
   });
 });
+
+describe('RC-14 the reconnect token belongs to the endpoint that issued it', () => {
+  /** Frames this socket sent, as parsed messages. */
+  const sentTypes = (s: FakeSocket): string[] => s.sent.map((raw) => (JSON.parse(raw) as { type: string }).type);
+
+  it('replays the token when the client reconnects to the same server', () => {
+    const client = new NetClient();
+    client.connect();
+    opened[0]!.accept();
+    opened[0]!.deliver({ v: 4, type: 'room_joined', code: 'ABCDE', seat: 0, token: 'TOKEN1', players: [], settings: {}, hostSeat: 0 });
+    opened[0]!.fail();
+    runNextAttempt();
+    opened[1]!.accept();
+    expect(sentTypes(opened[1]!)).toContain('reconnect');
+  });
+
+  it('never hands the token to a different server a ?ws= link points it at', () => {
+    const client = new NetClient();
+    client.connect();
+    opened[0]!.accept();
+    opened[0]!.deliver({ v: 4, type: 'room_joined', code: 'ABCDE', seat: 0, token: 'TOKEN1', players: [], settings: {}, hostSeat: 0 });
+    opened[0]!.fail();
+    // The player follows a crafted link on the real origin: same tab, same sessionStorage, but
+    // the endpoint the client now resolves is the attacker's.
+    (globalThis as Record<string, unknown>).location = {
+      protocol: 'http:', hostname: 'localhost', host: 'localhost', search: '?ws=ws://evil.example/ws',
+    };
+    client.connect();
+    const attacker = opened[opened.length - 1]!;
+    attacker.accept();
+    expect(attacker.url).toBe('ws://evil.example/ws');
+    expect(sentTypes(attacker)).not.toContain('reconnect');
+  });
+});

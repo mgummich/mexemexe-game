@@ -154,18 +154,23 @@ function recycleFinishedRoom(code: string): void {
   broadcastRoomState(code);
 }
 
+/** The one place a `room_state` frame is built, so the broadcast and the `resync` answer can
+ * never disagree about what a lobby is told. Null for a room that no longer exists. */
+function roomStateMsg(code: string): ServerMessage | null {
+  const info = rooms.getRoomInfo(code);
+  if (!info) return null;
+  return {
+    v: PROTOCOL_VERSION, type: 'room_state',
+    players: info.players, settings: info.settings, hostSeat: rooms.getHostSeat(code),
+    locked: info.locked, party: info.party, visibility: info.visibility,
+  };
+}
+
 function broadcastRoomState(code: string): void {
   const bySeat = sockets.get(code);
-  const info = rooms.getRoomInfo(code);
-  if (!bySeat || !info) return;
-  const hostSeat = rooms.getHostSeat(code);
-  for (const ws of bySeat.values()) {
-    send(ws, {
-      v: PROTOCOL_VERSION, type: 'room_state',
-      players: info.players, settings: info.settings, hostSeat, locked: info.locked, party: info.party,
-      visibility: info.visibility,
-    });
-  }
+  const msg = roomStateMsg(code);
+  if (!bySeat || !msg) return;
+  for (const ws of bySeat.values()) send(ws, msg);
 }
 
 /** The room_joined payload, built from the room manager rather than from the caller's own
@@ -200,6 +205,27 @@ function releaseQueueSocket(conn: ConnState, ws: WebSocket): void {
   if (conn.queueToken === null) return;
   if (queueSockets.get(conn.queueToken) === ws) queueSockets.delete(conn.queueToken);
   conn.queueToken = null;
+}
+
+/**
+ * A session that has just taken a seat is no longer searching for one. `join_queue` already
+ * refuses a seated connection; this is the same rule from the other side, for the connection
+ * that was queued first and then created or joined a room by code. Without it the entry stays
+ * matchable, and the next group forms *around this session* — moving its socket to the
+ * matchmade room while the room it just took a seat in keeps that seat marked `connected` with
+ * nothing attached. That room is then invisible to the sweep, the idle backstop and the stalled-
+ * turn check, so anyone else in it is stranded on it for the life of the process.
+ *
+ * Dropping the search (rather than refusing the join) is the same precedence `reconnect` already
+ * applies: the seat this session actually holds wins over the one it was hoping for. Safe to do
+ * in the same synchronous handler as the seating, since nothing can run between them.
+ */
+function leaveQueueForSeat(ws: WebSocket, conn: ConnState): void {
+  if (conn.queueToken === null) return;
+  if (queue.cancel(conn.queueToken)) counters.queueCancelsTotal++;
+  releaseQueueSocket(conn, ws);
+  // The searching UI has to close on the server's word, not on the client's guess.
+  send(ws, queueState('idle', null));
 }
 
 /**
@@ -267,6 +293,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         return;
       }
       const { code, seat, token } = result;
+      leaveQueueForSeat(ws, conn);
       conn.code = code;
       conn.seat = seat;
       attachSocket(code, seat, ws);
@@ -291,6 +318,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         }
         return;
       }
+      leaveQueueForSeat(ws, conn);
       conn.code = msg.code;
       conn.seat = result.seat;
       attachSocket(msg.code, result.seat, ws);
@@ -573,14 +601,8 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         log.debug('resync_limit', {});
         return;
       }
-      const info = rooms.getRoomInfo(conn.code);
-      if (info) {
-        send(ws, {
-          v: PROTOCOL_VERSION, type: 'room_state',
-          players: info.players, settings: info.settings, hostSeat: rooms.getHostSeat(conn.code),
-          locked: info.locked, party: info.party, visibility: info.visibility,
-        });
-      }
+      const roomState = roomStateMsg(conn.code);
+      if (roomState) send(ws, roomState);
       const view = rooms.getView(conn.code, conn.seat);
       if (view) send(ws, { v: PROTOCOL_VERSION, type: 'state_sync', view });
       return;

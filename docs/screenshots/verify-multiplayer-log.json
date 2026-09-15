@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-15T12:34:14.175Z",
-  "roomCode": "6VS24",
+  "generatedAt": "2026-09-15T13:20:10.040Z",
+  "roomCode": "Y2M75",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-15T12:34:04.269Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":8,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-15T13:20:00.955Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":8,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -239,7 +239,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "JSYRW",
+    "code": "MHK4Z",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {
@@ -256,13 +256,13 @@
     }
   },
   "mobileTouchJoin": {
-    "code": "99MQY",
+    "code": "MG6VG",
     "screenshot": "docs/screenshots/mp-mobile-join-input.png"
   },
   "discovery": {
-    "code": "87WPN",
+    "code": "G89HC",
     "card": {
-      "code": "87WPN",
+      "code": "G89HC",
       "hostName": "Marina",
       "players": 1,
       "capacity": 4,
@@ -277,8 +277,8 @@
         1
       ],
       "codes": [
-        "V8XHT",
-        "V8XHT"
+        "6N49K",
+        "6N49K"
       ],
       "timerMode": "casual"
     },
@@ -289,9 +289,9 @@
         2
       ],
       "codes": [
-        "B6936",
-        "B6936",
-        "B6936"
+        "4RX7K",
+        "4RX7K",
+        "4RX7K"
       ],
       "timerMode": "casual"
     },
@@ -303,10 +303,10 @@
         3
       ],
       "codes": [
-        "4K78S",
-        "4K78S",
-        "4K78S",
-        "4K78S"
+        "SMJ4V",
+        "SMJ4V",
+        "SMJ4V",
+        "SMJ4V"
       ],
       "timerMode": "casual"
     }
