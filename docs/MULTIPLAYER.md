@@ -457,9 +457,13 @@ seed is server-chosen and never sent. A room code is a public locator, not a
 credential; the session token is the only thing that owns a seat, and exactly
 one transport may hold a seat at a time (a reconnect evicts the previous one).
 
-`Origin` is validated only when `MEXE_ALLOWED_ORIGINS` is configured, and never
-as authentication — see [OPERATIONS.md](OPERATIONS.md) for why a missing header
-is still accepted. Explicitly *not* mitigated: denial of service at volume,
+Every per-source budget keys on the client address, which behind a proxy means
+`MEXE_TRUSTED_PROXY_HOPS` must state how many proxies are in front: `X-Forwarded-For`
+is client-settable and is ignored at the default of 0, and read only that many
+entries from the right once set. `Origin` is a stated policy — production must
+name its allowed origins or say `*` — and never authentication; see
+[OPERATIONS.md](OPERATIONS.md) for why a missing header is still accepted and
+why the server refuses to start on silence. Explicitly *not* mitigated: denial of service at volume,
 room-code brute force from a large connection farm, timing/behavioural
 collusion. Frame size (16 KiB) is enforced at the server; a client-supplied
 state hash is never accepted, only ever sent.

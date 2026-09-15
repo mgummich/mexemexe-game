@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   attachSocket,
+  clientIp,
   closeRoomSockets,
   detachSocket,
   evictSeat,
@@ -228,5 +229,45 @@ describe('OH-12/OH-13 heartbeat liveness', () => {
     const second = reapDeadSockets([live], alive);
     expect(second.dead).toEqual([]);
     expect(second.probe).toEqual([live]);
+  });
+});
+
+describe('clientIp behind a proxy', () => {
+  const DIRECT = '203.0.113.9';
+
+  it('ignores X-Forwarded-For entirely when no proxy is trusted', () => {
+    // The header is client-settable: honouring it by default would let anyone spoof their way
+    // out of every per-source budget.
+    expect(clientIp(DIRECT, '1.2.3.4', 0)).toBe(DIRECT);
+    expect(clientIp(DIRECT, '1.2.3.4, 5.6.7.8', 0)).toBe(DIRECT);
+  });
+
+  it('takes the entry the nearest trusted proxy appended, not the leftmost claim', () => {
+    // client -> edge -> app: the app's own proxy appended '70.0.0.1', and everything to its
+    // left is whatever the client chose to send.
+    expect(clientIp(DIRECT, '9.9.9.9, 70.0.0.1', 1)).toBe('70.0.0.1');
+    expect(clientIp(DIRECT, '9.9.9.9, 70.0.0.1, 10.0.0.2', 2)).toBe('70.0.0.1');
+  });
+
+  it('accepts bracketed IPv6 and an appended port', () => {
+    expect(clientIp(DIRECT, '[2001:db8::1]:443', 1)).toBe('2001:db8::1');
+    expect(clientIp(DIRECT, '70.0.0.1:51234', 1)).toBe('70.0.0.1');
+    expect(clientIp(DIRECT, '2001:db8::1', 1)).toBe('2001:db8::1');
+  });
+
+  it('falls back to the peer address for a missing, short or non-IP chain', () => {
+    expect(clientIp(DIRECT, undefined, 1)).toBe(DIRECT);
+    expect(clientIp(DIRECT, '', 1)).toBe(DIRECT);
+    expect(clientIp(DIRECT, '70.0.0.1', 2)).toBe(DIRECT); // fewer hops than configured
+    // A budget key must be an address, never free text a client chose.
+    expect(clientIp(DIRECT, 'not-an-ip', 1)).toBe(DIRECT);
+    expect(clientIp(undefined, undefined, 0)).toBe('unknown');
+  });
+});
+
+describe('OH-30 an explicit any-origin deployment', () => {
+  it('accepts every origin under the wildcard, without pretending it is a check', () => {
+    expect(originAllowed('https://anything.example', ['*'])).toBe(true);
+    expect(originAllowed(undefined, ['*'])).toBe(true);
   });
 });

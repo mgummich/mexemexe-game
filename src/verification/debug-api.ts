@@ -17,6 +17,10 @@ interface MexeOnlineDebugApi {
   /** Verification-only: current in-match connection notice text (opponent disconnected/reconnected,
    * "reconnecting...", etc) — empty string outside a match or when no notice is showing. */
   notice: () => string;
+  /** Verification-only: the lobby's current player-facing error text (the localized copy for a
+   * server refusal), or empty string when no error is showing. Canvas text, unreadable to
+   * Playwright otherwise. */
+  errorText: () => string;
   lastRejections: () => string[];
   trace: () => { dir: 'out' | 'in'; type: string }[];
   /** Verification-only: every connection status this client has passed through, newest last.

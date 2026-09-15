@@ -664,6 +664,8 @@ export class GameScene extends Phaser.Scene {
       rev: () => this.online?.lastRev ?? null,
       players: () => [],
       notice: () => this.onlineNoticeText?.text ?? '',
+      // No lobby error screen exists mid-match — a refusal here surfaces as the notice above.
+      errorText: () => '',
       lastRejections: () => this.lastRejections,
       trace: () => client.trace,
       statusTrace: () => client.statusTrace,

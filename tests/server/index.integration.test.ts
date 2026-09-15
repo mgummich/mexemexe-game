@@ -254,7 +254,7 @@ describe('server observability is privacy-safe (/metrics, /health, logs)', () =>
   beforeAll(async () => {
     // Production mode with debug logging on — the noisiest configuration that can ship, so the
     // canary assertions below cover every line a real deployment could emit.
-    server = await startServer(PORT, { MEXE_ENV: 'production', LOG_LEVEL: 'debug', MEXE_METRICS_TOKEN: METRICS_TOKEN });
+    server = await startServer(PORT, { MEXE_ENV: 'production', LOG_LEVEL: 'debug', MEXE_METRICS_TOKEN: METRICS_TOKEN, MEXE_ALLOWED_ORIGINS: '*' });
   }, 30_000);
 
   afterAll(() => {
@@ -381,7 +381,7 @@ describe('/metrics is closed by default in production', () => {
 
   beforeAll(async () => {
     // Production, no MEXE_METRICS_TOKEN — the shape a careless deployment actually has.
-    server = await startServer(PORT, { MEXE_ENV: 'production' });
+    server = await startServer(PORT, { MEXE_ENV: 'production', MEXE_ALLOWED_ORIGINS: '*' });
   }, 30_000);
 
   afterAll(() => {

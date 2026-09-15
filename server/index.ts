@@ -13,6 +13,7 @@ import { createLogger, errorFields } from './log';
 import { counters, renderMetrics } from './metrics';
 import {
   attachSocket as attach,
+  clientIp,
   closeRoomSockets,
   detachSocket as detach,
   evictSeat,
@@ -486,7 +487,10 @@ const wss = new WebSocketServer({
 const alive = new Set<WebSocket>();
 
 wss.on('connection', (ws: WebSocket, req) => {
-  const ip = req.socket.remoteAddress ?? 'unknown';
+  // Behind a configured number of trusted proxies the peer address is the proxy's, and every
+  // per-source budget would collapse onto it; with none configured X-Forwarded-For is ignored.
+  const xff = req.headers['x-forwarded-for'];
+  const ip = clientIp(req.socket.remoteAddress, Array.isArray(xff) ? xff.join(',') : xff, config.trustedProxyHops);
   const ipCount = connectionsByIp.get(ip) ?? 0;
   if (connections.size >= config.maxConnections || ipCount >= config.maxConnectionsPerIp) {
     const reason = connections.size >= config.maxConnections ? 'global_cap' : 'ip_cap';

@@ -18,6 +18,9 @@ export interface Config {
   readonly maxConnections: number;
   readonly maxConnectionsPerIp: number;
   readonly maxRoomCreatesPerIp: number;
+  /** How many reverse proxies sit in front of this server. 0 (the default) means the socket's
+   * own peer address is the client address and `X-Forwarded-For` is ignored entirely. */
+  readonly trustedProxyHops: number;
   readonly disconnectGraceMs: number;
   readonly idleTimeoutMs: number;
   readonly testSeed: number | undefined;
@@ -37,8 +40,20 @@ const DEFAULT_MAX_CONNECTIONS_PER_IP = 20;
 // Rooms one source may create per minute. Generous for a household or a shared NAT, far under
 // the rate needed to park MEXE_MAX_ROOMS of abandoned rooms before the sweep reclaims them.
 const DEFAULT_MAX_ROOM_CREATES_PER_IP = 20;
+const DEFAULT_TRUSTED_PROXY_HOPS = 0;
 const DEFAULT_DISCONNECT_GRACE_MS = 30_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
+
+/** Same, but zero is a meaningful value ("no proxies"), so only negatives and garbage fail. */
+function parseNonNegativeInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new ConfigError(`invalid ${name}: "${raw}" must be a non-negative integer`);
+  }
+  return n;
+}
 
 /** Env value must parse to a finite positive number, or config load fails naming `name`. */
 function parsePositiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -89,6 +104,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (metricsToken !== undefined && metricsToken !== '' && metricsToken.length < 16) {
     throw new ConfigError('MEXE_METRICS_TOKEN must be at least 16 characters');
   }
+  // Production must state its Origin policy rather than inherit one by omission: `*` is a
+  // deliberate "any origin" (correct behind someone else's proxy, or for non-browser clients),
+  // and a list is the stricter answer. Silence is the one thing that is not allowed, because a
+  // forgotten variable and a considered decision would otherwise look identical.
+  const allowedOrigins = parseOrigins(env.MEXE_ALLOWED_ORIGINS);
+  if (mode === 'production' && allowedOrigins.length === 0) {
+    throw new ConfigError(
+      'MEXE_ALLOWED_ORIGINS must be set in production: your site origin(s), comma-separated, or * to accept any origin',
+    );
+  }
   return {
     port: parsePositiveInt(env, 'PORT', DEFAULT_PORT),
     host: env.HOST || DEFAULT_HOST,
@@ -98,11 +123,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     maxConnections: parsePositiveInt(env, 'MEXE_MAX_CONNECTIONS', DEFAULT_MAX_CONNECTIONS),
     maxConnectionsPerIp: parsePositiveInt(env, 'MEXE_MAX_CONNECTIONS_PER_IP', DEFAULT_MAX_CONNECTIONS_PER_IP),
     maxRoomCreatesPerIp: parsePositiveInt(env, 'MEXE_MAX_ROOM_CREATES_PER_IP', DEFAULT_MAX_ROOM_CREATES_PER_IP),
+    trustedProxyHops: parseNonNegativeInt(env, 'MEXE_TRUSTED_PROXY_HOPS', DEFAULT_TRUSTED_PROXY_HOPS),
     disconnectGraceMs: parsePositiveInt(env, 'MEXE_DISCONNECT_GRACE_MS', DEFAULT_DISCONNECT_GRACE_MS),
     idleTimeoutMs: parsePositiveInt(env, 'MEXE_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS),
     testSeed,
     metricsToken: metricsToken || undefined,
-    allowedOrigins: parseOrigins(env.MEXE_ALLOWED_ORIGINS),
+    allowedOrigins,
   };
 }
 

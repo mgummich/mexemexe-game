@@ -58,3 +58,35 @@ describe('MEXE_METRICS_TOKEN', () => {
     expect(loadConfig({ MEXE_METRICS_TOKEN: 'x'.repeat(16) }).metricsToken).toBe('x'.repeat(16));
   });
 });
+
+describe('MEXE_ALLOWED_ORIGINS', () => {
+  it('parses a comma list, trimming whitespace and trailing slashes', () => {
+    const cfg = loadConfig({ MEXE_ALLOWED_ORIGINS: 'https://mexe.example/, http://localhost:5173 ,' });
+    expect(cfg.allowedOrigins).toEqual(['https://mexe.example', 'http://localhost:5173']);
+  });
+
+  it('is optional in development, where an empty list means no check', () => {
+    expect(loadConfig({}).allowedOrigins).toEqual([]);
+  });
+
+  it('refuses to start production on silence, so an omission cannot pass for a decision', () => {
+    expect(() => loadConfig({ MEXE_ENV: 'production' })).toThrow(/MEXE_ALLOWED_ORIGINS/);
+    expect(() => loadConfig({ MEXE_ENV: 'production', MEXE_ALLOWED_ORIGINS: '  ' })).toThrow(/MEXE_ALLOWED_ORIGINS/);
+  });
+
+  it('accepts an explicit any-origin production deployment', () => {
+    expect(loadConfig({ MEXE_ENV: 'production', MEXE_ALLOWED_ORIGINS: '*' }).allowedOrigins).toEqual(['*']);
+  });
+});
+
+describe('MEXE_TRUSTED_PROXY_HOPS', () => {
+  it('defaults to trusting no proxy, which is what makes X-Forwarded-For ignorable', () => {
+    expect(loadConfig({}).trustedProxyHops).toBe(0);
+  });
+
+  it('reads a hop count and rejects a negative or fractional one', () => {
+    expect(loadConfig({ MEXE_TRUSTED_PROXY_HOPS: '2' }).trustedProxyHops).toBe(2);
+    expect(() => loadConfig({ MEXE_TRUSTED_PROXY_HOPS: '-1' })).toThrow(/MEXE_TRUSTED_PROXY_HOPS/);
+    expect(() => loadConfig({ MEXE_TRUSTED_PROXY_HOPS: '1.5' })).toThrow(/MEXE_TRUSTED_PROXY_HOPS/);
+  });
+});

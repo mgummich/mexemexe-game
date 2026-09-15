@@ -74,6 +74,63 @@ describe('OH room-creation spam is bounded per source', () => {
   }, 30_000);
 });
 
+describe('OH room-creation budget behind a trusted proxy', () => {
+  // Every socket arrives from one address (the proxy, or here the loopback peer), so without a
+  // forwarded client address the per-source budget collapses into a second global cap and the
+  // first busy household locks the room out for everyone else.
+  const PORT = 8805;
+  let server: Server;
+
+  /** A client that presents `forwardedFor` as the proxy would have appended it. */
+  async function openVia(forwardedFor: string): Promise<Client> {
+    const ws = new WebSocket(`ws://localhost:${PORT}`, { headers: { 'x-forwarded-for': forwardedFor } });
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', () => resolve());
+      ws.once('error', reject);
+    });
+    return new Client(ws);
+  }
+
+  async function createFrom(forwardedFor: string): Promise<'ok' | 'refused'> {
+    const c = await openVia(forwardedFor);
+    c.send({ type: 'create_room', name: 'P' });
+    await c.until((msgs) => msgs.some((m) => m.type === 'room_joined' || m.type === 'error'), 'a create answer');
+    const err = c.received.find((m) => m.type === 'error');
+    c.close();
+    if (err?.type === 'error') {
+      expect(err.code).toBe('room_create_limit');
+      return 'refused';
+    }
+    return 'ok';
+  }
+
+  beforeAll(async () => {
+    server = await startServer(PORT, {
+      MEXE_TEST_SEED: '7',
+      MEXE_TRUSTED_PROXY_HOPS: '1',
+      MEXE_MAX_ROOM_CREATES_PER_IP: '2',
+    });
+  }, 30_000);
+
+  afterAll(() => stopServer(server));
+
+  it('OH-05: budgets each forwarded client separately instead of collapsing onto the proxy', async () => {
+    expect(await createFrom('198.51.100.7')).toBe('ok');
+    expect(await createFrom('198.51.100.7')).toBe('ok');
+    expect(await createFrom('198.51.100.7')).toBe('refused');
+    // A different player behind the same proxy still has their whole budget.
+    expect(await createFrom('198.51.100.8')).toBe('ok');
+    expect((await health(PORT)).ok).toBe(true);
+  }, 30_000);
+
+  it('OH-05: a longer client-supplied chain cannot spend someone else\'s budget or dodge its own', async () => {
+    // Only the last hop is the proxy's own word; everything left of it is the client's claim.
+    expect(await createFrom('1.1.1.1, 198.51.100.9')).toBe('ok');
+    expect(await createFrom('2.2.2.2, 198.51.100.9')).toBe('ok');
+    expect(await createFrom('3.3.3.3, 198.51.100.9')).toBe('refused');
+  }, 30_000);
+});
+
 describe('OH Origin policy', () => {
   const PORT = 8803;
   let server: Server;

@@ -367,6 +367,7 @@ export class OnlineScene extends Phaser.Scene {
       rev: () => null,
       players: () => this.players,
       notice: () => '',
+      errorText: () => this.errorMsg ?? '',
       lastRejections: () => [],
       trace: () => this.client.trace,
       statusTrace: () => this.client.statusTrace,

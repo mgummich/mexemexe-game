@@ -33,11 +33,18 @@ rather than silently falling back to a default.
 | `MEXE_MAX_CONNECTIONS`     | `2000`      | Global WebSocket admission cap. Beyond it, new sockets are closed with `capacity`. |
 | `MEXE_MAX_CONNECTIONS_PER_IP` | `20`     | Per-IP admission cap, same refusal.                          |
 | `MEXE_MAX_ROOM_CREATES_PER_IP` | `20`    | Rooms one source may create per minute. Over it, `create_room` is refused with `room_create_limit`. Raise it behind a reverse proxy, where every client shares one address. |
-| `MEXE_ALLOWED_ORIGINS`     | unset       | Comma-separated browser origins allowed to open a WebSocket (e.g. `https://mexe.example,http://localhost:5173`). Unset means no Origin check. |
+| `MEXE_ALLOWED_ORIGINS`     | unset       | Comma-separated browser origins allowed to open a WebSocket (e.g. `https://mexe.example,http://localhost:5173`), or `*` for any. **Required in production** — the server refuses to start without it. Unset in development means no check. |
+| `MEXE_TRUSTED_PROXY_HOPS`  | `0`         | Reverse proxies in front of the server. `0` ignores `X-Forwarded-For`; `n` reads the client address `n` entries from the right of that header. Only raise it when the server's port is unreachable except through those proxies. |
 | `MEXE_DISCONNECT_GRACE_MS` | `30000`     | Seeds a new room's reconnect grace and bounds the room sweep. A lobby timer preset replaces the room's own value (Casual/Off 60s, Fast 30s). |
 | `MEXE_IDLE_TIMEOUT_MS`     | `600000`    | Idle room lifetime before the sweep reaps it.                |
 | `MEXE_METRICS_TOKEN`       | unset       | Bearer token for `/metrics`. Minimum 16 characters. Unset in production means `/metrics` returns 404. |
 | `MEXE_TEST_SEED`           | unset       | Forces a deterministic deal. **Test-only.**                  |
+
+`MEXE_ALLOWED_ORIGINS` is a required, deliberate choice in production: a list pins the
+browsers that may open a socket, `*` accepts any (correct behind someone else's proxy, or when
+clients are not all browsers). The server refuses to start on silence so a forgotten variable
+and a considered decision cannot look identical, and the compose files fail with the same
+message before a container is even created.
 
 `MEXE_TEST_SEED` exists solely for `verify:multiplayer`. Setting it with
 `MEXE_ENV`/`NODE_ENV=production` is a **fatal** config error and the process refuses to
@@ -302,26 +309,29 @@ console errors and zero server stderr lines.
   `MEXE_MAX_ROOMS`, because leaving a room deletes an empty one); and full-state `resync`
   requests are capped at five per connection per ten seconds and silently dropped above that.
   A distributed abuser that stays under every one of those is not throttled further.
-- **`MEXE_MAX_CONNECTIONS_PER_IP` counts `req.socket.remoteAddress`, so it collapses behind
-  a reverse proxy.** Every client then shares the proxy's address and the per-IP cap becomes
-  a second global cap. The server deliberately does **not** trust `X-Forwarded-For` — that
-  header is client-settable, and trusting it by default would turn the cap into a no-op that
-  any abuser can spoof. Either terminate the WebSocket without a proxy hop, or raise
-  `MEXE_MAX_CONNECTIONS_PER_IP` to at least the global cap so it stops being the binding
-  limit and rely on `MEXE_MAX_CONNECTIONS` plus the per-connection guards.
+- **Per-address limits need `MEXE_TRUSTED_PROXY_HOPS` when the server sits behind a proxy.**
+  `X-Forwarded-For` is client-settable, so it is ignored by default — trusting it unasked
+  would turn every per-address limit into a no-op any abuser can spoof. Set the number of
+  proxies in front of the server (`1` for the Traefik compose files, which already default to
+  it) and the client address is read that many entries from the right of the header, with
+  everything to its left treated as the client's own claim. This is sound **only** while the
+  server's port is unreachable except through those proxies: a client that can connect
+  directly appends whatever chain it likes. Left at `0` behind a proxy, every player shares
+  the proxy's address and `MEXE_MAX_CONNECTIONS_PER_IP` / `MEXE_MAX_ROOM_CREATES_PER_IP`
+  become second global caps — raise both, or accept that they no longer separate players.
 - **Room codes are 5 characters from a 28-symbol alphabet** (~17.2M combinations), generated
   with `crypto.randomInt` and retried on collision, throttled to ten failed lookups per
   connection. Practical to brute-force only with a large, throttle-resetting connection farm;
   a per-IP failed-join counter is the next step if that ever shows up in practice. A room code
   is a public locator, never a credential — the session token (`crypto.randomUUID`) is the only
   thing that owns a seat.
-- **Origin is checked only when configured, and is never authentication.** With
-  `MEXE_ALLOWED_ORIGINS` set, a browser page on any other origin is refused at the upgrade
-  with `401`; a request with no `Origin` header at all is still accepted, because only browsers
-  send one and requiring it would block non-browser clients while stopping nobody (anything
-  that is not a browser can send any `Origin` it likes). Unset — the default — means no check,
-  which is the honest default for a server that is also reached through other people's
-  proxies.
+- **Origin is a stated policy, never authentication.** Production must set
+  `MEXE_ALLOWED_ORIGINS` to a list or to `*`. With a list, a browser page on any other origin
+  is refused at the upgrade with `401`. A request with no `Origin` header at all is still
+  accepted under either setting, because only browsers send one and requiring it would block
+  non-browser clients while stopping nobody — anything that is not a browser can send any
+  `Origin` it likes. `*` is therefore a real option, not a failure: it is the honest answer for
+  a deployment reached through someone else's proxy.
 - **No online results summary.** The win screen's per-player stats are local-only; the
   client never observes the other seats' turn history online, so the line is hidden rather
   than faked. Fixing it needs a protocol change.

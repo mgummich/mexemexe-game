@@ -3,6 +3,7 @@
  * plain maps (not tied to `ws`) so it's unit-testable with fake sockets
  * instead of a real WebSocketServer.
  */
+import { isIP } from 'node:net';
 
 /** The subset of the WebSocket interface this module needs. A real `ws`/browser
  * WebSocket satisfies this structurally. */
@@ -107,19 +108,43 @@ export function hitResyncLimit(state: ConnState, now: number, max = 5, windowMs 
 }
 
 /**
- * Origin policy. `allowed` empty means every origin is accepted, which is the default: the
- * server is also deployed behind other people's proxies and reached by non-browser clients, and
- * a check that rejects those would be a broken check rather than a security gain. A deployment
- * that knows its front-end origins sets `MEXE_ALLOWED_ORIGINS` and gets the one thing an Origin
- * header can actually give: a browser on an unrelated page cannot open a socket here. A missing
- * Origin is allowed either way — only browsers send it, so requiring it would block `curl`/`ws`
- * clients while stopping nobody (anything not a browser can send any Origin it likes). Origin is
- * never treated as authentication; the session token is.
+ * Origin policy. A list of origins is the strict answer; `*` is the explicit "any origin", which
+ * is the right answer behind someone else's proxy or for a deployment whose clients are not all
+ * browsers. Production has to pick one of the two — see `loadConfig`, which refuses to start on
+ * silence. An empty list only happens in development, where it means no check.
+ *
+ * A missing Origin is allowed under every setting: only browsers send one, so requiring it would
+ * block `curl`/`ws` clients while stopping nobody, since anything that is not a browser can send
+ * whatever Origin it likes. Origin is never treated as authentication; the session token is.
  */
 export function originAllowed(origin: string | undefined, allowed: readonly string[]): boolean {
-  if (allowed.length === 0) return true;
+  if (allowed.length === 0 || allowed.includes('*')) return true;
   if (origin === undefined || origin === '') return true;
   return allowed.includes(origin.replace(/\/+$/, ''));
+}
+
+/**
+ * The address the per-source budgets are keyed on.
+ *
+ * With no proxy (`trustedHops` 0, the default) that is the socket's own peer address and
+ * `X-Forwarded-For` is ignored outright — the header is client-settable, so honouring it by
+ * default would turn every per-source limit into something any abuser can spoof away.
+ *
+ * With `trustedHops` proxies in front, the entry that many places from the right is the one the
+ * nearest trusted proxy appended, and everything to its left is client-supplied and ignored.
+ * This is only sound while the server port is unreachable except through those proxies: a client
+ * that can connect directly appends whatever chain it likes. Anything that does not parse as an
+ * IP falls back to the peer address rather than becoming a budget key of its own.
+ */
+export function clientIp(remoteAddress: string | undefined, forwardedFor: string | undefined, trustedHops: number): string {
+  const direct = remoteAddress ?? 'unknown';
+  if (trustedHops <= 0 || !forwardedFor) return direct;
+  const chain = forwardedFor.split(',').map((part) => part.trim()).filter((part) => part !== '');
+  const candidate = chain[chain.length - trustedHops];
+  if (candidate === undefined) return direct;
+  // Proxies vary: bare address, bracketed IPv6, or either with a port appended.
+  const bare = candidate.replace(/^\[([^\]]+)\](?::\d+)?$/, '$1').replace(/^(\d+\.\d+\.\d+\.\d+):\d+$/, '$1');
+  return isIP(bare) === 0 ? direct : bare;
 }
 
 /**

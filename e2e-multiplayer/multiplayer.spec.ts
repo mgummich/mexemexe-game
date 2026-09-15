@@ -72,11 +72,11 @@ function trackConsoleErrors(page: Page): string[] {
   return errs;
 }
 
-async function newClient(browser: Browser): Promise<Page> {
+async function newClient(browser: Browser, wsUrl = WS_URL): Promise<Page> {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   trackConsoleErrors(page);
-  await page.goto(`/?ws=${encodeURIComponent(WS_URL)}&showcase=menu`);
+  await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu`);
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   // MenuScene ONLINE button, logical (240, 258)
   const [ox, oy] = toScreen(240, 258);
@@ -694,11 +694,15 @@ test('room full: a 5th joiner sees a translated room_full error', async ({ brows
 
 /** Same flow as `newClient`, on a portrait phone viewport and addressing the ONLINE button
  *  through the live world size instead of the 1280x720 scale factor. */
-async function newPhoneClient(browser: Browser, viewport = { width: 390, height: 844 }): Promise<Page> {
+async function newPhoneClient(
+  browser: Browser,
+  viewport = { width: 390, height: 844 },
+  wsUrl = WS_URL,
+): Promise<Page> {
   const ctx = await browser.newContext({ viewport });
   const page = await ctx.newPage();
   trackConsoleErrors(page);
-  await page.goto(`/?ws=${encodeURIComponent(WS_URL)}&showcase=menu`);
+  await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu`);
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   const point = await page.evaluate(() => {
     const c = document.querySelector('canvas')!.getBoundingClientRect();
@@ -1014,4 +1018,66 @@ test('OR-34/OR-35: the reconnect notice is readable on a portrait and a landscap
   }
   appendLog({ screenshots });
   for (const p of [portrait, landscape]) await p.context().close();
+});
+
+test('room-creation budget: the refusal reads as plain copy on desktop and on a portrait phone', async ({
+  browser,
+}) => {
+  const screenshots: string[] = [];
+  // Its own server on its own port, with a budget of one room per minute: the shared server runs
+  // the default of 20 and every other test in this file would have to work around a tighter one.
+  const BUDGET_PORT = 8800;
+  const budgetProc = spawn(path.join(process.cwd(), 'node_modules', '.bin', 'tsx'), ['server/index.ts'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NO_COLOR: undefined,
+      FORCE_COLOR: undefined,
+      PORT: String(BUDGET_PORT),
+      MEXE_TEST_SEED: String(TEST_SEED),
+      MEXE_MAX_ROOM_CREATES_PER_IP: '1',
+    },
+  });
+  budgetProc.stdout.on('data', (d) => serverStdout.push(String(d)));
+  budgetProc.stderr.on('data', (d) => serverStderr.push(String(d)));
+  try {
+    await waitForHealth(`http://localhost:${BUDGET_PORT}/health`);
+    const budgetUrl = `ws://localhost:${BUDGET_PORT}`;
+
+    // One room spends the whole budget for this address; every client after it is refused.
+    const first = await newClient(browser, budgetUrl);
+    await first.evaluate(() => window.__MEXE__.online!.createRoom('First'));
+    await first.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+
+    const desktop = await newClient(browser, budgetUrl);
+    const portrait = await newPhoneClient(browser, { width: 390, height: 844 }, budgetUrl);
+    for (const page of [desktop, portrait]) {
+      await page.evaluate(() => window.__MEXE__.online!.createRoom('Refused'));
+      await page.waitForFunction(
+        () => window.__MEXE__.online!.trace().some((m) => m.dir === 'in' && m.type === 'error'),
+        undefined,
+        { timeout: 10_000 },
+      );
+      // Refused, not seated — and the socket stays open, so the player can simply try again.
+      expect(await page.evaluate(() => window.__MEXE__.online!.code())).toBeNull();
+      expect(await page.evaluate(() => window.__MEXE__.online!.status())).toBe('open');
+    }
+    await shot({ desktop, portrait }, 'room-create-limit', screenshots);
+
+    // Calm, non-technical copy: the player is told to wait, never shown the limiter.
+    for (const page of [desktop, portrait]) {
+      const text = await page.evaluate(() => window.__MEXE__.online!.errorText());
+      expect(text).toMatch(/instantes/); // PT-BR: "Tente de novo em instantes."
+      for (const jargon of ['rate', 'limit', 'IP', 'token', 'bucket', '429', 'room_create']) {
+        expect(text).not.toContain(jargon);
+      }
+      expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+      expect(trackConsoleErrors(page)).toEqual([]);
+    }
+
+    appendLog({ screenshots });
+    for (const page of [first, desktop, portrait]) await page.context().close();
+  } finally {
+    budgetProc.kill('SIGTERM');
+  }
 });
