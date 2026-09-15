@@ -1,0 +1,122 @@
+# Production stack: Traefik terminating TLS in front of the published ghcr.io images. Same
+# routing as docker-compose.traefik.yml, but nothing is built here — no source checkout, no
+# build cache, no Node toolchain on the server. Only this file and a .env are needed:
+#
+#   mkdir -p traefik && touch traefik/acme.json && chmod 600 traefik/acme.json
+#   cp .env.example .env && chmod 600 .env     # set MEXE_HOST, MEXE_DOMAIN, ACME_EMAIL,
+#                                              # CLOUDFLARE_DNS_API_TOKEN, MEXE_VERSION
+#   docker compose -f docker-compose.traefik.prod.yml up -d
+#
+# Upgrading is a tag bump plus `up -d`; rolling back is the same with the previous tag:
+#
+#   MEXE_VERSION=v1.10.0 docker compose -f docker-compose.traefik.prod.yml up -d
+#
+# The published web image is built with an empty VITE_WS_URL, so the client falls back to
+# wss://<host>/ws — exactly what the mexe-ws router below serves. A different WebSocket host
+# or path means building the web image yourself; see docs/SELF_HOSTING.md.
+services:
+  traefik:
+    image: traefik:v3.3
+    command:
+      - --providers.docker=true
+      # Nothing is exposed unless it says traefik.enable=true.
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?set ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/acme.json
+      - --certificatesresolvers.le.acme.dnschallenge=true
+      - --certificatesresolvers.le.acme.dnschallenge.provider=cloudflare
+      # Ask Cloudflare's own resolvers, not the host's: a stale local cache makes Traefik give up
+      # on a TXT record that is already live.
+      - --certificatesresolvers.le.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53
+    environment:
+      # Scope the token to Zone:DNS:Edit on this one zone. It can rewrite the zone's records,
+      # so it belongs in a chmod 600 .env, never in the compose file or git.
+      CLOUDFLARE_DNS_API_TOKEN: ${CLOUDFLARE_DNS_API_TOKEN:?set CLOUDFLARE_DNS_API_TOKEN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Read-only: Traefik only needs to watch the container list, never to drive the daemon.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/acme.json:/acme.json
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mexe:
+    # Pin a release tag rather than :latest, so a redeploy can never pull a different build
+    # than the one that was tested. Published by .github/workflows/release.yml.
+    image: ghcr.io/mgummich/mexemexe-game-web:${MEXE_VERSION:?set MEXE_VERSION, e.g. v1.10.0}
+    pull_policy: always
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.mexe.rule=Host(`${MEXE_HOST:?set MEXE_HOST}`)
+      - traefik.http.routers.mexe.entrypoints=websecure
+      - traefik.http.routers.mexe.tls.certresolver=le
+      - traefik.http.routers.mexe.tls.domains[0].main=${MEXE_DOMAIN:?set MEXE_DOMAIN}
+      - traefik.http.routers.mexe.tls.domains[0].sans=*.${MEXE_DOMAIN}
+      - traefik.http.services.mexe.loadbalancer.server.port=80
+    depends_on:
+      # Startup order only: the web container is static and local play never needs the
+      # server, but online alpha testers should not reach a page whose server is not up yet.
+      mexe-server:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Online alpha only. Local play never contacts this service. No `ports:` on purpose: the
+  # browser reaches it through Traefik on 443, so 8787 never has to be public.
+  mexe-server:
+    image: ghcr.io/mgummich/mexemexe-game-server:${MEXE_VERSION}
+    pull_policy: always
+    environment:
+      # Production mode also makes the server refuse to start if MEXE_TEST_SEED ever leaks
+      # into the environment (see docs/OPERATIONS.md).
+      MEXE_ENV: production
+      # Unset by default, which leaves /metrics returning 404. See docs/OBSERVABILITY_PRIVACY.md.
+      MEXE_METRICS_TOKEN: ${MEXE_METRICS_TOKEN:-}
+      # Browser origins allowed to open a WebSocket, comma-separated — your site's own
+      # origin(s). `*` accepts any origin, which is the right answer only when the server is
+      # reached through someone else's proxy or by non-browser clients. Required in production:
+      # the server refuses to start rather than let an omission pass for a decision.
+      MEXE_ALLOWED_ORIGINS: ${MEXE_ALLOWED_ORIGINS:?set MEXE_ALLOWED_ORIGINS to your site origin(s), or * to accept any}
+      # Rooms one client address may create per minute.
+      MEXE_MAX_ROOM_CREATES_PER_IP: ${MEXE_MAX_ROOM_CREATES_PER_IP:-}
+      # Reverse proxies in front of this server. Traefik terminates and appends the client address to X-Forwarded-For.
+      MEXE_TRUSTED_PROXY_HOPS: ${MEXE_TRUSTED_PROXY_HOPS:-1}
+    labels:
+      - traefik.enable=true
+      # Higher priority than the catch-all above, or the upgrade 404s.
+      - traefik.http.routers.mexe-ws.rule=Host(`${MEXE_HOST}`) && PathPrefix(`/ws`)
+      - traefik.http.routers.mexe-ws.priority=100
+      - traefik.http.routers.mexe-ws.entrypoints=websecure
+      - traefik.http.routers.mexe-ws.tls.certresolver=le
+      - traefik.http.routers.mexe-ws.tls.domains[0].main=${MEXE_DOMAIN}
+      - traefik.http.routers.mexe-ws.tls.domains[0].sans=*.${MEXE_DOMAIN}
+      - traefik.http.services.mexe-ws.loadbalancer.server.port=8787
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      # Without these, the first verdict waits a full interval and the web container idles
+      # ~30s after the server is already answering. Needs Docker Engine 25+ / Compose 2.24+.
+      start_period: 30s
+      start_interval: 2s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

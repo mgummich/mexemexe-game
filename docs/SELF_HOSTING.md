@@ -37,6 +37,59 @@ Both are built from the same `Dockerfile` via build targets, sharing one
 - Server health check: `curl http://localhost:8787/health` →
   `{"ok":true,"uptimeSec":142,"rooms":3,"connections":7,"protocol":3}`.
 
+## Which compose file to use
+
+Four stacks ship with the repository. All of them run the same two services;
+they differ in whether the images are built or pulled, and in who runs Traefik.
+
+| File | Images | Traefik | Use it when |
+| ---- | ------ | ------- | ----------- |
+| `docker-compose.yml` | built from source | none | Local or LAN play over plain HTTP on 8080/8787. The quick start above. |
+| `docker-compose.traefik.yml` | built from source | started for you | A public HTTPS host where you want the server to build the game itself. |
+| `docker-compose.traefik.prod.yml` | pulled from ghcr.io | started for you | A public HTTPS host with no Node toolchain and no source checkout — this file plus a `.env` is the whole deployment. |
+| `docker-compose.prod.yml` | pulled from ghcr.io | **yours**, already running | A host that already has a Traefik doing TLS for other sites. Attaches the two services to its network so it picks up their labels. |
+
+Everything except `docker-compose.yml` is configured through a `.env` file next
+to it. `.env.example` documents every variable; copy it and keep it private,
+since it holds a DNS API token:
+
+```bash
+cp .env.example .env && chmod 600 .env
+```
+
+`.env` is git-ignored. `.env.example` is not, so it must never gain a real
+value.
+
+The two `traefik` files request a **wildcard certificate over a Cloudflare
+DNS-01 challenge** (`CLOUDFLARE_DNS_API_TOKEN`, scoped to `Zone:DNS:Edit` on the
+one zone). That choice keeps the exact hostname out of public Certificate
+Transparency logs, which matters for an unlisted test host; an HTTP-01 challenge
+would publish it within minutes. Using a different DNS provider means changing
+`--certificatesresolvers.le.acme.dnschallenge.provider` and the matching
+credential variable. They also need an ACME storage file to exist first:
+
+```bash
+mkdir -p traefik && touch traefik/acme.json && chmod 600 traefik/acme.json
+docker compose -f docker-compose.traefik.prod.yml up -d
+```
+
+The released stacks pin `MEXE_VERSION` rather than tracking `latest`, so a
+redeploy cannot pull a build you have not tested. Upgrading and rolling back are
+the same command with a different tag:
+
+```bash
+MEXE_VERSION=v1.10.0 docker compose -f docker-compose.traefik.prod.yml up -d
+```
+
+`docker-compose.prod.yml` additionally needs `TRAEFIK_NETWORK` — the network
+your existing Traefik is attached to (`docker network ls`) — and, if they differ
+from the defaults, `TRAEFIK_ENTRYPOINT` (`websecure`) and `TRAEFIK_CERTRESOLVER`
+(`le`). That Traefik needs the Docker provider enabled, an HTTPS entrypoint, and
+a certificate resolver or a wildcard certificate loaded some other way.
+
+Every stack that sits behind Traefik sets `MEXE_TRUSTED_PROXY_HOPS=1` and
+requires `MEXE_ALLOWED_ORIGINS`; see `OPERATIONS.md` for what both do.
+
 ## Prebuilt images (GitHub Container Registry)
 
 Every tagged release publishes both targets to ghcr.io, so you can skip the
@@ -105,9 +158,17 @@ whenever the client asks for it. The only thing that matters is that `/ws`
 routes to `mexe-server` and everything else to `mexe`, with the `/ws` router at
 a higher priority so it wins over the catch-all.
 
-With the Docker provider, add labels to `docker-compose.yml` and put both
-services on Traefik's network (`docker network create proxy` once):
+The repository ships two compose files that do exactly this, so the labels below
+are a description of what they already contain rather than something to type:
+`docker-compose.traefik.yml` (builds from source) and
+`docker-compose.traefik.prod.yml` (pulls the released images). Both start
+Traefik themselves and request a **wildcard certificate over a Cloudflare DNS-01
+challenge**, which keeps the hostname out of public Certificate Transparency
+logs — see [Which compose file to use](#which-compose-file-to-use).
 
+To add the routing to a Traefik you already run, use `docker-compose.prod.yml`,
+or put these labels on the two services in your own file and place them on
+Traefik's network (`docker network create proxy` once):
 ```yaml
 services:
   mexe:
