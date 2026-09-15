@@ -4,6 +4,7 @@
  * an exception the caller has to catch.
  */
 import { playlog } from '../core/playlog';
+import { onConnectivityChange } from '../core/pwa';
 import { resolveWsUrl } from '../config';
 import { PROTOCOL_VERSION } from './protocol';
 import type { ClientMessage, ReactionId, RoomSettings, ServerMessage, SubmitTurnMeld } from './protocol';
@@ -24,8 +25,16 @@ export const MIN_NAME_LENGTH = 2;
 const PING_INTERVAL_MS = 20_000;
 const TRACE_CAP = 80;
 const STATUS_TRACE_CAP = 40;
-/** C1: single bounded retry — one reconnect attempt this long after an unexpected close. */
-const RECONNECT_DELAY_MS = 800;
+/**
+ * Bounded auto-reconnect schedule: the delay before attempt N after an unexpected close. A real
+ * mobile drop (Wi-Fi handover, tunnel, screen lock) routinely outlasts one retry, and the server
+ * holds the seat for the room's reconnect grace — 30s or 60s under every preset — so the schedule
+ * spans that window (~63s total) and then gives up rather than retrying forever.
+ */
+const RECONNECT_DELAYS_MS = [800, 2000, 4000, 8000, 12_000, 16_000, 20_000];
+/** Fraction of each delay added at random, so N clients dropped by one event do not all retry on
+ * the same millisecond. Never subtracted: a delay must not shrink below its schedule slot. */
+const RECONNECT_JITTER = 0.25;
 
 type ServerListener = (msg: ServerMessage) => void;
 
@@ -83,16 +92,20 @@ export class NetClient {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   /** Set by disconnect()/leaveRoom() so onclose knows not to retry a deliberate close. */
   private explicitClose = false;
-  /** Bounds the retry to one attempt per unexpected close — cleared again on a successful open. */
-  private reconnectAttempted = false;
+  /** How many reconnect attempts this drop has already spent. Indexes RECONNECT_DELAYS_MS; reset
+   * on every successful open, so a later drop gets the full schedule again. */
+  private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Unsubscribe for the online/offline listeners. One per client, ever — a re-`connect()` (or an
+   * orientation change that re-renders the scene) must not stack a second pair. */
+  private connectivityUnsub: (() => void) | null = null;
 
   /** Bounded trace of every message sent/received, newest last — for e2e/debug-api. */
   trace: { dir: 'out' | 'in'; type: string }[] = [];
   /** Bounded history of every status this client has been in, newest last — for e2e/debug-api.
    * `status()` alone cannot prove a *transient* state happened: 'reconnecting' only lasts
-   * RECONNECT_DELAY_MS plus one connect round-trip, so a verification step that samples it after
-   * any other unbounded await (a screenshot, a wait on the other client) can arrive once it is
+   * the first backoff delay plus one connect round-trip, so a verification step that samples it
+   * after any other unbounded await (a screenshot, a wait on the other client) can arrive once it is
    * already back to 'open'. That raced on CI. Asserting against this history instead is
    * order-independent. */
   statusTrace: ConnStatus[] = [];
@@ -121,15 +134,13 @@ export class NetClient {
     return () => set!.delete(listener);
   }
 
-  /** @param isRetry internal — true when this call is the single bounded reconnect attempt (C1),
-   * so it keeps the 'reconnecting' status instead of flashing back to 'connecting'. */
+  /** @param isRetry internal — true when this call is one of the bounded reconnect attempts, so
+   * it keeps the 'reconnecting' status instead of flashing back to 'connecting'. */
   connect(isRetry = false): void {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
     this.explicitClose = false;
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.clearReconnectTimer();
+    this.wireConnectivity();
     if (!isRetry) this.setStatus('connecting');
     let ws: WebSocket;
     try {
@@ -150,7 +161,7 @@ export class NetClient {
     ws.onopen = () => {
       if (this.ws !== ws) return;
       if (isRetry) playlog.record('net:reconnect');
-      this.reconnectAttempted = false;
+      this.reconnectAttempt = 0;
       this.setStatus('open');
       this.startPing();
       const token = readToken();
@@ -169,16 +180,7 @@ export class NetClient {
         this.setStatus('error', 'unreachable');
         return;
       }
-      const token = readToken();
-      if (!this.explicitClose && token && !this.reconnectAttempted) {
-        this.reconnectAttempted = true;
-        this.setStatus('reconnecting');
-        this.reconnectTimer = setTimeout(() => {
-          this.reconnectTimer = null;
-          this.connect(true);
-        }, RECONNECT_DELAY_MS);
-        return;
-      }
+      if (!this.explicitClose && readToken() && this.scheduleReconnect()) return;
       this.setStatus('closed');
     };
     ws.onerror = () => {
@@ -197,10 +199,15 @@ export class NetClient {
       }
       this.pushTrace('in', msg.type);
       if (msg.type === 'room_joined') writeToken(msg.token);
-      // The stored token is provably dead: keep it and every later entry into the online lobby
-      // re-sends it, gets invalid_token again, and lands on the same error screen — including
-      // the retry. Dropping it turns that into a normal, joinable lobby.
-      if (msg.type === 'error' && msg.code === 'invalid_token') clearToken();
+      // `invalid_token`/`room_closed` are definitive: the session or the room is gone, so no
+      // number of further attempts can restore the seat. Keeping the token would make every
+      // later entry into the online lobby re-send it, fail the same way and land on the same
+      // error screen; keeping the loop alive would do the same without even being asked.
+      if (msg.type === 'error' && (msg.code === 'invalid_token' || msg.code === 'room_closed')) {
+        clearToken();
+        this.clearReconnectTimer();
+        this.reconnectAttempt = RECONNECT_DELAYS_MS.length;
+      }
       if (msg.type === 'proposal_rejected') playlog.record('net:reject', { reason: msg.reasons[0] ?? '' });
       const set = this.listeners.get(msg.type);
       if (set) for (const cb of set) cb(msg);
@@ -216,18 +223,90 @@ export class NetClient {
 
   /** Verification-only: closes the underlying socket as if the network died — unlike disconnect()/
    * leaveRoom() this leaves explicitClose false and the reconnect token in place, so onclose runs
-   * the normal C1 single-retry reconnect path. Used by verify:multiplayer to exercise reconnect. */
+   * the normal bounded reconnect loop. Used by verify:multiplayer to exercise reconnect. */
   forceDrop(): void {
     this.ws?.close();
+  }
+
+  /** How many reconnect attempts are still available for the current drop. 0 means the loop has
+   * given up (or never started). Observability for the reconnect tests, which otherwise could
+   * only infer the budget from socket counts. */
+  reconnectAttemptsLeft(): number {
+    return Math.max(0, RECONNECT_DELAYS_MS.length - this.reconnectAttempt);
+  }
+
+  /**
+   * Queue the next bounded reconnect attempt. Returns false when the schedule is exhausted, which
+   * is the caller's signal to go terminal. Parks instead of retrying while the browser reports no
+   * network: a retry with the radio off would spend an attempt on a guaranteed failure, and the
+   * `online` event (see wireConnectivity) resumes the loop the moment the radio is back.
+   */
+  private scheduleReconnect(): boolean {
+    if (this.reconnectAttempt >= RECONNECT_DELAYS_MS.length) return false;
+    this.setStatus('reconnecting');
+    // Parked, not scheduled: the `online` event resumes the loop (see wireConnectivity).
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+    const base = RECONNECT_DELAYS_MS[this.reconnectAttempt]!;
+    this.reconnectAttempt += 1;
+    this.clearReconnectTimer();
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect(true);
+    }, base + Math.random() * base * RECONNECT_JITTER);
+    return true;
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+  }
+
+  /**
+   * Wi-Fi to mobile data, a tunnel, airplane mode: the socket usually dies without any event the
+   * page can act on, and the browser's `online` event is the earliest reliable signal that a
+   * retry can succeed. Subscribed once per client — a re-`connect()`, a scene rebuild or an
+   * orientation change must not stack a second pair of listeners.
+   */
+  private wireConnectivity(): void {
+    if (this.connectivityUnsub || typeof window === 'undefined') return;
+    this.connectivityUnsub = onConnectivityChange((offline) => {
+      if (offline) {
+        // Do not close the socket: the OS may hand it back intact on a short interruption, and a
+        // close we caused ourselves would spend an attempt for nothing.
+        this.clearReconnectTimer();
+        return;
+      }
+      // Network is back: retry now instead of sitting out the rest of a backoff delay that was
+      // measured against a network that no longer exists.
+      this.retryNow();
+    });
+  }
+
+  /**
+   * Try the next reconnect attempt immediately instead of waiting out the current backoff delay.
+   * For the two moments that are better evidence than a timer: the browser reporting the network
+   * back, and the app returning to the foreground with a socket that may have died while
+   * suspended. Still spends an attempt, so a player who backgrounds and resumes repeatedly cannot
+   * turn a bounded loop into an unbounded one. No-op when connected, deliberately closed, without
+   * a session token, or once the schedule is exhausted.
+   */
+  retryNow(): void {
+    if (this.explicitClose || !readToken()) return;
+    if (this.status === 'open' || this.status === 'connecting') return;
+    if (this.reconnectAttempt >= RECONNECT_DELAYS_MS.length) return;
+    this.clearReconnectTimer();
+    this.reconnectAttempt += 1;
+    this.setStatus('reconnecting');
+    this.connect(true);
   }
 
   /** Closes the socket without touching the reconnect token — used when the scene just tears down. */
   disconnect(): void {
     this.explicitClose = true;
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.connectivityUnsub?.();
+    this.connectivityUnsub = null;
+    this.reconnectAttempt = 0;
+    this.clearReconnectTimer();
     this.stopPing();
     if (this.ws) {
       try {

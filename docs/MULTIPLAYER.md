@@ -31,8 +31,9 @@ ranking, chat, or cosmetics sync. The game labels the entry point
   own numbers. The custom screen's buttons stop at `CUSTOM_BOUNDS`, the same
   bounds the server clamps to, and send one proposal on APPLY rather than one
   per field.
-- **Reconnect is a single bounded retry**, not a persistent loop; if it fails
-  the client returns you to the local menu with a message.
+- **Reconnect is a bounded retry loop**, not a persistent one: seven jittered
+  attempts spanning roughly the 60s seat-hold window, then the client returns
+  you to the local menu with a message. It never retries forever.
 
 ## 1. Responsibilities
 
@@ -259,21 +260,68 @@ the room would sit stuck forever with its remaining players stranded
 (Phase 18 finding 1, regression-tested in
 `tests/server/index.integration.test.ts`).
 
+A reconnect never moves the game. It re-sends authoritative state and nothing
+else: the returning seat gets the same redacted view every other seat is looking
+at (own hand identities, opponents as counts), the current turn and revision,
+the room's settings, and the clock's *current* remaining time. An inactive seat
+reconnecting leaves the turn where it was; a seat that reconnects after the turn
+moved on receives the new turn, not the one it left. A reconnect into a lobby —
+including the lobby a finished match was recycled into — returns `room_joined`
+with no view at all, so no stale playing state can survive a rematch. Pinned in
+`tests/server/reconnect.test.ts` (OR-01/02/06/07/08/09/16/25/26/27/28/29, at 2,
+3 and 4 seats).
+
 Seat presence changes — a disconnect, a reconnect, a hop — always re-broadcast
 `room_state` alongside the `player_disconnected`/`player_reconnected` event,
 because the lobby renders presence from `room_state` and would otherwise keep
 showing a stale marker.
 
-On the client, reconnect is **not** a persistent retry loop. `NetClient`
-attempts exactly one bounded reconnect (`RECONNECT_DELAY_MS` after an
-unexpected close) if a stored token exists; if that attempt also fails to
-stay open, the client falls back to the documented safe path — return to the
-local menu with an explicit message — rather than retrying indefinitely. This
-was scoped down from the original "grace window with an explicit countdown"
-idea in the initial design; the single-retry version is what's implemented
-and verified (`e2e-multiplayer/multiplayer.spec.ts` forces a socket drop and
-asserts the client reaches `'reconnecting'` then `'open'` with a resynced
-revision).
+On the client, reconnect is a **bounded** retry loop, never a persistent one.
+After an unexpected close with a stored token, `NetClient` works through
+`RECONNECT_DELAYS_MS` — `800, 2000, 4000, 8000, 12000, 16000, 20000` ms, each
+jittered upward by up to 25% so a server blip does not bring every client back
+on the same millisecond. That spans ~63s, which is the longest reconnect grace
+any preset offers, so the schedule runs out at about the moment the seat stops
+being worth holding. Then the client falls back to the documented safe path —
+return to the local menu with an explicit message. A successful open resets the
+budget, so a later drop gets the whole schedule again.
+
+Three things cut the loop short rather than letting it run out:
+
+- **`leaveRoom()`/`disconnect()`** — a deliberate exit is never retried.
+- **`invalid_token` or `room_closed`** — the session or the room is provably
+  gone, so further attempts could only arrive at the same error screen.
+- **the browser reporting no network** (`navigator.onLine === false`) — the loop
+  *parks* rather than spending an attempt on a guaranteed failure, and the
+  `online` event resumes it immediately. This is the Wi-Fi-to-cellular path: the
+  socket usually dies with no event the page can act on, and `online` is the
+  earliest reliable signal that a retry can succeed.
+
+`NetClient.retryNow()` pulls the next attempt forward without waiting out the
+current delay, for the two moments that are better evidence than a timer: the
+`online` event above, and the app returning to the foreground (both scenes call
+it from `onAppVisible` when the status is already `'reconnecting'`). It still
+spends an attempt, so a player who backgrounds and resumes twenty times cannot
+turn a bounded loop into an unbounded one, and it opens no socket beside the one
+the loop already owns.
+
+While the socket is down `GameScene` shows one line, repainted once a second:
+*"Conexão caiu. Seu lugar está guardado — 30s"*. The number counts down the
+room's `reconnectGraceMs` from the drop. It is an estimate the client
+interpolates, not an authority — the server owns the real deadline, and the
+countdown reaching zero decides nothing. Past zero the copy switches to *"Ainda
+reconectando. O servidor compra por você."*, which is literally what §7b's
+stalled-turn path does. The same gate that locks input on a dropped socket also
+blanks the "play cards or draw one" objective line, so the board never tells a
+player to act while it is refusing input.
+
+Verified in `e2e-multiplayer/multiplayer.spec.ts` (a forced socket drop reaches
+`'reconnecting'` then `'open'` with a resynced revision, and the same drop on a
+portrait and a landscape phone renders the held-seat copy with its countdown),
+and in `tests/net/reconnect.test.ts`, which drives the loop against a fake
+socket and fake timers: bounded attempt count, one socket per attempt, offline
+parking, `online` resumption, deliberate-leave cancellation and the two
+definitive-failure cases.
 
 ### 4a. Desync detection
 

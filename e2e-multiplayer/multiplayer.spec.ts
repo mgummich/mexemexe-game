@@ -961,3 +961,57 @@ test('ON-09/ON-20: a host settings change clears every ready bit, on a landscape
   appendLog({ screenshots });
   for (const p of [host, guest]) await p.context().close();
 });
+
+test('OR-34/OR-35: the reconnect notice is readable on a portrait and a landscape phone', async ({ browser }) => {
+  // A dropped connection is a phone event far more often than a desktop one, and it is the one
+  // moment the player most needs to be told they have not lost their seat. Both phone viewports
+  // get the same held-seat copy plus its countdown, on top of a board that stops accepting input.
+  const portrait = await newPhoneClient(browser);
+  const landscape = await newPhoneClient(browser, { width: 844, height: 390 });
+  expect(await portrait.evaluate(() => window.__MEXE__.viewport().portrait)).toBe(true);
+  expect(await landscape.evaluate(() => window.__MEXE__.viewport().portrait)).toBe(false);
+
+  await portrait.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await portrait.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await portrait.evaluate(() => window.__MEXE__.online!.code()))!;
+  await landscape.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Joao'), code);
+  await landscape.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+
+  for (const p of [portrait, landscape]) await p.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await portrait.waitForFunction(() => window.__MEXE__.online!.players().every((p) => p.ready), undefined, { timeout: 10_000 });
+  await portrait.evaluate(() => window.__MEXE__.online!.startGame());
+  for (const p of [portrait, landscape]) {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 10_000 });
+  }
+
+  const screenshots: string[] = [];
+  for (const p of [portrait, landscape]) {
+    await p.evaluate(() => window.__MEXE__.online!.forceDrop());
+    // The notice must name the held seat, not a protocol state: assert on the localized copy
+    // actually rendered, and that it carries the countdown the room's grace defines.
+    await p.waitForFunction(
+      () => /\d+s/.test(window.__MEXE__.online!.notice()),
+      undefined,
+      { timeout: 10_000 },
+    );
+    const notice = await p.evaluate(() => window.__MEXE__.online!.notice());
+    expect(notice).toMatch(/guardado/); // PT-BR: "seu lugar na mesa está guardado"
+    for (const jargon of ['socket', 'token', 'rev', 'SESSION', 'MISMATCH']) {
+      expect(notice).not.toContain(jargon);
+    }
+  }
+  await shot({ portrait, landscape }, 'reconnecting-phone', screenshots);
+
+  // And it recovers by itself on both, with no tap required.
+  for (const p of [portrait, landscape]) {
+    await p.waitForFunction(() => window.__MEXE__.online!.status() === 'open', undefined, { timeout: 15_000 });
+  }
+  await shot({ portrait, landscape }, 'reconnected-phone', screenshots);
+
+  for (const p of [portrait, landscape]) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of [portrait, landscape]) await p.context().close();
+});

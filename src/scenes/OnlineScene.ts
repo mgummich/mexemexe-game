@@ -184,7 +184,8 @@ export class OnlineScene extends Phaser.Scene {
         if (isOffline() || this.offlineError) return;
         const s = this.client.getStatus();
         if (s === 'open') this.client.requestResync();
-        else if (s !== 'connecting' && s !== 'reconnecting') this.client.connect();
+        else if (s === 'reconnecting') this.client.retryNow();
+        else if (s !== 'connecting') this.client.connect();
       }),
       onConnectivityChange((offline) => {
         if (!offline && this.offlineError) {

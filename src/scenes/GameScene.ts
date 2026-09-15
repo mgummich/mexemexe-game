@@ -263,6 +263,12 @@ export class GameScene extends Phaser.Scene {
   /** Last status seen by onOnlineStatusChange — only used to detect the reconnecting -> open
    * edge, so a self-reconnect gets the same "you're back" notice the opponent's already gets. */
   private lastOnlineStatus: ConnStatus | null = null;
+  /** Wall-clock instant the current drop started, so the reconnect notice can count down the
+   * room's reconnect grace — the window the server holds this seat for. 0 when connected. */
+  private reconnectStartedAt = 0;
+  /** Repaints the reconnect notice once a second while the socket is down. One ticker for the
+   * whole scene: a per-component timer is exactly the leak this phase is meant to avoid. */
+  private reconnectTicker: Phaser.Time.TimerEvent | null = null;
 
   // last opponent action: which table cards it touched, plus a one-line summary. A rearranging
   // opponent changes the puzzle's structure, so the new position needs to be readable, not guessed.
@@ -411,6 +417,8 @@ export class GameScene extends Phaser.Scene {
     this.lastTickSecond = -1;
     this.lastOnlineStatus = null;
     this.onlineTimerEvent = null;
+    this.reconnectStartedAt = 0;
+    this.reconnectTicker = null;
 
     // opponent presentation
     this.lastMoveIds = new Set();
@@ -554,7 +562,12 @@ export class GameScene extends Phaser.Scene {
         // if the socket claims to still be open, or kick the existing connect()/reconnect flow
         // (which drives onOnlineStatusChange's own notice text) if it isn't.
         if (this.online) {
-          if (this.online.client.getStatus() === 'open') this.online.client.requestResync();
+          const status = this.online.client.getStatus();
+          if (status === 'open') this.online.client.requestResync();
+          // Already mid-loop: pull the next attempt forward rather than opening a second socket
+          // beside the one the loop owns. retryNow() still spends an attempt, so repeated
+          // background/resume cycles cannot make the bounded loop unbounded.
+          else if (status === 'reconnecting') this.online.client.retryNow();
           else this.online.client.connect();
         }
       }),
@@ -573,6 +586,7 @@ export class GameScene extends Phaser.Scene {
       this.aiTimer?.remove();
       this.onlinePendingTimer?.remove();
       this.onlineTimerEvent?.remove();
+      this.reconnectTicker?.remove();
       for (const e of this.activeEmotes.values()) e.timer.remove();
       this.activeEmotes.clear();
       this.ambienceSound?.stop();
@@ -863,23 +877,66 @@ export class GameScene extends Phaser.Scene {
     this.lastOnlineStatus = status;
     if (wasConnected !== nowConnected && this.store.get().phase === 'playing') this.renderAll();
     if (status === 'reconnecting') {
-      this.setOnlineNotice(t('online.reconnecting'));
-      playSfx(this, 'sfx-invalid', 0.3);
+      // Only the first 'reconnecting' of a drop starts the clock — the bounded retry loop passes
+      // through this status once per attempt, and restarting the countdown on each would make the
+      // held-seat window look infinite.
+      if (prevStatus !== 'reconnecting') {
+        this.reconnectStartedAt = Date.now();
+        playSfx(this, 'sfx-invalid', 0.3);
+      }
+      this.startReconnectTicker();
       return;
     }
+    this.stopReconnectTicker();
     // Only the opponent's reconnect is announced elsewhere (onOnlineOpponentEvent) — this own
     // socket coming back from a reconnect attempt was silent, leaving the player to guess
     // whether they're actually back in the room.
     if (status === 'open' && prevStatus === 'reconnecting') {
-      this.setOnlineNotice(t('online.selfReconnected'));
       playSfx(this, 'sfx-feito', 0.3);
-      this.time.delayedCall(3000, () => this.setOnlineNotice(''));
+      // The socket is back but this client's board is whatever it was when the network died —
+      // possibly many turns stale. Lock input until the server's post-reconnect state_sync lands
+      // and replaces it; onOnlineStateSync clears the lock and the notice. The pending watchdog
+      // is the safety net for a reconnect that attaches but never syncs.
+      this.setOnlineNotice(t('online.selfReconnected'));
+      this.setOnlinePending(true);
+      this.renderAll();
     }
     if (status === 'closed' || status === 'error') {
       this.setOnlineNotice(t('online.connectionLost'));
       playSfx(this, 'sfx-invalid', 0.5);
       this.leaveOnlineToMenu(2500);
     }
+  }
+
+  /**
+   * While the socket is down, tell the player the two things they actually need: the game is
+   * trying to get back, and their seat is being held. The number is the room's reconnect grace
+   * counted down locally from the drop — the server owns the real deadline, so this is an
+   * estimate and reaching zero decides nothing. Past zero the seat is still theirs to reclaim,
+   * but the server starts playing its turns (draw and pass), which is what the second line says.
+   */
+  private startReconnectTicker(): void {
+    this.paintReconnectNotice();
+    if (this.reconnectTicker) return;
+    this.reconnectTicker = this.time.addEvent({
+      delay: 1000, loop: true, callback: () => this.paintReconnectNotice(),
+    });
+  }
+
+  private stopReconnectTicker(): void {
+    this.reconnectTicker?.remove();
+    this.reconnectTicker = null;
+    this.reconnectStartedAt = 0;
+  }
+
+  private paintReconnectNotice(): void {
+    const graceMs = this.onlineSettings?.reconnectGraceMs ?? 0;
+    const leftMs = graceMs - (Date.now() - this.reconnectStartedAt);
+    this.setOnlineNotice(
+      leftMs > 0
+        ? t('online.reconnectingHeld', { secs: Math.ceil(leftMs / 1000) })
+        : t('online.reconnectingStill'),
+    );
   }
 
   /** Reading the notice takes a moment, so the drop back to the menu is delayed — and skipped
@@ -2528,6 +2585,10 @@ export class GameScene extends Phaser.Scene {
    */
   private blockingReasonText(known?: DraftAnalysis): string {
     if (!this.editor) return '';
+    // While an online socket is down the board is locked, so "play cards or draw one" is an
+    // instruction the player cannot follow and that contradicts the reconnect notice sitting
+    // above it. The notice is the only thing to say until the table is authoritative again.
+    if (this.online && this.lastOnlineStatus !== null && this.lastOnlineStatus !== 'open') return '';
     const analysis = known ?? this.analyzeDraft();
     const check = analysis.check;
     // "what does the game want right now": ready-to-confirm / fix-the-invalid-meld / play-or-draw

@@ -16,6 +16,22 @@ one online load. This documents what is actually implemented
 The menu shows a banner while the browser reports no network, and online rooms
 are disabled rather than failing mid-connect.
 
+An online match already in progress is a separate case: the browser's
+`online`/`offline` events also drive `NetClient`'s bounded reconnect loop, which
+parks while the radio is off and retries the moment it is back
+([MULTIPLAYER.md](MULTIPLAYER.md) §7). Nothing is ever queued for replay — an
+online match cannot advance without the server, so a dropped socket locks
+gameplay input and the board is restored from the server's snapshot rather than
+from anything the client held while offline.
+
+Returning to the foreground is treated as "the connection may be dead": both
+online scenes subscribe to `onAppVisible` (`visibilitychange` plus `pageshow`,
+so an installed PWA resumed from the task switcher and a bfcache restore both
+count) and either request a fresh authoritative snapshot or pull the next
+reconnect attempt forward. Elapsed local time is never trusted after a
+suspension: the turn clock is re-anchored from the server's `turnMsLeft` on the
+next `state_sync`.
+
 ## Installability
 
 `public/manifest.webmanifest` declares name `MEXE!`, `display: standalone`,
