@@ -4,12 +4,16 @@ import { bus } from '../core/events';
 import { onAppVisible } from '../core/lifecycle';
 import { isOffline, onConnectivityChange } from '../core/pwa';
 import { t } from '../localization/i18n';
-import { MAX_NAME_LENGTH, MIN_NAME_LENGTH, NetClient, readDisplayName, writeDisplayName, type ConnStatus } from '../net/client';
+import {
+  forgetRoom, MAX_NAME_LENGTH, MIN_NAME_LENGTH, NetClient, readDisplayName, readRecentRooms,
+  rememberRoom, writeDisplayName, type ConnStatus, type RecentRoom,
+} from '../net/client';
 import { errorMessage } from '../net/errors';
 import {
-  CUSTOM_BOUNDS, DEFAULT_ROOM_SETTINGS, EMPTY_PARTY, REACTION_COOLDOWN_MS, REACTIONS, TIMER_PRESETS,
-  type ActivityEvent, type GameView, type PartyState, type ReactionId, type RoomPlayerSummary,
-  type RoomSettings, type TimerMode,
+  CUSTOM_BOUNDS, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY, REACTION_COOLDOWN_MS,
+  REACTIONS, TIMER_PRESETS,
+  type ActivityEvent, type GameView, type PartyState, type ReactionId, type RoomListing,
+  type RoomPlayerSummary, type RoomSettings, type RoomVisibility, type TimerMode,
 } from '../net/protocol';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
@@ -44,6 +48,18 @@ const SEAT_COLORS = [0xc8543a, 0x3a7fc8, 0x3ea05a, 0xc8a33a];
 /** Highest seat index the server will ever hand out — server/rooms.ts MAX_PLAYERS. */
 const MAX_SEATS = 4;
 
+/** Room cards drawn on one browser screen. The server's answer is bounded much higher
+ * (MAX_ROOM_LISTINGS); the rest becomes a "+N more" line rather than a scroll container, which
+ * nothing on this screen needs yet. Portrait fits one fewer: its cards are taller (a phone needs
+ * the touch height) and its ATUALIZAR sits higher, so a fourth row would land under the button. */
+function browseRows(portrait: boolean): number {
+  return portrait ? 3 : 4;
+}
+
+/** Recent-room codes offered as one-tap shortcuts under the entry screen's buttons. The stored
+ * list is longer (MAX_RECENT_ROOMS); more than three on screen is clutter, not recall. */
+const RECENT_SHOWN = 3;
+
 function nextTimerPreset(current: TimerMode): (typeof PRESET_CYCLE)[number] {
   const i = PRESET_CYCLE.indexOf(current as (typeof PRESET_CYCLE)[number]);
   return PRESET_CYCLE[(i + 1) % PRESET_CYCLE.length]!;
@@ -67,7 +83,7 @@ function sanitizeName(raw: string): string {
  */
 export class OnlineScene extends Phaser.Scene {
   private client!: NetClient;
-  private phase: 'idle' | 'join' | 'name' | 'lobby' | 'custom' | 'party' | 'error' = 'idle';
+  private phase: 'idle' | 'join' | 'name' | 'lobby' | 'custom' | 'party' | 'browse' | 'error' = 'idle';
   /** The custom screen's working copy. Edited freely while that screen is open and sent as one
    * proposal on APLICAR — a field-by-field send would clear everyone's ready bit five times for
    * one decision. Null whenever the screen is closed. */
@@ -122,6 +138,28 @@ export class OnlineScene extends Phaser.Scene {
   /** Last reaction the room sent, shown briefly in the lobby. */
   private lastReaction: { seat: number; reaction: ReactionId } | null = null;
   private resume: { client: NetClient; code: string; seat: number } | null = null;
+  /** The room's visibility as the server last reported it. Never written locally — the tap sends
+   * a proposal and the next `room_state` is what changes this, same contract as the settings. */
+  private visibility: RoomVisibility = DEFAULT_ROOM_VISIBILITY;
+  /** Last `room_list` answer. A snapshot of a moment, never treated as still true: tapping JOIN
+   * asks the server, which is free to answer "full" or "gone". */
+  private listings: RoomListing[] = [];
+  private browseState: 'loading' | 'ready' | 'failed' = 'loading';
+  /** Rooms this device recently got into, read from local display history (never the token). */
+  private recent: RecentRoom[] = [];
+  /** Code of the join currently in flight, so a refusal can retire a dead recent-room entry
+   * instead of offering it again next time. Cleared by the answer, whichever way it goes. */
+  private pendingJoinCode: string | null = null;
+  /** Every button on the current screen, in reading order — the keyboard focus ring's targets.
+   * Collected from the display list after each rebuild rather than registered per call site, so
+   * a screen cannot be keyboard-unreachable by forgetting to opt in. */
+  private focusables: PixelButton[] = [];
+  /** Which of `focusables` the ring is on. -1 until the player actually uses the keyboard, so a
+   * mouse or touch player never sees a focus ring they did not ask for. */
+  private focusIndex = -1;
+  /** The phase the ring's index was last meaningful in. A new screen starts the ring at its top
+   * button; a redraw of the same screen (a room_state push, a flash label) keeps it where it is. */
+  private focusPhase: OnlineScene['phase'] | null = null;
 
   constructor() {
     super('online');
@@ -163,6 +201,14 @@ export class OnlineScene extends Phaser.Scene {
     this.settingsChangedNotice = false;
     this.nameError = false;
     this.inFlight.clear();
+    this.visibility = DEFAULT_ROOM_VISIBILITY;
+    this.listings = [];
+    this.browseState = 'loading';
+    this.pendingJoinCode = null;
+    this.focusables = [];
+    this.focusIndex = -1;
+    this.focusPhase = null;
+    this.recent = readRecentRooms();
     // Field initializer, not reset here, is exactly the class of bug this run's worst defect
     // (D1) came from — a restart must never inherit a scene's previous life's state.
     this.offlineError = false;
@@ -281,7 +327,7 @@ export class OnlineScene extends Phaser.Scene {
         if (s === 'open' && this.autoJoinCode !== null && this.phase === 'idle' && this.code === null) {
           const code = this.autoJoinCode;
           this.autoJoinCode = null;
-          this.fireOnce('join', 3000, () => this.client.joinRoom(code, this.playerName()));
+          this.fireOnce('join', 3000, () => this.joinCode(code));
         }
         // 'error' with the 'unreachable' marker means the initial connection never opened at
         // all (server down/refused) — distinct from a mid-session drop, which uses the normal
@@ -305,7 +351,13 @@ export class OnlineScene extends Phaser.Scene {
         this.roomSettings = msg.settings;
         this.hostSeat = msg.hostSeat;
         this.party = msg.party;
+        this.visibility = msg.visibility;
         this.phase = 'lobby';
+        this.pendingJoinCode = null;
+        // Local display history only: the code and the host's name, both already on screen. The
+        // credential that could reclaim this seat lives in sessionStorage and never comes here.
+        rememberRoom(msg.code, msg.players.find((p) => p.seat === msg.hostSeat)?.name ?? '');
+        this.recent = readRecentRooms();
         this.rebuild();
       }),
       this.client.on('room_state', (msg) => {
@@ -324,6 +376,7 @@ export class OnlineScene extends Phaser.Scene {
         this.roomSettings = msg.settings;
         this.hostSeat = msg.hostSeat;
         this.party = msg.party;
+        this.visibility = msg.visibility;
         this.settingsLocked = msg.locked;
         this.rebuild();
       }),
@@ -338,6 +391,11 @@ export class OnlineScene extends Phaser.Scene {
           }
         });
       }),
+      this.client.on('room_list', (msg) => {
+        this.listings = msg.rooms;
+        this.browseState = 'ready';
+        if (this.phase === 'browse') this.rebuild();
+      }),
       this.client.on('game_started', (msg) => this.enterMatch(msg.view)),
       // Resuming after a reload: the server answers `reconnect` with `room_joined` (which set
       // code/seat just above) followed by `state_sync` for a match already in progress. Without
@@ -346,6 +404,22 @@ export class OnlineScene extends Phaser.Scene {
       this.client.on('error', (msg) => {
         // Any in-flight lobby action just got its answer (rejection) — unblock its button.
         this.inFlight.clear();
+        // A recent-room shortcut that the server says is gone stops being a shortcut. The entry
+        // is dropped here rather than on a timer: the server's refusal is the only reliable
+        // evidence a room is dead, and re-offering it would send the player down the same hole.
+        const failedCode = this.pendingJoinCode;
+        this.pendingJoinCode = null;
+        if (failedCode && (msg.code === 'room_not_found' || msg.code === 'room_closed')) {
+          forgetRoom(failedCode);
+          this.recent = readRecentRooms();
+        }
+        // Discovery is additive: a refused room list must not throw the player off a screen from
+        // which create/join-by-code still work. It degrades in place instead.
+        if (this.phase === 'browse' && failedCode === null) {
+          this.browseState = 'failed';
+          this.rebuild();
+          return;
+        }
         // Player sees a translated, actionable sentence — never the raw dev-facing `msg.message`
         // or `msg.code`. The raw code stays available via `client.trace`/debug API for logs.
         this.errorMsg = errorMessage(msg.code);
@@ -398,6 +472,18 @@ export class OnlineScene extends Phaser.Scene {
       },
       openCustomSettings: () => this.openCustomSettings(),
       turnMsLeft: () => null,
+      phase: () => this.phase,
+      focus: () => ({ index: this.focusIndex, count: this.focusables.length }),
+      visibility: () => this.visibility,
+      setVisibility: (v) => this.client.setVisibility(v),
+      openBrowse: () => {
+        if (this.phase !== 'idle') return;
+        this.phase = 'browse';
+        this.rebuild();
+        this.refreshListings();
+      },
+      listings: () => this.listings,
+      recentRooms: () => this.recent.map((r) => ({ code: r.code, host: r.host })),
       comprar: () => { /* no in-match action while still in the lobby */ },
       submitRaw: () => { /* not applicable in the lobby */ },
       forceDrop: () => this.client.forceDrop(),
@@ -417,7 +503,10 @@ export class OnlineScene extends Phaser.Scene {
   private wireCodeEntry(): void {
     const onKey = (ev: KeyboardEvent): void => {
       const naming = this.phase === 'name';
-      if (this.phase !== 'join' && !naming) return;
+      if (this.phase !== 'join' && !naming) {
+        this.onNavKey(ev);
+        return;
+      }
       // The DOM input (see ensureTextInput) owns its own value edits and Enter handling while
       // focused — this global path is desktop-only and would otherwise double-process every
       // keystroke a touch player types into it.
@@ -449,6 +538,59 @@ export class OnlineScene extends Phaser.Scene {
     this.unsubs.push(() => this.input.keyboard?.off('keydown', onKey));
   }
 
+  /**
+   * Keyboard navigation for every screen that is not a text field.
+   *
+   * The code and name screens are excluded by the caller: there Enter already means "submit" and
+   * every printable key is a character, so a second meaning for them would be a trap. Everywhere
+   * else Tab/arrows move a ring and Enter/Space presses what it is on — including a *disabled*
+   * button, which answers with its own blocking reason exactly as a click on it does. Skipping
+   * disabled buttons would hide the one explanation the player is looking for.
+   */
+  private onNavKey(ev: KeyboardEvent): void {
+    if (ev.key === 'Tab' || ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      this.moveFocus(ev.key === 'ArrowUp' || (ev.key === 'Tab' && ev.shiftKey) ? -1 : 1);
+      return;
+    }
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      if (this.focusIndex < 0) return;
+      ev.preventDefault();
+      this.focusables[this.focusIndex]?.press();
+    }
+  }
+
+  private moveFocus(delta: number): void {
+    const n = this.focusables.length;
+    if (n === 0) return;
+    const from = this.focusIndex;
+    if (from >= 0) this.focusables[from]?.setSelected(false);
+    this.focusIndex = from < 0 ? (delta > 0 ? 0 : n - 1) : (from + delta + n) % n;
+    this.focusables[this.focusIndex]?.setSelected(true);
+  }
+
+  /**
+   * Re-read the screen's buttons after a rebuild and put the ring back.
+   *
+   * Reading order, not creation order: the reactions strip and the READY/START pair are built in
+   * whatever order their renderers happen to run, and a ring that jumped sideways up the screen
+   * would be worse than no ring.
+   *
+   * The index survives a redraw of the same screen — pressing a button usually redraws it, and
+   * losing the ring every time would make the keyboard path one-shot — but a *new* screen starts
+   * the ring at its top button rather than at whatever index happens to still be in range, which
+   * would otherwise land somewhere arbitrary on a shorter screen.
+   */
+  private collectFocusables(): void {
+    this.focusables = this.children.list
+      .filter((o): o is PixelButton => o instanceof PixelButton)
+      .sort((a, b) => a.y - b.y || a.x - b.x);
+    if (this.focusIndex >= 0 && this.focusPhase !== this.phase) this.focusIndex = 0;
+    this.focusPhase = this.phase;
+    if (this.focusIndex >= this.focusables.length) this.focusIndex = this.focusables.length - 1;
+    if (this.focusIndex >= 0) this.focusables[this.focusIndex]?.setSelected(true);
+  }
+
   /** Runs `fn` unless `key` is already in flight, then disables it for `cooldownMs` (cleared
    * earlier by a matching server response, e.g. room_joined/error above). */
   private fireOnce(key: string, cooldownMs: number, fn: () => void): void {
@@ -477,7 +619,18 @@ export class OnlineScene extends Phaser.Scene {
 
   private submitJoin(): void {
     if (this.codeInput.length === 0) return;
-    this.client.joinRoom(this.codeInput, this.playerName());
+    this.joinCode(this.codeInput);
+  }
+
+  /**
+   * The single join path behind every entrance — typed code, invite link, recent room, browser
+   * card. One place, so the client can never treat a discovered room as a different kind of join
+   * than a typed one: the server validates lifecycle, capacity and seat ownership identically,
+   * and a live session token has already reclaimed its seat before any of this runs.
+   */
+  private joinCode(code: string): void {
+    this.pendingJoinCode = code;
+    this.client.joinRoom(code, this.playerName());
   }
 
   /**
@@ -592,6 +745,8 @@ export class OnlineScene extends Phaser.Scene {
       this.renderCustom();
     } else if (this.phase === 'party' && this.code !== null) {
       this.renderParty();
+    } else if (this.phase === 'browse') {
+      this.renderBrowse();
     } else if (this.phase === 'lobby' && this.code !== null) {
       this.renderLobby();
     } else {
@@ -601,12 +756,14 @@ export class OnlineScene extends Phaser.Scene {
     // Portrait stacks START (and its reason line) under READY, so VOLTAR moves down to clear them.
     // On the custom screen the same button means "back to the lobby, change nothing" — leaving the
     // room from a settings screen would be a trap, and the draft is deliberately thrown away.
-    const leavingRoom = this.phase !== 'custom' && this.phase !== 'party';
-    const backLabel = leavingRoom ? 'online.back' : this.phase === 'custom' ? 'online.customCancel' : 'online.back';
+    // 'browse' is reached from the entry screen without a room, so VOLTAR there means "back to
+    // create/join", not "leave the room" — leaving one we were never in would drop the socket.
+    const leavingRoom = this.phase !== 'custom' && this.phase !== 'party' && this.phase !== 'browse';
+    const backLabel = this.phase === 'custom' ? 'online.customCancel' : 'online.back';
     new PixelButton(this, cx(), view().portrait ? vy(260) : vy(245), t(backLabel), () => {
       if (!leavingRoom) {
         this.customDraft = null;
-        this.phase = 'lobby';
+        this.phase = this.phase === 'browse' ? 'idle' : 'lobby';
         this.rebuild();
         return;
       }
@@ -616,12 +773,25 @@ export class OnlineScene extends Phaser.Scene {
       this.inFlight.add('leave');
       this.backToMenu();
     }, { textureBase: 'btn-comprar', w: this.phase === 'custom' ? 150 : 110, h: view().portrait ? 24 : 18, size: 7 });
+
+    // Last, because it reads the finished display list: every button this rebuild created, in
+    // reading order, is what the keyboard ring walks.
+    this.collectFocusables();
   }
 
   /** ONLINE-22: the entry screen says who you will show up as before you commit to a room, and
    * lets you change it there — an identity you can see is worth more than one you have to guess. */
+  /**
+   * Online home. One vertical stack, in the order a returning player wants it: the room they
+   * were just in, then making a new one, then the two ways into someone else's.
+   *
+   * CONTINUE and RECENT are local display history, not a second source of room truth — both do
+   * nothing but hand a code to the same join path a typed code uses, and the server is free to
+   * answer that the room is gone. BROWSE is offered unconditionally: it is additive, and a
+   * discovery outage degrades on its own screen instead of taking CREATE/JOIN down with it.
+   */
   private renderEntry(): void {
-    const nameLine = label(this, cx(), vy(82), t('online.playingAs', { name: this.playerName() }), 8, '#f7f2e7');
+    const nameLine = label(this, cx(), vy(66), t('online.playingAs', { name: this.playerName() }), 8, '#f7f2e7');
     nameLine
       // A text line's own bounds are a thin strip; a coarse pointer needs a real target, so the
       // hit area is grown to the touch floor without moving the text.
@@ -635,19 +805,153 @@ export class OnlineScene extends Phaser.Scene {
         this.nameInput = readDisplayName() ?? '';
         this.rebuild();
       });
-    label(this, cx(), vy(93), t('online.changeName'), 6, '#8a7f6e');
+    label(this, cx(), vy(76), t('online.changeName'), 6, '#8a7f6e');
+
+    // Two stacks, one cursor. A first-time player sees exactly the stack they always saw —
+    // CRIAR SALA at 110, ENTRAR at 145 — because nothing has been remembered yet and there is
+    // nothing to make room for. A returning one gets CONTINUAR above it and a tighter stack.
+    const last = this.recent[0];
+    let y = last ? 128 : 110;
+    if (last) {
+      const cont = new PixelButton(
+        this, cx(), vy(92), t('online.continue'),
+        () => this.fireOnce('join', 3000, () => this.joinCode(last.code)),
+        { textureBase: 'btn-feito', w: 150, h: 20, size: 8, primary: true, onBlocked: () => this.flashOfflineReason() },
+      );
+      cont.setEnabled(this.canAct('join'));
+      label(
+        this, cx(), vy(104),
+        last.host ? t('online.continueRoom', { code: last.code, host: last.host }) : last.code,
+        6, '#c0b8a8',
+      );
+    }
 
     const createBtn = new PixelButton(
-      this, cx(), vy(110), t('online.create'),
+      this, cx(), vy(y), t('online.create'),
       () => this.fireOnce('create', 3000, () => this.client.createRoom(this.playerName())),
-      { textureBase: 'btn-feito', w: 140, h: 24, size: 9, primary: true, onBlocked: () => this.flashOfflineReason() },
+      { textureBase: 'btn-feito', w: 140, h: 24, size: 9, primary: !last, onBlocked: () => this.flashOfflineReason() },
     );
     createBtn.setEnabled(this.canAct('create'));
-    new PixelButton(this, cx(), vy(145), t('online.join'), () => {
+    y += last ? 30 : 35;
+
+    new PixelButton(this, cx(), vy(y), t('online.join'), () => {
       this.phase = 'join';
       this.codeInput = '';
       this.rebuild();
     }, { textureBase: 'btn-comprar', w: 140, h: 22, size: 8 });
+    y += 28;
+
+    const browse = new PixelButton(this, cx(), vy(y), t('online.browse'), () => {
+      this.phase = 'browse';
+      this.browseState = 'loading';
+      this.rebuild();
+      this.refreshListings();
+    }, { textureBase: 'btn-comprar', w: 140, h: 20, size: 7, onBlocked: () => this.flashOfflineReason() });
+    browse.setEnabled(!isOffline());
+    y += 24;
+
+    // Anything older than "the room before last" is offered as a bare code strip: small, one tap,
+    // and gone from the list the moment the server says that room no longer exists.
+    const others = this.recent.slice(1, 1 + RECENT_SHOWN);
+    if (others.length > 0) {
+      label(this, cx(), vy(y), t('online.recent'), 6, '#8a7f6e');
+      const gap = 56;
+      others.forEach((room, i) => {
+        const x = cx() - ((others.length - 1) * gap) / 2 + i * gap;
+        const el = label(this, x, vy(y + 12), room.code, 8, '#f7d23e');
+        el.setInteractive(
+          new Phaser.Geom.Rectangle(-12, -14, el.width + 24, Math.max(el.height + 20, 34)),
+          Phaser.Geom.Rectangle.Contains,
+        ).on('pointerup', () => {
+          if (isOffline()) { this.flashOfflineReason(); return; }
+          this.fireOnce('join', 3000, () => this.joinCode(room.code));
+        });
+      });
+    }
+  }
+
+  /** Ask the server for the currently discoverable rooms. Manual only — this fires when the
+   * browser is opened and when ATUALIZAR is tapped, never on a timer. */
+  private refreshListings(): void {
+    if (isOffline()) {
+      this.browseState = 'failed';
+      this.rebuild();
+      return;
+    }
+    this.browseState = 'loading';
+    this.client.listRooms();
+    this.rebuild();
+  }
+
+  /** Player-facing status word for a card. Never the raw enum, and never colour alone. */
+  private listingStatus(room: RoomListing): string {
+    return t(room.status === 'full' ? 'online.cardFull' : 'online.cardWaiting');
+  }
+
+  /**
+   * The room browser: only rooms their hosts explicitly listed, only while they can actually
+   * seat someone, and only the small public projection (protocol.ts `RoomListing`). Nothing here
+   * is a room snapshot — there is no seat, no token, no revision and no hand count to leak.
+   */
+  private renderBrowse(): void {
+    label(this, cx(), vy(62), t('online.browseTitle'), 11, '#f7d23e');
+
+    const portrait = view().portrait;
+    const rowW = Math.min(panelW(260), view().w - 24);
+    const left = cx() - rowW / 2;
+    const step = portrait ? 32 : 26;
+    const top = 92;
+
+    if (this.browseState === 'loading') {
+      label(this, cx(), vy(120), t('online.browseLoading'), 8, '#c0b8a8');
+    } else if (this.browseState === 'failed') {
+      this.add
+        .text(cx(), vy(116), t('online.browseFailed'), {
+          ...fontStyle(8, '#ff6b5e'), align: 'center', wordWrap: { width: rowW },
+        })
+        .setOrigin(0.5);
+      // Discovery is not a dependency of private multiplayer — say so, and keep the door open.
+      label(this, cx(), vy(136), t('online.browseStillWorks'), 6, '#c0b8a8');
+    } else if (this.listings.length === 0) {
+      this.add
+        .text(cx(), vy(120), t('online.browseEmpty'), {
+          ...fontStyle(8, '#c0b8a8'), align: 'center', wordWrap: { width: rowW },
+        })
+        .setOrigin(0.5);
+    } else {
+      const shown = this.listings.slice(0, browseRows(portrait));
+      shown.forEach((room, i) => {
+        const y = vy(top + i * step);
+        this.add.rectangle(cx(), y, rowW, vy(step - 4), 0x2a1a10, 0.75).setStrokeStyle(1, 0xc0a878, 0.5);
+        // Both lines are clamped to the space the JOIN button leaves, rather than trusted to be
+        // short: a 12-character name and the large-text scale together are enough to run a label
+        // straight under the button. Least important word last, because that is what gets cut.
+        const textW = rowW - 76;
+        const cardLine = (ly: number, str: string, size: number, color: string): void => {
+          this.add
+            .text(left + 8, ly, str, { ...fontStyle(size, color), wordWrap: { width: textW }, maxLines: 1 })
+            .setOrigin(0, 0.5);
+        };
+        cardLine(y - vy(6), t('online.cardHost', { host: room.hostName }), 7, '#f7f2e7');
+        cardLine(
+          y + vy(6),
+          `${t('online.cardSeats', { n: room.players, max: room.capacity })} · ${this.listingStatus(room)} · ${t(`online.timer.${room.timerMode}`)}`,
+          6, '#c0b8a8',
+        );
+        const join = new PixelButton(this, left + rowW - 34, y, t('online.join'), () => {
+          this.fireOnce('join', 3000, () => this.joinCode(room.code));
+        }, { textureBase: 'btn-feito', w: 58, h: portrait ? 22 : 18, size: 6, onBlocked: () => this.flashOfflineReason() });
+        // A full room keeps its card (so "it just filled up" is readable) but not its action.
+        join.setEnabled(room.status !== 'full' && this.canAct('join'));
+      });
+      if (this.listings.length > shown.length) {
+        label(this, cx(), vy(top + shown.length * step), t('online.browseMore', { n: this.listings.length - shown.length }), 6, '#8a7f6e');
+      }
+    }
+
+    new PixelButton(this, cx(), portrait ? vy(228) : vy(216), t('online.browseRefresh'), () => {
+      this.fireOnce('refresh', 1500, () => this.refreshListings());
+    }, { textureBase: 'btn-comprar', w: 120, h: portrait ? 22 : 18, size: 7 });
   }
 
   private renderJoin(): void {
@@ -872,6 +1176,39 @@ export class OnlineScene extends Phaser.Scene {
 
   /** ONLINE-21: four preset things to say, and nothing else — no free text to moderate. The
    * server owns the real cooldown; this only greys the row out so the tap feels answered. */
+  /**
+   * Who can *find* this room, stated in words rather than by a colour or an icon — and, for the
+   * host, the control that changes it.
+   *
+   * Private is the state a room is born in and the state it returns to with one tap. Changing it
+   * deliberately does not clear anyone's ready bit: visibility is not one of the terms a seat
+   * agreed to play under (contrast renderRoomSummary / ON-09), so resetting the lobby over it
+   * would be friction with no fairness behind it. Locked once the match starts, same as settings.
+   */
+  private renderVisibility(): void {
+    const listed = this.visibility === 'listed';
+    const isHost = this.seat === this.hostSeat && !this.settingsLocked;
+    const state = t(listed ? 'online.visibilityListed' : 'online.visibilityPrivate');
+    const right = cx() + panelW(260) / 2 - 4;
+    const badge = label(this, right, vy(54), isHost ? `${state} · ${t('online.visibilityChange')}` : state, 6, listed ? '#7fd07f' : '#c0b8a8')
+      .setOrigin(1, 0.5);
+    // Ten grid units apart, not eight: at the large-text scale (1.25x) two size-6 lines eight
+    // apart touch. The gap is the layout's, so it holds without the label knowing its own scale.
+    label(this, right, vy(64), t(listed ? 'online.visibilityListedHint' : 'online.visibilityPrivateHint'), 6, '#8a7f6e')
+      .setOrigin(1, 0.5);
+    if (!isHost) return;
+    badge
+      .setInteractive(
+        new Phaser.Geom.Rectangle(-14, -14, badge.width + 28, Math.max(badge.height + 20, 34)),
+        Phaser.Geom.Rectangle.Contains,
+      )
+      .on('pointerup', () => {
+        // Proposal only: the server decides and broadcasts, and the next room_state is the only
+        // thing that moves `this.visibility`.
+        this.fireOnce('visibility', 300, () => this.client.setVisibility(listed ? 'private' : 'listed'));
+      });
+  }
+
   private renderReactions(y: number): void {
     const w = view().portrait ? 56 : 50;
     const gap = 4;
@@ -940,6 +1277,7 @@ export class OnlineScene extends Phaser.Scene {
   }
 
   private renderLobby(): void {
+    this.renderVisibility();
     label(this, cx(), vy(74), this.code ?? '', 20, '#f7f2e7');
     // room-code text and its buttons must stay comfortably tappable in portrait
     const btnH = view().portrait ? 24 : 16;

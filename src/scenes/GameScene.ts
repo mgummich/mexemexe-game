@@ -17,8 +17,8 @@ import { playerStats, summarizeMoveKey } from '../core/results-summary';
 import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES } from '../cosmetics';
 import { t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
-import type { ConnStatus, NetClient } from '../net/client';
-import { digestOfState, EMPTY_PARTY, stateHash } from '../net/protocol';
+import { readRecentRooms, type ConnStatus, type NetClient } from '../net/client';
+import { DEFAULT_ROOM_VISIBILITY, digestOfState, EMPTY_PARTY, stateHash } from '../net/protocol';
 import type { ErrorMsg, GameOverMsg, GameView, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
@@ -686,6 +686,15 @@ export class GameScene extends Phaser.Scene {
       openParty: () => { /* the lobby owns the history screen; there is none mid-match */ },
       openCustomSettings: () => { /* the lobby owns the settings screen; there is none mid-match */ },
       turnMsLeft: () => (this.turnDeadlineAt === null ? null : Math.max(0, this.turnDeadlineAt - Date.now())),
+      phase: () => 'match',
+      focus: () => ({ index: -1, count: 0 }),
+      // Discovery belongs to the lobby: a running match is neither listed nor browsable, and its
+      // visibility is frozen with the rest of the room's terms.
+      visibility: () => client.lastRoomState?.visibility ?? DEFAULT_ROOM_VISIBILITY,
+      setVisibility: () => { /* visibility is frozen once the match starts */ },
+      openBrowse: () => { /* the lobby owns the room browser; there is none mid-match */ },
+      listings: () => [],
+      recentRooms: () => readRecentRooms().map((r) => ({ code: r.code, host: r.host })),
       comprar: () => this.onComprar(),
       /** Verification-only: submit a raw (possibly illegal) proposal straight to the server,
        * bypassing the editor's client-side gate — the UI itself never constructs an illegal

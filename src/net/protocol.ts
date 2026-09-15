@@ -5,7 +5,7 @@
  */
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 // ---------------------------------------------------------------------------
 // Room settings (docs/MULTIPLAYER.md §7)
@@ -54,6 +54,54 @@ export type ReactionId = (typeof REACTIONS)[number];
 /** Minimum gap between two reactions from the same seat. Enforced by the server — a client-side
  * cooldown alone would be one `devtools` call away from a spam channel. */
 export const REACTION_COOLDOWN_MS = 3_000;
+
+// ---------------------------------------------------------------------------
+// Room visibility and discovery (docs/MULTIPLAYER.md §3d)
+// ---------------------------------------------------------------------------
+
+/**
+ * Who is allowed to find a room, as opposed to who is allowed to join it.
+ *
+ * `private` is the only default there will ever be: a fresh room is reachable by its invite link
+ * or its code and by nothing else. `listed` is an explicit host decision to also appear in the
+ * room browser, and it changes discovery only — lifecycle, capacity and seat ownership decide
+ * joining either way, exactly as they did before discovery existed.
+ */
+export type RoomVisibility = 'private' | 'listed';
+
+export const DEFAULT_ROOM_VISIBILITY: RoomVisibility = 'private';
+
+export function isRoomVisibility(v: unknown): v is RoomVisibility {
+  return v === 'private' || v === 'listed';
+}
+
+/** What a browser card says about a room it is offering. Derived from the room, never stored. */
+export type RoomListingStatus = 'waiting' | 'full';
+
+/**
+ * The entire public face of a listed room — a deliberately separate, tiny projection rather than
+ * a trimmed `RoomStateMsg`. Nothing here is a secret, and nothing here is *derivable* from a
+ * secret: no token, no seat id, no hand, no revision, no activity, no party history. A room that
+ * is not `listed` never becomes one of these at all.
+ *
+ * The code is in here on purpose: it is a locator, not a credential, and a browser card the
+ * player cannot act on would be pointless. Guess-rate protection (server/connections.ts) is what
+ * makes the code safe to publish, not its obscurity.
+ */
+export interface RoomListing {
+  code: string;
+  /** The host seat's display name — already public to anyone holding the code. */
+  hostName: string;
+  players: number;
+  capacity: number;
+  status: RoomListingStatus;
+  /** Enough for "Casual / Fast / no clock" on a card; not the six-field settings object. */
+  timerMode: TimerMode;
+}
+
+/** Hard cap on one `room_list` answer. Bounded so enumeration cannot be turned into a scrape,
+ * and so a busy server's answer stays one small frame. Well above what a browser screen shows. */
+export const MAX_ROOM_LISTINGS = 20;
 
 // ---------------------------------------------------------------------------
 // Party session (docs/MULTIPLAYER.md §3c)
@@ -396,6 +444,22 @@ interface ReactionMsg {
   reaction: ReactionId;
 }
 
+/** Host-only, lobby-only: change who can *find* this room. Never changes who may join it. */
+interface SetRoomVisibilityMsg {
+  v: number;
+  type: 'set_room_visibility';
+  reqId: string;
+  visibility: RoomVisibility;
+}
+
+/** "What listed rooms can I join right now?" Carries no filters: the server decides eligibility
+ * and the answer is already bounded, so there is nothing for a client to widen. */
+interface ListRoomsMsg {
+  v: number;
+  type: 'list_rooms';
+  reqId: string;
+}
+
 export type ClientMessage =
   | CreateRoomMsg
   | JoinRoomMsg
@@ -409,7 +473,9 @@ export type ClientMessage =
   | ReconnectMsg
   | PingMsg
   | ResyncMsg
-  | ReactionMsg;
+  | ReactionMsg
+  | SetRoomVisibilityMsg
+  | ListRoomsMsg;
 
 // ---------------------------------------------------------------------------
 // Server -> client messages
@@ -441,6 +507,7 @@ interface RoomJoinedMsg {
    * (D15) — never assume it is 0. */
   hostSeat: number;
   party: PartyState;
+  visibility: RoomVisibility;
 }
 export interface RoomStateMsg {
   v: number;
@@ -452,6 +519,17 @@ export interface RoomStateMsg {
   locked: boolean;
   /** The room's memory across matches: session wins live on `players`, the rest lives here. */
   party: PartyState;
+  /** Server-owned. A client renders this and may propose a change; it never applies one. */
+  visibility: RoomVisibility;
+}
+
+/** Answer to `list_rooms`. Bounded by MAX_ROOM_LISTINGS and built from the listing projection
+ * only — a full room snapshot is never sent for a room the caller has not joined. */
+export interface RoomListMsg {
+  v: number;
+  type: 'room_list';
+  reqId: string;
+  rooms: RoomListing[];
 }
 /** Match start. Deliberately carries no shuffle seed: the seed reproduces both hands and the
  * whole draw pile through the shared deal functions, so it must never leave the server. */
@@ -538,7 +616,8 @@ export type ServerMessage =
   | GameOverMsg
   | ErrorMsg
   | PongMsg
-  | PlayerReactionMsg;
+  | PlayerReactionMsg
+  | RoomListMsg;
 
 // ---------------------------------------------------------------------------
 // Boundary validator — the only place untrusted socket text becomes a typed
@@ -603,6 +682,14 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
       // Normalizing here means the room manager can never be handed an out-of-range value, and
       // an omitted/garbage payload becomes the default preset instead of a parse failure.
       return { v: PROTOCOL_VERSION, type: 'set_room_settings', reqId, settings: normalizeRoomSettings(o.settings) };
+    case 'set_room_visibility': {
+      if (!isRoomVisibility(o.visibility)) return { error: 'bad visibility' };
+      return { v: PROTOCOL_VERSION, type: 'set_room_visibility', reqId, visibility: o.visibility };
+    }
+    case 'list_rooms':
+      // No filters on the wire: an oversized or hostile filter payload is not rejected, it is
+      // simply not representable.
+      return { v: PROTOCOL_VERSION, type: 'list_rooms', reqId };
     case 'mexe_started':
       return { v: PROTOCOL_VERSION, type: 'mexe_started', reqId };
     case 'start_game':

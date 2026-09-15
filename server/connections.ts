@@ -32,6 +32,8 @@ export interface ConnState {
   failedJoins: number;
   /** Full-snapshot requests this connection has made, windowed (see `hitResyncLimit`). */
   resyncs: Counter;
+  /** Room-list requests this connection has made, windowed (see `hitListLimit`). */
+  listings: Counter;
   /** The source this connection arrived from, as the key of the per-source room-creation
    * budget. Never logged — see server/log.ts, which redacts it by key name anyway. */
   ip: string;
@@ -45,6 +47,7 @@ export function newConnState(now: number, ip = 'unknown'): ConnState {
     windowStart: now,
     failedJoins: 0,
     resyncs: { count: 0, start: now },
+    listings: { count: 0, start: now },
     ip,
   };
 }
@@ -105,6 +108,19 @@ export function hitRoomCreateLimit(
  * request is ignored, not answered: the answer is the expensive part. */
 export function hitResyncLimit(state: ConnState, now: number, max = 5, windowMs = 10_000): boolean {
   return hitWindow(state.resyncs, now, max, windowMs);
+}
+
+/**
+ * Room-list budget. Discovery is the only message that reads across every room, so an unbounded
+ * caller could turn one socket into a scraper — and the answer is already capped in size, which
+ * means enumeration pressure comes from the *rate*, not from any single reply.
+ *
+ * Twelve in ten seconds is far above a human opening the browser and pulling to refresh, and far
+ * below a poll loop. The room browser refreshes on demand, not on a timer, so a normal player
+ * never approaches it.
+ */
+export function hitListLimit(state: ConnState, now: number, max = 12, windowMs = 10_000): boolean {
+  return hitWindow(state.listings, now, max, windowMs);
 }
 
 /**

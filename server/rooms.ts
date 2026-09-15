@@ -21,10 +21,11 @@ import type { Card, DraftState, GameState, Meld, PlayerState, ReasonCode } from 
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import { timerExpireTurn } from '../src/rules/rules';
 import {
-  buildView, DEFAULT_ROOM_SETTINGS, MAX_ACTIVITY, MAX_MATCH_HISTORY, normalizeRoomSettings,
-  REACTION_COOLDOWN_MS,
+  buildView, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, MAX_ACTIVITY, MAX_MATCH_HISTORY,
+  MAX_ROOM_LISTINGS, normalizeRoomSettings, REACTION_COOLDOWN_MS,
   type ActivityEvent, type ActivityKind, type GameView, type MatchSummary, type PartyState,
-  type ReactionId, type RoomPlayerSummary, type RoomSettings, type SubmitTurnMeld, type WinningMove,
+  type ReactionId, type RoomListing, type RoomPlayerSummary, type RoomSettings, type RoomVisibility,
+  type SubmitTurnMeld, type WinningMove,
 } from '../src/net/protocol';
 
 // No vowels, no 0/O/1/I/L — unambiguous when read aloud or typed.
@@ -100,6 +101,8 @@ interface RoomInternal {
   hostSeat: number;
   /** Host-chosen, frozen at `startGame`. The server is the only writer. */
   settings: RoomSettings;
+  /** Who may *find* this room. Always starts `private` — see setVisibility. */
+  visibility: RoomVisibility;
   /** When the current turn's clock started. null while the room has no running turn. */
   turnStartedAt: number | null;
   /** The current turn's budget: `settings.turnMs`, plus the Mexe bonus once claimed. */
@@ -149,6 +152,10 @@ type StartResult =
 
 type RoomSettingsResult =
   | { ok: true; settings: RoomSettings; changed: boolean }
+  | { ok: false; error: 'room_not_found' | 'not_host' | 'game_started' };
+
+type VisibilityResult =
+  | { ok: true; visibility: RoomVisibility; changed: boolean }
   | { ok: false; error: 'room_not_found' | 'not_host' | 'game_started' };
 
 type TurnResult =
@@ -304,6 +311,9 @@ export class RoomManager {
       // Reconnect grace starts at the deployment's configured value; picking a timer preset in
       // the lobby replaces it with that preset's own grace.
       settings: { ...DEFAULT_ROOM_SETTINGS, reconnectGraceMs: this.disconnectGraceMs },
+      // OD-01: private, always. There is no create-time option and no migration path that can
+      // produce anything else — a room becomes discoverable only by its host saying so later.
+      visibility: DEFAULT_ROOM_VISIBILITY,
       turnStartedAt: null,
       turnBudgetMs: 0,
       mexeBonusClaimed: false,
@@ -408,6 +418,63 @@ export class RoomManager {
     }
     room.lastActivityAt = this.now();
     return { ok: true, settings: room.settings, changed };
+  }
+
+  /**
+   * Host-only, lobby-only change to who can find this room.
+   *
+   * Lobby-only for the same reason settings are: a room whose match is running has nothing to
+   * offer a browser anyway, and refusing outright is one rule instead of two. Unlike settings
+   * this does NOT clear ready bits — visibility changes nothing about the terms a seat agreed
+   * to play under, so resetting the lobby over it would be friction with no fairness behind it
+   * (ON-09 applies to fairness-sensitive changes only).
+   */
+  setVisibility(code: string, seat: number, visibility: RoomVisibility): VisibilityResult {
+    const room = this.rooms.get(code);
+    if (!room) return { ok: false, error: 'room_not_found' };
+    if (room.state) return { ok: false, error: 'game_started' };
+    if (seat !== room.hostSeat) return { ok: false, error: 'not_host' };
+    const changed = room.visibility !== visibility;
+    room.visibility = visibility;
+    room.lastActivityAt = this.now();
+    return { ok: true, visibility: room.visibility, changed };
+  }
+
+  getVisibility(code: string): RoomVisibility {
+    return this.rooms.get(code)?.visibility ?? DEFAULT_ROOM_VISIBILITY;
+  }
+
+  /**
+   * The discovery projection: every room that is *currently* eligible to be found, as the small
+   * public shape in protocol.ts and nothing else.
+   *
+   * Eligibility is recomputed from the live room on every call — there is no listing index to go
+   * stale, which is what makes an expired, closed or newly-private room disappear the moment it
+   * stops qualifying (OD-18) instead of when some cache notices. A room with a match in progress
+   * is omitted rather than shown as non-joinable: it cannot seat anyone until that match ends,
+   * and a card offering a seat that does not exist is worse than no card.
+   *
+   * Full lobbies are kept, marked `full`, so "the room I was about to tap just filled up" reads
+   * as a fact on screen rather than as a rejection after a tap.
+   */
+  listRooms(limit = MAX_ROOM_LISTINGS): RoomListing[] {
+    const out: RoomListing[] = [];
+    for (const room of this.rooms.values()) {
+      if (out.length >= limit) break;
+      if (room.visibility !== 'listed' || room.state !== null) continue;
+      const occupied = room.seats.filter((s): s is Seat => s !== null);
+      if (occupied.length === 0) continue;
+      const host = room.seats[room.hostSeat] ?? occupied[0]!;
+      out.push({
+        code: room.code,
+        hostName: host.name,
+        players: occupied.length,
+        capacity: MAX_PLAYERS,
+        status: occupied.length >= MAX_PLAYERS ? 'full' : 'waiting',
+        timerMode: room.settings.timerMode,
+      });
+    }
+    return out;
   }
 
   /** Start (or restart) the active seat's clock. A turn with no timer keeps a null start, and so
@@ -762,7 +829,7 @@ export class RoomManager {
 
   /** Everything a lobby renders: who is in, the agreed settings, whether they are frozen, and the
    * room's memory across matches. */
-  getRoomInfo(code: string): { players: RoomPlayerSummary[]; settings: RoomSettings; locked: boolean; party: PartyState } | null {
+  getRoomInfo(code: string): { players: RoomPlayerSummary[]; settings: RoomSettings; locked: boolean; party: PartyState; visibility: RoomVisibility } | null {
     const room = this.rooms.get(code);
     if (!room) return null;
     return {
@@ -770,6 +837,7 @@ export class RoomManager {
       settings: room.settings,
       locked: room.state !== null,
       party: this.getParty(code),
+      visibility: room.visibility,
     };
   }
 

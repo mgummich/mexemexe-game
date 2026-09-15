@@ -78,8 +78,8 @@ async function newClient(browser: Browser, wsUrl = WS_URL): Promise<Page> {
   trackConsoleErrors(page);
   await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu`);
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  // MenuScene ONLINE button, logical (240, 258)
-  const [ox, oy] = toScreen(240, 258);
+  // MenuScene ONLINE button, logical (240, 254) — see MenuScene's onlineBtn.
+  const [ox, oy] = toScreen(240, 254);
   await page.mouse.click(ox, oy);
   await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
   await page.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 10_000 });
@@ -241,7 +241,7 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
   // (code + revision), instead of re-establishing the seat and then sitting in the lobby. ---
   await pageB.reload();
   await pageB.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  const [reloadOx, reloadOy] = toScreen(240, 258); // MenuScene ONLINE button
+  const [reloadOx, reloadOy] = toScreen(240, 254); // MenuScene ONLINE button
   await pageB.mouse.click(reloadOx, reloadOy);
   await pageB.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 15_000 });
   await pageB.waitForFunction((c) => window.__MEXE__.online?.code() === c, code, { timeout: 10_000 });
@@ -557,7 +557,7 @@ test('server unavailable: shows a recoverable, non-frozen state and the player c
   const DEAD_WS_URL = 'ws://localhost:18799';
   await page.goto(`/?ws=${encodeURIComponent(DEAD_WS_URL)}&showcase=menu`);
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  const [ox, oy] = toScreen(240, 258); // MenuScene ONLINE button
+  const [ox, oy] = toScreen(240, 254); // MenuScene ONLINE button
   await page.mouse.click(ox, oy);
   await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
   await page.waitForFunction(() => window.__MEXE__.online?.status() === 'error', undefined, { timeout: 10_000 });
@@ -644,7 +644,7 @@ test('bad room code: shows a recoverable room_not_found error, not a stuck scree
   const [bx, by] = toScreen(240, 245);
   await page.mouse.click(bx, by);
   await page.waitForFunction(() => window.__MEXE__.scene === 'menu', undefined, { timeout: 10_000 });
-  const [ox, oy] = toScreen(240, 258);
+  const [ox, oy] = toScreen(240, 254);
   await page.mouse.click(ox, oy);
   await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
   await page.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 10_000 });
@@ -698,17 +698,20 @@ async function newPhoneClient(
   browser: Browser,
   viewport = { width: 390, height: 844 },
   wsUrl = WS_URL,
+  extraQuery = '',
 ): Promise<Page> {
   const ctx = await browser.newContext({ viewport });
   const page = await ctx.newPage();
   trackConsoleErrors(page);
-  await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu`);
+  await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu${extraQuery}`);
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   const point = await page.evaluate(() => {
     const c = document.querySelector('canvas')!.getBoundingClientRect();
-    // MenuScene's ONLINE button is authored at (240, 258) on the 480x270 grid; menu-layout maps
+    // MenuScene's ONLINE button is authored at (240, 254) on the 480x270 grid; menu-layout maps
     // that proportionally onto whichever world is live, so the same fractions hold in portrait.
-    return { x: c.left + 0.5 * c.width, y: c.top + (258 / 270) * c.height };
+    // 258 was the old value: it sits below the button's centre, and on a 360-wide phone — where
+    // the fitted canvas is smallest — those four units fall off the bottom edge and miss.
+    return { x: c.left + 0.5 * c.width, y: c.top + (254 / 270) * c.height };
   });
   await page.mouse.click(point.x, point.y);
   await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
@@ -766,7 +769,7 @@ test('mobile: an unreachable server is a readable, recoverable state in portrait
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   const point = await page.evaluate(() => {
     const c = document.querySelector('canvas')!.getBoundingClientRect();
-    return { x: c.left + 0.5 * c.width, y: c.top + (258 / 270) * c.height };
+    return { x: c.left + 0.5 * c.width, y: c.top + (254 / 270) * c.height };
   });
   await page.mouse.click(point.x, point.y);
   await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
@@ -1285,4 +1288,207 @@ test('OS-28..OS-30: a 4-seat room names the active seat, the score and the feed 
   }
   appendLog({ screenshots });
   for (const p of pages) await p.context().close();
+});
+
+/**
+ * Online Phase 7 — discovery. One test, because the whole point of the phase is that these are
+ * one flow: a room the host chose to list, found in the browser, joined from a card, then
+ * returned to from the online home without anyone typing a code twice.
+ */
+test('OD-03/OD-07/OD-13/OD-30: list a room, find it, join it from a card and from an invite link', async ({
+  browser,
+}) => {
+  const screenshots: string[] = [];
+  const host = await newClient(browser);
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+
+  // OD-01 as the player sees it: a room is born private, and says so in the lobby.
+  expect(await host.evaluate(() => window.__MEXE__.online!.visibility())).toBe('private');
+  await shot({ host }, 'discover-private-lobby', screenshots);
+
+  await host.evaluate(() => window.__MEXE__.online!.setVisibility('listed'));
+  await host.waitForFunction(() => window.__MEXE__.online!.visibility() === 'listed', undefined, { timeout: 10_000 });
+  await shot({ host }, 'discover-listed-lobby', screenshots);
+
+  // OD-03/OD-30: a second player finds it in the browser, with only the safe fields on the card.
+  const browserPage = await newClient(browser);
+  await browserPage.evaluate(() => window.__MEXE__.online!.openBrowse());
+  await browserPage.waitForFunction(
+    (c) => window.__MEXE__.online!.listings().some((r) => r.code === c),
+    code,
+    { timeout: 10_000 },
+  );
+  const card = (await browserPage.evaluate(
+    (c) => window.__MEXE__.online!.listings().find((r) => r.code === c)!,
+    code,
+  ))!;
+  expect(Object.keys(card).sort()).toEqual(['capacity', 'code', 'hostName', 'players', 'status', 'timerMode']);
+  expect(card).toMatchObject({ hostName: 'Marina', players: 1, capacity: 4, status: 'waiting' });
+  await shot({ browser: browserPage }, 'discover-browser', screenshots);
+
+  await browserPage.evaluate((c) => window.__MEXE__.online!.joinRoom(c), code);
+  await browserPage.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+  expect(await browserPage.evaluate(() => window.__MEXE__.online!.code())).toBe(code);
+
+  // OD-07: the invite link is still the fastest path in, and it lands in this exact room.
+  const invited = await browser.newContext().then(async (ctx) => {
+    const page = await ctx.newPage();
+    trackConsoleErrors(page);
+    await page.goto(`/?ws=${encodeURIComponent(WS_URL)}&showcase=menu&room=${code}`);
+    await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+    const [ox, oy] = toScreen(240, 254);
+    await page.mouse.click(ox, oy);
+    return page;
+  });
+  await invited.waitForFunction(() => window.__MEXE__.online?.seat() === 2, undefined, { timeout: 15_000 });
+  expect(await invited.evaluate(() => window.__MEXE__.online!.code())).toBe(code);
+
+  // OD-11/OD-13: every one of them now carries the room in local display history, which is what
+  // the online home's CONTINUE is built from. Codes only — never the seat credential.
+  for (const p of [host, browserPage, invited]) {
+    const recent = await p.evaluate(() => window.__MEXE__.online!.recentRooms());
+    expect(recent[0]).toEqual({ code, host: 'Marina' });
+  }
+
+  // OD-02: a room that goes back to private disappears from discovery while its seats stay put.
+  await host.evaluate(() => window.__MEXE__.online!.setVisibility('private'));
+  await host.waitForFunction(() => window.__MEXE__.online!.visibility() === 'private', undefined, { timeout: 10_000 });
+  const onlooker = await newClient(browser);
+  await onlooker.evaluate(() => window.__MEXE__.online!.openBrowse());
+  await onlooker.waitForTimeout(500);
+  expect(await onlooker.evaluate(() => window.__MEXE__.online!.listings())).toEqual([]);
+  await shot({ empty: onlooker }, 'discover-empty', screenshots);
+  expect(await host.evaluate(() => window.__MEXE__.online!.players().length)).toBe(3);
+
+  for (const p of [host, browserPage, invited, onlooker]) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots, discovery: { code, card } });
+  for (const p of [host, browserPage, invited, onlooker]) await p.context().close();
+});
+
+test('OD-28/OD-29: the online home and the room browser read on a phone, portrait and landscape', async ({
+  browser,
+}) => {
+  const screenshots: string[] = [];
+  // Five listed rooms, so the browser is drawn at its cap on every viewport and the overflow
+  // line has something to say. A phone shows one row fewer than a desktop; a fourth card there
+  // would sit under ATUALIZAR, which is exactly the collision this capture has to rule out.
+  const hosts: Page[] = [];
+  for (const name of ['Marina', 'Bia', 'Joao', 'Lia', 'Ana']) {
+    const h = await newClient(browser);
+    await h.evaluate((n) => window.__MEXE__.online!.createRoom(n), name);
+    await h.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+    await h.evaluate(() => window.__MEXE__.online!.setVisibility('listed'));
+    await h.waitForFunction(() => window.__MEXE__.online!.visibility() === 'listed', undefined, { timeout: 10_000 });
+    hosts.push(h);
+  }
+  const host = hosts[0]!;
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+
+  const portrait = await newPhoneClient(browser);
+  const landscape = await newPhoneClient(browser, { width: 844, height: 390 });
+  // Large text on the narrowest phone: the worst case both for the home stack and for the
+  // two-line visibility badge, and the one that would show a collision first.
+  const narrow = await newPhoneClient(browser, { width: 360, height: 800 }, WS_URL, '&textscale=125');
+
+  // The online home, before anything has been remembered: create/join/browse, nothing else.
+  await shot({ portrait, landscape, narrow }, 'discover-home-phone', screenshots);
+
+  for (const p of [portrait, landscape, narrow]) {
+    await p.evaluate(() => window.__MEXE__.online!.openBrowse());
+    await p.waitForFunction(() => window.__MEXE__.online!.listings().length >= 5, undefined, { timeout: 10_000 });
+  }
+  await shot({ portrait, landscape, narrow }, 'discover-browser-phone', screenshots);
+
+  // The host-side visibility control, at large text on the narrowest phone: the badge, its hint
+  // and the lobby it sits above all have to survive the worst case together.
+  await narrow.evaluate(() => window.__MEXE__.online!.createRoom('Bia'));
+  await narrow.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  await narrow.evaluate(() => window.__MEXE__.online!.setVisibility('listed'));
+  await narrow.waitForFunction(() => window.__MEXE__.online!.visibility() === 'listed', undefined, { timeout: 10_000 });
+  await shot({ 'largetext-lobby': narrow }, 'discover-visibility', screenshots);
+
+  // Joining from a card is what makes the home screen's CONTINUE appear on the next visit.
+  await portrait.evaluate((c) => window.__MEXE__.online!.joinRoom(c), code);
+  await portrait.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+  // A returning player whose session is gone but whose display history is not — which is exactly
+  // when CONTINUE has a job. The seat credential lives in sessionStorage, the history in
+  // localStorage, and clearing one must leave the other alone.
+  await portrait.evaluate(() => sessionStorage.clear());
+  await portrait.reload();
+  await portrait.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const point = await portrait.evaluate(() => {
+    const c = document.querySelector('canvas')!.getBoundingClientRect();
+    return { x: c.left + 0.5 * c.width, y: c.top + (254 / 270) * c.height };
+  });
+  await portrait.mouse.click(point.x, point.y);
+  await portrait.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
+  await portrait.waitForFunction(() => window.__MEXE__.online!.recentRooms().length > 0, undefined, { timeout: 10_000 });
+  await shot({ continue: portrait }, 'discover-continue-phone', screenshots);
+
+  for (const p of [portrait, landscape, narrow]) {
+    const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of [...hosts, portrait, landscape, narrow]) await p.context().close();
+});
+
+/** Tab until the focus ring is on `target`, asserting rather than counting keystrokes: a
+ * keystroke dropped under load would otherwise silently shift every later assertion. */
+async function focusTo(page: Page, target: number): Promise<void> {
+  for (let n = 0; n < 16; n++) {
+    const { index, count } = await page.evaluate(() => window.__MEXE__.online!.focus());
+    if (index === target) return;
+    expect(count, 'screen has no focusable buttons').toBeGreaterThan(0);
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(50);
+  }
+  throw new Error(`focus ring never reached index ${target}`);
+}
+
+test('OD-A11Y: the online home, the browser and the lobby are reachable from the keyboard', async ({
+  browser,
+}) => {
+  const screenshots: string[] = [];
+  const page = await newClient(browser);
+
+  // No ring until the keyboard is used — a mouse player must never see one.
+  expect(await page.evaluate(() => window.__MEXE__.online!.focus())).toEqual({ index: -1, count: 4 });
+
+  // A fresh context has no recent rooms, so the entry stack is exactly CRIAR SALA, ENTRAR,
+  // PROCURAR SALAS, VOLTAR in reading order.
+  await focusTo(page, 2);
+  await shot({ home: page }, 'discover-keyboard-home', screenshots);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__MEXE__.online!.phase() === 'browse', undefined, { timeout: 10_000 });
+  await page.waitForTimeout(400); // let the listing answer land, whatever it contains
+  await shot({ browse: page }, 'discover-keyboard-browse', screenshots);
+
+  // A new screen puts the ring on its top button. VOLTAR is the bottom one on every screen —
+  // deliberately addressed as "the last index", not as "Tab N times": how many room cards this
+  // shared server is offering right now is not this test's business.
+  expect((await page.evaluate(() => window.__MEXE__.online!.focus())).index).toBe(0);
+  const browseCount = (await page.evaluate(() => window.__MEXE__.online!.focus())).count;
+  await focusTo(page, browseCount - 1);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__MEXE__.online!.phase() === 'idle', undefined, { timeout: 10_000 });
+
+  // Back at the top of the entry stack: CRIAR SALA, reached without a pointer.
+  await focusTo(page, 0);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  expect(await page.evaluate(() => window.__MEXE__.online!.phase())).toBe('lobby');
+  await shot({ lobby: page }, 'discover-keyboard-lobby', screenshots);
+
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  expect(trackConsoleErrors(page)).toEqual([]);
+  appendLog({ screenshots });
+  await page.context().close();
 });

@@ -7,7 +7,7 @@ import { playlog } from '../core/playlog';
 import { onConnectivityChange } from '../core/pwa';
 import { resolveWsUrl } from '../config';
 import { PROTOCOL_VERSION } from './protocol';
-import type { ClientMessage, ReactionId, RoomSettings, RoomStateMsg, ServerMessage, SubmitTurnMeld } from './protocol';
+import type { ClientMessage, ReactionId, RoomSettings, RoomStateMsg, RoomVisibility, ServerMessage, SubmitTurnMeld } from './protocol';
 
 export type ConnStatus = 'connecting' | 'open' | 'closed' | 'error' | 'reconnecting';
 
@@ -80,6 +80,86 @@ export function writeDisplayName(name: string): void {
   } catch {
     // storage blocked — the name just won't survive a reload
   }
+}
+
+// ---------------------------------------------------------------------------
+// Recent rooms (local display history)
+// ---------------------------------------------------------------------------
+
+/** Deliberately a *different* storage key, a different storage area and a different shape from
+ * the reconnect token: this list is display history the player is meant to see, and the token is
+ * a credential. Nothing that can reclaim a seat is representable in a `RecentRoom`. */
+const RECENT_KEY = 'mexe.online.recent';
+
+/** Short list on purpose. The point is "the room we were just in", not an account history — six
+ * stale codes would cost a player more reading than typing five characters would. */
+export const MAX_RECENT_ROOMS = 5;
+
+/**
+ * How long an entry is worth showing. Rooms die far sooner than this (the server's idle backstop
+ * is minutes), so this is not a liveness claim — it is the point past which offering the room is
+ * more likely to be a dead end than a shortcut. A surviving-but-dead entry is still handled the
+ * only way it can be: the join is tried and the server says no.
+ */
+const RECENT_TTL_MS = 6 * 60 * 60 * 1000;
+
+export interface RecentRoom {
+  /** Public room code. A locator, never a credential — see RoomListing in protocol.ts. */
+  code: string;
+  /** Host display name when we were last there, purely so the entry reads as a place. */
+  host: string;
+  /** Epoch ms of the last visit, for ordering and ageing out. */
+  at: number;
+}
+
+/** Persisted data is a trust boundary: anything unparseable, wrong-shaped or expired is dropped
+ * rather than repaired, so a corrupt key can never become a join attempt on garbage. */
+export function readRecentRooms(now = Date.now()): RecentRoom[] {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(RECENT_KEY);
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: RecentRoom[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    if (typeof o.code !== 'string' || typeof o.at !== 'number') continue;
+    const code = o.code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    if (code.length === 0 || now - o.at > RECENT_TTL_MS) continue;
+    if (out.some((r) => r.code === code)) continue;
+    out.push({ code, host: typeof o.host === 'string' ? o.host.slice(0, MAX_NAME_LENGTH) : '', at: o.at });
+    if (out.length >= MAX_RECENT_ROOMS) break;
+  }
+  return out.sort((a, b) => b.at - a.at);
+}
+
+function writeRecentRooms(rooms: RecentRoom[]): void {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(rooms.slice(0, MAX_RECENT_ROOMS)));
+  } catch {
+    // storage blocked — the list just won't survive a reload
+  }
+}
+
+/** Record (or refresh) a room we actually got into. Most recent first, deduped by code. */
+export function rememberRoom(code: string, host: string, now = Date.now()): void {
+  const kept = readRecentRooms(now).filter((r) => r.code !== code);
+  writeRecentRooms([{ code, host: host.slice(0, MAX_NAME_LENGTH), at: now }, ...kept]);
+}
+
+/** Drop an entry the server has just told us is gone, so a dead room stops being offered. */
+export function forgetRoom(code: string, now = Date.now()): void {
+  writeRecentRooms(readRecentRooms(now).filter((r) => r.code !== code));
 }
 
 export class NetClient {
@@ -344,6 +424,17 @@ export class NetClient {
    * applied locally, so a non-host or a mid-match send simply comes back as an error. */
   setRoomSettings(settings: RoomSettings): void {
     this.sendRaw({ v: PROTOCOL_VERSION, type: 'set_room_settings', reqId: this.nextReqId(), settings });
+  }
+
+  /** Host-only lobby proposal for who can find this room. Same shape as setRoomSettings: the
+   * server decides, broadcasts, and a non-host or mid-match send comes back as an error. */
+  setVisibility(visibility: RoomVisibility): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'set_room_visibility', reqId: this.nextReqId(), visibility });
+  }
+
+  /** Ask for the currently discoverable rooms. Answered with one bounded `room_list`. */
+  listRooms(): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'list_rooms', reqId: this.nextReqId() });
   }
 
   /** Claim this turn's one-off Mexe extension. Safe to call more than once: the server grants it

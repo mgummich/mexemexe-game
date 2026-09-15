@@ -28,8 +28,10 @@ function state(): GameState {
 }
 
 describe('protocol', () => {
-  it('PROTOCOL_VERSION is 5', () => {
-    expect(PROTOCOL_VERSION).toBe(5);
+  // Bumped with every wire change so a client and a server from different builds refuse each
+  // other instead of half-understanding one another. 6 added room visibility + discovery.
+  it('PROTOCOL_VERSION is 6', () => {
+    expect(PROTOCOL_VERSION).toBe(6);
   });
 
   it('buildView carries the rules config', () => {

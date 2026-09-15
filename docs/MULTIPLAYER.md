@@ -11,8 +11,10 @@ ranking, chat, or cosmetics sync. The game labels the entry point
 
 ## 0. Limitations
 
-- **No accounts, matchmaking, ranked play, chat or spectators.** Private rooms
-  by 5-character code only.
+- **No accounts, ranked play, chat or spectators.** Rooms are private by
+  default and joined by invite link or 5-character code. A host may opt one room
+  into a listed room browser (§3d); there is no public directory, no matchmaking
+  queue, no rating, and no way to find a room whose host did not list it.
 - **Online rematch keeps the room *and* the room's score** — a finished match hands
   its room back to the lobby on the same code (`recycleForRematch`), with every seat
   kept and every ready bit cleared. Session wins, the match history and the activity
@@ -101,6 +103,11 @@ cannot leak an opponent's hand in an online match.
 6. **empty/abandoned** — room is destroyed when both sockets are gone past the
    grace window, or after an absolute idle timeout.
 
+Orthogonal to all of it: **visibility** (§3d), which decides who can *find* a
+room and never who may join one. Lifecycle, capacity and seat ownership are the
+only things that decide a join, for a discovered room exactly as for a typed
+code.
+
 ## 3b. Identity, names and invite links
 
 There are no accounts. Three things carry identity, and only one of them is
@@ -125,6 +132,63 @@ sanitizes it to the code alphabet, and sends an ordinary `join_room` once the
 socket opens — the server validates it exactly as it does a typed code. Sharing
 uses the Web Share API where the browser has one, with clipboard copy as the
 universal fallback.
+
+**Recent rooms** are local display history: `mexe.online.recent` in
+`localStorage`, at most `MAX_RECENT_ROOMS` entries of `{ code, host, at }`, aged
+out after six hours and read back through a validating parser (a corrupt or
+tampered entry is dropped, never repaired). They are what the online home's
+CONTINUE and RECENT shortcuts are built from. Deliberately a different key, a
+different storage area and a different shape from the session token: this list
+is meant to be shown, and nothing in it can reclaim a seat. An entry is dropped
+the moment the server answers `room_not_found`/`room_closed` for it.
+
+## 3d. Room visibility and discovery
+
+Every room is born `private` and there is no create-time option that says
+otherwise. `private` means reachable by invite link or code and invisible to
+everything else. A host may set `listed`, which adds the room to the room
+browser and changes nothing else.
+
+Visibility is server-owned. `set_room_visibility` is **host-only and
+lobby-only** (refused with `not_host` / `game_started`), and the answer is an
+authoritative `room_state` broadcast, never an echo of the request. Unlike a
+settings change it does **not** clear ready bits: visibility is not one of the
+terms a seat agreed to play under, so ON-09's re-agreement rule does not apply.
+
+Discovery reads through a separate, tiny projection — `RoomListing` in
+`protocol.ts`: `code`, `hostName`, `players`, `capacity`, `status`,
+`timerMode`. Not a trimmed room snapshot, a different type, so there is no
+token, seat, revision, hand count, activity feed or party history to leak by
+accident. Eligibility is recomputed from the live rooms on every `list_rooms`
+— there is no listing index to go stale, which is why a room that expires, goes
+private or starts a match disappears immediately:
+
+- `private` rooms: never listed.
+- rooms with a match in progress: omitted, not shown as non-joinable. They
+  cannot seat anyone until the match ends, and a card offering a seat that does
+  not exist is worse than no card. (A room recycled back to a lobby between
+  matches becomes listable again, and can accept a newcomer under §3c's rules.)
+- full lobbies: listed, marked `full`, with the join action disabled — "it just
+  filled up" is more useful as a fact on screen than as a rejection after a tap.
+
+Answers are bounded at `MAX_ROOM_LISTINGS` (20) and the per-connection budget is
+`hitListLimit` (12 per 10s, refused rather than answered — building the answer
+is the expensive half). The room code is published in a listing on purpose: it
+is a locator, not a credential, and what makes that safe is the existing
+guess-rate protection (§9), not its obscurity.
+
+Discovery is **additive**. If listing fails or is refused, the room browser says
+so on its own screen and creating a room, joining by code and joining by link
+keep working — none of them consults discovery at all.
+
+Every screen in `OnlineScene` is keyboard-operable: Tab/Shift+Tab and the up/down
+arrows walk a gold focus ring through the screen's buttons in reading order, and
+Enter/Space presses the one it is on (`PixelButton.press()` re-emits `pointerup`,
+so a keyboard press gets the same sound, the same animation and the same
+`onBlocked` refusal a click does). The ring appears only once the keyboard is
+used, is skipped on the code and name screens where Enter already means
+"submit", and starts at the top button of each new screen. Disabled buttons stay
+focusable on purpose — their refusal is the explanation the player is after.
 
 ## 3c. The party session
 
@@ -200,7 +264,9 @@ it. `NetClient.lastRoomState` latches the most recent one, because the
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 5` — bumped from 4 for the party session: `GameView`
+version (`PROTOCOL_VERSION = 6` — bumped from 5 for room visibility and discovery:
+`room_joined`/`room_state` gained `visibility`, and the client gained
+`set_room_visibility` and `list_rooms` with a new `room_list` answer; v5 bumped from 4 for the party session: `GameView`
 gained `matchId`, `RoomPlayerSummary` gained `wins`, and `room_joined`/`room_state`
 gained `party` (match history + activity feed); v4 bumped from 3 for room settings and the
 server turn timer: `GameView` gained `settings` and `turnMsLeft`, `room_joined`
@@ -227,6 +293,8 @@ submission that caused it.
 | `submit_turn` | `rev`, `melds: [{ id, cardIds[] }]` | card **ids only** |
 | `draw_end_turn` | `rev` | |
 | `reconnect` | `token` | resumes a seat in a live room |
+| `set_room_visibility` | `visibility: 'private' \| 'listed'` | host only, lobby only; answered with an authoritative `room_state`, never an echo. Does not clear ready bits (§3d) |
+| `list_rooms` | — | no filters are representable on the wire; the answer is bounded and rate-limited (§3d) |
 | `resync` | — | "resend authoritative state"; never carries client state |
 | `ping` | — | |
 
@@ -234,8 +302,8 @@ submission that caused it.
 
 | type | payload | notes |
 |---|---|---|
-| `room_joined` | `code`, `seat`, `token`, `players`, `settings`, `hostSeat`, `party` | token is the reconnect key; `players[].wins` is the session score |
-| `room_state` | `players` (each entry carries its own `ready`/`connected`/`wins`), `settings`, `hostSeat`, `locked`, `party` | lobby updates; `locked` is true once the match started and the settings are frozen. `ready` doubles as the rematch vote between matches (§3c) |
+| `room_joined` | `code`, `seat`, `token`, `players`, `settings`, `hostSeat`, `party`, `visibility` | token is the reconnect key; `players[].wins` is the session score; `visibility` is always `private` for a new room |
+| `room_state` | `players` (each entry carries its own `ready`/`connected`/`wins`), `settings`, `hostSeat`, `locked`, `party`, `visibility` | lobby updates; `locked` is true once the match started and the settings are frozen. `ready` doubles as the rematch vote between matches (§3c). `visibility` is server-owned (§3d) |
 | `game_started` | `view` | broadcast per seat after host `start_game`; the server never sends shuffle seed, and `rev` lives inside `view.rev` |
 | `state_sync` | `view` (redacted, `rev` and `hash` inside it) | the only source of truth on the client |
 | `proposal_rejected` | `reqId`, `reasons: ReasonCode[]` | codes, not prose |
@@ -244,6 +312,7 @@ submission that caused it.
 | `player_reconnected` | `seat` | |
 | `game_over` | `winnerId`, `stalemate`, `view` | `view` carries the final redacted state so both clients render the same closing board |
 | `error` | `code`, `message`, `reqId?` | protocol-level problems; `reqId` echoes the request that failed, absent for server-initiated errors including `room_closed` (S1/S2: a reaped or abandoned room notifies every attached socket before dropping it) |
+| `room_list` | `reqId`, `rooms: RoomListing[]` | the discovery projection only (§3d): `code`, `hostName`, `players`, `capacity`, `status`, `timerMode`. Never a room snapshot, never a room the caller has not joined |
 | `pong` | — | |
 
 `ReasonCode` values are the existing localized keys (`reason.duplicateCard`,
@@ -570,6 +639,15 @@ suite spawns the real process and drives raw `ws` clients (shared harness in
 acceptance: session wins and their duplicate guard, rematch voting, between-match
 leave/join, bounded history and feed, and the room-scoped, rate-limited,
 ownership-checked reaction path over real sockets.
+`tests/server/discovery.test.ts` carries the `OD-*` discovery acceptance in two
+halves: a socket-free `RoomManager` block for what the projection *is* (private
+by default, eligibility, the exact field set, the bound) and an integration
+block for what a client can reach (visibility authority and its lifecycle rule,
+listing privacy and cross-room isolation, seat reclaim versus a discovered join,
+stale/full/in-match rooms, the list budget, and that create/join-by-code survive
+an exhausted one). `tests/net/recent-rooms.test.ts` covers the local
+display-history list, including that it stores no credential and that corrupt
+storage is dropped rather than repaired.
 `tests/server/hardening.test.ts` carries the
 `OH-*` hardening acceptance: the room-creation budget, the Origin policy, the
 resync bound, reconnect bursts, cross-room isolation under a malformed client,
@@ -590,8 +668,10 @@ Files:
 - `src/net/viewToState.ts` — projects a `GameView` back into a local-shaped
   `GameState` (placeholder cards for hidden hands/draw pile) so the existing
   offline renderer can draw it unchanged.
-- `src/scenes/OnlineScene.ts` — the lobby scene (idle/join/lobby/error),
-  including the in-canvas keyboard join-code entry.
+- `src/scenes/OnlineScene.ts` — the lobby scene
+  (idle/join/name/lobby/custom/party/browse/error), including the in-canvas
+  keyboard join-code entry, the online home's CONTINUE/RECENT shortcuts, the
+  room browser, and the host's visibility badge.
 - `server/index.ts` — the WebSocket server process: message dispatch,
   broadcast helpers, health check, sweep interval, crash guards.
 - `server/rooms.ts` — `RoomManager`: room lifecycle, seat/ready state, seed

@@ -2,7 +2,7 @@ import type { DraftState, GameState } from '../rules/types';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { ConnStatus } from '../net/client';
-import type { PartyState, ReactionId, RoomPlayerSummary, RoomSettings, SubmitTurnMeld } from '../net/protocol';
+import type { PartyState, ReactionId, RoomListing, RoomPlayerSummary, RoomSettings, RoomVisibility, SubmitTurnMeld } from '../net/protocol';
 import type { HelperMode } from '../ui/helpers';
 import { view, type ViewProfile } from '../ui/viewport';
 
@@ -42,6 +42,23 @@ interface MexeOnlineDebugApi {
   /** Verification-only: ms left on the active seat's turn as of the last state_sync, or null in
    * a room with no timer. Rendered, never authoritative. */
   turnMsLeft: () => number | null;
+  /** Verification-only: where the keyboard focus ring is and how many buttons this screen has.
+   * `index` is -1 until the keyboard has been used. Canvas-only UI has no DOM focus to query. */
+  focus: () => { index: number; count: number };
+  /** Verification-only: which screen of the online flow is showing (idle/join/lobby/browse/...).
+   * Canvas text is unreadable to Playwright, so a screen transition has no other observable. */
+  phase: () => string;
+  /** Verification-only: the room's visibility as the server last reported it. */
+  visibility: () => RoomVisibility;
+  /** Verification-only: host-only proposal for the room's visibility. Goes through the same
+   * `set_room_visibility` message the badge sends — the server still refuses a non-host. */
+  setVisibility: (visibility: RoomVisibility) => void;
+  /** Verification-only: open the room browser and ask for a fresh listing. */
+  openBrowse: () => void;
+  /** Verification-only: the last `room_list` answer, exactly as it came off the wire. */
+  listings: () => RoomListing[];
+  /** Verification-only: this device's local recent-room display history. */
+  recentRooms: () => { code: string; host: string }[];
   /** In-match draw-and-end-turn; a thin alias over the same action COMPRAR triggers. */
   comprar: () => void;
   /** Verification-only: submit a proposal straight to the server, bypassing the editor's

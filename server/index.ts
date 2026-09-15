@@ -6,7 +6,10 @@ import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { DEFAULT_ROOM_SETTINGS, EMPTY_PARTY, parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
+import {
+  DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY, MAX_ROOM_LISTINGS,
+  parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage,
+} from '../src/net/protocol';
 import { RoomManager } from './rooms';
 import { config } from './config';
 import { createLogger, errorFields } from './log';
@@ -19,6 +22,7 @@ import {
   evictSeat,
   hitFlood,
   hitJoinLimit,
+  hitListLimit,
   hitResyncLimit,
   hitRoomCreateLimit,
   moveSocket,
@@ -151,6 +155,7 @@ function broadcastRoomState(code: string): void {
     send(ws, {
       v: PROTOCOL_VERSION, type: 'room_state',
       players: info.players, settings: info.settings, hostSeat, locked: info.locked, party: info.party,
+      visibility: info.visibility,
     });
   }
 }
@@ -165,6 +170,7 @@ function roomJoined(code: string, seat: number, token: string): ServerMessage {
     settings: info?.settings ?? DEFAULT_ROOM_SETTINGS,
     hostSeat: rooms.getHostSeat(code),
     party: info?.party ?? EMPTY_PARTY,
+    visibility: info?.visibility ?? DEFAULT_ROOM_VISIBILITY,
   };
 }
 
@@ -255,6 +261,36 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         return;
       }
       broadcastRoomState(conn.code);
+      return;
+    }
+    case 'set_room_visibility': {
+      if (conn.code === null || conn.seat === null) {
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
+        return;
+      }
+      const result = rooms.setVisibility(conn.code, conn.seat, msg.visibility);
+      if (!result.ok) {
+        sendError(ws, result.error, `cannot change visibility: ${result.error}`, msg.reqId);
+        return;
+      }
+      // Authoritative broadcast even on a no-op re-send: the room's own answer is the only thing
+      // any client is allowed to render this from.
+      broadcastRoomState(conn.code);
+      return;
+    }
+    case 'list_rooms': {
+      // Discovery is the cheapest message to loop and the only one that touches every room, so
+      // it gets its own budget. Over the limit the request is refused, not answered — building
+      // the answer is the cost being defended against.
+      if (hitListLimit(conn, Date.now())) {
+        log.debug('list_limit', {});
+        sendError(ws, 'rate_limited', 'too many room list requests', msg.reqId);
+        return;
+      }
+      send(ws, {
+        v: PROTOCOL_VERSION, type: 'room_list', reqId: msg.reqId,
+        rooms: rooms.listRooms(MAX_ROOM_LISTINGS),
+      });
       return;
     }
     case 'mexe_started': {
@@ -385,7 +421,7 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         send(ws, {
           v: PROTOCOL_VERSION, type: 'room_state',
           players: info.players, settings: info.settings, hostSeat: rooms.getHostSeat(conn.code),
-          locked: info.locked, party: info.party,
+          locked: info.locked, party: info.party, visibility: info.visibility,
         });
       }
       const view = rooms.getView(conn.code, conn.seat);
