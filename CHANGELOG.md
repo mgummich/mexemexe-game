@@ -4,7 +4,7 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased — online release-candidate pass
+## 1.10.0 — 2026-09-15
 
 ### Fixed: a search that had already found a chair could still be matched again
 
