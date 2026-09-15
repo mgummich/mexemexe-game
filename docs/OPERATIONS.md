@@ -32,6 +32,8 @@ rather than silently falling back to a default.
 | `MEXE_MAX_ROOMS`           | `500`       | Room capacity. Beyond it, room creation is refused cleanly.  |
 | `MEXE_MAX_CONNECTIONS`     | `2000`      | Global WebSocket admission cap. Beyond it, new sockets are closed with `capacity`. |
 | `MEXE_MAX_CONNECTIONS_PER_IP` | `20`     | Per-IP admission cap, same refusal.                          |
+| `MEXE_MAX_ROOM_CREATES_PER_IP` | `20`    | Rooms one source may create per minute. Over it, `create_room` is refused with `room_create_limit`. Raise it behind a reverse proxy, where every client shares one address. |
+| `MEXE_ALLOWED_ORIGINS`     | unset       | Comma-separated browser origins allowed to open a WebSocket (e.g. `https://mexe.example,http://localhost:5173`). Unset means no Origin check. |
 | `MEXE_DISCONNECT_GRACE_MS` | `30000`     | Seeds a new room's reconnect grace and bounds the room sweep. A lobby timer preset replaces the room's own value (Casual/Off 60s, Fast 30s). |
 | `MEXE_IDLE_TIMEOUT_MS`     | `600000`    | Idle room lifetime before the sweep reaps it.                |
 | `MEXE_METRICS_TOKEN`       | unset       | Bearer token for `/metrics`. Minimum 16 characters. Unset in production means `/metrics` returns 404. |
@@ -292,11 +294,14 @@ console errors and zero server stderr lines.
   one instance, and a restart ends every match.
 - **Online alpha scope.** Private rooms by code only — no matchmaking, no accounts, no
   ranked play, no chat, no rematch online.
-- **Rate limiting is admission caps plus per-connection guards, not per-IP throttling.**
-  Global and per-IP connection caps refuse new sockets at the door, the flood guard closes
-  a looping client (close code `1008`), and ten failed room-code guesses close the guessing
-  connection (also `1008`) — but a distributed abuser that stays under the per-IP admission
-  cap is not throttled further.
+- **Rate limiting is admission caps plus per-connection and per-source guards, not general
+  throttling.** Global and per-IP connection caps refuse new sockets at the door; the flood
+  guard closes a looping client (close code `1008`); ten failed room-code guesses close the
+  guessing connection (also `1008`); `MEXE_MAX_ROOM_CREATES_PER_IP` bounds room creation per
+  source per minute (a create-then-drop loop is the only way to park rooms against
+  `MEXE_MAX_ROOMS`, because leaving a room deletes an empty one); and full-state `resync`
+  requests are capped at five per connection per ten seconds and silently dropped above that.
+  A distributed abuser that stays under every one of those is not throttled further.
 - **`MEXE_MAX_CONNECTIONS_PER_IP` counts `req.socket.remoteAddress`, so it collapses behind
   a reverse proxy.** Every client then shares the proxy's address and the per-IP cap becomes
   a second global cap. The server deliberately does **not** trust `X-Forwarded-For` — that
@@ -304,10 +309,19 @@ console errors and zero server stderr lines.
   any abuser can spoof. Either terminate the WebSocket without a proxy hop, or raise
   `MEXE_MAX_CONNECTIONS_PER_IP` to at least the global cap so it stops being the binding
   limit and rely on `MEXE_MAX_CONNECTIONS` plus the per-connection guards.
-- **Room codes are 5 characters from a 28-symbol alphabet** (~17.2M combinations), throttled
-  to ten failed lookups per connection. Practical to brute-force only with a large, throttle-
-  resetting connection farm; a per-IP failed-join counter is the next step if that ever shows
-  up in practice.
+- **Room codes are 5 characters from a 28-symbol alphabet** (~17.2M combinations), generated
+  with `crypto.randomInt` and retried on collision, throttled to ten failed lookups per
+  connection. Practical to brute-force only with a large, throttle-resetting connection farm;
+  a per-IP failed-join counter is the next step if that ever shows up in practice. A room code
+  is a public locator, never a credential — the session token (`crypto.randomUUID`) is the only
+  thing that owns a seat.
+- **Origin is checked only when configured, and is never authentication.** With
+  `MEXE_ALLOWED_ORIGINS` set, a browser page on any other origin is refused at the upgrade
+  with `401`; a request with no `Origin` header at all is still accepted, because only browsers
+  send one and requiring it would block non-browser clients while stopping nobody (anything
+  that is not a browser can send any `Origin` it likes). Unset — the default — means no check,
+  which is the honest default for a server that is also reached through other people's
+  proxies.
 - **No online results summary.** The win screen's per-player stats are local-only; the
   client never observes the other seats' turn history online, so the line is hidden rather
   than faked. Fixing it needs a protocol change.

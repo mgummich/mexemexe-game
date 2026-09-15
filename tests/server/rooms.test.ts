@@ -259,7 +259,7 @@ describe('room lifecycle', () => {
     expect(mgr.getRoom(code)!.state!.players.map((p) => p.id)).toEqual(['p0', 'p1', 'p2']);
   });
 
-  it('cleans up an empty room', () => {
+  it('OH-14: cleans up an empty room', () => {
     const mgr = testManager();
     const { code } = mustCreate(mgr, 'Alice');
     mgr.leaveRoom(code, 0);
@@ -546,7 +546,7 @@ describe('lifecycle and liveness', () => {
     expect(mgr.getRoom(code)).not.toBeNull();
   });
 
-  it('S1: sweep reports codes for rooms with every seat disconnected past the grace window (the caller must notify+detach those sockets)', () => {
+  it('OH-14: S1: sweep reports codes for rooms with every seat disconnected past the grace window (the caller must notify+detach those sockets)', () => {
     let now = 1000;
     const mgr = testManager(7, { now: () => now, disconnectGraceMs: 1000 });
     const { code } = mustCreate(mgr, 'Alice');
@@ -559,7 +559,7 @@ describe('lifecycle and liveness', () => {
     expect(mgr.getRoom(code)).toBeNull();
   });
 
-  it('S3: a live lobby with both seats connected is never reaped by the idle timeout', () => {
+  it('OH-16: S3: a live lobby with both seats connected is never reaped by the idle timeout', () => {
     let now = 1000;
     const mgr = testManager(7, { now: () => now, idleTimeoutMs: 1000 });
     const { code } = mustCreate(mgr, 'Alice');
@@ -570,7 +570,7 @@ describe('lifecycle and liveness', () => {
     expect(mgr.getRoom(code)).not.toBeNull();
   });
 
-  it('S3: idle timeout still applies as a backstop once nobody is connected', () => {
+  it('OH-15: S3: idle timeout still applies as a backstop once nobody is connected', () => {
     let now = 1000;
     const mgr = testManager(7, { now: () => now, idleTimeoutMs: 1000, disconnectGraceMs: 60_000 });
     const { code } = mustCreate(mgr, 'Alice');
@@ -779,7 +779,7 @@ describe('stalled-turn recovery', () => {
 });
 
 describe('load: repeated room churn', () => {
-  it('ten sequential create/join/leave cycles leave no room behind', () => {
+  it('OH-34: ten sequential create/join/leave cycles leave no room behind', () => {
     let counter = 0;
     const clock = { t: 1000 };
     const mgr = new RoomManager({
@@ -801,7 +801,7 @@ describe('load: repeated room churn', () => {
     expect(mgr.sweep()).toEqual([]);
   });
 
-  it('abandoned rooms are reaped by the sweep rather than accumulating', () => {
+  it('OH-15: abandoned rooms are reaped by the sweep rather than accumulating', () => {
     let counter = 0;
     const clock = { t: 1000 };
     const mgr = new RoomManager({
@@ -832,7 +832,7 @@ describe('per-room isolation and crash policy', () => {
     mgr.startGame(code, 0);
   }
 
-  it('a corrupt room is dropped without stopping other stalled rooms from advancing', () => {
+  it('OH-33: a corrupt room is dropped without stopping other stalled rooms from advancing', () => {
     const clock = { t: 1000 };
     const mgr = testManager(1, { disconnectGraceMs: 100, now: () => clock.t });
     startedRoom(mgr, 'CODE1');
@@ -850,7 +850,28 @@ describe('per-room isolation and crash policy', () => {
     expect(mgr.getRoom('CODE2')!.state!.activePlayerIndex).toBe(1);
   });
 
-  it('deleteRoom drops a room outright', () => {
+  it('OH-19/OH-20: a room deleted mid-stall is never advanced, resurrected or re-broadcast', () => {
+    const clock = { t: 1000 };
+    const mgr = testManager(1, { disconnectGraceMs: 100, now: () => clock.t });
+    startedRoom(mgr, 'CODE1');
+    startedRoom(mgr, 'CODE2');
+    mgr.disconnect('CODE1', 0);
+    mgr.disconnect('CODE2', 0);
+    // The room goes away between the tick being due and the tick running — the shape of every
+    // late callback: a sweep reap, a host leaving, a crash drop.
+    mgr.deleteRoom('CODE1');
+    clock.t += 1000;
+    // Only the surviving room advances; the deleted one produces no work and no state at all.
+    expect(mgr.advanceStalledTurns().map((r) => r.code)).toEqual(['CODE2']);
+    expect(mgr.getRoom('CODE1')).toBeNull();
+    expect(mgr.getRoomInfo('CODE1')).toBeNull();
+    expect(mgr.getView('CODE1', 0)).toBeNull();
+    // And nothing can bring it back under the same code: the identifier is free, not restored.
+    expect(mgr.joinRoom('CODE1', 'Late')).toEqual({ ok: false, error: 'room_not_found' });
+    expect(mgr.setReady('CODE1', 0, true)).toEqual({ ok: false, error: 'room_not_found' });
+  });
+
+  it('OH-18: deleteRoom drops a room outright', () => {
     const mgr = testManager();
     const { code } = mustCreate(mgr, 'Host');
     mgr.deleteRoom(code);
@@ -903,5 +924,64 @@ describe('join_room code cap', () => {
       JSON.stringify({ v: PROTOCOL_VERSION, type: 'join_room', reqId: 'r1', code: 'BCDFG', name: 'A' }),
     );
     expect('error' in ok).toBe(false);
+  });
+});
+
+describe('OH-04 oversized and non-finite fields are rejected at the wire boundary', () => {
+  const good = (extra: Record<string, unknown>) => JSON.stringify({ v: PROTOCOL_VERSION, reqId: 'r1', ...extra });
+
+  it('rejects an overlong display name, reqId, token and room code', () => {
+    const long = 'x'.repeat(65);
+    const cases = [
+      good({ type: 'create_room', name: long }),
+      good({ type: 'join_room', code: 'ABCDE', name: long }),
+      good({ type: 'join_room', code: 'x'.repeat(17), name: 'Bia' }),
+      good({ type: 'reconnect', token: long }),
+      JSON.stringify({ v: PROTOCOL_VERSION, type: 'ping', reqId: long }),
+      good({ type: 'create_room', name: '' }), // empty is not a name either
+    ];
+    for (const raw of cases) expect(parseClientMessage(raw)).toHaveProperty('error');
+  });
+
+  it('rejects NaN, Infinity and a fractional revision rather than coercing them', () => {
+    // JSON has no NaN/Infinity literal, so a hostile client sends what JSON.parse yields for
+    // them — null — plus the numeric shapes that do survive the wire.
+    for (const rev of [null, 1.5, -1, '3']) {
+      expect(parseClientMessage(good({ type: 'draw_end_turn', rev }))).toHaveProperty('error');
+    }
+    // A revision that survives the shape check but names no state the room ever had is still
+    // caught downstream by the revision comparison — see the stale-revision rejections above.
+  });
+});
+
+describe('OH-27/OH-28 room codes and session tokens', () => {
+  it('OH-28: real room codes are fixed-length, unambiguous and never handed out twice', () => {
+    const mgr = new RoomManager(); // real generators, not the deterministic test ones
+    const codes = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      const result = mgr.createRoom('P');
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.code).toMatch(/^[BCDFGHJKMNPQRSTVWXYZ23456789]{5}$/);
+        codes.add(result.code);
+      }
+    }
+    // createRoom retries on collision, so 400 rooms means 400 distinct codes.
+    expect(codes.size).toBe(400);
+  });
+
+  it('OH-27: session tokens are unique, high-entropy and derived from neither the name nor the code', () => {
+    const mgr = new RoomManager();
+    const tokens = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      const result = mgr.createRoom('Ana');
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(result.token.length).toBeGreaterThanOrEqual(32);
+      expect(result.token).not.toContain(result.code);
+      expect(result.token.toLowerCase()).not.toContain('ana');
+      tokens.add(result.token);
+    }
+    expect(tokens.size).toBe(200);
   });
 });

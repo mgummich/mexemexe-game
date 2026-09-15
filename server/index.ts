@@ -18,7 +18,13 @@ import {
   evictSeat,
   hitFlood,
   hitJoinLimit,
+  hitResyncLimit,
+  hitRoomCreateLimit,
   moveSocket,
+  originAllowed,
+  pruneCounters,
+  reapDeadSockets,
+  type Counter,
   newConnState,
   type ConnState,
 } from './connections';
@@ -53,6 +59,9 @@ const rooms = new RoomManager({
 
 const connections = new Map<WebSocket, ConnState>();
 const connectionsByIp = new Map<string, number>();
+/** Per-source room-creation budget. Pruned by the sweep so it cannot outgrow live traffic. */
+const roomCreatesByIp = new Map<string, Counter>();
+const ROOM_CREATE_WINDOW_MS = 60_000;
 // code -> seat -> socket, for broadcast/targeted send
 const sockets = new Map<string, Map<number, WebSocket>>();
 
@@ -162,6 +171,11 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
     case 'create_room': {
       if (conn.code !== null) {
         sendError(ws, 'already_in_room', 'leave current room before creating another', msg.reqId);
+        return;
+      }
+      if (hitRoomCreateLimit(roomCreatesByIp, conn.ip, Date.now(), config.maxRoomCreatesPerIp)) {
+        log.info('room_create_limit', {});
+        sendError(ws, 'room_create_limit', 'too many rooms created from this source', msg.reqId);
         return;
       }
       const result = rooms.createRoom(msg.name);
@@ -358,6 +372,12 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
         sendError(ws, 'no_room', 'not in a room', msg.reqId);
         return;
       }
+      // Over the snapshot allowance the request is dropped silently: a client that is asking
+      // this often is looping, and an error frame would only give the loop something to answer.
+      if (hitResyncLimit(conn, Date.now())) {
+        log.debug('resync_limit', {});
+        return;
+      }
       const info = rooms.getRoomInfo(conn.code);
       if (info) {
         send(ws, {
@@ -448,7 +468,18 @@ const server = createServer((req, res) => {
   res.end();
 });
 
-const wss = new WebSocketServer({ server, maxPayload: MAX_PAYLOAD_BYTES });
+const wss = new WebSocketServer({
+  server,
+  maxPayload: MAX_PAYLOAD_BYTES,
+  // Refused before the upgrade completes, so a rejected page never gets an open socket at all.
+  // No-op unless MEXE_ALLOWED_ORIGINS is configured — see originAllowed in connections.ts.
+  verifyClient: ({ origin }: { origin: string | undefined }) => {
+    if (originAllowed(origin, config.allowedOrigins)) return true;
+    counters.connectionsRejectedOrigin++;
+    log.info('connection_rejected', { reason: 'origin' });
+    return false;
+  },
+});
 
 /** Sockets that answered the last heartbeat probe. A socket missing from this set when the next
  * probe fires is terminated rather than left holding its seat. */
@@ -466,7 +497,7 @@ wss.on('connection', (ws: WebSocket, req) => {
     return;
   }
   counters.connectionsTotal++;
-  const conn: ConnState = newConnState(Date.now());
+  const conn: ConnState = newConnState(Date.now(), ip);
   connections.set(ws, conn);
   connectionsByIp.set(ip, ipCount + 1);
   alive.add(ws);
@@ -526,17 +557,15 @@ wss.on('connection', (ws: WebSocket, req) => {
 const sweepTimer = setInterval(() => {
   // Reaped rooms must not leave their sockets stuck forever on a dead code (S1).
   for (const code of rooms.sweep()) closeRoom(code, 'room closed: timed out');
+  pruneCounters(roomCreatesByIp, Date.now(), ROOM_CREATE_WINDOW_MS);
 }, SWEEP_INTERVAL_MS).unref();
 
 const heartbeatTimer = setInterval(() => {
-  for (const ws of connections.keys()) {
-    if (!alive.has(ws)) {
-      // Missed a full probe interval: drop it now so `close` runs the normal disconnect path
-      // and the seat's grace timer actually starts.
-      ws.terminate();
-      continue;
-    }
-    alive.delete(ws);
+  const { dead, probe } = reapDeadSockets(connections.keys(), alive);
+  // Missed a full probe interval: drop it now so `close` runs the normal disconnect path and the
+  // seat's grace timer actually starts.
+  for (const ws of dead) ws.terminate();
+  for (const ws of probe) {
     try {
       ws.ping();
     } catch {

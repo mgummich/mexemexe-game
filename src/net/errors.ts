@@ -9,6 +9,7 @@ export const SERVER_ERROR_CODES = [
   'room_not_found',
   'game_started',
   'room_limit',
+  'room_create_limit',
   'already_in_room',
   'no_room',
   'not_member',

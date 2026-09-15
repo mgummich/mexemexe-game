@@ -17,10 +17,14 @@ export interface Config {
   readonly maxRooms: number;
   readonly maxConnections: number;
   readonly maxConnectionsPerIp: number;
+  readonly maxRoomCreatesPerIp: number;
   readonly disconnectGraceMs: number;
   readonly idleTimeoutMs: number;
   readonly testSeed: number | undefined;
   readonly metricsToken: string | undefined;
+  /** Browser origins allowed to open a WebSocket. Empty means "do not check" — see
+   * `originAllowed` in server/connections.ts for why that is the honest default. */
+  readonly allowedOrigins: readonly string[];
 }
 
 const DEFAULT_PORT = 8787;
@@ -30,6 +34,9 @@ const DEFAULT_HOST = '0.0.0.0';
 const DEFAULT_MAX_ROOMS = 500;
 const DEFAULT_MAX_CONNECTIONS = 2_000;
 const DEFAULT_MAX_CONNECTIONS_PER_IP = 20;
+// Rooms one source may create per minute. Generous for a household or a shared NAT, far under
+// the rate needed to park MEXE_MAX_ROOMS of abandoned rooms before the sweep reclaims them.
+const DEFAULT_MAX_ROOM_CREATES_PER_IP = 20;
 const DEFAULT_DISCONNECT_GRACE_MS = 30_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 
@@ -58,6 +65,17 @@ function parseLogLevel(env: NodeJS.ProcessEnv, mode: Mode): LogLevel {
   return 'info';
 }
 
+/** Comma-separated origin list, e.g. `https://mexe.example,http://localhost:5173`. Entries are
+ * compared verbatim against the browser's `Origin` header, so a trailing slash or a stray space
+ * would silently never match — both are stripped here rather than left as a deployment trap. */
+function parseOrigins(raw: string | undefined): readonly string[] {
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter((o) => o !== '');
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const mode = parseMode(env);
   // MEXE_TEST_SEED=0 is falsy, so it's treated as unset (parsePositiveInt would reject 0 anyway) — fine, 0 isn't a meaningful seed distinct from unset.
@@ -79,10 +97,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     maxRooms: parsePositiveInt(env, 'MEXE_MAX_ROOMS', DEFAULT_MAX_ROOMS),
     maxConnections: parsePositiveInt(env, 'MEXE_MAX_CONNECTIONS', DEFAULT_MAX_CONNECTIONS),
     maxConnectionsPerIp: parsePositiveInt(env, 'MEXE_MAX_CONNECTIONS_PER_IP', DEFAULT_MAX_CONNECTIONS_PER_IP),
+    maxRoomCreatesPerIp: parsePositiveInt(env, 'MEXE_MAX_ROOM_CREATES_PER_IP', DEFAULT_MAX_ROOM_CREATES_PER_IP),
     disconnectGraceMs: parsePositiveInt(env, 'MEXE_DISCONNECT_GRACE_MS', DEFAULT_DISCONNECT_GRACE_MS),
     idleTimeoutMs: parsePositiveInt(env, 'MEXE_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS),
     testSeed,
     metricsToken: metricsToken || undefined,
+    allowedOrigins: parseOrigins(env.MEXE_ALLOWED_ORIGINS),
   };
 }
 

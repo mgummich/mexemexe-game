@@ -15,16 +15,132 @@ export interface Sock {
 /** WebSocket.OPEN per the WebSocket spec — both `ws` and browsers use 1. */
 export const SOCK_OPEN = 1;
 
+/** A fixed-window counter. Coarse on purpose: a window boundary can let through up to 2x the
+ * limit back to back, which is irrelevant for abuse control and much easier to reason about
+ * than a token bucket. */
+export interface Counter {
+  count: number;
+  start: number;
+}
+
 export interface ConnState {
   code: string | null;
   seat: number | null;
   msgCount: number;
   windowStart: number;
   failedJoins: number;
+  /** Full-snapshot requests this connection has made, windowed (see `hitResyncLimit`). */
+  resyncs: Counter;
+  /** The source this connection arrived from, as the key of the per-source room-creation
+   * budget. Never logged — see server/log.ts, which redacts it by key name anyway. */
+  ip: string;
 }
 
-export function newConnState(now: number): ConnState {
-  return { code: null, seat: null, msgCount: 0, windowStart: now, failedJoins: 0 };
+export function newConnState(now: number, ip = 'unknown'): ConnState {
+  return {
+    code: null,
+    seat: null,
+    msgCount: 0,
+    windowStart: now,
+    failedJoins: 0,
+    resyncs: { count: 0, start: now },
+    ip,
+  };
+}
+
+/** Counts one hit and reports whether the window's allowance is now used up. */
+export function hitWindow(c: Counter, now: number, max: number, windowMs: number): boolean {
+  if (now - c.start > windowMs) {
+    c.start = now;
+    c.count = 0;
+  }
+  c.count++;
+  return c.count > max;
+}
+
+/** The same fixed window, keyed — one budget per source rather than per connection. */
+export function hitKeyedWindow(
+  map: Map<string, Counter>,
+  key: string,
+  now: number,
+  max: number,
+  windowMs: number,
+): boolean {
+  let c = map.get(key);
+  if (!c) {
+    c = { count: 0, start: now };
+    map.set(key, c);
+  }
+  return hitWindow(c, now, max, windowMs);
+}
+
+/** Drop counters whose window has elapsed, so a keyed budget map cannot grow with every source
+ * that ever connected. Call from the existing sweep — it is a bounded map scan, not a timer. */
+export function pruneCounters(map: Map<string, Counter>, now: number, windowMs: number): void {
+  for (const [key, c] of map) if (now - c.start > windowMs) map.delete(key);
+}
+
+/**
+ * Room-creation budget, per source rather than per connection: a connection can only hold one
+ * room at a time, and leaving deletes an empty one, so the way to park rooms against the global
+ * ceiling is to create one, drop the socket without leaving, and reconnect — a fresh connection
+ * every time, which a per-connection counter would never see. The abandoned room then lives for
+ * the disconnect grace. Twenty a minute is far above a household of players making and remaking
+ * rooms and far below the rate needed to reach MEXE_MAX_ROOMS before the sweep reclaims them.
+ */
+export function hitRoomCreateLimit(
+  map: Map<string, Counter>,
+  ip: string,
+  now: number,
+  max = 20,
+  windowMs = 60_000,
+): boolean {
+  return hitKeyedWindow(map, ip, now, max, windowMs);
+}
+
+/** A `resync` makes the server serialize a whole room view per caller, so it is the most
+ * expensive message a client can send without playing. Legitimate clients ask on desync, on
+ * app resume and on a dropped proposal — never five times in ten seconds. Over the limit the
+ * request is ignored, not answered: the answer is the expensive part. */
+export function hitResyncLimit(state: ConnState, now: number, max = 5, windowMs = 10_000): boolean {
+  return hitWindow(state.resyncs, now, max, windowMs);
+}
+
+/**
+ * Origin policy. `allowed` empty means every origin is accepted, which is the default: the
+ * server is also deployed behind other people's proxies and reached by non-browser clients, and
+ * a check that rejects those would be a broken check rather than a security gain. A deployment
+ * that knows its front-end origins sets `MEXE_ALLOWED_ORIGINS` and gets the one thing an Origin
+ * header can actually give: a browser on an unrelated page cannot open a socket here. A missing
+ * Origin is allowed either way — only browsers send it, so requiring it would block `curl`/`ws`
+ * clients while stopping nobody (anything not a browser can send any Origin it likes). Origin is
+ * never treated as authentication; the session token is.
+ */
+export function originAllowed(origin: string | undefined, allowed: readonly string[]): boolean {
+  if (allowed.length === 0) return true;
+  if (origin === undefined || origin === '') return true;
+  return allowed.includes(origin.replace(/\/+$/, ''));
+}
+
+/**
+ * The liveness rule, as a pure split. A connection that did not answer the last probe has missed
+ * a full heartbeat interval and is `dead` — a half-open socket (closed lid, dead NAT entry) that
+ * would otherwise hold its seat `connected` until TCP gives up, so the disconnect grace never
+ * starts. Everything that did answer is cleared from `alive` and goes back in `probe`, so the
+ * next round tests it again: an active socket must never be reaped for being quiet.
+ */
+export function reapDeadSockets<S>(conns: Iterable<S>, alive: Set<S>): { dead: S[]; probe: S[] } {
+  const dead: S[] = [];
+  const probe: S[] = [];
+  for (const c of conns) {
+    if (alive.has(c)) {
+      alive.delete(c);
+      probe.push(c);
+    } else {
+      dead.push(c);
+    }
+  }
+  return { dead, probe };
 }
 
 /** Room codes are short shared secrets; a connection that keeps guessing nonexistent codes is

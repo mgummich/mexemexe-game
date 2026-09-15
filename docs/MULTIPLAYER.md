@@ -416,9 +416,18 @@ Every inbound frame is parsed inside a try/catch; a parse failure or a failed
 shape check replies `error` and, on repeated abuse, closes the socket. No
 inbound value is ever used as an object key, array index, or loop bound before
 being range-checked. Handlers are wrapped so a thrown `RulesError` becomes a
-rejection message, never an unhandled exception. The process installs
-`uncaughtException`/`unhandledRejection` handlers that log and keep serving —
-a crash would take every room down, which is the worst possible alpha failure.
+rejection message, never an unhandled exception. Per-room work is isolated: a
+room whose state can no longer advance legally is dropped and its sockets
+notified, rather than throwing out of the tick that serves every other room.
+
+Truly fatal failures are deliberate, not swallowed. `uncaughtException` logs
+`uncaught_exception` (the error *type*, never its text) to stderr and exits
+with status 1: every inbound message is already wrapped in its own try/catch,
+so reaching that handler means process state is unknown, and serving rooms
+from a half-applied state is worse than dropping them. The supervisor restarts
+the process (`restart: unless-stopped` in the compose files). `unhandledRejection`
+is logged without exiting — no room-mutating path is async. See
+[OPERATIONS.md](OPERATIONS.md).
 
 ## 9. Security assumptions and anti-cheat
 
@@ -427,12 +436,33 @@ token; anyone with a code can attempt to join an open room; the alpha is for
 friends, not for hostile scale. Mitigated: hidden-information leaks (redacted
 views), forged cards (id rehydration), out-of-turn play (seat check), replay
 and double-submit (revision + in-flight lock), malformed input (boundary
-validation), seed manipulation (server-chosen seed). Explicitly *not*
-mitigated in the alpha: denial of service, room-code brute force at scale,
-timing/behavioural collusion. Rate limiting is a per-connection message
-counter — enough to stop an accidental loop, not a determined attacker opening
-many sockets. Frame size (16 KiB) and socket liveness are enforced at the
-server; a client-supplied state hash is never accepted, only ever sent.
+validation), seed manipulation (server-chosen seed).
+
+Resource abuse is bounded rather than solved. The controls, smallest first:
+a per-connection message-rate guard closes a looping client (`1008`); ten
+failed room-code lookups close the guessing connection; room creation is
+budgeted per source per minute (`MEXE_MAX_ROOM_CREATES_PER_IP`, refused with
+`room_create_limit`), which is what stops a create-then-drop loop parking rooms
+against `MEXE_MAX_ROOMS`; full-state `resync` is capped per connection and
+dropped, not answered, above the cap; global and per-IP connection caps refuse
+sockets at the door; a 15s heartbeat terminates transports that missed a probe,
+so a half-open socket cannot hold a seat `connected` until TCP gives up. Every
+budget is windowed and its map pruned by the existing sweep, so no counter
+collection grows with traffic.
+
+Credentials use `node:crypto`, never the gameplay RNG: session tokens are
+`randomUUID`, room codes are `randomInt` over the 28-symbol alphabet and
+retried on collision. The gameplay deal stays seeded and deterministic, and its
+seed is server-chosen and never sent. A room code is a public locator, not a
+credential; the session token is the only thing that owns a seat, and exactly
+one transport may hold a seat at a time (a reconnect evicts the previous one).
+
+`Origin` is validated only when `MEXE_ALLOWED_ORIGINS` is configured, and never
+as authentication — see [OPERATIONS.md](OPERATIONS.md) for why a missing header
+is still accepted. Explicitly *not* mitigated: denial of service at volume,
+room-code brute force from a large connection farm, timing/behavioural
+collusion. Frame size (16 KiB) is enforced at the server; a client-supplied
+state hash is never accepted, only ever sent.
 
 ## 10. Deployment notes
 
@@ -441,14 +471,19 @@ resolves the WS URL from build-time configuration with a same-host default;
 a page served over HTTPS must use `wss://`, which is the most common
 first-deployment failure and is called out in [SELF_HOSTING.md](SELF_HOSTING.md). The server takes its
 port from the environment, exposes a trivial health check, caps concurrent
-rooms, and reaps idle rooms on a timer. Local development runs both with two
+rooms and connections, budgets room creation per source, optionally pins the
+allowed browser origins, and reaps idle, empty and abandoned rooms on a timer. Local development runs both with two
 commands; a single `docker compose` service pair is the deployment shape.
 
 ## 11. Tests
 
 Server unit suites (`tests/server/`) cover room lifecycle, legal and rejected
 turns, redaction, reconnect and a malformed-message battery; the integration
-suite spawns the real process and drives raw `ws` clients. `npm run
+suite spawns the real process and drives raw `ws` clients (shared harness in
+`tests/server/harness.ts`). `tests/server/hardening.test.ts` carries the
+`OH-*` hardening acceptance: the room-creation budget, the Origin policy, the
+resync bound, reconnect bursts, cross-room isolation under a malformed client,
+room resurrection, and a concurrent-room load that has to return to baseline. `npm run
 verify:multiplayer` runs two-plus real browser clients against the real server
 and gates on client console errors, server stderr, accepted illegal proposals,
 hand privacy and state-hash agreement. Details in [TESTING.md](TESTING.md).
@@ -472,7 +507,13 @@ Files:
 - `server/rooms.ts` — `RoomManager`: room lifecycle, seat/ready state, seed
   generation, turn validation and application, reconnect, sweep.
 - `server/connections.ts` — per-connection state, socket attach/detach/evict,
-  the flood guard, and closing every socket attached to a reaped room.
+  the windowed abuse budgets (flood, failed joins, room creation, resync), the
+  Origin policy, the heartbeat liveness split, and closing every socket attached
+  to a reaped room.
+- `server/config.ts` — env-derived caps and limits, validated once at startup.
+- `server/log.ts` — level-gated structured logging with redaction enforced at
+  the logger, not at call sites.
+- `server/metrics.ts` — aggregate Prometheus counters, no per-player series.
 
 Payload bounds in `parseClientMessage`: a `submit_turn` carries the whole draft
 table plus the hand cards being played, so it is bounded by the deck

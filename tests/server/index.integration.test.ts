@@ -7,152 +7,9 @@
  * exactly what a browser client can never send, and spawning the server is ~1s versus a browser
  * context per client. Phase 18.
  */
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import path from 'node:path';
-import WebSocket from 'ws';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PROTOCOL_VERSION, type ServerMessage } from '../../src/net/protocol';
-
-const TSX = path.join(process.cwd(), 'node_modules', '.bin', 'tsx');
-
-interface Server {
-  proc: ChildProcessWithoutNullStreams;
-  port: number;
-  stderr: string[];
-  /** Captured too, not just stderr: the privacy canaries below have to hold for *every* line the
-   * process emits, and info/debug lines go to stdout. */
-  stdout: string[];
-}
-
-async function startServer(port: number, env: Record<string, string> = {}): Promise<Server> {
-  // `detached` so the whole process group can be killed: the `tsx` bin is a shim that runs the
-  // real server in a child node process, and killing only the shim leaves that child listening on
-  // the port, which makes the next run fail with EADDRINUSE.
-  const proc = spawn(TSX, ['server/index.ts'], {
-    cwd: process.cwd(),
-    detached: true,
-    env: { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined, PORT: String(port), ...env },
-  });
-  const stderr: string[] = [];
-  const stdout: string[] = [];
-  proc.stderr.on('data', (d) => stderr.push(String(d)));
-  proc.stdout.on('data', (d) => stdout.push(String(d)));
-  const deadline = Date.now() + 20_000;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`http://localhost:${port}/health`);
-      if (res.ok) return { proc, port, stderr, stdout };
-    } catch {
-      // not up yet
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`server did not become healthy on port ${port}: ${stderr.join('')}`);
-}
-
-/** A raw client that records every server message it ever received, so a test can assert on
- * what a *different* socket's action pushed to it. */
-class Client {
-  readonly received: ServerMessage[] = [];
-  closeCode: number | null = null;
-  closeReason = '';
-  constructor(private readonly ws: WebSocket) {
-    ws.on('message', (d) => this.received.push(JSON.parse(String(d)) as ServerMessage));
-    ws.on('close', (code, reason) => {
-      this.closeCode = code;
-      this.closeReason = String(reason);
-    });
-  }
-
-  static async open(port: number): Promise<Client> {
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    await new Promise<void>((resolve, reject) => {
-      ws.once('open', () => resolve());
-      ws.once('error', reject);
-    });
-    return new Client(ws);
-  }
-
-  send(msg: Record<string, unknown>): void {
-    this.ws.send(JSON.stringify({ v: PROTOCOL_VERSION, reqId: 'r1', ...msg }));
-  }
-
-  sendRaw(text: string): void {
-    this.ws.send(text);
-  }
-
-  close(): void {
-    this.ws.close();
-  }
-
-  /** Waits for the first message of `type`, counting ones already received. */
-  async next<K extends ServerMessage['type']>(type: K, timeoutMs = 4000): Promise<Extract<ServerMessage, { type: K }>> {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const hit = this.received.find((m) => m.type === type);
-      if (hit) return hit as Extract<ServerMessage, { type: K }>;
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${type}; got ${this.received.map((m) => m.type).join(',')}`);
-      await new Promise((r) => setTimeout(r, 25));
-    }
-  }
-
-  /** Waits until `pred` holds over everything received so far. `next('room_state')` alone is not
-   * enough to sequence a lobby: it matches the room_state the *join* broadcast already delivered,
-   * so a start_game fired right after it can beat the other seat's `ready` to the server. */
-  async until(pred: (msgs: ServerMessage[]) => boolean, what: string, timeoutMs = 4000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (!pred(this.received)) {
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}; got ${this.received.map((m) => m.type).join(',')}`);
-      await new Promise((r) => setTimeout(r, 25));
-    }
-  }
-
-  /** Waits for this socket to be closed by the server, and returns the close code. */
-  async closed(timeoutMs = 4000): Promise<number | null> {
-    const deadline = Date.now() + timeoutMs;
-    while (this.closeCode === null && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
-    return this.closeCode;
-  }
-
-  clear(): void {
-    this.received.length = 0;
-  }
-}
-
-/** The server only starts a lobby whose every occupied seat is ready, so a test must observe
- * that state before sending start_game. */
-function stopServer(server: Server): void {
-  try {
-    process.kill(-server.proc.pid!, 'SIGKILL');
-  } catch {
-    server.proc.kill('SIGKILL');
-  }
-}
-
-function allSeatsReady(c: Client): Promise<void> {
-  return c.until(
-    (msgs) =>
-      msgs.some((m) => m.type === 'room_state' && m.players.length >= 2 && m.players.every((p) => p.ready)),
-    'a room_state with every seat ready',
-  );
-}
-
-async function health(port: number): Promise<{ ok: boolean; rooms: number; connections: number }> {
-  const res = await fetch(`http://localhost:${port}/health`);
-  return (await res.json()) as { ok: boolean; rooms: number; connections: number };
-}
-
-/** Health read taken only once two consecutive reads agree on the connection count. */
-async function quiescedHealth(port: number): Promise<{ ok: boolean; rooms: number; connections: number }> {
-  let prev = await health(port);
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 50));
-    const now = await health(port);
-    if (now.connections === prev.connections && now.rooms === prev.rooms) return now;
-    prev = now;
-  }
-  return prev;
-}
+import { PROTOCOL_VERSION } from '../../src/net/protocol';
+import { allSeatsReady, Client, health, quiescedHealth, startServer, stopServer, type Server } from './harness';
 
 describe('server/index.ts protocol and ownership (Phase 18)', () => {
   const PORT = 8795;
@@ -166,7 +23,7 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     stopServer(server);
   });
 
-  it('malformed, unknown, wrong-version and wrong-type frames are rejected without crashing the server', async () => {
+  it('OH-01/OH-02: malformed, unknown, wrong-version and wrong-type frames are rejected without crashing the server', async () => {
     const c = await Client.open(PORT);
     const frames = [
       '{not json',
@@ -191,7 +48,7 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     c.close();
   });
 
-  it('an oversized frame closes that socket and leaves the server serving', async () => {
+  it('OH-03: an oversized frame closes that socket and leaves the server serving', async () => {
     const c = await Client.open(PORT);
     // MAX_PAYLOAD_BYTES is 16 KiB — `ws` closes the connection itself with 1009 (too large).
     c.sendRaw(JSON.stringify({ v: PROTOCOL_VERSION, type: 'create_room', reqId: 'r1', name: 'x'.repeat(20_000) }));
@@ -199,7 +56,7 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     expect((await health(PORT)).ok).toBe(true);
   });
 
-  it('an unsolicited in-match message from a socket with no room is rejected, not applied', async () => {
+  it('OH-32: an unsolicited in-match message from a socket with no room is rejected, not applied', async () => {
     const c = await Client.open(PORT);
     for (const type of ['ready', 'start_game', 'submit_turn', 'draw_end_turn', 'resync', 'leave_room']) {
       c.clear();
@@ -211,7 +68,7 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     c.close();
   });
 
-  it('reconnecting to another room releases the seat the socket was holding (no stuck room)', async () => {
+  it('OH-11: reconnecting to another room releases the seat the socket was holding (no stuck room)', async () => {
     // Room 1: created then abandoned, so its token is live but its seat is disconnected.
     const host1 = await Client.open(PORT);
     host1.send({ type: 'create_room', name: 'Ana' });
@@ -251,7 +108,7 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     victim.close();
   }, 20_000);
 
-  it('a room the hopper left behind does not receive its broadcasts any more', async () => {
+  it('OH-24: a room the hopper left behind does not receive its broadcasts any more', async () => {
     const host = await Client.open(PORT);
     host.send({ type: 'create_room', name: 'Dani' });
     const joined = await host.next('room_joined');
@@ -275,14 +132,14 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     other.close();
   }, 20_000);
 
-  it('guessing room codes closes the connection after the failed-lookup ceiling', async () => {
+  it('OH-06/OH-07: guessing room codes closes the connection after the failed-lookup ceiling', async () => {
     const c = await Client.open(PORT);
     for (let i = 0; i < 12; i++) c.send({ type: 'join_room', code: `ZZZZ${i}`, name: 'probe' });
     expect(await c.closed()).toBe(1008);
     expect((await health(PORT)).ok).toBe(true);
   });
 
-  it('flooding the socket closes it with a policy code rather than exhausting the process', async () => {
+  it('OH-08: flooding the socket closes it with a policy code rather than exhausting the process', async () => {
     const c = await Client.open(PORT);
     for (let i = 0; i < 60; i++) c.send({ type: 'ping' });
     expect(await c.closed()).toBe(1008);
@@ -291,7 +148,7 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     expect((await health(PORT)).ok).toBe(true);
   });
 
-  it('an opponent hand never appears in any frame a non-owner receives', async () => {
+  it('OH-26: an opponent hand never appears in any frame a non-owner receives', async () => {
     const host = await Client.open(PORT);
     host.send({ type: 'create_room', name: 'Fe' });
     const joined = await host.next('room_joined');
@@ -321,7 +178,7 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     guest.close();
   }, 20_000);
 
-  it('room and connection counts return to their baseline once every socket closes', async () => {
+  it('OH-34: room and connection counts return to their baseline once every socket closes', async () => {
     // Sockets closed by earlier tests may still be draining, so settle first — otherwise the
     // baseline is a moving number and the comparison below is meaningless.
     const before = await quiescedHealth(PORT);
@@ -336,7 +193,7 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     expect(after.connections).toBe(before.connections);
   }, 20_000);
 
-  it('logs no room code, player name or card id on a normal session', async () => {
+  it('OH-25/OH-26: logs no room code, player name or card id on a normal session', async () => {
     // Earlier tests in this file deliberately trip socket errors, so only the lines this session
     // adds are under test here.
     const stderrBefore = server.stderr.length;
@@ -452,7 +309,7 @@ describe('server observability is privacy-safe (/metrics, /health, logs)', () =>
     expect(body).not.toContain(token);
     // The only label in the whole exposition is the fixed-set rejection reason.
     const labels = [...body.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]);
-    for (const label of labels) expect(label).toMatch(/^reason="(global_cap|ip_cap)"$/);
+    for (const label of labels) expect(label).toMatch(/^reason="(global_cap|ip_cap|origin)"$/);
 
     host.close();
     guest.close();
@@ -478,7 +335,7 @@ describe('server observability is privacy-safe (/metrics, /health, logs)', () =>
     }
   });
 
-  it('no canary — name, room code or reconnect token — reaches stdout or stderr', async () => {
+  it('OH-25: no canary — name, room code or reconnect token — reaches stdout or stderr', async () => {
     const c = await Client.open(PORT);
     c.send({ type: 'create_room', name: CANARY_NAME });
     const joined = await c.next('room_joined');

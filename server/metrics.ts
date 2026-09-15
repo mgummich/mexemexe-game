@@ -2,7 +2,7 @@
  * Prometheus text-format metrics for `/metrics`. Aggregate counts only — there is deliberately
  * no per-room, per-player, per-socket or per-request series here, because one time series per
  * player *is* a tracking system however it is labelled. The only label used at all is a
- * `reason` drawn from a fixed two-value set, so cardinality is bounded by the code, not by
+ * `reason` drawn from a fixed three-value set, so cardinality is bounded by the code, not by
  * traffic. See docs/OBSERVABILITY_PRIVACY.md.
  */
 
@@ -10,6 +10,7 @@ export const counters = {
   connectionsTotal: 0,
   connectionsRejectedGlobalCap: 0,
   connectionsRejectedIpCap: 0,
+  connectionsRejectedOrigin: 0,
   disconnectsTotal: 0,
   reconnectsTotal: 0,
   roomsCreatedTotal: 0,
@@ -57,6 +58,7 @@ export function renderMetrics(s: MetricsSnapshot): string {
       metric('mexemexe_connections_rejected_total', 'Connections refused by an admission cap.', 'counter', [
         `mexemexe_connections_rejected_total{reason="global_cap"} ${counters.connectionsRejectedGlobalCap}`,
         `mexemexe_connections_rejected_total{reason="ip_cap"} ${counters.connectionsRejectedIpCap}`,
+        `mexemexe_connections_rejected_total{reason="origin"} ${counters.connectionsRejectedOrigin}`,
       ]),
       metric('mexemexe_disconnects_total', 'WebSocket connections closed since start.', 'counter', [
         `mexemexe_disconnects_total ${counters.disconnectsTotal}`,
