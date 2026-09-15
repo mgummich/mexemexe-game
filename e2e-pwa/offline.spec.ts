@@ -185,11 +185,14 @@ test('offline AI match runs with 4 players', async () => {
 });
 
 test('offline tutorial runs', async () => {
+  // The menu's firstRun layout swaps its two buttons, and this file's shared context has already
+  // started matches by now (gamesStarted > 0), which would put "play direct" on the primary slot.
+  // Clearing the save makes this test's layout its own business instead of a function of which
+  // tests ran before it.
+  await page.evaluate(() => localStorage.removeItem('mexe-save'));
   await boot('/?showcase=menu');
-  // This suite's context never completes the tutorial, so MenuScene.rebuild() is always in its
   // firstRun layout: the PRIMARY button (vy(168)) is "learn" (tutorial) and the secondary one at
-  // (240, 207) is "play direct" — the reverse of a returning player's layout. Clicking (240, 207)
-  // here landed on setup ("MONTE A MESA"), not the tutorial, which is what this test actually needs.
+  // (240, 207) is "play direct" — the reverse of a returning player's layout.
   const [tx, ty] = toScreen(240, 168); // TUTORIAL button (firstRun primary button)
   await page.mouse.click(tx, ty);
   await page.waitForFunction(() => window.__MEXE__.scene === 'tutorial', undefined, { timeout: 10_000 });

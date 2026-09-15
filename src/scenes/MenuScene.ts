@@ -103,7 +103,11 @@ export class MenuScene extends Phaser.Scene {
     // so without this each toggle would stack another copy of every repeating timer.
     this.time.removeAllEvents();
     this.children.removeAll(true);
-    const firstRun = !settings.progress().tutorialCompleted;
+    // "First run" means nothing has been played yet, not just that the tutorial was skipped:
+    // someone who went straight into a match and finished it already knows the big button is
+    // JOGAR, and demoting it back to the lesson every visit reads as the menu forgetting them.
+    const progress = settings.progress();
+    const firstRun = !progress.tutorialCompleted && progress.gamesStarted === 0;
 
     coverBackground(this, 'bg-menu');
     this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.35);
