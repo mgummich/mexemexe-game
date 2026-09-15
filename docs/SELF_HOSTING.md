@@ -43,8 +43,8 @@ Every tagged release publishes both targets to ghcr.io, so you can skip the
 local build:
 
 ```bash
-docker pull ghcr.io/<owner>/mexemexe-game-web:v1.7.0
-docker pull ghcr.io/<owner>/mexemexe-game-server:v1.7.0
+docker pull ghcr.io/<owner>/mexemexe-game-web:v1.10.0
+docker pull ghcr.io/<owner>/mexemexe-game-server:v1.10.0
 ```
 
 Both also carry a `latest` tag. Note that the published `-web` image is built
