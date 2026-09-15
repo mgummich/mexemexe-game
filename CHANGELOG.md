@@ -43,6 +43,13 @@ alongside the docs.
 release script now bumps the lockfile with `package.json`, so the two cannot
 drift apart again.
 
+The arm64 container images were built on an amd64 runner under QEMU, where
+`npm ci` dies with "illegal instruction". Each architecture is now built on its
+own native runner and the two are joined into one multi-arch tag, so the
+published `-web` and `-server` images cover amd64 and arm64 again. Publishing
+the GitHub Release is idempotent, so a release whose image build failed can be
+re-run against the same tag.
+
 ## 1.10.0 — 2026-09-15
 
 ### Fixed: a search that had already found a chair could still be matched again
