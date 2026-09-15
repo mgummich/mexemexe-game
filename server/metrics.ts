@@ -16,6 +16,11 @@ export const counters = {
   roomsCreatedTotal: 0,
   gamesStartedTotal: 0,
   gamesFinishedTotal: 0,
+  queueJoinsTotal: 0,
+  queueCancelsTotal: 0,
+  queueTimeoutsTotal: 0,
+  matchesFormedTotal: 0,
+  matchAllocFailuresTotal: 0,
   messageHandlerErrorsTotal: 0,
   socketErrorsTotal: 0,
 };
@@ -23,6 +28,8 @@ export const counters = {
 interface MetricsSnapshot {
   connections: number;
   rooms: number;
+  /** Players waiting in the casual queue right now. A count, never a roster. */
+  queued: number;
   maxConnections: number;
   maxRooms: number;
   uptimeSec: number;
@@ -46,6 +53,9 @@ export function renderMetrics(s: MetricsSnapshot): string {
       ]),
       metric('mexemexe_rooms_capacity_ratio', 'Live rooms as a fraction of MEXE_MAX_ROOMS.', 'gauge', [
         `mexemexe_rooms_capacity_ratio ${(s.rooms / s.maxRooms).toFixed(4)}`,
+      ]),
+      metric('mexemexe_queue_current', 'Players waiting in the casual matchmaking queue.', 'gauge', [
+        `mexemexe_queue_current ${s.queued}`,
       ]),
       metric('mexemexe_uptime_seconds', 'Seconds since this process started serving.', 'gauge', [
         `mexemexe_uptime_seconds ${s.uptimeSec}`,
@@ -74,6 +84,21 @@ export function renderMetrics(s: MetricsSnapshot): string {
       ]),
       metric('mexemexe_games_finished_total', 'Matches that reached game over since start.', 'counter', [
         `mexemexe_games_finished_total ${counters.gamesFinishedTotal}`,
+      ]),
+      metric('mexemexe_queue_joins_total', 'Queue entries created since start.', 'counter', [
+        `mexemexe_queue_joins_total ${counters.queueJoinsTotal}`,
+      ]),
+      metric('mexemexe_queue_cancels_total', 'Queue entries cancelled by their player since start.', 'counter', [
+        `mexemexe_queue_cancels_total ${counters.queueCancelsTotal}`,
+      ]),
+      metric('mexemexe_queue_timeouts_total', 'Queue entries that expired without a match.', 'counter', [
+        `mexemexe_queue_timeouts_total ${counters.queueTimeoutsTotal}`,
+      ]),
+      metric('mexemexe_matches_formed_total', 'Matchmade rooms allocated since start.', 'counter', [
+        `mexemexe_matches_formed_total ${counters.matchesFormedTotal}`,
+      ]),
+      metric('mexemexe_match_alloc_failures_total', 'Match allocations that failed and returned their group to the queue.', 'counter', [
+        `mexemexe_match_alloc_failures_total ${counters.matchAllocFailuresTotal}`,
       ]),
       metric('mexemexe_message_handler_errors_total', 'Throws caught by the inbound message handler.', 'counter', [
         `mexemexe_message_handler_errors_total ${counters.messageHandlerErrorsTotal}`,

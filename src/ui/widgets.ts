@@ -293,6 +293,13 @@ export class PixelButton extends Phaser.GameObjects.Container {
     return this;
   }
 
+  /** The text on the button, for a caller that needs to say *which* button it means — the
+   * keyboard focus ring's verification surface, where an index is only meaningful until the
+   * next layout change. */
+  labelText(): string {
+    return this.txt.text;
+  }
+
   /** Gold ring overlay marking a "chosen" state (e.g. the active player-count chip) — independent of hover/pressed/disabled. */
   setSelected(on: boolean): this {
     if (on && !this.selectedRing) {

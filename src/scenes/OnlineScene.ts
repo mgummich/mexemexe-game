@@ -10,10 +10,10 @@ import {
 } from '../net/client';
 import { errorMessage } from '../net/errors';
 import {
-  CUSTOM_BOUNDS, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY, REACTION_COOLDOWN_MS,
-  REACTIONS, TIMER_PRESETS,
-  type ActivityEvent, type GameView, type PartyState, type ReactionId, type RoomListing,
-  type RoomPlayerSummary, type RoomSettings, type RoomVisibility, type TimerMode,
+  CUSTOM_BOUNDS, DEFAULT_QUEUE_TARGET, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY,
+  QUEUE_TARGETS, REACTION_COOLDOWN_MS, REACTIONS, TIMER_PRESETS,
+  type ActivityEvent, type GameView, type PartyState, type QueueTarget, type ReactionId,
+  type RoomListing, type RoomPlayerSummary, type RoomSettings, type RoomVisibility, type TimerMode,
 } from '../net/protocol';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
@@ -61,6 +61,17 @@ function browseRows(portrait: boolean): number {
  * built from a snapshot, so they are answered on the browser instead of on the error screen. */
 const STALE_LISTING_CODES: readonly string[] = ['room_not_found', 'room_closed', 'room_full', 'game_started'];
 
+/**
+ * How long MATCH FOUND stays on screen before the table does. Long enough to read three words and
+ * understand what just happened, short enough that Quick Match still feels quick. The handoff is
+ * already committed on the server while this runs — nothing is waiting on the player.
+ */
+const MATCH_FOUND_MS = 1200;
+
+/** Player-count preference cycle, in the order one tap moves through it. `any` first because it
+ * is the default and the only one that can be honoured at any queue size. */
+const QUEUE_TARGET_CYCLE = QUEUE_TARGETS;
+
 /** Recent-room codes offered as one-tap shortcuts under the entry screen's buttons. The stored
  * list is longer (MAX_RECENT_ROOMS); more than three on screen is clutter, not recall. */
 const RECENT_SHOWN = 3;
@@ -88,7 +99,8 @@ function sanitizeName(raw: string): string {
  */
 export class OnlineScene extends Phaser.Scene {
   private client!: NetClient;
-  private phase: 'idle' | 'join' | 'name' | 'lobby' | 'custom' | 'party' | 'browse' | 'error' = 'idle';
+  private phase:
+    | 'idle' | 'join' | 'name' | 'lobby' | 'custom' | 'party' | 'browse' | 'queue' | 'matched' | 'error' = 'idle';
   /** The custom screen's working copy. Edited freely while that screen is open and sent as one
    * proposal on APLICAR — a field-by-field send would clear everyone's ready bit five times for
    * one decision. Null whenever the screen is closed. */
@@ -159,6 +171,27 @@ export class OnlineScene extends Phaser.Scene {
   /** Code of the join currently in flight, so a refusal can retire a dead recent-room entry
    * instead of offering it again next time. Cleared by the answer, whichever way it goes. */
   private pendingJoinCode: string | null = null;
+  /** How many players this device asks Quick Match for. A request, never a decision: the server's
+   * answer is what `queueTarget` is set from, so a refused or clamped preference can never be
+   * rendered as if it had been honoured. */
+  private queueTarget: QueueTarget = DEFAULT_QUEUE_TARGET;
+  /** When the current search started, for the cosmetic elapsed counter. The server owns the
+   * actual queue lifetime; this number is only ever shown, never acted on. */
+  private queueStartedAt = 0;
+  /** The line explaining how the last search ended (cancelled, expired), shown on the online home
+   * where the player lands. Null when there is nothing to explain. */
+  private queueNotice: string | null = null;
+  /** Table size of the match that was just found, for the MATCH FOUND line. */
+  private matchPlayers = 0;
+  /** True once the handoff into GameScene is scheduled, so a second view arriving during the
+   * MATCH FOUND beat cannot start the match twice. */
+  private matchHandoff = false;
+  /** The newest view seen during the MATCH FOUND beat. Kept rather than dropped: a `state_sync`
+   * that lands inside that second would otherwise be discarded and GameScene would open on a
+   * revision the server has already moved past. */
+  private pendingMatchView: GameView | null = null;
+  /** The elapsed-search label, ticked in place once a second instead of by rebuilding the screen. */
+  private searchLabel: Phaser.GameObjects.Text | null = null;
   /** Every button on the current screen, in reading order — the keyboard focus ring's targets.
    * Collected from the display list after each rebuild rather than registered per call site, so
    * a screen cannot be keyboard-unreachable by forgetting to opt in. */
@@ -169,6 +202,11 @@ export class OnlineScene extends Phaser.Scene {
   /** The phase the ring's index was last meaningful in. A new screen starts the ring at its top
    * button; a redraw of the same screen (a room_state push, a flash label) keeps it where it is. */
   private focusPhase: OnlineScene['phase'] | null = null;
+  /** The label the ring was on when the screen was last drawn. A redraw can change how many
+   * buttons a screen has — a room card appearing or leaving the browser, a reason line showing —
+   * and an index kept across that change points at a *different* action than the one the player
+   * put the ring on. The label is what the ring is actually on, so it is what gets restored. */
+  private focusLabel: string | null = null;
 
   constructor() {
     super('online');
@@ -217,7 +255,15 @@ export class OnlineScene extends Phaser.Scene {
     this.focusables = [];
     this.focusIndex = -1;
     this.focusPhase = null;
+    this.focusLabel = null;
     this.recent = readRecentRooms();
+    this.queueTarget = DEFAULT_QUEUE_TARGET;
+    this.queueStartedAt = 0;
+    this.queueNotice = null;
+    this.matchPlayers = 0;
+    this.matchHandoff = false;
+    this.pendingMatchView = null;
+    this.searchLabel = null;
     // Field initializer, not reset here, is exactly the class of bug this run's worst defect
     // (D1) came from — a restart must never inherit a scene's previous life's state.
     this.offlineError = false;
@@ -275,6 +321,18 @@ export class OnlineScene extends Phaser.Scene {
     } else {
       this.client.connect();
     }
+    // One scene-wide timer for the searching counter, rather than a rebuild a second: the screen
+    // is unchanged apart from this number, and a full rebuild would also reset the focus ring.
+    this.time.addEvent({
+      delay: 1000,
+      loop: true,
+      callback: () => {
+        if (this.phase === 'queue' && this.searchLabel?.active) {
+          this.searchLabel.setText(t('online.queueElapsed', { time: this.elapsedSearch() }));
+        }
+      },
+    });
+
     this.rebuild();
     debugApi.ready = true;
 
@@ -361,7 +419,10 @@ export class OnlineScene extends Phaser.Scene {
         this.hostSeat = msg.hostSeat;
         this.party = msg.party;
         this.visibility = msg.visibility;
-        this.phase = 'lobby';
+        // A matchmade room arrives as room_joined like any other, but the player is not in a
+        // lobby — they are mid-handoff, watching MATCH FOUND. Clobbering the phase here would
+        // flash the lobby for a frame and cancel the one readable beat of Quick Match.
+        if (this.phase !== 'matched') this.phase = 'lobby';
         this.pendingJoinCode = null;
         // Local display history only: the code and the host's name, both already on screen. The
         // credential that could reclaim this seat lives in sessionStorage and never comes here.
@@ -399,6 +460,30 @@ export class OnlineScene extends Phaser.Scene {
             this.rebuild();
           }
         });
+      }),
+      /**
+       * The only writer of this client's queue state. Every transition is the server's word:
+       * a cancel that lost to a match arrives here as `matched`, a resumed phone arrives as
+       * `queued`, and nothing on this screen infers a state it was not told.
+       */
+      this.client.on('queue_state', (msg) => {
+        this.inFlight.delete('queue');
+        this.queueTarget = msg.target;
+        if (msg.status === 'queued') {
+          if (this.phase !== 'queue') this.queueStartedAt = Date.now();
+          this.phase = 'queue';
+          this.queueNotice = null;
+        } else if (msg.status === 'matched') {
+          this.matchPlayers = msg.players ?? 0;
+          this.phase = 'matched';
+        } else if (msg.status === 'expired') {
+          this.phase = 'idle';
+          this.queueNotice = t('online.queueExpired');
+        } else if (this.phase === 'queue') {
+          this.phase = 'idle';
+          this.queueNotice = t('online.queueCancelled');
+        }
+        this.rebuild();
       }),
       this.client.on('room_list', (msg) => {
         this.listings = msg.rooms;
@@ -453,8 +538,30 @@ export class OnlineScene extends Phaser.Scene {
     );
   }
 
-  /** Hand off to GameScene for a match — from a fresh `game_started` or a resumed `state_sync`. */
+  /** Hand off to GameScene for a match — from a fresh `game_started` or a resumed `state_sync`.
+   *
+   * A matchmade match pauses on MATCH FOUND first. The pause is presentation only: the room, the
+   * seat and the deal already exist on the server, so a player who closes the tab during it
+   * reconnects into the match exactly as they would from any other moment. */
   private enterMatch(view: GameView): void {
+    if (this.code === null || this.seat === null) return;
+    if (this.phase === 'matched' || this.matchHandoff) {
+      // Newest wins: the handoff opens GameScene on the last view the server sent, not on the
+      // one that happened to arrive first.
+      this.pendingMatchView = view;
+      if (this.matchHandoff) return;
+      this.matchHandoff = true;
+      this.time.delayedCall(MATCH_FOUND_MS, () => {
+        const latest = this.pendingMatchView;
+        this.pendingMatchView = null;
+        if (latest) this.startMatch(latest);
+      });
+      return;
+    }
+    this.startMatch(view);
+  }
+
+  private startMatch(view: GameView): void {
     if (this.code === null || this.seat === null) return;
     // seed 0: the server never discloses the shuffle seed, and an online client never deals.
     this.scene.start('game', {
@@ -499,9 +606,19 @@ export class OnlineScene extends Phaser.Scene {
       openCustomSettings: () => this.openCustomSettings(),
       turnMsLeft: () => null,
       phase: () => this.phase,
-      focus: () => ({ index: this.focusIndex, count: this.focusables.length }),
+      focus: () => ({
+        index: this.focusIndex,
+        count: this.focusables.length,
+        label: this.focusIndex < 0 ? '' : this.focusables[this.focusIndex]?.labelText() ?? '',
+      }),
       visibility: () => this.visibility,
       setVisibility: (v) => this.client.setVisibility(v),
+      joinQueue: (target) => {
+        this.queueTarget = target;
+        this.startQueue();
+      },
+      cancelQueue: () => this.cancelQueue(),
+      queue: () => ({ status: this.phase === 'queue' ? 'queued' : this.phase === 'matched' ? 'matched' : 'idle', target: this.queueTarget }),
       openBrowse: () => {
         if (this.phase !== 'idle') return;
         this.phase = 'browse';
@@ -518,6 +635,29 @@ export class OnlineScene extends Phaser.Scene {
       desyncs: () => 0,
       requestResync: () => this.client.requestResync(),
     };
+  }
+
+  /** mm:ss since the search started. Cosmetic: the server decides when a search is over, and a
+   * client whose clock disagrees changes nothing. */
+  private elapsedSearch(): string {
+    const secs = Math.max(0, Math.floor((Date.now() - this.queueStartedAt) / 1000));
+    return `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+  }
+
+  private queueTargetLabel(target: QueueTarget): string {
+    return t(target === 'any' ? 'online.queueTargetAny' : `online.queueTarget${target}`);
+  }
+
+  private startQueue(): void {
+    this.queueNotice = null;
+    this.queueStartedAt = Date.now();
+    this.client.joinQueue(this.queueTarget, this.playerName());
+  }
+
+  /** Leave the search. Idempotent by construction — the button is gone after the first press, and
+   * the server answers a duplicate with the same authoritative state either way. */
+  private cancelQueue(): void {
+    this.client.cancelQueue();
   }
 
   private backToMenu(): void {
@@ -595,6 +735,7 @@ export class OnlineScene extends Phaser.Scene {
     if (from >= 0) this.focusables[from]?.setSelected(false);
     this.focusIndex = from < 0 ? (delta > 0 ? 0 : n - 1) : (from + delta + n) % n;
     this.focusables[this.focusIndex]?.setSelected(true);
+    this.focusLabel = this.focusables[this.focusIndex]?.labelText() ?? null;
   }
 
   /**
@@ -610,13 +751,24 @@ export class OnlineScene extends Phaser.Scene {
    * would otherwise land somewhere arbitrary on a shorter screen.
    */
   private collectFocusables(): void {
+    const wasOn = this.focusLabel;
     this.focusables = this.children.list
       .filter((o): o is PixelButton => o instanceof PixelButton)
       .sort((a, b) => a.y - b.y || a.x - b.x);
-    if (this.focusIndex >= 0 && this.focusPhase !== this.phase) this.focusIndex = 0;
+    if (this.focusIndex >= 0) {
+      if (this.focusPhase !== this.phase) {
+        this.focusIndex = 0;
+      } else if (wasOn !== null) {
+        // Same screen, redrawn: follow the button, not the slot. A card that disappeared between
+        // two frames must not silently hand the ring's Enter to whatever moved into its place.
+        const same = this.focusables.findIndex((b) => b.labelText() === wasOn);
+        if (same !== -1) this.focusIndex = same;
+      }
+    }
     this.focusPhase = this.phase;
     if (this.focusIndex >= this.focusables.length) this.focusIndex = this.focusables.length - 1;
     if (this.focusIndex >= 0) this.focusables[this.focusIndex]?.setSelected(true);
+    this.focusLabel = this.focusIndex >= 0 ? this.focusables[this.focusIndex]?.labelText() ?? null : null;
   }
 
   /** Runs `fn` unless `key` is already in flight, then disables it for `cooldownMs` (cleared
@@ -732,6 +884,8 @@ export class OnlineScene extends Phaser.Scene {
   private rebuild(): void {
     this.tweens.killAll();
     this.children.removeAll(true);
+    // Destroyed with the rest of the display list; the once-a-second tick checks for it.
+    this.searchLabel = null;
     if (view().touch && (this.phase === 'join' || this.phase === 'name')) {
       this.ensureTextInput(this.phase === 'join' ? 'code' : 'name');
     } else this.destroyJoinInput();
@@ -775,6 +929,10 @@ export class OnlineScene extends Phaser.Scene {
       this.renderParty();
     } else if (this.phase === 'browse') {
       this.renderBrowse();
+    } else if (this.phase === 'queue') {
+      this.renderQueue();
+    } else if (this.phase === 'matched') {
+      this.renderMatchFound();
     } else if (this.phase === 'lobby' && this.code !== null) {
       this.renderLobby();
     } else {
@@ -786,12 +944,22 @@ export class OnlineScene extends Phaser.Scene {
     // room from a settings screen would be a trap, and the draft is deliberately thrown away.
     // 'browse' is reached from the entry screen without a room, so VOLTAR there means "back to
     // create/join", not "leave the room" — leaving one we were never in would drop the socket.
-    const leavingRoom = this.phase !== 'custom' && this.phase !== 'party' && this.phase !== 'browse';
+    // MATCH FOUND has no way out on purpose: the seat already exists and the match has already
+    // been dealt, so an exit here would be an abandonment dressed up as a choice.
+    if (this.phase === 'matched') {
+      this.collectFocusables();
+      return;
+    }
+    const isSubScreen = this.phase === 'custom' || this.phase === 'party' || this.phase === 'browse' || this.phase === 'queue';
+    const leavingRoom = !isSubScreen;
     const backLabel = this.phase === 'custom' ? 'online.customCancel' : 'online.back';
     new PixelButton(this, cx(), view().portrait ? vy(260) : vy(245), t(backLabel), () => {
       if (!leavingRoom) {
         this.customDraft = null;
-        this.phase = this.phase === 'browse' ? 'idle' : 'lobby';
+        // Backing out of a search *is* cancelling it: leaving the entry behind would keep the
+        // player matchable from a screen that no longer says they are searching.
+        if (this.phase === 'queue') this.cancelQueue();
+        this.phase = this.phase === 'browse' || this.phase === 'queue' ? 'idle' : 'lobby';
         this.rebuild();
         return;
       }
@@ -819,7 +987,7 @@ export class OnlineScene extends Phaser.Scene {
    * discovery outage degrades on its own screen instead of taking CREATE/JOIN down with it.
    */
   private renderEntry(): void {
-    const nameLine = label(this, cx(), vy(66), t('online.playingAs', { name: this.playerName() }), 8, '#f7f2e7');
+    const nameLine = label(this, cx(), vy(62), t('online.playingAs', { name: this.playerName() }), 8, '#f7f2e7');
     nameLine
       // A text line's own bounds are a thin strip; a coarse pointer needs a real target, so the
       // hit area is grown to the touch floor without moving the text.
@@ -833,22 +1001,54 @@ export class OnlineScene extends Phaser.Scene {
         this.nameInput = readDisplayName() ?? '';
         this.rebuild();
       });
-    label(this, cx(), vy(76), t('online.changeName'), 6, '#8a7f6e');
+    label(this, cx(), vy(72), t('online.changeName'), 6, '#8a7f6e');
 
-    // Two stacks, one cursor. A first-time player sees exactly the stack they always saw —
-    // CRIAR SALA at 110, ENTRAR at 145 — because nothing has been remembered yet and there is
-    // nothing to make room for. A returning one gets CONTINUAR above it and a tighter stack.
+    // Quick Match is the primary action: one tap into a table with strangers, with the only
+    // choice that changes what it does — how many of them — directly under it.
+    const quick = new PixelButton(
+      this, cx(), vy(94), t('online.quickMatch'),
+      () => this.fireOnce('queue', 3000, () => this.startQueue()),
+      { textureBase: 'btn-feito', w: 160, h: 22, size: 9, primary: true, onBlocked: () => this.flashOfflineReason() },
+    );
+    quick.setEnabled(this.canAct('queue'));
+    const targetLine = label(this, cx(), vy(110), this.queueTargetLabel(this.queueTarget), 7, '#f7d23e');
+    targetLine
+      .setInteractive(
+        new Phaser.Geom.Rectangle(-20, -14, targetLine.width + 40, Math.max(targetLine.height + 16, 34)),
+        Phaser.Geom.Rectangle.Contains,
+      )
+      .on('pointerup', () => {
+        const i = QUEUE_TARGET_CYCLE.indexOf(this.queueTarget);
+        this.queueTarget = QUEUE_TARGET_CYCLE[(i + 1) % QUEUE_TARGET_CYCLE.length]!;
+        this.rebuild();
+      });
+
+    // How the last search ended, where the player actually landed rather than on a screen they
+    // have already left. It takes the caption's place for a moment: both are explanation, and
+    // only one of them is news.
+    if (this.queueNotice !== null) {
+      this.add
+        .text(cx(), vy(120), this.queueNotice, {
+          ...fontStyle(7, '#f7d23e'), align: 'center', wordWrap: { width: panelW(250) },
+        })
+        .setOrigin(0.5);
+    } else {
+      label(this, cx(), vy(120), t('online.playWithFriends'), 6, '#8a7f6e');
+    }
+
+    // Two stacks, one cursor. A returning player gets CONTINUAR above the create/join pair; a
+    // first-time one sees only the pair, because nothing has been remembered to make room for.
     const last = this.recent[0];
-    let y = last ? 128 : 110;
+    let y = last ? 164 : 136;
     if (last) {
       const cont = new PixelButton(
-        this, cx(), vy(92), t('online.continue'),
+        this, cx(), vy(138), t('online.continue'),
         () => this.fireOnce('join', 3000, () => this.joinCode(last.code)),
         { textureBase: 'btn-feito', w: 150, h: 20, size: 8, primary: true, onBlocked: () => this.flashOfflineReason() },
       );
       cont.setEnabled(this.canAct('join'));
       label(
-        this, cx(), vy(104),
+        this, cx(), vy(149),
         last.host ? t('online.continueRoom', { code: last.code, host: last.host }) : last.code,
         6, '#c0b8a8',
       );
@@ -857,26 +1057,26 @@ export class OnlineScene extends Phaser.Scene {
     const createBtn = new PixelButton(
       this, cx(), vy(y), t('online.create'),
       () => this.fireOnce('create', 3000, () => this.client.createRoom(this.playerName())),
-      { textureBase: 'btn-feito', w: 140, h: 24, size: 9, primary: !last, onBlocked: () => this.flashOfflineReason() },
+      { textureBase: 'btn-comprar', w: 140, h: 20, size: 8, onBlocked: () => this.flashOfflineReason() },
     );
     createBtn.setEnabled(this.canAct('create'));
-    y += last ? 30 : 35;
+    y += 20;
 
     new PixelButton(this, cx(), vy(y), t('online.join'), () => {
       this.phase = 'join';
       this.codeInput = '';
       this.rebuild();
-    }, { textureBase: 'btn-comprar', w: 140, h: 22, size: 8 });
-    y += 28;
+    }, { textureBase: 'btn-comprar', w: 140, h: 20, size: 8 });
+    y += 18;
 
     const browse = new PixelButton(this, cx(), vy(y), t('online.browse'), () => {
       this.phase = 'browse';
       this.browseState = 'loading';
       this.rebuild();
       this.refreshListings();
-    }, { textureBase: 'btn-comprar', w: 140, h: 20, size: 7, onBlocked: () => this.flashOfflineReason() });
+    }, { textureBase: 'btn-comprar', w: 140, h: 18, size: 7, onBlocked: () => this.flashOfflineReason() });
     browse.setEnabled(!isOffline());
-    y += 24;
+    y += 16;
 
     // Anything older than "the room before last" is offered as a bare code strip: small, one tap,
     // and gone from the list the moment the server says that room no longer exists.
@@ -886,7 +1086,7 @@ export class OnlineScene extends Phaser.Scene {
       const gap = 56;
       others.forEach((room, i) => {
         const x = cx() - ((others.length - 1) * gap) / 2 + i * gap;
-        const el = label(this, x, vy(y + 12), room.code, 8, '#f7d23e');
+        const el = label(this, x, vy(y + 11), room.code, 8, '#f7d23e');
         el.setInteractive(
           new Phaser.Geom.Rectangle(-12, -14, el.width + 24, Math.max(el.height + 20, 34)),
           Phaser.Geom.Rectangle.Contains,
@@ -896,6 +1096,43 @@ export class OnlineScene extends Phaser.Scene {
         });
       });
     }
+  }
+
+  /**
+   * The searching screen. Three facts and one action: that we are searching, what for, how long
+   * it has been, and how to stop. No queue size, no position, no estimate and no roster — none of
+   * it is on the wire (§3e), and a made-up number would be worse than the honest sentence.
+   *
+   * Nothing here is animated: the state is readable from words alone, so reduced motion and a
+   * still screenshot say exactly the same thing a moving one would.
+   */
+  private renderQueue(): void {
+    label(this, cx(), vy(72), t('online.queueSearching'), 11, '#f7d23e');
+    label(this, cx(), vy(88), this.queueTargetLabel(this.queueTarget), 8, '#f7f2e7');
+    this.searchLabel = label(
+      this, cx(), vy(116), t('online.queueElapsed', { time: this.elapsedSearch() }), 9, '#c0b8a8',
+    );
+    // The place in the queue is held server-side across a brief drop, so the honest line here is
+    // "it continues", not "it failed". The status line at the top already names the connection
+    // state itself.
+    if (this.status !== 'open') {
+      this.add
+        .text(cx(), vy(140), t('online.queueLost'), {
+          ...fontStyle(7, '#f7d23e'), align: 'center', wordWrap: { width: panelW(250) },
+        })
+        .setOrigin(0.5);
+    }
+    new PixelButton(this, cx(), vy(172), t('online.queueCancel'), () => this.cancelQueue(), {
+      textureBase: 'btn-comprar', w: 150, h: view().portrait ? 26 : 22, size: 9,
+    });
+  }
+
+  /** The beat between the queue and the table. No action on it, because there is nothing left to
+   * decide: the room, the seat and the deal already exist. */
+  private renderMatchFound(): void {
+    label(this, cx(), vy(100), t('online.matchFound'), 14, '#f7d23e');
+    label(this, cx(), vy(122), t('online.matchPlayers', { n: this.matchPlayers }), 9, '#f7f2e7');
+    label(this, cx(), vy(140), t('online.matchJoining'), 8, '#c0b8a8');
   }
 
   /** Ask the server for the currently discoverable rooms. Manual only — this fires when the

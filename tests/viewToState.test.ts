@@ -30,9 +30,10 @@ function state(): GameState {
 describe('protocol', () => {
   // Bumped with every wire change so a client and a server from different builds refuse each
   // other instead of half-understanding one another. 6 added room visibility + discovery;
-  // 7 changed the reaction enum (`hurry` out, `gg` in) for public rooms.
-  it('PROTOCOL_VERSION is 7', () => {
-    expect(PROTOCOL_VERSION).toBe(7);
+  // 7 changed the reaction enum (`hurry` out, `gg` in) for public rooms; 8 added the casual
+  // matchmaking queue (join_queue/cancel_queue/queue_state).
+  it('PROTOCOL_VERSION is 8', () => {
+    expect(PROTOCOL_VERSION).toBe(8);
   });
 
   it('buildView carries the rules config', () => {

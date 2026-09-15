@@ -7,9 +7,10 @@ import type { IncomingMessage } from 'node:http';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
-  DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY, MAX_ROOM_LISTINGS,
-  parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage,
+  DEFAULT_QUEUE_TARGET, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY, MAX_ROOM_LISTINGS,
+  parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type QueueStatus, type ServerMessage,
 } from '../src/net/protocol';
+import { MatchQueue, type QueueEntry } from './matchmaking';
 import { RoomManager } from './rooms';
 import { config } from './config';
 import { createLogger, errorFields } from './log';
@@ -23,6 +24,7 @@ import {
   hitFlood,
   hitJoinLimit,
   hitListLimit,
+  hitQueueLimit,
   hitResyncLimit,
   hitRoomCreateLimit,
   moveSocket,
@@ -61,6 +63,12 @@ const rooms = new RoomManager({
   idleTimeoutMs: config.idleTimeoutMs,
   ...(testSeed === undefined ? {} : { genSeed: () => testSeed }),
 });
+
+const queue = new MatchQueue();
+/** queue token -> the one socket currently speaking for that entry. The queue's equivalent of
+ * `sockets`, and the reason a matched player whose socket went away is simply seated absent
+ * rather than special-cased. */
+const queueSockets = new Map<string, WebSocket>();
 
 const connections = new Map<WebSocket, ConnState>();
 const connectionsByIp = new Map<string, number>();
@@ -172,6 +180,73 @@ function roomJoined(code: string, seat: number, token: string): ServerMessage {
     party: info?.party ?? EMPTY_PARTY,
     visibility: info?.visibility ?? DEFAULT_ROOM_VISIBILITY,
   };
+}
+
+/** The only shape queue state ever leaves the server in. Nothing about anyone else is
+ * representable in it — no size, no position, no names (§3e). */
+function queueState(status: QueueStatus, entry: QueueEntry | null, extra: { reqId?: string; players?: number } = {}): ServerMessage {
+  return {
+    v: PROTOCOL_VERSION, type: 'queue_state', status,
+    target: entry?.target ?? DEFAULT_QUEUE_TARGET,
+    ...(status === 'queued' && entry ? { token: entry.token } : {}),
+    ...(extra.players === undefined ? {} : { players: extra.players }),
+    ...(extra.reqId === undefined ? {} : { reqId: extra.reqId }),
+  };
+}
+
+/** Forget a connection's queue membership without touching the entry itself — for a socket that
+ * is going away or has just been superseded. */
+function releaseQueueSocket(conn: ConnState, ws: WebSocket): void {
+  if (conn.queueToken === null) return;
+  if (queueSockets.get(conn.queueToken) === ws) queueSockets.delete(conn.queueToken);
+  conn.queueToken = null;
+}
+
+/**
+ * Form and hand off every match that can be formed right now. Synchronous end to end, which is
+ * what makes it atomic in this process: an entry is removed from the queue by `takeGroups`, and
+ * by the time anything else can run it is either seated in a room or back in the queue.
+ *
+ * A player whose socket vanished between joining the queue and being matched is still seated —
+ * marked absent, so the room's ordinary reconnect grace and missed-turn policy decide what
+ * happens to them. That is deliberately the same policy a mid-match drop gets; matchmaking does
+ * not get a second abandonment system.
+ */
+function attemptMatches(): void {
+  for (const group of queue.takeGroups()) {
+    const created = rooms.createMatchRoom(group.map((e) => ({ name: e.name, token: e.token })));
+    if (!created.ok) {
+      // The server is out of room capacity. Put the group back exactly where it was, tell them
+      // they are still searching, and stop trying this pass — the next join or sweep retries.
+      queue.restore(group);
+      counters.matchAllocFailuresTotal++;
+      log.info('match_alloc_failed', { size: group.length });
+      for (const entry of group) {
+        const sock = queueSockets.get(entry.token);
+        if (sock) send(sock, queueState('queued', entry));
+      }
+      break;
+    }
+    counters.matchesFormedTotal++;
+    log.debug('match_formed', { size: group.length });
+    group.forEach((entry, seat) => {
+      const sock = queueSockets.get(entry.token);
+      queueSockets.delete(entry.token);
+      if (!sock) {
+        rooms.disconnect(created.code, seat);
+        return;
+      }
+      const state = connections.get(sock);
+      if (state) state.queueToken = null;
+      moveSocket(sockets, state ?? newConnState(Date.now()), created.code, seat, sock);
+      // MATCH FOUND first, then the room itself: the client shows one readable transition while
+      // the authoritative room and view land behind it.
+      send(sock, queueState('matched', entry, { players: group.length }));
+      send(sock, roomJoined(created.code, seat, entry.token));
+      const view = rooms.getView(created.code, seat);
+      if (view) send(sock, { v: PROTOCOL_VERSION, type: 'game_started', view });
+    });
+  }
 }
 
 function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void {
@@ -293,6 +368,60 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       });
       return;
     }
+    case 'join_queue': {
+      // Budget first, so a refusal a client keeps re-sending is bounded like any other.
+      if (hitQueueLimit(conn, Date.now())) {
+        log.debug('queue_limit', {});
+        sendError(ws, 'rate_limited', 'too many matchmaking requests', msg.reqId);
+        return;
+      }
+      // A seated player is already committed to a table. Queueing from one would put the same
+      // person in two matches, so it is refused and the existing room stays theirs (§3e).
+      if (conn.code !== null) {
+        sendError(ws, 'already_in_match', 'already seated in a room', msg.reqId);
+        return;
+      }
+      // Idempotent: a session that is already queued is told what it is already doing rather
+      // than given a second entry to be matched twice from.
+      if (conn.queueToken !== null) {
+        const existing = queue.get(conn.queueToken);
+        if (existing) {
+          send(ws, queueState('queued', existing, { reqId: msg.reqId }));
+          return;
+        }
+        releaseQueueSocket(conn, ws);
+      }
+      const entry = queue.join(msg.name, msg.target, Date.now());
+      if (!entry) {
+        sendError(ws, 'queue_busy', 'matchmaking is at capacity', msg.reqId);
+        return;
+      }
+      conn.queueToken = entry.token;
+      queueSockets.set(entry.token, ws);
+      counters.queueJoinsTotal++;
+      send(ws, queueState('queued', entry, { reqId: msg.reqId }));
+      // Event-driven: the only moment a new group can become formable is a join.
+      attemptMatches();
+      return;
+    }
+    case 'cancel_queue': {
+      if (hitQueueLimit(conn, Date.now())) {
+        log.debug('queue_limit', {});
+        sendError(ws, 'rate_limited', 'too many matchmaking requests', msg.reqId);
+        return;
+      }
+      // The cancel/match race, resolved one way for good: an assignment that is already
+      // committed wins, and the player is told they are in a match instead of being half-removed
+      // from a room that already holds their seat.
+      if (conn.code !== null) {
+        send(ws, queueState('matched', null, { reqId: msg.reqId }));
+        return;
+      }
+      if (conn.queueToken !== null && queue.cancel(conn.queueToken)) counters.queueCancelsTotal++;
+      releaseQueueSocket(conn, ws);
+      send(ws, queueState('idle', null, { reqId: msg.reqId }));
+      return;
+    }
     case 'mexe_started': {
       if (conn.code === null || conn.seat === null) {
         sendError(ws, 'no_room', 'not in a room', msg.reqId);
@@ -363,9 +492,29 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
     case 'reconnect': {
       const result = rooms.reconnect(msg.token);
       if (!result.ok) {
+        // Not a seat — but the same token is what a queue entry is keyed by, so a reload, a
+        // dropped socket or a resumed phone lands back on the search it left rather than on an
+        // error. A committed match is found by the branch above, never here, which is why a
+        // matched player can never be put back in the queue.
+        const entry = queue.get(msg.token);
+        if (entry) {
+          const previous = queueSockets.get(msg.token);
+          // Exactly one connection may speak for an entry (S4's rule, for the queue): whatever
+          // socket held it loses it here, so a stale transport cannot cancel or re-claim it.
+          if (previous && previous !== ws) {
+            const previousState = connections.get(previous);
+            if (previousState) previousState.queueToken = null;
+          }
+          queueSockets.set(msg.token, ws);
+          conn.queueToken = msg.token;
+          send(ws, queueState('queued', entry, { reqId: msg.reqId }));
+          return;
+        }
         sendError(ws, result.error, 'invalid or expired token', msg.reqId);
         return;
       }
+      // Seated: whatever this socket was searching for, the room it already holds wins.
+      releaseQueueSocket(conn, ws);
       counters.reconnectsTotal++;
       // The seat this socket held before the hop, if any. `moveSocket` below detaches the socket
       // from it, but only the room manager can mark the seat absent — without this the old seat
@@ -407,6 +556,14 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       // Recovery is one-way: the server re-sends what it already holds and never reads any
       // client state. A lobby seat gets the room list, an in-match seat the full view.
       if (conn.code === null || conn.seat === null) {
+        // A queued connection has authoritative state too, and a resumed phone asks for it on
+        // exactly this path. Answering "not in a room" would throw a player who is searching
+        // onto an error screen for doing nothing wrong.
+        const entry = conn.queueToken === null ? null : queue.get(conn.queueToken);
+        if (entry) {
+          send(ws, queueState('queued', entry, { reqId: msg.reqId }));
+          return;
+        }
         sendError(ws, 'no_room', 'not in a room', msg.reqId);
         return;
       }
@@ -481,6 +638,7 @@ const server = createServer((req, res) => {
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
         rooms: rooms.roomCount(),
         connections: connections.size,
+        queued: queue.size(),
         protocol: PROTOCOL_VERSION,
       }),
     );
@@ -498,6 +656,7 @@ const server = createServer((req, res) => {
       renderMetrics({
         connections: connections.size,
         rooms: rooms.roomCount(),
+        queued: queue.size(),
         maxConnections: config.maxConnections,
         maxRooms: config.maxRooms,
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
@@ -577,6 +736,10 @@ wss.on('connection', (ws: WebSocket, req) => {
 
   ws.on('close', () => {
     counters.disconnectsTotal++;
+    // The entry itself survives a dropped transport for the rest of its queue lifetime: a phone
+    // that lost Wi-Fi for ten seconds should come back to the same search, not to a lost place
+    // and a duplicate join. Only this socket's authority over it goes.
+    releaseQueueSocket(conn, ws);
     if (conn.code !== null && conn.seat !== null) {
       detachSocket(conn.code, conn.seat, ws);
       rooms.disconnect(conn.code, conn.seat);
@@ -603,6 +766,14 @@ wss.on('connection', (ws: WebSocket, req) => {
 const sweepTimer = setInterval(() => {
   // Reaped rooms must not leave their sockets stuck forever on a dead code (S1).
   for (const code of rooms.sweep()) closeRoom(code, 'room closed: timed out');
+  for (const entry of queue.expire(Date.now())) {
+    counters.queueTimeoutsTotal++;
+    const sock = queueSockets.get(entry.token);
+    queueSockets.delete(entry.token);
+    const state = sock ? connections.get(sock) : undefined;
+    if (state) state.queueToken = null;
+    if (sock) send(sock, queueState('expired', entry));
+  }
   pruneCounters(roomCreatesByIp, Date.now(), ROOM_CREATE_WINDOW_MS);
 }, SWEEP_INTERVAL_MS).unref();
 

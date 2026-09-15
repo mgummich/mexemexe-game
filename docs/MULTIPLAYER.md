@@ -5,16 +5,22 @@ reconnect, and what the alpha does **not** do. The rules themselves are in
 [GAME_RULES.md](GAME_RULES.md); the client/server split in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Scope: 2–4-player private rooms, alpha quality. No accounts, matchmaking,
-ranking, chat, or cosmetics sync. The game labels the entry point
+Scope: 2–4-player rooms, alpha quality — private by code or link, optionally
+listed in a room browser, or formed for you by the casual matchmaking queue. No
+accounts, ranking, chat, or cosmetics sync. The game labels the entry point
 `ONLINE (ALPHA)`.
 
 ## 0. Limitations
 
 - **No accounts, ranked play, chat or spectators.** Rooms are private by
   default and joined by invite link or 5-character code. A host may opt one room
-  into a listed room browser (§3d); there is no public directory, no matchmaking
-  queue, no rating, and no way to find a room whose host did not list it.
+  into a listed room browser (§3d), and Quick Match will form a table out of
+  whoever is queued (§3e). There is no public directory, no rating, no skill
+  matching, and no way to find a room whose host did not list it.
+- **Matchmaking is casual only.** One FIFO queue, one compatibility dimension
+  (how many players you want), server-defined casual terms, no backfill of a
+  match in progress and no bots. See §3e for the policy and what it refuses to
+  become.
 - **Online rematch keeps the room *and* the room's score** — a finished match hands
   its room back to the lobby on the same code (`recycleForRematch`), with every seat
   kept and every ready bit cleared. Session wins, the match history and the activity
@@ -200,6 +206,84 @@ used, is skipped on the code and name screens where Enter already means
 "submit", and starts at the top button of each new screen. Disabled buttons stay
 focusable on purpose — their refusal is the explanation the player is after.
 
+A redraw moves the ring with its *button*, not with its slot: the browser's list arriving pushes
+room cards in above ATUALIZAR, and a ring that kept index 0 through that would hand the next Enter
+to whichever card moved into the slot the player was actually pointing at. `collectFocusables`
+restores the ring by label, and only a genuinely new screen sends it back to the top button.
+
+## 3e. Casual matchmaking (Quick Match)
+
+Quick Match chooses *who plays together*. It is not a second game authority: the
+moment a group is formed the queue hands it to `createMatchRoom` and everything
+from §3 onward — seats, turn order, the clock, reconnect, missed turns, the
+rematch lobby — is the room lifecycle that already existed.
+
+**Identity.** A queue entry is keyed by a server-issued session token, exactly
+like a seat, and it is the *same* token the seat is later created with. That one
+decision is why matchmaking needs no recovery path of its own: `reconnect(token)`
+finds a seat if the match was committed and the queue entry if it was not, and a
+player can therefore never be put back in the queue after being seated, or
+duplicated into a second entry by a reload. Nothing is keyed by display name,
+socket or IP.
+
+**One player, one entry.** A duplicate `join_queue` is answered with the entry
+the session already has (never a second one), and a session already holding a
+seat is refused with `already_in_match`. Exactly one connection speaks for an
+entry: a second tab that reconnects with the token takes it over and the old
+socket's authority is cleared, so a stale transport cannot cancel a search that
+has moved on.
+
+**Preferences.** One dimension, four values: `2`, `3`, `4`, or `any` (the
+default). Skill, region, language and device are not representable on the wire,
+so none of them can quietly become a matching dimension.
+
+**The policy**, in full, run event-driven on every join rather than on a poll:
+
+1. For each explicit size 2, then 3, then 4: while at least one waiting entry
+   *asks* for that size and enough compatible entries exist (that size plus
+   `any`), take the N oldest of them.
+2. Then, from the `any` entries left over: while two or more remain, seat
+   everyone waiting up to the capacity of four.
+
+Oldest-first throughout, no scoring, and never a group larger than a table.
+`any` means "play now": it never waits for a bigger table, and it never delays a
+match that could already start.
+
+**Allocation is one operation.** `takeGroups` removes a group from the queue as
+it forms it, so two passes cannot select the same entry; `createMatchRoom` then
+builds the room, seats every player with the token they queued with, freezes the
+canonical casual settings and deals the match — or deletes the half-built room
+and reports failure, in which case the group goes back into the queue in its
+original wait order and is told it is still searching. Nobody is dropped
+silently.
+
+**Matchmade rooms are not negotiable rooms.** Their terms are `TIMER_PRESETS.casual`,
+chosen by the server; `room.matchmade` refuses `set_room_settings` and
+`set_room_visibility` from every seat, host included, so a table of strangers has
+no fairness lever to pull on each other and can never be pushed into the room
+browser. There is no ready step either — being matched *is* the agreement, and
+the deal happens at allocation.
+
+**Missing players.** A player whose socket dropped between queueing and being
+matched is still seated, marked absent, and the room's ordinary reconnect grace
+and missed-turn policy decide what happens next. Deliberately the same policy a
+mid-match drop gets: matchmaking does not get a second abandonment system, and
+there is no backfill of a match in progress.
+
+**Bounds.** The queue is capped (`MAX_QUEUE_ENTRIES`, 200 — over it, joins are
+refused with `queue_busy`), entries expire after `QUEUE_TIMEOUT_MS` (2 minutes)
+and are swept by the existing interval, and join/cancel share one per-connection
+budget (`hitQueueLimit`) so a join/cancel loop cannot make the matcher run flat
+out.
+
+**What a client is told.** `queue_state` carries the caller's own status, their
+preference, their token while queued, and the table size on `matched` — and
+nothing else. No queue size, no position, no ETA and no roster: the queue is not
+a lobby, and another waiting stranger is not the caller's business until a room
+exists. The searching screen shows a cosmetic elapsed counter for the same
+reason it shows no estimate — there is no data behind an estimate, and an honest
+sentence beats an invented number.
+
 ## 3c. The party session
 
 A room outlives its matches. What survives a rematch, and what does not:
@@ -274,7 +358,10 @@ it. `NetClient.lastRoomState` latches the most recent one, because the
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 7` — bumped from 6 for the public-room reaction set:
+version (`PROTOCOL_VERSION = 8` — bumped from 7 for the casual matchmaking queue:
+the client gained `join_queue`/`cancel_queue` and the server gained `queue_state`,
+so a v7 client cannot queue at all and must not be left believing it can; v7 bumped
+from 6 for the public-room reaction set:
 `hurry` left `REACTIONS` and `gg` took its place, so a v6 client's reaction id is
 no longer one this server relays; v6 bumped from 5 for room visibility and discovery:
 `room_joined`/`room_state` gained `visibility`, and the client gained
@@ -307,6 +394,8 @@ submission that caused it.
 | `reconnect` | `token` | resumes a seat in a live room |
 | `set_room_visibility` | `visibility: 'private' \| 'listed'` | host only, lobby only; answered with an authoritative `room_state`, never an echo. Does not clear ready bits (§3d) |
 | `list_rooms` | — | no filters are representable on the wire; the answer is bounded and rate-limited (§3d) |
+| `join_queue` | `target: 2 \| 3 \| 4 \| 'any'`, `name` | casual queue (§3e); idempotent per session, refused with `already_in_match` for a seated player and `queue_busy` at capacity |
+| `cancel_queue` | — | idempotent; answered with authoritative queue state, so a cancel that raced a formed match is told `matched` |
 | `resync` | — | "resend authoritative state"; never carries client state |
 | `ping` | — | |
 
@@ -324,6 +413,7 @@ submission that caused it.
 | `player_reconnected` | `seat` | |
 | `game_over` | `winnerId`, `stalemate`, `view` | `view` carries the final redacted state so both clients render the same closing board |
 | `error` | `code`, `message`, `reqId?` | protocol-level problems; `reqId` echoes the request that failed, absent for server-initiated errors including `room_closed` (S1/S2: a reaped or abandoned room notifies every attached socket before dropping it) |
+| `queue_state` | `status`, `target`, `token?`, `players?` | the caller's own queue state and nothing else (§3e): `token` only while `queued`, `players` only on `matched`. Never a queue size, a position or another waiting player |
 | `room_list` | `reqId`, `rooms: RoomListing[]` | the discovery projection only (§3d): `code`, `hostName`, `players`, `capacity`, `status`, `timerMode`. Never a room snapshot, never a room the caller has not joined |
 | `pong` | — | |
 
@@ -670,6 +760,16 @@ what strangers can actually race (a socket hammering `join_room`, four clients
 racing three seats, host transfer across a live churn, a double `leave_room`, a
 reconnect that reclaims rather than duplicates, reaction spam and cross-room
 isolation, a stale listing, and 2/3/4-seat rooms starting with per-seat hands).
+`tests/server/matchmaking.test.ts` and `tests/server/queue.integration.test.ts`
+carry the `OM-*` matchmaking acceptance, split the same way: a socket-free block
+for the policy and the handoff (membership and expiry, 2/3/4 and `any` group
+formation, oldest-first selection, unique assignment under a 400-entry load,
+canonical casual settings, the refusal of settings/visibility in a matchmade
+room, and an allocation failure that leaves no half-built room) and a wire block
+for what a client can actually race (idempotent join and cancel, a seated player
+refused, a cancel that lost to a committed match, reconnect into the queue versus
+into the committed match, a superseded socket that cannot cancel, malformed
+preferences, and the join/cancel budget).
 `tests/server/hardening.test.ts` carries the
 `OH-*` hardening acceptance: the room-creation budget, the Origin policy, the
 resync bound, reconnect bursts, cross-room isolation under a malformed client,
@@ -691,15 +791,20 @@ Files:
   `GameState` (placeholder cards for hidden hands/draw pile) so the existing
   offline renderer can draw it unchanged.
 - `src/scenes/OnlineScene.ts` — the lobby scene
-  (idle/join/name/lobby/custom/party/browse/error), including the in-canvas
-  keyboard join-code entry, the online home's CONTINUE/RECENT shortcuts, the
-  room browser, and the host's visibility badge.
+  (idle/join/name/lobby/custom/party/browse/queue/matched/error), including the
+  in-canvas keyboard join-code entry, the online home's Quick Match entry and
+  CONTINUE/RECENT shortcuts, the searching and MATCH FOUND screens, the room
+  browser, and the host's visibility badge.
 - `server/index.ts` — the WebSocket server process: message dispatch,
   broadcast helpers, health check, sweep interval, crash guards.
 - `server/rooms.ts` — `RoomManager`: room lifecycle, seat/ready state, seed
-  generation, turn validation and application, reconnect, sweep.
+  generation, turn validation and application, reconnect, sweep, and
+  `createMatchRoom` (the queue's one allocation entry point).
+- `server/matchmaking.ts` — `MatchQueue`: the casual queue and its grouping
+  policy (§3e). No sockets and no timers of its own; the caller drives `expire`.
 - `server/connections.ts` — per-connection state, socket attach/detach/evict,
-  the windowed abuse budgets (flood, failed joins, room creation, resync), the
+  the windowed abuse budgets (flood, failed joins, room creation, resync, queue),
+  the queue-entry ownership a connection holds, the
   Origin policy, the heartbeat liveness split, and closing every socket attached
   to a reaped room.
 - `server/config.ts` — env-derived caps and limits, validated once at startup.

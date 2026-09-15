@@ -18,7 +18,7 @@ import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_B
 import { t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import { readRecentRooms, type ConnStatus, type NetClient } from '../net/client';
-import { DEFAULT_ROOM_VISIBILITY, digestOfState, EMPTY_PARTY, stateHash } from '../net/protocol';
+import { DEFAULT_QUEUE_TARGET, DEFAULT_ROOM_VISIBILITY, digestOfState, EMPTY_PARTY, stateHash } from '../net/protocol';
 import type { ErrorMsg, GameOverMsg, GameView, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
@@ -687,12 +687,17 @@ export class GameScene extends Phaser.Scene {
       openCustomSettings: () => { /* the lobby owns the settings screen; there is none mid-match */ },
       turnMsLeft: () => (this.turnDeadlineAt === null ? null : Math.max(0, this.turnDeadlineAt - Date.now())),
       phase: () => 'match',
-      focus: () => ({ index: -1, count: 0 }),
+      focus: () => ({ index: -1, count: 0, label: '' }),
       // Discovery belongs to the lobby: a running match is neither listed nor browsable, and its
       // visibility is frozen with the rest of the room's terms.
       visibility: () => client.lastRoomState?.visibility ?? DEFAULT_ROOM_VISIBILITY,
       setVisibility: () => { /* visibility is frozen once the match starts */ },
       openBrowse: () => { /* the lobby owns the room browser; there is none mid-match */ },
+      // Matchmaking ends at the handoff: a seated player is refused by the server anyway (OM-04),
+      // so the mid-match surface does not offer a way to ask.
+      joinQueue: () => { /* not applicable mid-match */ },
+      cancelQueue: () => { /* not applicable mid-match */ },
+      queue: () => ({ status: 'idle', target: DEFAULT_QUEUE_TARGET }),
       listings: () => [],
       browseNotice: () => null,
       recentRooms: () => readRecentRooms().map((r) => ({ code: r.code, host: r.host })),

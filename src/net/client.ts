@@ -7,7 +7,10 @@ import { playlog } from '../core/playlog';
 import { onConnectivityChange } from '../core/pwa';
 import { resolveWsUrl } from '../config';
 import { PROTOCOL_VERSION } from './protocol';
-import type { ClientMessage, ReactionId, RoomSettings, RoomStateMsg, RoomVisibility, ServerMessage, SubmitTurnMeld } from './protocol';
+import type {
+  ClientMessage, QueueTarget, ReactionId, RoomSettings, RoomStateMsg, RoomVisibility, ServerMessage,
+  SubmitTurnMeld,
+} from './protocol';
 
 export type ConnStatus = 'connecting' | 'open' | 'closed' | 'error' | 'reconnecting';
 
@@ -283,6 +286,14 @@ export class NetClient {
       }
       this.pushTrace('in', msg.type);
       if (msg.type === 'room_joined') writeToken(msg.token);
+      // A queue entry is a session like a seat is, and it is keyed by the same token — storing it
+      // here is what makes a reload or a resumed phone reconnect into the search it left. The
+      // states that end an entry drop it, so a dead token never becomes the next visit's
+      // reconnect attempt.
+      if (msg.type === 'queue_state') {
+        if (msg.status === 'queued' && msg.token) writeToken(msg.token);
+        else if (msg.status === 'idle' || msg.status === 'expired') clearToken();
+      }
       // Latched so a scene that starts *after* a push can still read it. The room_state carrying
       // the session score arrives in the same server tick as game_over, i.e. a frame before
       // WinScene exists — without this latch the result screen would have to wait for the next
@@ -430,6 +441,18 @@ export class NetClient {
    * server decides, broadcasts, and a non-host or mid-match send comes back as an error. */
   setVisibility(visibility: RoomVisibility): void {
     this.sendRaw({ v: PROTOCOL_VERSION, type: 'set_room_visibility', reqId: this.nextReqId(), visibility });
+  }
+
+  /** Enter the casual queue. Idempotent on the server: a second call from a session that is
+   * already searching is answered with the entry it already has, never a second one. */
+  joinQueue(target: QueueTarget, name: string): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'join_queue', reqId: this.nextReqId(), target, name });
+  }
+
+  /** Leave the queue. Idempotent, and answered with authoritative queue state — a cancel that
+   * raced a formed match is told `matched`, not `idle`. */
+  cancelQueue(): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'cancel_queue', reqId: this.nextReqId() });
   }
 
   /** Ask for the currently discoverable rooms. Answered with one bounded `room_list`. */

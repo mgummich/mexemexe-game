@@ -34,6 +34,12 @@ export interface ConnState {
   resyncs: Counter;
   /** Room-list requests this connection has made, windowed (see `hitListLimit`). */
   listings: Counter;
+  /** Queue join/cancel messages this connection has sent, windowed (see `hitQueueLimit`). */
+  queueOps: Counter;
+  /** The queue entry this connection currently speaks for, or null. Exactly like `code`/`seat`:
+   * it is cleared when another socket takes the entry over, which is what stops a stale
+   * transport from cancelling a queue membership that has moved on. */
+  queueToken: string | null;
   /** The source this connection arrived from, as the key of the per-source room-creation
    * budget. Never logged — see server/log.ts, which redacts it by key name anyway. */
   ip: string;
@@ -48,6 +54,8 @@ export function newConnState(now: number, ip = 'unknown'): ConnState {
     failedJoins: 0,
     resyncs: { count: 0, start: now },
     listings: { count: 0, start: now },
+    queueOps: { count: 0, start: now },
+    queueToken: null,
     ip,
   };
 }
@@ -121,6 +129,18 @@ export function hitResyncLimit(state: ConnState, now: number, max = 5, windowMs 
  */
 export function hitListLimit(state: ConnState, now: number, max = 12, windowMs = 10_000): boolean {
   return hitWindow(state.listings, now, max, windowMs);
+}
+
+/**
+ * Queue budget, covering join and cancel together. Both are cheap on their own, but a
+ * join/cancel loop is the one way to make the matcher run flat out from a single socket, so the
+ * pair shares one allowance rather than each getting its own.
+ *
+ * Ten in ten seconds leaves room for the things real players do — queue, change their mind,
+ * change the player count, queue again, resume a backgrounded phone — and none for a loop.
+ */
+export function hitQueueLimit(state: ConnState, now: number, max = 10, windowMs = 10_000): boolean {
+  return hitWindow(state.queueOps, now, max, windowMs);
 }
 
 /**

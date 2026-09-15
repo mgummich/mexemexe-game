@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-15T10:22:21.572Z",
-  "roomCode": "NTJ29",
+  "generatedAt": "2026-09-15T12:34:14.175Z",
+  "roomCode": "6VS24",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-15T10:22:12.830Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":7,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-15T12:34:04.269Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":8,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -204,7 +204,20 @@
     "docs/screenshots/mp-discover-keyboard-lobby-lobby.png",
     "docs/screenshots/mp-public-stale-card-desktop.png",
     "docs/screenshots/mp-public-stale-card-portrait.png",
-    "docs/screenshots/mp-public-stale-card-landscape.png"
+    "docs/screenshots/mp-public-stale-card-landscape.png",
+    "docs/screenshots/mp-queue-searching-desktop.png",
+    "docs/screenshots/mp-queue-match-found-desktop.png",
+    "docs/screenshots/mp-queue-home-phone-portrait.png",
+    "docs/screenshots/mp-queue-home-phone-landscape.png",
+    "docs/screenshots/mp-queue-home-phone-narrow.png",
+    "docs/screenshots/mp-queue-home-full-portrait.png",
+    "docs/screenshots/mp-queue-home-full-landscape.png",
+    "docs/screenshots/mp-queue-searching-phone-portrait.png",
+    "docs/screenshots/mp-queue-searching-phone-landscape.png",
+    "docs/screenshots/mp-queue-searching-phone-narrow.png",
+    "docs/screenshots/mp-queue-cancelled-phone-portrait.png",
+    "docs/screenshots/mp-queue-cancelled-phone-landscape.png",
+    "docs/screenshots/mp-queue-cancelled-phone-narrow.png"
   ],
   "playerCountRuns": {
     "3": {
@@ -226,7 +239,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "ST6BP",
+    "code": "JSYRW",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {
@@ -243,17 +256,58 @@
     }
   },
   "mobileTouchJoin": {
-    "code": "CRSD6",
+    "code": "99MQY",
     "screenshot": "docs/screenshots/mp-mobile-join-input.png"
   },
   "discovery": {
-    "code": "D9SNF",
+    "code": "87WPN",
     "card": {
-      "code": "D9SNF",
+      "code": "87WPN",
       "hostName": "Marina",
       "players": 1,
       "capacity": 4,
       "status": "waiting",
+      "timerMode": "casual"
+    }
+  },
+  "queueRuns": {
+    "2": {
+      "seats": [
+        0,
+        1
+      ],
+      "codes": [
+        "V8XHT",
+        "V8XHT"
+      ],
+      "timerMode": "casual"
+    },
+    "3": {
+      "seats": [
+        0,
+        1,
+        2
+      ],
+      "codes": [
+        "B6936",
+        "B6936",
+        "B6936"
+      ],
+      "timerMode": "casual"
+    },
+    "4": {
+      "seats": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "codes": [
+        "4K78S",
+        "4K78S",
+        "4K78S",
+        "4K78S"
+      ],
       "timerMode": "casual"
     }
   }

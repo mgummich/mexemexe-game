@@ -2,7 +2,10 @@ import type { DraftState, GameState } from '../rules/types';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { ConnStatus } from '../net/client';
-import type { PartyState, ReactionId, RoomListing, RoomPlayerSummary, RoomSettings, RoomVisibility, SubmitTurnMeld } from '../net/protocol';
+import type {
+  PartyState, QueueTarget, ReactionId, RoomListing, RoomPlayerSummary, RoomSettings, RoomVisibility,
+  SubmitTurnMeld,
+} from '../net/protocol';
 import type { HelperMode } from '../ui/helpers';
 import { view, type ViewProfile } from '../ui/viewport';
 
@@ -44,7 +47,7 @@ interface MexeOnlineDebugApi {
   turnMsLeft: () => number | null;
   /** Verification-only: where the keyboard focus ring is and how many buttons this screen has.
    * `index` is -1 until the keyboard has been used. Canvas-only UI has no DOM focus to query. */
-  focus: () => { index: number; count: number };
+  focus: () => { index: number; count: number; label: string };
   /** Verification-only: which screen of the online flow is showing (idle/join/lobby/browse/...).
    * Canvas text is unreadable to Playwright, so a screen transition has no other observable. */
   phase: () => string;
@@ -53,6 +56,14 @@ interface MexeOnlineDebugApi {
   /** Verification-only: host-only proposal for the room's visibility. Goes through the same
    * `set_room_visibility` message the badge sends — the server still refuses a non-host. */
   setVisibility: (visibility: RoomVisibility) => void;
+  /** Verification-only: enter the casual queue with a player-count preference, the way QUICK
+   * MATCH does. The server still owns the entry — this only sends the same `join_queue`. */
+  joinQueue: (target: QueueTarget) => void;
+  /** Verification-only: leave the queue the way CANCELAR does. */
+  cancelQueue: () => void;
+  /** Verification-only: what this client believes its queue state is. Rendered from the server's
+   * `queue_state` pushes only — the client never infers one. */
+  queue: () => { status: string; target: QueueTarget };
   /** Verification-only: open the room browser and ask for a fresh listing. */
   openBrowse: () => void;
   /** Verification-only: the last `room_list` answer, exactly as it came off the wire. */

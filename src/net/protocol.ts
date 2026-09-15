@@ -5,9 +5,11 @@
  */
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 
-/** Bumped to 7 with the public-room reaction set: `hurry` left `REACTIONS` and `gg` took its
- * place, so a v6 client's reaction id is no longer one this server will relay. */
-export const PROTOCOL_VERSION = 7;
+/** Bumped to 8 for the casual matchmaking queue: the client gained `join_queue`/`cancel_queue`
+ * and the server gained `queue_state`. A v7 client cannot queue at all, so it must not be left
+ * believing it can. (7 was the public-room reaction set: `hurry` left `REACTIONS` and `gg` took
+ * its place, so a v6 client's reaction id is no longer one this server will relay.) */
+export const PROTOCOL_VERSION = 8;
 
 // ---------------------------------------------------------------------------
 // Room settings (docs/MULTIPLAYER.md §7)
@@ -109,6 +111,56 @@ export interface RoomListing {
 /** Hard cap on one `room_list` answer. Bounded so enumeration cannot be turned into a scrape,
  * and so a busy server's answer stays one small frame. Well above what a browser screen shows. */
 export const MAX_ROOM_LISTINGS = 20;
+
+// ---------------------------------------------------------------------------
+// Casual matchmaking queue (docs/MULTIPLAYER.md §3e)
+// ---------------------------------------------------------------------------
+
+/**
+ * How many players the queued person wants at the table. `'any'` is the default and means
+ * "whoever is waiting, 2 to 4" — it is the only preference that can be honoured immediately at
+ * any queue size, which is why it is what Quick Match asks for unless the player says otherwise.
+ *
+ * Deliberately the whole preference model: nothing about skill, region, language or device is
+ * representable here, so none of it can quietly become a matching dimension later.
+ */
+export const QUEUE_TARGETS = [2, 3, 4, 'any'] as const;
+export type QueueTarget = (typeof QUEUE_TARGETS)[number];
+export const DEFAULT_QUEUE_TARGET: QueueTarget = 'any';
+
+export function isQueueTarget(v: unknown): v is QueueTarget {
+  return v === 2 || v === 3 || v === 4 || v === 'any';
+}
+
+/**
+ * The entire queue state a client is ever told about, and all of it is about the caller:
+ *
+ * - `idle` — not queued (also the answer to a cancel, however it raced).
+ * - `queued` — waiting. `token` is the session key for this entry; the seat the entry eventually
+ *   becomes is issued the *same* token, which is what makes a reconnect land on the queue before
+ *   a match and on the match after it, with no second recovery path.
+ * - `matched` — a room exists and this player has a seat in it. `players` is its size, for the
+ *   MATCH FOUND line. The `room_joined`/`game_started` pair follows immediately.
+ * - `expired` — waited past the server's queue lifetime without a match.
+ *
+ * There is deliberately no queue size, no position, no ETA and no list of who else is waiting:
+ * the queue is not a lobby, and a stranger's presence is not the caller's business until a room
+ * actually exists.
+ */
+export type QueueStatus = 'idle' | 'queued' | 'matched' | 'expired';
+
+export interface QueueStateMsg {
+  v: number;
+  type: 'queue_state';
+  /** Echoes the request that produced this state, absent when the server pushed it. */
+  reqId?: string;
+  status: QueueStatus;
+  target: QueueTarget;
+  /** Present only while `queued`: the reconnect key for this entry. */
+  token?: string;
+  /** Present only on `matched`: how many players the formed room seats. */
+  players?: number;
+}
 
 // ---------------------------------------------------------------------------
 // Party session (docs/MULTIPLAYER.md §3c)
@@ -451,6 +503,25 @@ interface ReactionMsg {
   reaction: ReactionId;
 }
 
+/** "Put me in the casual queue." Carries the display name for the seat it will become and the
+ * only preference the matcher honours. Idempotent: a second one from a session that is already
+ * queued is answered with its current entry, never a second one. */
+interface JoinQueueMsg {
+  v: number;
+  type: 'join_queue';
+  reqId: string;
+  target: QueueTarget;
+  name: string;
+}
+
+/** "Take me out of the queue." Idempotent, and answered with the caller's authoritative queue
+ * state rather than with a success flag — a cancel that raced a match is told `matched`. */
+interface CancelQueueMsg {
+  v: number;
+  type: 'cancel_queue';
+  reqId: string;
+}
+
 /** Host-only, lobby-only: change who can *find* this room. Never changes who may join it. */
 interface SetRoomVisibilityMsg {
   v: number;
@@ -482,7 +553,9 @@ export type ClientMessage =
   | ResyncMsg
   | ReactionMsg
   | SetRoomVisibilityMsg
-  | ListRoomsMsg;
+  | ListRoomsMsg
+  | JoinQueueMsg
+  | CancelQueueMsg;
 
 // ---------------------------------------------------------------------------
 // Server -> client messages
@@ -624,7 +697,8 @@ export type ServerMessage =
   | ErrorMsg
   | PongMsg
   | PlayerReactionMsg
-  | RoomListMsg;
+  | RoomListMsg
+  | QueueStateMsg;
 
 // ---------------------------------------------------------------------------
 // Boundary validator — the only place untrusted socket text becomes a typed
@@ -693,6 +767,14 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
       if (!isRoomVisibility(o.visibility)) return { error: 'bad visibility' };
       return { v: PROTOCOL_VERSION, type: 'set_room_visibility', reqId, visibility: o.visibility };
     }
+    case 'join_queue': {
+      // An unrecognized target is refused rather than coerced to the default: a client that
+      // asked for something this server does not do must not be quietly given a different table.
+      if (!isQueueTarget(o.target) || !isStr(o.name)) return { error: 'bad join_queue payload' };
+      return { v: PROTOCOL_VERSION, type: 'join_queue', reqId, target: o.target, name: o.name };
+    }
+    case 'cancel_queue':
+      return { v: PROTOCOL_VERSION, type: 'cancel_queue', reqId };
     case 'list_rooms':
       // No filters on the wire: an oversized or hostile filter payload is not rejected, it is
       // simply not representable.

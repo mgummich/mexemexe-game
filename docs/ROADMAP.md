@@ -48,7 +48,9 @@ Nothing is mid-flight. The repository is at a released, green state.
 
 ## Not planned now
 
-- Accounts, matchmaking, ranked play, chat, spectators.
+- Accounts, ranked play, skill rating, chat, spectators. Casual matchmaking
+  *is* shipped — one FIFO queue, a player-count preference and server-chosen
+  casual terms (see [MULTIPLAYER.md](MULTIPLAYER.md) §3e); nothing above it is.
 - Cosmetics synced across the network (they are strictly client-side).
 - Native app builds — the PWA is the install story.
 - New AI personalities beyond the existing four (difficulty tiers now exist).

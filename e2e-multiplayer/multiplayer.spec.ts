@@ -464,7 +464,7 @@ test('in-canvas join code, hand privacy, and an explicit resync round-trip', asy
 
   // --- P7: join by typing the code into the canvas, not a native window.prompt. Clicking the
   // JOIN button opens the code screen; the keystrokes below are the real user path. ---
-  const [jx, jy] = toScreen(240, 145); // OnlineScene JOIN button
+  const [jx, jy] = toScreen(240, 156); // OnlineScene JOIN button
   await guest.mouse.click(jx, jy);
   await guest.waitForTimeout(200);
   const joinShot = path.join(OUT_DIR, 'mp-join-input.png');
@@ -590,7 +590,7 @@ test('server unavailable: shows a recoverable, non-frozen state and the player c
 
 test('impatient tester: double-clicking CREATE and JOIN sends exactly one request each', async ({ browser }) => {
   const pageA = await newClient(browser);
-  const [cx, cy] = toScreen(240, 110); // OnlineScene idle CREATE button
+  const [cx, cy] = toScreen(240, 136); // OnlineScene idle CREATE button
   await pageA.mouse.click(cx, cy);
   await pageA.mouse.click(cx, cy); // second click lands inside the fireOnce cooldown, must be a no-op
   await pageA.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
@@ -601,7 +601,7 @@ test('impatient tester: double-clicking CREATE and JOIN sends exactly one reques
   expect(traceA.filter((m) => m.dir === 'out' && m.type === 'create_room'), JSON.stringify(traceA)).toHaveLength(1);
 
   const pageB = await newClient(browser);
-  const [jx, jy] = toScreen(240, 145); // OnlineScene idle JOIN button -> opens the code screen
+  const [jx, jy] = toScreen(240, 156); // OnlineScene idle JOIN button -> opens the code screen
   await pageB.mouse.click(jx, jy);
   await pageB.waitForTimeout(100);
   await pageB.keyboard.type(code, { delay: 30 });
@@ -625,7 +625,7 @@ test('impatient tester: double-clicking CREATE and JOIN sends exactly one reques
 
 test('bad room code: shows a recoverable room_not_found error, not a stuck screen', async ({ browser }) => {
   const page = await newClient(browser);
-  const [jx, jy] = toScreen(240, 145);
+  const [jx, jy] = toScreen(240, 156);
   await page.mouse.click(jx, jy);
   await page.waitForTimeout(100);
   await page.keyboard.type('ZZZZZ', { delay: 30 }); // well-formed 5-char code, no such room
@@ -813,7 +813,7 @@ test('mobile: a touch player can type a room code and join (soft-keyboard input 
   await guest.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
   await guest.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 10_000 });
 
-  const joinBtn = await at(145); // OnlineScene JOIN
+  const joinBtn = await at(156); // OnlineScene JOIN
   await guest.touchscreen.tap(joinBtn.x, joinBtn.y);
   // Entering the join phase must focus the DOM input — that focus IS the soft keyboard.
   await guest.waitForFunction(() => document.activeElement?.tagName === 'INPUT', undefined, { timeout: 5_000 });
@@ -1440,17 +1440,47 @@ test('OD-28/OD-29: the online home and the room browser read on a phone, portrai
   for (const p of [...hosts, portrait, landscape, narrow]) await p.context().close();
 });
 
-/** Tab until the focus ring is on `target`, asserting rather than counting keystrokes: a
- * keystroke dropped under load would otherwise silently shift every later assertion. */
-async function focusTo(page: Page, target: number): Promise<void> {
-  for (let n = 0; n < 16; n++) {
-    const { index, count } = await page.evaluate(() => window.__MEXE__.online!.focus());
-    if (index === target) return;
-    expect(count, 'screen has no focusable buttons').toBeGreaterThan(0);
-    await page.keyboard.press('Tab');
-    await page.waitForTimeout(50);
+/**
+ * Read the focus ring only once it has stopped moving.
+ *
+ * Phaser dispatches DOM key events on its own update tick, not in the DOM handler, so a Tab this
+ * suite sends is applied a frame or more later. A read-then-press loop can outrun that queue: the
+ * walk sees the button it wanted, presses Enter, and a still-queued Tab moves the ring one further
+ * first — so Enter lands on the neighbour. Two consecutive agreeing reads mean the queue is
+ * drained and what the ring says is what the next Enter will press.
+ */
+async function ringSettled(page: Page): Promise<{ index: number; count: number; label: string }> {
+  let previous = -2;
+  for (let i = 0; i < 40; i++) {
+    const focus = await page.evaluate(() => window.__MEXE__.online!.focus());
+    if (focus.index === previous) return focus;
+    previous = focus.index;
+    await page.waitForTimeout(60);
   }
-  throw new Error(`focus ring never reached index ${target}`);
+  throw new Error('focus ring never settled');
+}
+
+/** Tab until the ring is on the button whose label matches, addressing it by name rather than by
+ * index: an index silently means a different button the next time a screen's stack changes. */
+async function focusToLabel(page: Page, label: RegExp): Promise<void> {
+  const seen: string[] = [];
+  for (let n = 0; n < 16; n++) {
+    const focus = await ringSettled(page);
+    if (focus.index >= 0 && label.test(focus.label)) return;
+    if (focus.index >= 0) seen.push(focus.label);
+    expect(focus.count, 'screen has no focusable buttons').toBeGreaterThan(0);
+    if (focus.count === 1) break; // one button and it is not the one asked for
+    await page.keyboard.press('Tab');
+  }
+  throw new Error(`focus ring never reached ${label}; walked ${JSON.stringify(seen)}`);
+}
+
+/** Walk to a button and press it, with the ring settled on it at the moment Enter is sent. */
+async function pressByLabel(page: Page, label: RegExp): Promise<void> {
+  await focusToLabel(page, label);
+  const focus = await ringSettled(page);
+  expect(focus.label, 'the ring moved between the walk and the press').toMatch(label);
+  await page.keyboard.press('Enter');
 }
 
 test('OD-A11Y: the online home, the browser and the lobby are reachable from the keyboard', async ({
@@ -1460,30 +1490,43 @@ test('OD-A11Y: the online home, the browser and the lobby are reachable from the
   const page = await newClient(browser);
 
   // No ring until the keyboard is used — a mouse player must never see one.
-  expect(await page.evaluate(() => window.__MEXE__.online!.focus())).toEqual({ index: -1, count: 4 });
+  expect(await page.evaluate(() => window.__MEXE__.online!.focus())).toEqual({ index: -1, count: 5, label: '' });
 
-  // A fresh context has no recent rooms, so the entry stack is exactly CRIAR SALA, ENTRAR,
-  // PROCURAR SALAS, VOLTAR in reading order.
-  await focusTo(page, 2);
+  // A fresh context has no recent rooms, so the entry stack is exactly PARTIDA RÁPIDA,
+  // CRIAR SALA, ENTRAR, PROCURAR SALAS, VOLTAR in reading order — walked by name, so a screen
+  // that gains or loses a button later fails loudly here instead of pressing its neighbour.
+  await focusToLabel(page, /PROCURAR/);
   await shot({ home: page }, 'discover-keyboard-home', screenshots);
-  await page.keyboard.press('Enter');
+  await pressByLabel(page, /PROCURAR/);
   await page.waitForFunction(() => window.__MEXE__.online!.phase() === 'browse', undefined, { timeout: 10_000 });
   await page.waitForTimeout(400); // let the listing answer land, whatever it contains
   await shot({ browse: page }, 'discover-keyboard-browse', screenshots);
 
-  // A new screen puts the ring on its top button. VOLTAR is the bottom one on every screen —
-  // deliberately addressed as "the last index", not as "Tab N times": how many room cards this
-  // shared server is offering right now is not this test's business.
-  expect((await page.evaluate(() => window.__MEXE__.online!.focus())).index).toBe(0);
-  const browseCount = (await page.evaluate(() => window.__MEXE__.online!.focus())).count;
-  await focusTo(page, browseCount - 1);
-  await page.keyboard.press('Enter');
+  // A new screen puts the ring on its top button — ATUALIZAR, while the list is still loading —
+  // and it stays on *that button* when the answer lands and pushes room cards in above it. Keeping
+  // the index instead would hand the ring's Enter to whichever card moved into slot 0, which is
+  // what made this test flaky: the shared server's listing count decides when that happens.
+  expect((await page.evaluate(() => window.__MEXE__.online!.focus())).label).toMatch(/ATUALIZAR/);
+  await pressByLabel(page, /VOLTAR/);
   await page.waitForFunction(() => window.__MEXE__.online!.phase() === 'idle', undefined, { timeout: 10_000 });
 
-  // Back at the top of the entry stack: CRIAR SALA, reached without a pointer.
-  await focusTo(page, 0);
-  await page.keyboard.press('Enter');
-  await page.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  // Back on the entry stack: CRIAR SALA, reached without a pointer.
+  await pressByLabel(page, /CRIAR/);
+  // Two waits, not one: the first proves the keyboard press actually reached the client and put a
+  // create_room on the wire, so a failure names which half broke instead of only timing out.
+  await page.waitForFunction(
+    () => window.__MEXE__.online!.trace().some((m) => m.dir === 'out' && m.type === 'create_room'),
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.waitForFunction(
+    () => window.__MEXE__.online?.code() !== null || window.__MEXE__.online!.errorText() !== '',
+    undefined,
+    { timeout: 10_000 },
+  );
+  // A refusal here is a real server answer (the shared server's room-creation budget is the only
+  // one that can bite), not a stuck screen — say which it was rather than timing out on `code()`.
+  expect(await page.evaluate(() => window.__MEXE__.online!.errorText())).toBe('');
   expect(await page.evaluate(() => window.__MEXE__.online!.phase())).toBe('lobby');
   await shot({ lobby: page }, 'discover-keyboard-lobby', screenshots);
 
@@ -1563,4 +1606,133 @@ test('OP-16/OP-36/OP-37/OP-38: a card whose room is gone is answered on the brow
   }
   appendLog({ screenshots });
   for (const p of [alive, ...Object.values(viewers)]) await p.context().close();
+});
+
+test('OM-07..OM-17/OM-40: Quick Match forms a 2P, a 3P and a 4P table and every player gets one seat', async ({
+  browser,
+}) => {
+  const screenshots: string[] = [];
+  const queueRuns: Record<number, { seats: number[]; codes: string[]; timerMode: string }> = {};
+
+  for (const size of [2, 3, 4]) {
+    const pages = await Promise.all(Array.from({ length: size }, () => newClient(browser)));
+    // One player first, so the searching screen exists as a state and not only as a frame
+    // between two clicks. Everyone asks for the same explicit size, which is what makes the
+    // assertion below ("exactly `size` seats") mean something.
+    await pages[0]!.evaluate((n) => window.__MEXE__.online!.joinQueue(n as 2 | 3 | 4), size);
+    await pages[0]!.waitForFunction(() => window.__MEXE__.online!.phase() === 'queue', undefined, { timeout: 10_000 });
+    if (size === 2) await shot({ desktop: pages[0]! }, 'queue-searching', screenshots);
+
+    for (const page of pages.slice(1)) {
+      await page.evaluate((n) => window.__MEXE__.online!.joinQueue(n as 2 | 3 | 4), size);
+    }
+    // MATCH FOUND is a real state with a readable duration, not a flash: catch it on the last
+    // client before it hands off to the table.
+    if (size === 4) {
+      await pages[0]!.waitForFunction(() => window.__MEXE__.online!.phase() === 'matched', undefined, { timeout: 10_000 });
+      await shot({ desktop: pages[0]! }, 'queue-match-found', screenshots);
+    }
+    await Promise.all(pages.map((p) => p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 15_000 })));
+
+    const seats = await Promise.all(pages.map((p) => p.evaluate(() => window.__MEXE__.online!.seat() ?? -1)));
+    const codes = await Promise.all(pages.map((p) => p.evaluate(() => window.__MEXE__.online!.code() ?? '')));
+    // One room, one seat each, in the order the queue selected them.
+    expect([...seats].sort((a, b) => a - b)).toEqual([...Array(size).keys()]);
+    expect(new Set(codes).size).toBe(1);
+    const view = await pages[0]!.evaluate(() => window.__MEXE__.state!()!);
+    expect(view.players).toHaveLength(size);
+    const settings = await pages[0]!.evaluate(() => window.__MEXE__.online!.roomSettings());
+    queueRuns[size] = { seats, codes, timerMode: settings?.timerMode ?? 'unknown' };
+    // Canonical casual terms, chosen by the server rather than by anybody at the table.
+    expect(settings?.timerMode).toBe('casual');
+
+    // A turn actually rotates, so the matchmade room is an ordinary room from here on.
+    const before = await pages[0]!.evaluate(() => window.__MEXE__.online!.rev());
+    const active = seats.indexOf(0);
+    await pages[active]!.evaluate(() => window.__MEXE__.mexe!.comprar());
+    await Promise.all(pages.map((p) => p.waitForFunction((rev) => window.__MEXE__.online!.rev() !== rev, before, { timeout: 10_000 })));
+
+    for (const p of pages) {
+      expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+      expect(trackConsoleErrors(p)).toEqual([]);
+    }
+    for (const p of pages) await p.context().close();
+  }
+  appendLog({ queueRuns, screenshots });
+});
+
+test('OM-05/OM-38/OM-39: Quick Match, the searching screen and cancel read on a phone', async ({ browser }) => {
+  const screenshots: string[] = [];
+  const portrait = await newPhoneClient(browser);
+  const landscape = await newPhoneClient(browser, { width: 844, height: 390 });
+  // The narrowest phone at 125% text: the worst case for the home stack now that Quick Match and
+  // its preference line sit above create/join/browse.
+  const narrow = await newPhoneClient(browser, { width: 360, height: 800 }, WS_URL, '&textscale=125');
+  const phones = { portrait, landscape, narrow };
+
+  await shot(phones, 'queue-home-phone', screenshots);
+
+  // The fullest the online home ever gets: Quick Match and its preference above CONTINUAR, the
+  // create/join/browse stack and a recent-code strip. Seeded rather than played into, because
+  // what is being checked is the layout at its tallest, not how the entries got there.
+  // Portrait and landscape both: landscape is the tighter of the two, because VOLTAR sits
+  // higher there and the recent-code strip is the last thing above it.
+  for (const [key, viewport] of [['portrait', { width: 390, height: 844 }], ['landscape', { width: 844, height: 390 }]] as const) {
+  const crowded = await browser.newContext({ viewport });
+  const crowdedPage = await crowded.newPage();
+  trackConsoleErrors(crowdedPage);
+  await crowdedPage.addInitScript(() => {
+    const now = Date.now();
+    localStorage.setItem('mexe.online.recent', JSON.stringify([
+      { code: 'BCDFG', host: 'Marina', at: now },
+      { code: 'HJKMN', host: 'Bia', at: now - 1000 },
+      { code: 'PQRST', host: 'Lia', at: now - 2000 },
+    ]));
+  });
+  await crowdedPage.goto(`/?ws=${encodeURIComponent(WS_URL)}&showcase=menu`);
+  await crowdedPage.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const menuPoint = await crowdedPage.evaluate(() => {
+    const c = document.querySelector('canvas')!.getBoundingClientRect();
+    return { x: c.left + 0.5 * c.width, y: c.top + (254 / 270) * c.height };
+  });
+  await crowdedPage.mouse.click(menuPoint.x, menuPoint.y);
+  await crowdedPage.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
+  await crowdedPage.waitForFunction(() => window.__MEXE__.online!.recentRooms().length === 3, undefined, { timeout: 10_000 });
+  await shot({ [key]: crowdedPage }, 'queue-home-full', screenshots);
+  const fullOverflow = await crowdedPage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(fullOverflow).toBeLessThanOrEqual(0);
+  expect(trackConsoleErrors(crowdedPage)).toEqual([]);
+  await crowded.close();
+  }
+
+  // Four-player preference with only three phones waiting: the search stays a search, which is
+  // the state that has to be readable.
+  for (const p of Object.values(phones)) {
+    await p.evaluate(() => window.__MEXE__.online!.joinQueue(4));
+    await p.waitForFunction(() => window.__MEXE__.online!.phase() === 'queue', undefined, { timeout: 10_000 });
+  }
+  // Long enough that the elapsed counter has actually ticked — a frozen 00:00 would read as a
+  // hung screen however correct the state behind it is.
+  await portrait.waitForTimeout(1500);
+  await shot(phones, 'queue-searching-phone', screenshots);
+
+  for (const p of Object.values(phones)) {
+    const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  }
+
+  // Cancel returns them to the home screen, with a sentence saying so.
+  for (const p of Object.values(phones)) {
+    await p.evaluate(() => window.__MEXE__.online!.cancelQueue());
+    await p.waitForFunction(() => window.__MEXE__.online!.phase() === 'idle', undefined, { timeout: 10_000 });
+    expect(await p.evaluate(() => window.__MEXE__.online!.queue().status)).toBe('idle');
+  }
+  await shot(phones, 'queue-cancelled-phone', screenshots);
+
+  for (const p of Object.values(phones)) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of Object.values(phones)) await p.context().close();
 });

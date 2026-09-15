@@ -22,7 +22,7 @@ import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import { timerExpireTurn } from '../src/rules/rules';
 import {
   buildView, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, MAX_ACTIVITY, MAX_MATCH_HISTORY,
-  MAX_ROOM_LISTINGS, normalizeRoomSettings, REACTION_COOLDOWN_MS,
+  MAX_ROOM_LISTINGS, normalizeRoomSettings, REACTION_COOLDOWN_MS, TIMER_PRESETS,
   type ActivityEvent, type ActivityKind, type GameView, type MatchSummary, type PartyState,
   type ReactionId, type RoomListing, type RoomPlayerSummary, type RoomSettings, type RoomVisibility,
   type SubmitTurnMeld, type WinningMove,
@@ -40,6 +40,10 @@ export const MAX_PLAYERS = 4;
  * `RoomInternal.hostSeat` and moves to the next-occupied seat if the current host leaves (D15) —
  * this constant is only the fallback for a nonexistent room. */
 const HOST_SEAT = 0;
+/** The terms every matchmade table is played under. The casual preset, deliberately: it is the
+ * room default friends already play, so a queued stranger meets nothing unfamiliar, and it is the
+ * server's value rather than anyone's proposal — no seat in a matchmade room can change it. */
+const MATCHMADE_SETTINGS = TIMER_PRESETS.casual;
 
 interface RoomManagerDeps {
   /** Injectable clock, for deterministic tests. */
@@ -125,6 +129,10 @@ interface RoomInternal {
   activity: ActivityEvent[];
   /** Next activity sequence number. Monotonic for the life of the room. */
   activitySeq: number;
+  /** True for a room the matchmaking queue allocated. Its terms are the server's canonical
+   * casual preset and nothing in the room may change them — there is no host settings step for
+   * players who never agreed to one with each other (§3e). */
+  matchmade: boolean;
   /** True once the current match's result has been recorded. The single guard that makes a
    * duplicate finish — a second broadcast, a retried tick — unable to award a second win. */
   resultRecorded: boolean;
@@ -293,11 +301,13 @@ export class RoomManager {
     return room ? room.hostSeat : HOST_SEAT;
   }
 
-  createRoom(name: string): CreateRoomResult {
+  /** @param token pre-issued session token for seat 0. Only the matchmaking handoff passes one:
+   * a queued player already holds a token, and reusing it is what makes their reconnect land on
+   * the seat the queue became instead of on a second identity. */
+  createRoom(name: string, token = this.genToken()): CreateRoomResult {
     if (this.rooms.size >= this.maxRooms) return { ok: false, error: 'room_limit' };
     let code = this.genCode();
     while (this.rooms.has(code)) code = this.genCode(); // extremely unlikely, cheap to guard
-    const token = this.genToken();
     const seat = newSeat(0, name, token);
     const room: RoomInternal = {
       code,
@@ -324,11 +334,51 @@ export class RoomManager {
       history: [],
       activity: [],
       activitySeq: 0,
+      matchmade: false,
       resultRecorded: false,
     };
     this.rooms.set(code, room);
     this.note(room, 'joined', seat);
     return { ok: true, code, seat: 0, token };
+  }
+
+  /**
+   * The queue handoff, as one operation: a private room with the canonical casual terms, one
+   * seat per matched player in the order they were selected, and the match already dealt.
+   *
+   * Everything here is deliberately made of parts that already existed. The seats are ordinary
+   * `newSeat`s carrying the tokens the queue issued; the deal is the ordinary `startGame`, so
+   * capacity, seat gaps, turn order and the match id come from the one place that has always
+   * decided them. Nothing about a matchmade match is a second lifecycle — only its *allocation*
+   * is different, and that difference ends here.
+   *
+   * All or nothing: a room that cannot be dealt is deleted rather than left half-built, so the
+   * caller's only recovery is to put the group back in the queue.
+   */
+  createMatchRoom(players: { name: string; token: string }[]): CreateRoomResult {
+    if (players.length < MIN_PLAYERS || players.length > MAX_PLAYERS) return { ok: false, error: 'room_limit' };
+    const first = players[0]!;
+    const created = this.createRoom(first.name, first.token);
+    if (!created.ok) return created;
+    const room = this.rooms.get(created.code)!;
+    room.matchmade = true;
+    // Server-defined terms, identical for every matchmade table. Not negotiable before the match
+    // (nobody is in a lobby) and not changeable after it (see setRoomSettings).
+    room.settings = { ...MATCHMADE_SETTINGS };
+    players.slice(1).forEach((p, i) => {
+      const seat = newSeat(i + 1, p.name, p.token);
+      room.seats[i + 1] = seat;
+      this.note(room, 'joined', seat);
+    });
+    // Auto-ready: being matched *is* the agreement. Quick Match that made you press READY with
+    // three strangers would be neither quick nor a match.
+    for (const s of room.seats) if (s) s.ready = true;
+    const started = this.startGame(created.code, room.hostSeat);
+    if (!started.ok) {
+      this.rooms.delete(created.code);
+      return { ok: false, error: 'room_limit' };
+    }
+    return created;
   }
 
   /**
@@ -406,7 +456,9 @@ export class RoomManager {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: 'room_not_found' };
     if (room.state) return { ok: false, error: 'game_started' };
-    if (seat !== room.hostSeat) return { ok: false, error: 'not_host' };
+    // Nobody holds fairness authority in a matchmade room, host seat included: its terms are the
+    // ones every queued player was matched under, and no seat agreed to let another change them.
+    if (room.matchmade || seat !== room.hostSeat) return { ok: false, error: 'not_host' };
     // Normalized again here: `setRoomSettings` is a public manager entry point, not only the
     // socket path, so it must not depend on the caller having gone through the wire parser.
     const next = normalizeRoomSettings(proposed);
@@ -433,7 +485,9 @@ export class RoomManager {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: 'room_not_found' };
     if (room.state) return { ok: false, error: 'game_started' };
-    if (seat !== room.hostSeat) return { ok: false, error: 'not_host' };
+    // A matchmade room belongs to the players the server put in it. Letting a seat list it would
+    // hand a stranger's table to the room browser (§3e).
+    if (room.matchmade || seat !== room.hostSeat) return { ok: false, error: 'not_host' };
     const changed = room.visibility !== visibility;
     room.visibility = visibility;
     room.lastActivityAt = this.now();

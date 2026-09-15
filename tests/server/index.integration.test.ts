@@ -317,7 +317,7 @@ describe('server observability is privacy-safe (/metrics, /health, logs)', () =>
 
   it('/health stays a fixed set of aggregate fields', async () => {
     const body = (await (await fetch(`http://localhost:${PORT}/health`)).json()) as Record<string, unknown>;
-    expect(Object.keys(body).sort()).toEqual(['connections', 'ok', 'protocol', 'rooms', 'uptimeSec']);
+    expect(Object.keys(body).sort()).toEqual(['connections', 'ok', 'protocol', 'queued', 'rooms', 'uptimeSec']);
     for (const value of Object.values(body)) expect(typeof value === 'number' || typeof value === 'boolean').toBe(true);
   });
 
