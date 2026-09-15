@@ -4,6 +4,22 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
+## 1.10.2 — 2026-09-15
+
+### join screen name, quieter by default
+
+### Fixed
+
+- Online players can set their display name directly on the join screen instead
+  of being stuck with whatever name the client picked for them.
+
+### Changed
+
+- Background music is now off by default. `DEFAULT_SETTINGS.musicEnabled` is
+  `false`, so the ambient playlist and the boteco room tone stay silent until
+  the player turns music on in Settings. Saves migrated from the pre-music
+  settings key start silent too.
+
 ## 1.10.1 — 2026-09-15
 
 ### menu and online papercuts
