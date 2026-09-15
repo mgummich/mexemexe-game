@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = path.join(root, 'package.json');
+const LOCK = path.join(root, 'package-lock.json');
 const LOG = path.join(root, 'CHANGELOG.md');
 
 /** `1.6.0` + `minor` -> `1.7.0`. An explicit `X.Y.Z` passes through. */
@@ -298,8 +299,15 @@ function main(argv) {
   pkg.version = version;
   fs.writeFileSync(PKG, JSON.stringify(pkg, null, 2) + '\n');
   fs.writeFileSync(LOG, changelog);
+  // The lockfile names the package version twice (root entry and `packages[""]`);
+  // npm would rewrite both on the next install, and a lockfile that disagrees
+  // with package.json fails `npm ci`.
+  const lock = JSON.parse(fs.readFileSync(LOCK, 'utf8'));
+  lock.version = version;
+  if (lock.packages?.['']) lock.packages[''].version = version;
+  fs.writeFileSync(LOCK, JSON.stringify(lock, null, 2) + '\n');
 
-  git('add', 'package.json', 'CHANGELOG.md');
+  git('add', 'package.json', 'package-lock.json', 'CHANGELOG.md');
   git('commit', '-m', `chore(release): ${tag}`);
   git('tag', '-a', tag, '-m', `${tag}\n\n${extractNotes(changelog, version)}`);
 

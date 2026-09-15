@@ -35,21 +35,44 @@ jobs:
       - name: Extract the release notes from CHANGELOG.md
         run: node scripts/release.mjs --notes "${GITHUB_REF_NAME#v}" > notes.md
 
+      # Idempotent so a release whose image build failed can be re-run by
+      # re-pointing the tag at the fixed commit.
       - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "MEXE! ${GITHUB_REF_NAME}" --notes-file notes.md
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --title "MEXE! ${GITHUB_REF_NAME}" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --title "MEXE! ${GITHUB_REF_NAME}" --notes-file notes.md
+          fi
 
+  # One job per architecture on its own native runner: `npm ci` under QEMU
+  # emulation dies with "illegal instruction", and native arm64 runners are
+  # free for public repositories anyway. Each job pushes an untagged,
+  # digest-only image; `manifests` below joins them into one multi-arch tag.
+  #
+  # The web image is the static game. VITE_WS_URL is baked at build time and
+  # left empty here, so this image plays offline and talks to a same-host
+  # server; point it at your own wss:// endpoint by building locally (see
+  # docs/SELF_HOSTING.md).
   images:
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: web, arch: amd64, runner: ubuntu-latest }
+          - { target: web, arch: arm64, runner: ubuntu-24.04-arm }
+          - { target: server, arch: amd64, runner: ubuntu-latest }
+          - { target: server, arch: arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -61,31 +84,71 @@ jobs:
         id: prefix
         run: echo "value=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      # The static game. VITE_WS_URL is baked at build time and left empty here,
-      # so this image plays offline and talks to a same-host server; point it at
-      # your own wss:// endpoint by building locally (see docs/SELF_HOSTING.md).
-      - name: Build and push the web image
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          target: web
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ steps.prefix.outputs.value }}-web:${{ github.ref_name }}
-            ${{ contains(github.ref_name, '-') && '' || format('{0}-web:latest', steps.prefix.outputs.value) }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          target: ${{ matrix.target }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ steps.prefix.outputs.value }}-${{ matrix.target }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.target }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}-${{ matrix.arch }}
 
-      - name: Build and push the server image
-        uses: docker/build-push-action@v6
+      # The `sha256:` prefix is stripped: upload-artifact rejects `:` in paths.
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
         with:
-          context: .
-          target: server
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ steps.prefix.outputs.value }}-server:${{ github.ref_name }}
-            ${{ contains(github.ref_name, '-') && '' || format('{0}-server:latest', steps.prefix.outputs.value) }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          name: digests-${{ matrix.target }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  manifests:
+    needs: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        target: [web, server]
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Lowercase the image prefix
+        id: prefix
+        run: echo "value=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digests-${{ matrix.target }}-*
+          merge-multiple: true
+          path: /tmp/digests
+
+      # Pre-releases (a `-` in the tag, e.g. v1.11.0-rc.1) get the version tag
+      # only, never `latest`.
+      - name: Create the multi-arch tags
+        env:
+          IMAGE: ${{ steps.prefix.outputs.value }}-${{ matrix.target }}
+          VERSION: ${{ github.ref_name }}
+          LATEST: ${{ contains(github.ref_name, '-') && '0' || '1' }}
+        run: |
+          tags=(-t "$IMAGE:$VERSION")
+          if [ "$LATEST" = 1 ]; then tags+=(-t "$IMAGE:latest"); fi
+          sources=()
+          for f in /tmp/digests/*; do
+            sources+=("$IMAGE@sha256:$(basename "$f")")
+          done
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"

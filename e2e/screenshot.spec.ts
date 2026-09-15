@@ -2952,7 +2952,9 @@ test('meld-focus: opens a read-only large view of one meld with its invalid reas
 
     const icon = await focusIconLogicalPos(p, meldId);
     await tapWorld(p, icon.x, icon.y);
-    expect(await p.evaluate(() => window.__MEXE__.mexe!.focusedMeldId())).toBe(meldId);
+    // Polled, not sampled: a loaded runner can render the two frames tapWorld waits for before
+    // Phaser has drained the pointer that opens the panel.
+    await p.waitForFunction((id) => window.__MEXE__.mexe!.focusedMeldId() === id, meldId);
     // read-only: opening it never touches the draft
     expect(await p.evaluate(() => window.__MEXE__.mexe!.getDraft())).toEqual(draftBefore);
 
@@ -2960,7 +2962,7 @@ test('meld-focus: opens a read-only large view of one meld with its invalid reas
 
     // dismiss by tapping outside the panel (top-left corner, well clear of the centered panel)
     await tapWorld(p, 4, 4);
-    expect(await p.evaluate(() => window.__MEXE__.mexe!.focusedMeldId())).toBeNull();
+    await p.waitForFunction(() => window.__MEXE__.mexe!.focusedMeldId() === null);
   });
 });
 
