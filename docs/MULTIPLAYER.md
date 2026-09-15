@@ -151,6 +151,32 @@ different storage area and a different shape from the session token: this list
 is meant to be shown, and nothing in it can reclaim a seat. An entry is dropped
 the moment the server answers `room_not_found`/`room_closed` for it.
 
+## 3f. Seats and player indices
+
+Two numbering schemes meet here, and they are equal only by accident.
+
+- A **room seat** (0–3) is a chair. It is assigned at join, never moves, and survives its
+  occupant leaving — reconnect, host authority, the session score and the lobby's own rows are
+  all keyed on it.
+- A **player index** is a position in `GameState.players`, which is dense and turn-ordered
+  because the rules engine advances a turn by rotating an index.
+
+They coincide only when the occupied seats happen to be 0..n-1. A lobby that lost a middle seat
+between matches (seats 0, 2 and 3 after seat 1 walked out) has three players and four chairs, and
+the two schemes diverge. `RoomInternal.matchSeats` is the one place they are related: the room
+seat of each player index, frozen at `startGame` and cleared on recycle. Every seat-taking entry
+point in the room manager translates through it, and it rides the wire as `GameView.seats` so a
+client can do the same for the room seats that arrive on `turn_timeout`, `player_disconnected`,
+`player_reconnected` and `winningMove`.
+
+Everything else inside a `GameView` — `seat`, `activeSeat`, `players[].seat`, `missedTurns` — is
+a player index, the state hash included, so both sides digest the same numbers.
+
+Before this existed the equality was assumed and a gap was refused outright: `startGame` answered
+`seat_gap`, so a four-player table that lost one player between matches could never play again
+until somebody filled the empty chair. That refusal is gone, along with the `seat_gap` error
+code, and seats still never compact.
+
 ## 3d. Room visibility and discovery
 
 Every room is born `private` and there is no create-time option that says
@@ -367,7 +393,9 @@ it. `NetClient.lastRoomState` latches the most recent one, because the
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 8` — bumped from 7 for the casual matchmaking queue:
+version (`PROTOCOL_VERSION = 9` — bumped from 8 for the seat/player split: `GameView` gained
+`seats`, the room seat of each player by turn-order index, without which a client cannot read a
+room that is playing with a seat gap (§3f); v8 bumped from 7 for the casual matchmaking queue:
 the client gained `join_queue`/`cancel_queue` and the server gained `queue_state`,
 so a v7 client cannot queue at all and must not be left believing it can; v7 bumped
 from 6 for the public-room reaction set:
@@ -397,7 +425,7 @@ submission that caused it.
 | `ready` | `ready: boolean` | idempotent |
 | `set_room_settings` | `settings` | seat-0 host only, lobby only; normalized at the parser *and* again in the room manager, so an out-of-range value is clamped rather than applied |
 | `mexe_started` | — | claims this turn's one-off Mexe extension; active seat only, granted at most once per turn |
-| `start_game` | — | seat-0 host only; requires every occupied 2–4P seat ready |
+| `start_game` | — | host seat only; requires every occupied 2–4P seat ready and connected. A gap between occupied seats is dealt, not refused (§3f) |
 | `submit_turn` | `rev`, `melds: [{ id, cardIds[] }]` | card **ids only** |
 | `draw_end_turn` | `rev` | |
 | `reconnect` | `token` | resumes a seat in a live room |
@@ -415,13 +443,13 @@ submission that caused it.
 | `room_joined` | `code`, `seat`, `token`, `players`, `settings`, `hostSeat`, `party`, `visibility` | token is the reconnect key; `players[].wins` is the session score; `visibility` is always `private` for a new room |
 | `room_state` | `players` (each entry carries its own `ready`/`connected`/`wins`), `settings`, `hostSeat`, `locked`, `party`, `visibility` | lobby updates; `locked` is true once the match started and the settings are frozen. `ready` doubles as the rematch vote between matches (§3c). `visibility` is server-owned (§3d) |
 | `game_started` | `view` | broadcast per seat after host `start_game`; the server never sends shuffle seed, and `rev` lives inside `view.rev` |
-| `state_sync` | `view` (redacted, `rev` and `hash` inside it) | the only source of truth on the client |
+| `state_sync` | `view` (redacted, `rev` and `hash` inside it) | the only source of truth on the client; `view.seats` maps its player indices back to room seats (§3f) |
 | `proposal_rejected` | `reqId`, `reasons: ReasonCode[]` | codes, not prose |
 | `turn_timeout` | `seat` | the server ended that seat's turn (clock expired, or absent past the reconnect grace); the authoritative result already arrived as a `state_sync` |
 | `player_disconnected` | `seat` | opponent notice |
 | `player_reconnected` | `seat` | |
 | `game_over` | `winnerId`, `stalemate`, `view` | `view` carries the final redacted state so both clients render the same closing board |
-| `error` | `code`, `message`, `reqId?` | protocol-level problems; `reqId` echoes the request that failed, absent for server-initiated errors including `room_closed` (S1/S2: a reaped or abandoned room notifies every attached socket before dropping it) |
+| `error` | `code`, `message`, `reqId?` | protocol-level problems; a refusal about the room's own state (`not_ready`, `not_host`, `game_started`, `room_full`, `rate_limited`) is answered on the lobby itself rather than replacing it with an error screen — the caller is still seated and every other control still works; `reqId` echoes the request that failed, absent for server-initiated errors including `room_closed` (S1/S2: a reaped or abandoned room notifies every attached socket before dropping it) |
 | `queue_state` | `status`, `target`, `token?`, `players?` | the caller's own queue state and nothing else (§3e): `token` only while `queued`, `players` only on `matched`. Never a queue size, a position or another waiting player |
 | `room_list` | `reqId`, `rooms: RoomListing[]` | the discovery projection only (§3d): `code`, `hostName`, `players`, `capacity`, `status`, `timerMode`. Never a room snapshot, never a room the caller has not joined |
 | `pong` | — | |
@@ -497,8 +525,13 @@ reconnect the server also evicts whatever socket previously held that seat
 (S4: exactly one connection can act for a seat at a time), attaches the new
 socket, and replies with `state_sync` if a game is in progress or
 `room_joined` if the room is still in its lobby; the opponent gets
-`player_reconnected`. After a room is swept, any socket still attached to it
-receives an `error` with `code: 'room_closed'` and must return to the lobby.
+`player_reconnected`. The evicted socket is told `error: invalid_token` *before* it is closed:
+its client still holds the same token, and an ordinary close would start its bounded reconnect
+loop, so two tabs of one session would take the seat off each other in turn and flap it between
+connected and disconnected for the whole room. `invalid_token` is one of the two codes the client
+treats as definitive (§7's list), so it drops the token and stops instead. After a room is swept,
+any socket still attached to it receives an `error` with `code: 'room_closed'` and must return to
+the lobby.
 
 Any proposal that was in flight when the socket dropped is treated as never
 submitted: the server only mutates state on a fully validated message it has
@@ -792,7 +825,30 @@ resync bound, reconnect bursts, cross-room isolation under a malformed client,
 room resurrection, and a concurrent-room load that has to return to baseline. `npm run
 verify:multiplayer` runs two-plus real browser clients against the real server
 and gates on client console errors, server stderr, accepted illegal proposals,
-hand privacy and state-hash agreement. Details in [TESTING.md](TESTING.md).
+hand privacy and state-hash agreement.
+
+`e2e-multiplayer/lobby.spec.ts` carries the `LB-*` lobby acceptance and runs on
+**Chromium, Firefox and WebKit** — a Chrome pass is not evidence for another
+engine's socket lifecycle or storage. One browser context per player, so every
+client has its own storage, its own session and its own socket. Its assertions
+are on `lobbySeats()`, the rows the lobby actually *painted*: the internal
+roster and the screen can disagree, and that disagreement is the bug class the
+suite exists for. Covered: 2/3/4-client rooms agreeing on membership, seats,
+YOU/HOST and the code; seat gaps (an occupant of seat 3 surviving seats 1 and 2
+emptying out); a replacement taking the canonical lowest free seat with nothing
+inherited; ready as server truth, simultaneous ready, a settings change clearing
+it and a refused start; host transfer including across a gap and across a
+temporary disconnect; real 2/3/4-player matches played to a server-decided
+finish and rematched on the same code; a three-match endurance run across
+departures, a replacement and a host transfer; lobby reload, between-match
+reconnect, a second tab taking a seat over, and room-switch isolation.
+`e2e-multiplayer/ios-lobby.spec.ts` is the WebKit iOS gate: the five
+representative portrait/landscape viewports, an orientation change that must
+change layout and nothing else, and a two-client match with a mid-match reload.
+Both write their evidence to `docs/screenshots/verify-lobby*.json`, which
+`scripts/check-verify-multiplayer.mjs` gates on per engine.
+
+Details in [TESTING.md](TESTING.md).
 
 ## 12. As built
 
@@ -813,6 +869,8 @@ Files:
   in-canvas keyboard join-code entry, the online home's Quick Match entry and
   CONTINUE/RECENT shortcuts, the searching and MATCH FOUND screens, the room
   browser, and the host's visibility badge.
+- `e2e-multiplayer/harness.ts` — one real server per spec file and one browser
+  context per player; shared by the lobby and iOS suites.
 - `server/index.ts` — the WebSocket server process: message dispatch,
   broadcast helpers, health check, sweep interval, crash guards.
 - `server/rooms.ts` — `RoomManager`: room lifecycle, seat/ready state, seed

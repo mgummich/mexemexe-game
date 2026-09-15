@@ -9,7 +9,7 @@ import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/ty
  * and the server gained `queue_state`. A v7 client cannot queue at all, so it must not be left
  * believing it can. (7 was the public-room reaction set: `hurry` left `REACTIONS` and `gg` took
  * its place, so a v6 client's reaction id is no longer one this server will relay.) */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 // ---------------------------------------------------------------------------
 // Room settings (docs/MULTIPLAYER.md §7)
@@ -305,6 +305,14 @@ export interface GameView {
    * uses the false->true edge to show a one-time "extension granted" notice, never part of the
    * hash. Resets to false at the start of each turn. */
   mexeBonusClaimed: boolean;
+  /** Room seat of each player in this match, by player index. A match is dealt into a dense,
+   * turn-ordered array while a room seat is a stable chair, so the two only coincide when the
+   * occupied seats happen to be 0..n-1 — a lobby that lost a middle seat between matches plays
+   * on with a gap. Every other number in this view (`seat`, `activeSeat`, `players[].seat`) is a
+   * player index; this is the one place the room's own numbering appears, and it is what lets a
+   * client translate the room-seat carried by `turn_timeout`/`player_disconnected`/`winningMove`.
+   */
+  seats: number[];
   /** Digest of the parts of the authoritative state every seat can see. A client recomputes it
    * from its own reconstruction and asks for a resync on mismatch. */
   hash: string;
@@ -380,6 +388,7 @@ export function buildView(
   missedTurns: number[] = [],
   mexeBonusClaimed = false,
   matchId = '',
+  seats: number[] = [],
 ): GameView {
   const view: GameView = {
     seat,
@@ -402,6 +411,9 @@ export function buildView(
     settings,
     turnMsLeft,
     missedTurns: state.players.map((_, i) => missedTurns[i] ?? 0),
+    // Defaults to the identity mapping, which is what a gapless room (and every local/offline
+    // caller that builds a view without a room behind it) already has.
+    seats: state.players.map((_, i) => seats[i] ?? i),
     mexeBonusClaimed,
     hash: '',
   };

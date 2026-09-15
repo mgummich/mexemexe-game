@@ -1,0 +1,20 @@
+{
+  "rotate": {
+    "seat": 1,
+    "rows": 4
+  },
+  "webkitMatch": {
+    "code": "RG9K2",
+    "firstId": "b72ab25f-1b43-42cf-9b28-aceecf6b184c",
+    "secondId": "989419d6-eda7-46ed-a202-2d3b71f1720b"
+  },
+  "screenshots": [
+    "docs/screenshots/lb-ios-lobby-390x844.png",
+    "docs/screenshots/lb-ios-lobby-393x852.png",
+    "docs/screenshots/lb-ios-lobby-430x932.png",
+    "docs/screenshots/lb-ios-lobby-844x390.png",
+    "docs/screenshots/lb-ios-lobby-932x430.png",
+    "docs/screenshots/lb-ios-rotate-rotated.png"
+  ],
+  "serverStderr": []
+}

@@ -1,0 +1,671 @@
+import { expect, test, type Browser, type Page } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  OUT_DIR, consoleErrorsOf, newClient, shot, startTestServer, toScreen, type TestServer,
+} from './harness';
+
+/**
+ * LB-01..LB-45 — the lobby as a distributed state machine.
+ *
+ * Every test here runs real browser contexts (one storage, one socket each) against the real
+ * server. Assertions are on `lobbySeats()` — the rows the lobby actually PAINTED — not only on
+ * `players()`, because the bug class this suite exists for is exactly the two disagreeing: the
+ * client can hold a correct roster and still drop an occupied seat off the screen.
+ */
+
+const LOG_PATH = path.join(OUT_DIR, 'verify-lobby-log.json');
+// One port per engine so the three projects never race each other's server, and none of them is
+// the server's own DEFAULT_PORT (8787) — a dev server (or anything else) already on that port
+// answers the health check and the WebSocket never reaches the room manager under test.
+const PORTS: Record<string, number> = { chromium: 8778, firefox: 8779, webkit: 8777 };
+
+let server: TestServer;
+const evidence: Record<string, unknown> = {};
+const screenshots: string[] = [];
+
+test.beforeAll(async ({}, testInfo) => {
+  server = await startTestServer(PORTS[testInfo.project.name] ?? 8785);
+});
+
+test.afterAll(async ({}, testInfo) => {
+  server.stop();
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  const log = fs.existsSync(LOG_PATH) ? JSON.parse(fs.readFileSync(LOG_PATH, 'utf8')) : {};
+  log[testInfo.project.name] = {
+    ...evidence,
+    screenshots,
+    serverStderr: server.stderr.filter((l) => l.trim().length > 0),
+  };
+  fs.writeFileSync(LOG_PATH, JSON.stringify(log, null, 2));
+});
+
+// ---------- lobby vocabulary ----------
+
+interface SeatRow {
+  seat: number;
+  name: string;
+  you: boolean;
+  host: boolean;
+  status: 'empty' | 'waiting' | 'ready' | 'offline';
+  wins: number;
+}
+
+const client = (browser: Browser): Promise<Page> => newClient(browser, server.url);
+
+async function clients(browser: Browser, n: number): Promise<Page[]> {
+  const pages: Page[] = [];
+  for (let i = 0; i < n; i++) pages.push(await client(browser));
+  return pages;
+}
+
+/** The rows the lobby drew, in row order. */
+const rows = (p: Page): Promise<SeatRow[]> =>
+  p.evaluate(() => window.__MEXE__.online!.lobbySeats!() as SeatRow[]);
+
+const occupiedRows = async (p: Page): Promise<SeatRow[]> =>
+  (await rows(p)).filter((r) => r.status !== 'empty');
+
+async function createRoom(page: Page, name: string): Promise<string> {
+  await page.evaluate((n) => window.__MEXE__.online!.createRoom(n), name);
+  await page.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  return (await page.evaluate(() => window.__MEXE__.online!.code()))!;
+}
+
+async function joinRoom(page: Page, code: string, name: string, seat: number): Promise<void> {
+  await page.evaluate(([c, n]) => window.__MEXE__.online!.joinRoom(c as string, n as string), [code, name]);
+  await page.waitForFunction((s) => window.__MEXE__.online?.seat() === s, seat, { timeout: 10_000 });
+}
+
+/** Wait until every client has PAINTED the given occupied seat indices. */
+async function waitForSeats(pages: Page[], seats: number[]): Promise<void> {
+  for (const p of pages) {
+    await p.waitForFunction(
+      (want) => {
+        const drawn = (window.__MEXE__.online?.lobbySeats?.() ?? [])
+          .filter((r) => r.status !== 'empty')
+          .map((r) => r.seat);
+        return JSON.stringify(drawn) === JSON.stringify(want);
+      },
+      seats,
+      { timeout: 10_000 },
+    );
+  }
+}
+
+/** Every client must agree on membership, seat ownership, names, host and room code. */
+async function assertParity(pages: Page[], code: string): Promise<void> {
+  const views = await Promise.all(
+    pages.map(async (p) => ({
+      code: await p.evaluate(() => window.__MEXE__.online!.code()),
+      seats: (await occupiedRows(p)).map((r) => ({ seat: r.seat, name: r.name, host: r.host, status: r.status, wins: r.wins })),
+      host: (await rows(p)).find((r) => r.host && r.status !== 'empty')?.seat ?? null,
+    })),
+  );
+  for (const v of views) {
+    expect(v.code).toBe(code);
+    // Seat ownership is unique by construction only if nothing rendered a seat twice.
+    expect(new Set(v.seats.map((s) => s.seat)).size).toBe(v.seats.length);
+    expect(JSON.stringify(v.seats)).toBe(JSON.stringify(views[0]!.seats));
+    expect(v.host).toBe(views[0]!.host);
+  }
+}
+
+/** Exactly one row says YOU, and it is this client's own seat. */
+async function assertYouBadge(page: Page): Promise<void> {
+  const drawn = await rows(page);
+  const mine = await page.evaluate(() => window.__MEXE__.online!.seat());
+  const you = drawn.filter((r) => r.you);
+  expect(you).toHaveLength(1);
+  expect(you[0]!.seat).toBe(mine);
+}
+
+async function readyAll(pages: Page[]): Promise<void> {
+  for (const p of pages) await p.evaluate(() => window.__MEXE__.online!.setReady(true));
+  for (const p of pages) {
+    await p.waitForFunction(
+      (n) => {
+        const drawn = (window.__MEXE__.online?.lobbySeats?.() ?? []).filter((r) => r.status !== 'empty');
+        return drawn.length === n && drawn.every((r) => r.status === 'ready');
+      },
+      pages.length,
+      { timeout: 10_000 },
+    );
+  }
+}
+
+/** Ready everyone, host starts, every client reaches the match. */
+async function startMatch(host: Page, pages: Page[]): Promise<string> {
+  await readyAll(pages);
+  await host.evaluate(() => window.__MEXE__.online!.startGame());
+  for (const p of pages) await p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 20_000 });
+  return (await host.evaluate(() => window.__MEXE__.online!.matchId()))!;
+}
+
+/** Drain the draw pile to a server-decided finish; nobody fakes game_over. */
+async function playToFinish(pages: Page[]): Promise<void> {
+  for (let i = 0; i < 600; i++) {
+    if (await pages[0]!.evaluate(() => window.__MEXE__.scene === 'win')) return;
+    for (const p of pages) {
+      const mine = await p.evaluate(() => {
+        const s = window.__MEXE__.state?.();
+        return !!s && s.winnerId === null && s.activePlayerIndex === window.__MEXE__.online?.localSeat?.();
+      });
+      if (!mine) continue;
+      await p.evaluate(() => window.__MEXE__.online!.comprar());
+      break;
+    }
+    await pages[0]!.waitForTimeout(20);
+  }
+  throw new Error('match did not finish within draw-pile budget');
+}
+
+/** WinScene REMATCH for every seat — back into the same room, on the same code. */
+async function rematchAll(pages: Page[]): Promise<void> {
+  for (const p of pages) await p.waitForFunction(() => window.__MEXE__.scene === 'win', undefined, { timeout: 20_000 });
+  for (const p of pages) {
+    const y = (await p.evaluate(() => window.__MEXE__.winButtonY))!;
+    const [bx, by] = toScreen(240, y);
+    await p.mouse.click(bx, by);
+    await p.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 15_000 });
+  }
+}
+
+async function assertClean(pages: Page[]): Promise<void> {
+  for (const p of pages) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(consoleErrorsOf(p).filter((e) => !e.includes('WebSocket connection'))).toEqual([]);
+  }
+  expect(server.stderr.filter((l) => l.trim().length > 0)).toEqual([]);
+}
+
+/** Re-enter the online flow from the menu, the way a player who backed out would. */
+async function reenterOnline(page: Page): Promise<void> {
+  await page.reload();
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const [ox, oy] = toScreen(240, 254);
+  await page.mouse.click(ox, oy);
+  await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 15_000 });
+  await page.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 20_000 });
+}
+
+const closeAll = async (pages: Page[]): Promise<void> => {
+  for (const p of pages) await p.context().close();
+};
+
+// ---------- LB-01..LB-06, LB-30: seats, gaps, and what is on screen ----------
+
+test('LB-01/LB-02/LB-03/LB-30: 2, 3 and 4 clients agree on membership, seats, YOU, HOST and code', async ({ browser }) => {
+  for (const n of [2, 3, 4]) {
+    const pages = await clients(browser, n);
+    const code = await createRoom(pages[0]!, 'Marina');
+    const names = ['Marina', 'Joao', 'Ana', 'Bea'];
+    for (let i = 1; i < n; i++) await joinRoom(pages[i]!, code, names[i]!, i);
+    await waitForSeats(pages, Array.from({ length: n }, (_, i) => i));
+
+    await assertParity(pages, code);
+    for (const p of pages) await assertYouBadge(p);
+    // Host authority is rendered from the server's hostSeat, never from array position.
+    for (const p of pages) {
+      const drawn = await rows(p);
+      expect(drawn.filter((r) => r.host && r.status !== 'empty').map((r) => r.seat)).toEqual([0]);
+      expect((await occupiedRows(p)).map((r) => r.name)).toEqual(names.slice(0, n));
+    }
+    evidence[`lb0${n - 1}`] = { seats: (await occupiedRows(pages[0]!)).map((r) => r.seat), code };
+    await assertClean(pages);
+    await closeAll(pages);
+  }
+});
+
+test('LB-04/LB-05/LB-06: a seat above a gap keeps rendering after the seats below it empty out', async ({ browser }) => {
+  const pages = await clients(browser, 4);
+  const [a, b, c, d] = pages as [Page, Page, Page, Page];
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await joinRoom(c, code, 'Caio', 2);
+  await joinRoom(d, code, 'Dora', 3);
+  await waitForSeats(pages, [0, 1, 2, 3]);
+  await shot({ full: a }, 'lb-seats-full', screenshots);
+
+  // LB-04: one gap at seat 1.
+  await b.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  await waitForSeats([a, c, d], [0, 2, 3]);
+  for (const p of [a, c, d]) {
+    const drawn = await rows(p);
+    expect(drawn.find((r) => r.seat === 3)?.name).toBe('Dora');
+    expect(drawn.find((r) => r.seat === 1)?.status).toBe('empty');
+  }
+
+  // LB-05/LB-06: two gaps — seat 3 must still be on screen.
+  await c.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  await waitForSeats([a, d], [0, 3]);
+  for (const p of [a, d]) {
+    const drawn = await rows(p);
+    expect(drawn.map((r) => r.seat)).toEqual([0, 1, 2, 3]);
+    expect(drawn.find((r) => r.seat === 0)?.name).toBe('Ana');
+    expect(drawn.find((r) => r.seat === 3)?.name).toBe('Dora');
+    expect(drawn.filter((r) => r.status === 'empty').map((r) => r.seat)).toEqual([1, 2]);
+  }
+  await assertParity([a, d], code);
+  await shot({ gaps: a }, 'lb-seat-gaps', screenshots);
+  evidence.seatGaps = (await rows(a)).map((r) => ({ seat: r.seat, name: r.name, status: r.status }));
+
+  await assertClean([a, d]);
+  await closeAll(pages);
+});
+
+test('LB-07/LB-08: a replacement takes the lowest free seat and inherits nothing', async ({ browser }) => {
+  const pages = await clients(browser, 4);
+  const [a, b, c, d] = pages as [Page, Page, Page, Page];
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await joinRoom(c, code, 'Caio', 2);
+  await waitForSeats([a, b, c], [0, 1, 2]);
+
+  // Bruno readies, then leaves: the vote retires with the chair.
+  await b.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await a.waitForFunction(
+    () => window.__MEXE__.online!.lobbySeats!().some((r) => r.seat === 1 && r.status === 'ready'),
+    undefined,
+    { timeout: 10_000 },
+  );
+  await b.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  await waitForSeats([a, c], [0, 2]);
+
+  // LB-07: the newcomer is handed seat 1, the canonical lowest free seat.
+  await joinRoom(d, code, 'Dora', 1);
+  await waitForSeats([a, c, d], [0, 1, 2]);
+  const seat1 = (await rows(a)).find((r) => r.seat === 1)!;
+  // LB-08: brand-new seat object — no inherited ready bit, no inherited wins.
+  expect(seat1).toMatchObject({ name: 'Dora', status: 'waiting', wins: 0, host: false });
+  await assertParity([a, c, d], code);
+  await assertYouBadge(d);
+
+  await assertClean([a, c, d]);
+  await closeAll(pages);
+});
+
+// ---------- LB-09..LB-12: ready is the server's bit ----------
+
+test('LB-09/LB-12: the rendered ready state is the server\'s, and a ready/start race resolves once', async ({ browser }) => {
+  const pages = await clients(browser, 3);
+  const [a, b, c] = pages as [Page, Page, Page];
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await joinRoom(c, code, 'Caio', 2);
+  await waitForSeats(pages, [0, 1, 2]);
+
+  // Simultaneous ready from three clients: every client converges on all-ready.
+  await Promise.all(pages.map((p) => p.evaluate(() => window.__MEXE__.online!.setReady(true))));
+  for (const p of pages) {
+    await p.waitForFunction(
+      () => window.__MEXE__.online!.lobbySeats!().filter((r) => r.status !== 'empty').every((r) => r.status === 'ready'),
+      undefined,
+      { timeout: 10_000 },
+    );
+  }
+  // Unready one seat: the row and every other client's copy of it follow the server, not a local flag.
+  await b.evaluate(() => window.__MEXE__.online!.setReady(false));
+  for (const p of pages) {
+    await p.waitForFunction(
+      () => window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === 1)?.status === 'waiting',
+      undefined,
+      { timeout: 10_000 },
+    );
+  }
+  // Rendered rows and the authoritative roster never disagree.
+  for (const p of pages) {
+    const drawn = await occupiedRows(p);
+    const truth = await p.evaluate(() => window.__MEXE__.online!.players());
+    expect(drawn.map((r) => ({ seat: r.seat, ready: r.status === 'ready' })))
+      .toEqual(truth.map((t) => ({ seat: t.seat, ready: t.ready })));
+  }
+
+  // LB-12: a start racing a stale ready bit must not deal. Seat 1 is not ready. The refusal is
+  // answered on the lobby — it must not cost the host the screen they are acting on.
+  await a.evaluate(() => window.__MEXE__.online!.startGame());
+  await a.waitForTimeout(500);
+  expect(await a.evaluate(() => window.__MEXE__.scene)).toBe('online');
+  expect(await a.evaluate(() => window.__MEXE__.online!.phase())).toBe('lobby');
+  expect(await a.evaluate(() => window.__MEXE__.online!.lobbyNotice!())).toBeTruthy();
+  expect((await occupiedRows(a)).length).toBe(3);
+
+  // Everyone ready, two starts fired back to back: exactly one match.
+  await readyAll(pages);
+  await a.evaluate(() => {
+    window.__MEXE__.online!.startGame();
+    window.__MEXE__.online!.startGame();
+  });
+  for (const p of pages) await p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 20_000 });
+  const ids = await Promise.all(pages.map((p) => p.evaluate(() => window.__MEXE__.online!.matchId())));
+  expect(new Set(ids).size).toBe(1);
+
+  await assertClean(pages);
+  await closeAll(pages);
+});
+
+test('LB-11: a fairness setting change clears every ready bit, once, on every client', async ({ browser }) => {
+  const pages = await clients(browser, 3);
+  const [a, b, c] = pages as [Page, Page, Page];
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await joinRoom(c, code, 'Caio', 2);
+  await waitForSeats(pages, [0, 1, 2]);
+  await readyAll(pages);
+
+  const before = await a.evaluate(() => window.__MEXE__.online!.roomSettings());
+  await a.evaluate(() => window.__MEXE__.online!.setRoomSettings({ timerMode: 'fast', turnMs: 20_000, mexeBonusMs: 10_000, warnMs: 5_000, missedTurnLimit: 3, reconnectGraceMs: 30_000 }));
+  for (const p of pages) {
+    await p.waitForFunction(
+      () => window.__MEXE__.online!.lobbySeats!().filter((r) => r.status !== 'empty').every((r) => r.status === 'waiting'),
+      undefined,
+      { timeout: 10_000 },
+    );
+    expect(await p.evaluate(() => window.__MEXE__.online!.roomSettings()?.timerMode)).toBe('fast');
+  }
+  expect(before?.timerMode).not.toBe('fast');
+
+  // A stale ready bit cannot start the match: the host's own bit was cleared too, and the
+  // refusal keeps the lobby on screen.
+  await a.evaluate(() => window.__MEXE__.online!.startGame());
+  await a.waitForTimeout(500);
+  expect(await a.evaluate(() => window.__MEXE__.online!.phase())).toBe('lobby');
+
+  // Idempotent re-send of the same settings is not a change and leaves the lobby alone.
+  await readyAll(pages);
+  await a.evaluate(() => window.__MEXE__.online!.setRoomSettings(window.__MEXE__.online!.roomSettings()!));
+  await a.waitForTimeout(400);
+  expect((await occupiedRows(a)).every((r) => r.status === 'ready')).toBe(true);
+
+  await assertClean(pages);
+  await closeAll(pages);
+});
+
+// ---------- LB-13..LB-15: host authority ----------
+
+test('LB-13/LB-14/LB-15: host transfer is deterministic, gap-safe, and a drop is not a departure', async ({ browser }) => {
+  const pages = await clients(browser, 4);
+  const [a, b, c, d] = pages as [Page, Page, Page, Page];
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await joinRoom(c, code, 'Caio', 2);
+  await joinRoom(d, code, 'Dora', 3);
+  await waitForSeats(pages, [0, 1, 2, 3]);
+
+  // LB-15: a dropped socket is a held seat, not a departure — host authority does not move.
+  await a.evaluate(() => window.__MEXE__.online!.forceDrop());
+  for (const p of [b, c, d]) {
+    await p.waitForFunction(
+      () => window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === 0)?.status === 'offline',
+      undefined,
+      { timeout: 15_000 },
+    );
+    expect((await rows(p)).find((r) => r.host && r.status !== 'empty')?.seat).toBe(0);
+  }
+  await a.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 30_000 });
+  await waitForSeats(pages, [0, 1, 2, 3]);
+  await assertParity(pages, code);
+
+  // LB-14: host leaves a lobby with a gap below the survivors — the next OCCUPIED seat takes over.
+  await b.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  await waitForSeats([a, c, d], [0, 2, 3]);
+  await a.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  for (const p of [c, d]) {
+    await p.waitForFunction(
+      () => window.__MEXE__.online!.lobbySeats!().find((r) => r.host && r.status !== 'empty')?.seat === 2,
+      undefined,
+      { timeout: 10_000 },
+    );
+  }
+  await waitForSeats([c, d], [2, 3]);
+  await assertParity([c, d], code);
+  // LB-13: the new host has the controls, the old host's row is gone from every client.
+  for (const p of [c, d]) {
+    const drawn = await rows(p);
+    expect(drawn.filter((r) => r.host && r.status !== 'empty')).toHaveLength(1);
+    expect(drawn.find((r) => r.seat === 0)?.status).toBe('empty');
+  }
+  expect(await c.evaluate(() => window.__MEXE__.online!.seat())).toBe(2);
+  // The new host can actually start: the authority moved, not only the badge.
+  await readyAll([c, d]);
+  await c.evaluate(() => window.__MEXE__.online!.startGame());
+  for (const p of [c, d]) await p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 20_000 });
+  evidence.hostTransfer = { from: 0, to: 2 };
+
+  await assertClean([c, d]);
+  await closeAll(pages);
+});
+
+// ---------- LB-16..LB-20: real matches and real rematches ----------
+
+for (const n of [2, 3, 4]) {
+  test(`LB-1${n + 4}/LB-20: a ${n}-player match finishes, scores once, and rematches on the same code`, async ({ browser }) => {
+    const pages = await clients(browser, n);
+    const names = ['Ana', 'Bruno', 'Caio', 'Dora'];
+    const code = await createRoom(pages[0]!, names[0]!);
+    for (let i = 1; i < n; i++) await joinRoom(pages[i]!, code, names[i]!, i);
+    await waitForSeats(pages, Array.from({ length: n }, (_, i) => i));
+
+    const firstId = await startMatch(pages[0]!, pages);
+    await playToFinish(pages);
+    await rematchAll(pages);
+
+    // Same room, same code, one win awarded, one history entry — never two.
+    for (const p of pages) {
+      expect(await p.evaluate(() => window.__MEXE__.online!.code())).toBe(code);
+      await p.waitForFunction(
+        () => window.__MEXE__.online!.party().matches.length === 1
+          && window.__MEXE__.online!.players().reduce((s, x) => s + x.wins, 0) === 1,
+        undefined,
+        { timeout: 15_000 },
+      );
+    }
+    await waitForSeats(pages, Array.from({ length: n }, (_, i) => i));
+    await assertParity(pages, code);
+    // No stale rematch vote survived the deal that consumed it.
+    expect((await occupiedRows(pages[0]!)).every((r) => r.status === 'waiting')).toBe(true);
+
+    const secondId = await startMatch(pages[0]!, pages);
+    expect(secondId).toBeTruthy();
+    expect(secondId).not.toBe(firstId);
+    evidence[`rematch${n}p`] = { code, firstId, secondId };
+
+    await assertClean(pages);
+    await closeAll(pages);
+  });
+}
+
+// ---------- LB-19, LB-21..LB-24: endurance and between-match churn ----------
+
+test('LB-19/LB-21/LB-22/LB-23/LB-24: three matches across departures, a replacement and a host transfer', async ({ browser }) => {
+  test.setTimeout(300_000);
+  const pages = await clients(browser, 5);
+  const [a, b, c, d, e] = pages as [Page, Page, Page, Page, Page];
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await joinRoom(c, code, 'Caio', 2);
+  await joinRoom(d, code, 'Dora', 3);
+  await waitForSeats([a, b, c, d], [0, 1, 2, 3]);
+
+  const matchIds: string[] = [];
+  matchIds.push(await startMatch(a, [a, b, c, d]));
+  await playToFinish([a, b, c, d]);
+  await rematchAll([a, b, c, d]);
+  await waitForSeats([a, b, c, d], [0, 1, 2, 3]);
+
+  // LB-21/LB-22: departures between matches, one at a time, 4 -> 3 -> 2.
+  await b.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  await waitForSeats([a, c, d], [0, 2, 3]);
+  await c.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  await waitForSeats([a, d], [0, 3]);
+  // Seat 3 is still on screen with its name and its session score.
+  const seat3 = (await rows(a)).find((r) => r.seat === 3)!;
+  expect(seat3.name).toBe('Dora');
+
+  // LB-23: a replacement between matches starts at zero wins with no old player's state.
+  await joinRoom(e, code, 'Elis', 1);
+  await waitForSeats([a, d, e], [0, 1, 3]);
+  expect((await rows(a)).find((r) => r.seat === 1)).toMatchObject({ name: 'Elis', wins: 0, status: 'waiting' });
+
+  // LB-24: the host leaves between matches — authority moves to the next occupied seat.
+  await a.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  for (const p of [d, e]) {
+    await p.waitForFunction(
+      () => window.__MEXE__.online!.lobbySeats!().find((r) => r.host && r.status !== 'empty')?.seat === 1,
+      undefined,
+      { timeout: 10_000 },
+    );
+  }
+  await waitForSeats([d, e], [1, 3]);
+  await assertParity([d, e], code);
+
+  // Match 2 with the survivors, under the new host.
+  matchIds.push(await startMatch(e, [e, d]));
+  await playToFinish([e, d]);
+  await rematchAll([e, d]);
+  await waitForSeats([e, d], [1, 3]);
+
+  // LB-26: a between-match reconnect restores the exact seat and the authoritative party state.
+  const winsBefore = (await occupiedRows(e)).map((r) => ({ seat: r.seat, wins: r.wins }));
+  await d.evaluate(() => window.__MEXE__.online!.forceDrop());
+  await e.waitForFunction(
+    () => window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === 3)?.status === 'offline',
+    undefined,
+    { timeout: 15_000 },
+  );
+  await d.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 30_000 });
+  await waitForSeats([d, e], [1, 3]);
+  expect(await d.evaluate(() => window.__MEXE__.online!.seat())).toBe(3);
+  expect((await occupiedRows(e)).map((r) => ({ seat: r.seat, wins: r.wins }))).toEqual(winsBefore);
+  expect(await d.evaluate(() => window.__MEXE__.online!.party().matches.length)).toBe(2);
+
+  // Match 3 starts on the same room.
+  matchIds.push(await startMatch(e, [e, d]));
+  expect(new Set(matchIds).size).toBe(3);
+  expect(await e.evaluate(() => window.__MEXE__.online!.code())).toBe(code);
+  evidence.endurance = { code, matchIds };
+  await shot({ endurance: e }, 'lb-endurance-match3', screenshots);
+
+  await assertClean([d, e]);
+  await closeAll(pages);
+});
+
+// ---------- LB-25..LB-29: reconnect, reload, stale sockets, room isolation ----------
+
+test('LB-25/LB-10/LB-27: a reload in the lobby restores the exact seat and the server\'s ready bit', async ({ browser }) => {
+  const pages = await clients(browser, 3);
+  const [a, b, c] = pages as [Page, Page, Page];
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await joinRoom(c, code, 'Caio', 2);
+  await waitForSeats(pages, [0, 1, 2]);
+
+  // Seat 2 is ready when it reloads; seat 1 is not.
+  await c.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await a.waitForFunction(
+    () => window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === 2)?.status === 'ready',
+    undefined,
+    { timeout: 10_000 },
+  );
+
+  for (const [page, seat, ready] of [[c, 2, true], [b, 1, false]] as [Page, number, boolean][]) {
+    await page.reload();
+    await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+    const [ox, oy] = toScreen(240, 254);
+    await page.mouse.click(ox, oy);
+    await page.waitForFunction((s) => window.__MEXE__.online?.seat() === s, seat, { timeout: 20_000 });
+    await page.waitForFunction(
+      (want) => {
+        const me = window.__MEXE__.online!.seat();
+        const row = window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === me);
+        return !!row && (row.status === 'ready') === want;
+      },
+      ready,
+      { timeout: 15_000 },
+    );
+  }
+
+  // No duplicate player, no duplicate seat, everyone agrees.
+  await waitForSeats(pages, [0, 1, 2]);
+  await assertParity(pages, code);
+  for (const p of pages) await assertYouBadge(p);
+  evidence.reload = { seats: (await occupiedRows(a)).map((r) => r.seat) };
+
+  await assertClean(pages);
+  await closeAll(pages);
+});
+
+test('LB-28: a second tab holding the same token takes the seat and the old socket loses authority', async ({ browser }) => {
+  const pages = await clients(browser, 2);
+  const [a, b] = pages as [Page, Page];
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await waitForSeats(pages, [0, 1]);
+
+  const token = await b.evaluate(() => sessionStorage.getItem('mexe.online.token'));
+  expect(token).toBeTruthy();
+
+  const tab2 = await b.context().newPage();
+  await tab2.goto(`/?ws=${encodeURIComponent(server.url)}&showcase=menu`);
+  await tab2.evaluate((t) => sessionStorage.setItem('mexe.online.token', t as string), token);
+  await tab2.reload();
+  await tab2.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+  const [ox, oy] = toScreen(240, 254);
+  await tab2.mouse.click(ox, oy);
+  await tab2.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 20_000 });
+
+  // Exactly one seat 1, from the host's point of view: the seat was taken over, not duplicated.
+  await waitForSeats([a, tab2], [0, 1]);
+  const drawn = await rows(a);
+  expect(drawn.filter((r) => r.seat === 1 && r.status !== 'empty')).toHaveLength(1);
+  expect(drawn.find((r) => r.seat === 1)?.name).toBe('Bruno');
+
+  // The evicted socket cannot mutate the room any more.
+  await b.evaluate(() => window.__MEXE__.online?.setReady(true));
+  await a.waitForTimeout(700);
+  expect((await rows(a)).find((r) => r.seat === 1)?.status).not.toBe('ready');
+  // …while the tab that owns the seat can. This is also what proves the evicted tab stopped
+  // trying: its bounded reconnect loop holds the same token, and if it were still retrying it
+  // would take the seat back and the ready bit would flap instead of settling.
+  await tab2.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await a.waitForFunction(
+    () => window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === 1)?.status === 'ready',
+    undefined,
+    { timeout: 10_000 },
+  );
+  await a.waitForTimeout(2500);
+  expect((await rows(a)).find((r) => r.seat === 1)?.status).toBe('ready');
+  expect(await tab2.evaluate(() => window.__MEXE__.online!.seat())).toBe(1);
+
+  expect(await a.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  expect(server.stderr.filter((l) => l.trim().length > 0)).toEqual([]);
+  await closeAll(pages);
+});
+
+test('LB-29: switching rooms leaves the old one behind entirely', async ({ browser }) => {
+  const pages = await clients(browser, 3);
+  const [a, b, c] = pages as [Page, Page, Page];
+  const roomA = await createRoom(a, 'Ana');
+  await joinRoom(b, roomA, 'Bruno', 1);
+  await waitForSeats([a, b], [0, 1]);
+
+  // Bruno walks out of room A, back to the menu, and into room B.
+  await b.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  await waitForSeats([a], [0]);
+  const roomB = await createRoom(c, 'Caio');
+  await reenterOnline(b);
+  await joinRoom(b, roomB, 'Bruno', 1);
+  await waitForSeats([b, c], [0, 1]);
+  expect(await b.evaluate(() => window.__MEXE__.online!.code())).toBe(roomB);
+  expect((await occupiedRows(b)).map((r) => r.name)).toEqual(['Caio', 'Bruno']);
+
+  // Room A keeps churning and none of it reaches the client that left.
+  await a.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await a.waitForTimeout(700);
+  expect(await b.evaluate(() => window.__MEXE__.online!.code())).toBe(roomB);
+  expect((await occupiedRows(b)).map((r) => r.name)).toEqual(['Caio', 'Bruno']);
+  expect(roomA).not.toBe(roomB);
+
+  await assertClean([a, b, c]);
+  await closeAll(pages);
+});

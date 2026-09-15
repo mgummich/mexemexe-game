@@ -117,6 +117,74 @@ for (const shot of EXPECTED_DEMO_SHOTS) {
   }
 }
 
+// Lobby state-machine gate (e2e-multiplayer/lobby.spec.ts), one entry per browser engine. A
+// Chrome pass is not evidence for Firefox or WebKit, so all three must be present and clean.
+const LOBBY_LOG = 'docs/screenshots/verify-lobby-log.json';
+if (!fs.existsSync(LOBBY_LOG)) {
+  failed = true;
+  console.error('verify:multiplayer: missing', LOBBY_LOG);
+} else {
+  const lobby = JSON.parse(fs.readFileSync(LOBBY_LOG, 'utf8'));
+  for (const engine of ['chromium', 'firefox', 'webkit']) {
+    const run = lobby[engine];
+    if (!run) {
+      failed = true;
+      console.error(`verify:multiplayer: no lobby evidence for ${engine}`);
+      continue;
+    }
+    if ((run.serverStderr ?? []).length) {
+      failed = true;
+      console.error(`verify:multiplayer: lobby server stderr (${engine}):`, run.serverStderr);
+    }
+    // The seat-gap invariant, as RENDERED: seat 3 keeps its occupant with seats 1 and 2 empty.
+    const gaps = run.seatGaps ?? [];
+    const occupied = gaps.filter((r) => r.status !== 'empty').map((r) => r.seat);
+    if (JSON.stringify(gaps.map((r) => r.seat)) !== '[0,1,2,3]' || JSON.stringify(occupied) !== '[0,3]') {
+      failed = true;
+      console.error(`verify:multiplayer: lobby seat-gap evidence wrong (${engine})`, gaps);
+    }
+    // Three matches on one room code, each with its own match id.
+    const end = run.endurance;
+    if (!end || new Set(end.matchIds ?? []).size !== 3 || !end.code) {
+      failed = true;
+      console.error(`verify:multiplayer: 3-match endurance evidence missing (${engine})`, end);
+    }
+    for (const shot of run.screenshots ?? []) {
+      if (!fs.existsSync(shot)) {
+        failed = true;
+        console.error(`verify:multiplayer: missing lobby screenshot ${shot}`);
+      }
+    }
+  }
+}
+
+// iOS-viewport WebKit gate (e2e-multiplayer/ios-lobby.spec.ts).
+const IOS_LOG = 'docs/screenshots/verify-lobby-ios-log.json';
+if (!fs.existsSync(IOS_LOG)) {
+  failed = true;
+  console.error('verify:multiplayer: missing', IOS_LOG);
+} else {
+  const ios = JSON.parse(fs.readFileSync(IOS_LOG, 'utf8'));
+  if ((ios.serverStderr ?? []).length) {
+    failed = true;
+    console.error('verify:multiplayer: iOS lobby server stderr:', ios.serverStderr);
+  }
+  if (ios.rotate?.seat !== 1) {
+    failed = true;
+    console.error('verify:multiplayer: orientation change did not preserve the seat', ios.rotate);
+  }
+  if (!ios.webkitMatch?.firstId || ios.webkitMatch.firstId === ios.webkitMatch.secondId) {
+    failed = true;
+    console.error('verify:multiplayer: WebKit rematch did not mint a fresh matchId', ios.webkitMatch);
+  }
+  for (const shot of ios.screenshots ?? []) {
+    if (!fs.existsSync(shot)) {
+      failed = true;
+      console.error(`verify:multiplayer: missing iOS lobby screenshot ${shot}`);
+    }
+  }
+}
+
 console.log(`verify:multiplayer: room=${log.roomCode} seed=${log.seed} revisions=${JSON.stringify(log.revisionsObserved)}`);
 console.log(`verify:multiplayer: screenshots=${(log.screenshots ?? []).length}`);
 

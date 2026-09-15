@@ -15,7 +15,6 @@ export const SERVER_ERROR_CODES = [
   'not_member',
   'not_host',
   'not_ready',
-  'seat_gap',
   'invalid_token',
   'room_closed',
   'server_shutdown',

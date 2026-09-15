@@ -244,7 +244,7 @@ describe('room lifecycle', () => {
     expect(mgr.startGame(code, 0)).toMatchObject({ ok: true, started: true });
   });
 
-  it('does not compact stable seats after a lobby leave; host must refill the gap before start', () => {
+  it('LB-14/LB-21: a lobby with a seat gap starts, keeps its stable seats, and maps them to turn order', () => {
     const mgr = testManager();
     const { code } = mustCreate(mgr, 'Alice');
     mgr.joinRoom(code, 'Bob');
@@ -252,11 +252,34 @@ describe('room lifecycle', () => {
     mgr.leaveRoom(code, 1);
     mgr.setReady(code, 0, true);
     mgr.setReady(code, 2, true);
-    expect(mgr.startGame(code, 0)).toMatchObject({ ok: false, error: 'seat_gap' });
-    expect(mgr.joinRoom(code, 'Dina')).toMatchObject({ ok: true, seat: 1 });
-    mgr.setReady(code, 1, true);
+    // Seats never compact — Carol keeps chair 2 — but the gap no longer deadlocks the room, which
+    // is what a between-match departure used to do to every rematch that followed it.
     expect(mgr.startGame(code, 0)).toMatchObject({ ok: true, started: true });
-    expect(mgr.getRoom(code)!.state!.players.map((p) => p.id)).toEqual(['p0', 'p1', 'p2']);
+    expect(mgr.getPlayers(code)!.map((p) => p.seat)).toEqual([0, 2]);
+    const state = mgr.getRoom(code)!.state!;
+    expect(state.players.map((p) => p.name)).toEqual(['Alice', 'Carol']);
+    // Chair 2 is the second player in turn order, and the view it is handed is that player's.
+    expect(mgr.getView(code, 2)!.seat).toBe(1);
+    expect(mgr.getView(code, 2)!.seats).toEqual([0, 2]);
+    expect(mgr.getView(code, 0)!.players[0]!.hand).toBeDefined();
+    expect(mgr.getView(code, 2)!.players[1]!.hand).toBeDefined();
+    expect(mgr.getView(code, 2)!.players[0]!.hand).toBeUndefined();
+  });
+
+  it('LB-14: a gapped match rejects a turn from the wrong chair and accepts one from the active chair', () => {
+    const mgr = testManager();
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    mgr.joinRoom(code, 'Carol');
+    mgr.leaveRoom(code, 1);
+    mgr.setReady(code, 0, true);
+    mgr.setReady(code, 2, true);
+    mgr.startGame(code, 0);
+    // Chair 2 is not the active player at turn 1 — chair 0 is.
+    expect(mgr.drawEndTurn(code, 2, 1)).toMatchObject({ ok: false });
+    expect(mgr.drawEndTurn(code, 0, 1)).toMatchObject({ ok: true });
+    expect(mgr.getRoom(code)!.state!.activePlayerIndex).toBe(1);
+    expect(mgr.drawEndTurn(code, 2, 2)).toMatchObject({ ok: true });
   });
 
   it('OH-14: cleans up an empty room', () => {

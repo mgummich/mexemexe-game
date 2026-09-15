@@ -4,6 +4,57 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
+## Unreleased
+
+### lobby stabilization
+
+### Fixed
+
+- **A player who left between matches could strand the room for good.** Seats
+  never move, so a four-player table that lost seat 1 kept seats 0, 2 and 3 —
+  and `start_game` refused that shape outright with `seat_gap`, because the
+  server assumed a room seat and a `GameState` player index were the same
+  number. The two are now related explicitly (`RoomInternal.matchSeats`, on the
+  wire as `GameView.seats`, see MULTIPLAYER.md §3f): a gap is dealt, seats still
+  never compact, and the `seat_gap` error is gone. `PROTOCOL_VERSION` is 9.
+- **An occupied seat above a gap vanished from the lobby.** The seat rows were
+  sized by `players.length`, so with seats 0 and 3 taken the lobby drew three
+  rows and the player in seat 3 was simply not on screen. Rows are counted from
+  the highest occupied seat. Before/after:
+  `docs/screenshots/lb-seat-gap-BEFORE.png` and
+  `docs/screenshots/lb-seat-gaps-gaps.png`.
+- **READY could disagree with the row it sat under.** The lobby kept its own
+  copy of the local ready bit beside the server's. It is now derived from the
+  room state, so a reconnect, a reload or a settings reset can never leave the
+  button and the seat row telling different stories.
+- **A refused START threw the host off the lobby.** `not_ready`, `not_host`,
+  `game_started`, `room_full` and `rate_limited` are answered on the lobby
+  itself now — the caller is still seated and every other control still works.
+- **Two tabs of one session flapped the seat between them.** An evicted socket
+  saw an ordinary close, still held the token, and its bounded reconnect loop
+  took the seat straight back. The server now tells it `invalid_token` before
+  closing it, which is one of the two codes the client treats as definitive.
+- A scene restart no longer inherits the previous room's host seat, terms or
+  lock state.
+
+### Added
+
+- `e2e-multiplayer/lobby.spec.ts` (`LB-*`) — the lobby as a distributed state
+  machine, on **Chromium, Firefox and WebKit**: 2/3/4-client rooms, seat gaps,
+  replacement seats, ready/settings/host-transfer races, real 2/3/4-player
+  matches and rematches, a three-match endurance run across churn, reload,
+  reconnect, multi-tab takeover and room-switch isolation. Assertions are on
+  the rows the lobby actually painted, not only on its internal roster.
+- `tests/server/lobby-soak.test.ts` — the seeded counterpart to those named
+  scenarios: a deterministic random walk of join/leave/ready/disconnect/
+  reconnect/start/play/rematch against a real `RoomManager` (10 seeds x 1200
+  steps), re-checking every room invariant after each step, including the
+  seat/player-index mapping. A failure prints the step log and its seed replays
+  it exactly.
+- `e2e-multiplayer/ios-lobby.spec.ts` — the WebKit iOS gate: five portrait and
+  landscape viewports, an orientation change that must not touch server state,
+  and a two-client match with a mid-match reload.
+
 ## 1.10.2 — 2026-09-15
 
 ### join screen name, quieter by default

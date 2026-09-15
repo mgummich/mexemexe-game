@@ -555,6 +555,15 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
           : null;
       // Exactly one connection may ever act for a seat: evict whatever socket previously
       // held it before attaching this one (S4).
+      //
+      // Tell it why first. An evicted socket sees an ordinary close, and its client's bounded
+      // reconnect loop still holds the same token — so without this the two tabs take the seat
+      // off each other in turn, flapping the seat between connected and disconnected for the
+      // whole room. `invalid_token` is exactly what happened from that socket's side (the token
+      // no longer speaks for the seat there) and is one of the two codes the client treats as
+      // definitive, so it drops the token and stops retrying instead.
+      const previous = sockets.get(result.code)?.get(result.seat);
+      if (previous && previous !== ws) sendError(previous, 'invalid_token', 'seat taken over by a newer connection');
       evictSeat(sockets, connections, result.code, result.seat, ws);
       moveSocket(sockets, conn, result.code, result.seat, ws);
       if (held) {

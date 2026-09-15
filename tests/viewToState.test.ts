@@ -32,8 +32,8 @@ describe('protocol', () => {
   // other instead of half-understanding one another. 6 added room visibility + discovery;
   // 7 changed the reaction enum (`hurry` out, `gg` in) for public rooms; 8 added the casual
   // matchmaking queue (join_queue/cancel_queue/queue_state).
-  it('PROTOCOL_VERSION is 8', () => {
-    expect(PROTOCOL_VERSION).toBe(8);
+  it('PROTOCOL_VERSION is 9', () => {
+    expect(PROTOCOL_VERSION).toBe(9);
   });
 
   it('buildView carries the rules config', () => {
