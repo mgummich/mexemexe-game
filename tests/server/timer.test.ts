@@ -19,15 +19,14 @@ function manager(clock: { t: number }, code = 'ROOM') {
   });
 }
 
-/** A started 2-seat room with `settings` agreed in the lobby first. */
-function startedRoom(clock: { t: number }, settings = TIMER_PRESETS.fast, code = 'ROOM') {
+/** A started room with `settings` agreed in the lobby first. Two seats unless asked otherwise. */
+function startedRoom(clock: { t: number }, settings = TIMER_PRESETS.fast, code = 'ROOM', seats = 2) {
   const mgr = manager(clock, code);
   const created = mgr.createRoom('Host');
   if (!created.ok) throw new Error('setup');
-  mgr.joinRoom(code, 'Guest');
+  for (let i = 1; i < seats; i++) mgr.joinRoom(code, `Guest${i}`);
   mgr.setRoomSettings(code, 0, settings);
-  mgr.setReady(code, 0, true);
-  mgr.setReady(code, 1, true);
+  for (let i = 0; i < seats; i++) mgr.setReady(code, i, true);
   const start = mgr.startGame(code, 0);
   if (!start.ok) throw new Error(`setup: ${start.error}`);
   return mgr;
@@ -131,6 +130,38 @@ describe('server-authoritative turn timer', () => {
     expect(mgr.getView('ROOM', 1)!.turnMsLeft).toBe(45_000);
   });
 
+  it.each([3, 4])('times each seat of a %i-player room in turn, on its own fresh budget', (seats) => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TIMER_PRESETS.fast, 'ROOM', seats);
+    for (let i = 0; i < seats; i++) {
+      expect(mgr.getRoom('ROOM')!.state!.activePlayerIndex).toBe(i);
+      // Only the active seat is on a clock: every view reports the same single remaining time.
+      expect(mgr.getView('ROOM', (i + 1) % seats)!.turnMsLeft).toBe(45_000);
+      clock.t += 45_000;
+      expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, timedOut: i }]);
+    }
+    // Back to seat 0 with a full budget, not a leftover one.
+    expect(mgr.getRoom('ROOM')!.state!.activePlayerIndex).toBe(0);
+    expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBe(45_000);
+  });
+
+  it('a DONE racing the deadline resolves once: whichever lands first, the other is refused', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TIMER_PRESETS.fast);
+    const rev = mgr.getRoom('ROOM')!.rev;
+    const hand = mgr.getRoom('ROOM')!.state!.players[0]!.hand.length;
+
+    clock.t += 45_000;
+    expect(mgr.advanceStalledTurns()).toHaveLength(1);
+    // The DONE was already in flight against the pre-timeout revision: it must not draw a second
+    // card or advance the turn a second time.
+    expect(mgr.drawEndTurn('ROOM', 0, rev)).toEqual({ ok: false, reasons: ['reason.notYourTurn'] });
+    const after = mgr.getRoom('ROOM')!;
+    expect(after.state!.players[0]!.hand.length).toBe(hand + 1);
+    expect(after.state!.activePlayerIndex).toBe(1);
+    expect(after.rev).toBe(rev + 1);
+  });
+
   it('a client cannot extend its turn: only the Mexe bonus moves the deadline, once', () => {
     const clock = { t: 1000 };
     const mgr = startedRoom(clock, TIMER_PRESETS.fast);
@@ -167,6 +198,28 @@ describe('server-authoritative turn timer', () => {
     const clock = { t: 1000 };
     const mgr = startedRoom(clock, TIMER_PRESETS.off);
     expect(mgr.claimMexeBonus('ROOM', 0)).toEqual({ ok: false, msLeft: null });
+  });
+
+  it('a finished match has no clock left running behind the results screen', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TIMER_PRESETS.fast);
+    // Drain the draw pile, then run past the consecutive-empty-draw threshold: the cheapest way
+    // to reach `phase: 'finished'` through the public API only.
+    let room = mgr.getRoom('ROOM')!;
+    let rev = room.rev;
+    let gameOver = false;
+    for (let i = 0; i < 200 && !gameOver; i++) {
+      const result = mgr.drawEndTurn('ROOM', room.state!.activePlayerIndex, rev);
+      expect(result.ok).toBe(true);
+      if (result.ok) gameOver = result.gameOver;
+      rev++;
+      room = mgr.getRoom('ROOM')!;
+    }
+    expect(gameOver).toBe(true);
+    expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBeNull();
+    // And nothing ticks after it: no expiry on a match that is already over.
+    clock.t += 10 * 60_000;
+    expect(mgr.advanceStalledTurns()).toEqual([]);
   });
 
   it('the clock is gone with the room — a deleted room leaves nothing to tick', () => {

@@ -21,6 +21,17 @@ STATE.md
 STATE.template.md
 mexe_improvements_plan_and_prompt.md
 
+# Traefik ACME account key and issued certificates (server-side only, never commit).
+traefik/acme.json
+
+# Agent/tool state: scratch logs, per-developer settings and language-server caches.
+# Regenerated on demand, never part of the project. A shared `.claude/settings.json` or
+# skill would still be committable — only the local-only files are ignored here.
+tmp/
+.serena/
+.claude/settings.local.json
+.claude/.headroom_*
+
 # MkDocs: local build output and the virtualenv used to run it.
 .site/
 .venv/

@@ -8,6 +8,11 @@ services:
         VITE_WS_URL: ${VITE_WS_URL:-}
     ports:
       - "8080:80"
+    depends_on:
+      # Startup order only: the web container is static and local play never needs the
+      # server, but online alpha testers should not reach a page whose server is not up yet.
+      mexe-server:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -30,6 +35,15 @@ services:
       # Unset by default, which leaves /metrics returning 404 in production. Set it (>=16 chars)
       # to enable scraping; the monitoring profile needs it. See docs/OBSERVABILITY_PRIVACY.md.
       MEXE_METRICS_TOKEN: ${MEXE_METRICS_TOKEN:-}
+      # Browser origins allowed to open a WebSocket, comma-separated — your site's own
+      # origin(s). `*` accepts any origin, which is the right answer only when the server is
+      # reached through someone else's proxy or by non-browser clients. Required in production:
+      # the server refuses to start rather than let an omission pass for a decision.
+      MEXE_ALLOWED_ORIGINS: ${MEXE_ALLOWED_ORIGINS:?set MEXE_ALLOWED_ORIGINS to your site origin(s), or * to accept any}
+      # Rooms one client address may create per minute.
+      MEXE_MAX_ROOM_CREATES_PER_IP: ${MEXE_MAX_ROOM_CREATES_PER_IP:-}
+      # Reverse proxies in front of this server. This file publishes 8787 directly, so the peer address already is the client.
+      MEXE_TRUSTED_PROXY_HOPS: ${MEXE_TRUSTED_PROXY_HOPS:-0}
     ports:
       - "8787:8787"
     restart: unless-stopped
@@ -38,6 +52,10 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
+      # Without these, the first verdict waits a full interval and the web container idles
+      # ~30s after the server is already answering. Needs Docker Engine 25+ / Compose 2.24+.
+      start_period: 30s
+      start_interval: 2s
     logging:
       driver: json-file
       options:

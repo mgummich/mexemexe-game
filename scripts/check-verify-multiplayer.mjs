@@ -67,6 +67,24 @@ for (const count of [3, 4]) {
   }
 }
 
+// Quick Match: one room and one seat per player at every supported table size, under the
+// server's canonical casual terms. A duplicate seat or a second room here is the failure the
+// whole queue phase exists to make impossible.
+for (const size of [2, 3, 4]) {
+  const run = log.queueRuns?.[size];
+  const expectedSeats = Array.from({ length: size }, (_, i) => i);
+  const seats = run ? [...run.seats].sort((a, b) => a - b) : null;
+  if (
+    !run ||
+    JSON.stringify(seats) !== JSON.stringify(expectedSeats) ||
+    new Set(run.codes ?? []).size !== 1 ||
+    run.timerMode !== 'casual'
+  ) {
+    failed = true;
+    console.error(`verify:multiplayer: missing or wrong ${size}P Quick Match evidence`, run);
+  }
+}
+
 const kj = log.keyboardJoin;
 if (!kj?.code || !kj.screenshot || !fs.existsSync(kj.screenshot)) {
   failed = true;

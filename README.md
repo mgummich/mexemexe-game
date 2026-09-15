@@ -84,8 +84,10 @@ Full setup, URL parameters, env vars and troubleshooting:
   clock end to end; the client only renders it.
 - **Installable PWA** that works fully offline — see
   [`docs/PWA_OFFLINE.md`](docs/PWA_OFFLINE.md).
-- **Online rooms (alpha)**: 2–4-player private rooms over WebSocket,
-  server-authoritative — see [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md).
+- **Online rooms (alpha)**: 2–4-player rooms over WebSocket,
+  server-authoritative. Private by default, joined by invite link or room code,
+  with recent-room shortcuts and an optional room browser a host can opt one
+  room into — see [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md).
 
 ## Controls
 
@@ -112,6 +114,10 @@ docs/           documentation (see below)
 
 ## Documentation
 
+Browse it online at
+**[mgummich.github.io/mexemexe-game/docs](https://mgummich.github.io/mexemexe-game/docs/)**,
+or read the sources here:
+
 | Doc | What it covers |
 |---|---|
 | [`docs/GAME_RULES.md`](docs/GAME_RULES.md) | Source of truth for the implemented rules |
@@ -125,12 +131,14 @@ docs/           documentation (see below)
 | [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) · [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Deploying and running the server |
 | [`docs/OBSERVABILITY_PRIVACY.md`](docs/OBSERVABILITY_PRIVACY.md) | What is monitored, what is never collected |
 | [`docs/PLAYTEST_GUIDE.md`](docs/PLAYTEST_GUIDE.md) | Running a playtest session |
+| [`docs/ART_DIRECTION.md`](docs/ART_DIRECTION.md) · [`docs/AUDIO_DIRECTION.md`](docs/AUDIO_DIRECTION.md) | Visual and audio style guides |
 
 ## Known limitations
 
-- Online rooms are alpha: no accounts, no matchmaking, no chat, no online
-  rematch, and no rematch stats on the win screen. Per-connection rate limiting
-  only. Full list in [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md).
+- Online rooms are alpha: no accounts, no ranked matchmaking, no chat, no
+  spectators, and no rematch stats on the win screen. Discovery is limited to
+  rooms whose host explicitly listed them; there is no public directory. Full
+  list in [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md).
 - The turn timer is **online only** — a local hot-seat or AI match is never on a
   clock. Custom timer values are validated on the wire but have no lobby control;
   the three presets are what a host can pick.

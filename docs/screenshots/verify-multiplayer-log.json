@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-13T10:02:13.926Z",
-  "roomCode": "YGWBD",
+  "generatedAt": "2026-09-15T13:20:10.040Z",
+  "roomCode": "Y2M75",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-13T10:02:04.739Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":4,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-15T13:20:00.955Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":8,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -159,7 +159,65 @@
     "docs/screenshots/mp-mobile-lobby-guest.png",
     "docs/screenshots/mp-mobile-waiting-waiting.png",
     "docs/screenshots/mp-mobile-unreachable.png",
-    "docs/screenshots/mp-mobile-join-input.png"
+    "docs/screenshots/mp-mobile-join-input.png",
+    "docs/screenshots/mp-custom-settings-custom.png",
+    "docs/screenshots/mp-custom-settings-guest-denied-guest.png",
+    "docs/screenshots/mp-mobile-custom-settings-host.png",
+    "docs/screenshots/mp-landscape-lobby-ready-host.png",
+    "docs/screenshots/mp-landscape-lobby-ready-guest.png",
+    "docs/screenshots/mp-landscape-lobby-settings-changed-host.png",
+    "docs/screenshots/mp-landscape-lobby-settings-changed-guest.png",
+    "docs/screenshots/mp-landscape-turn-timer-host.png",
+    "docs/screenshots/mp-landscape-turn-timer-guest.png",
+    "docs/screenshots/mp-reconnecting-phone-portrait.png",
+    "docs/screenshots/mp-reconnecting-phone-landscape.png",
+    "docs/screenshots/mp-reconnected-phone-portrait.png",
+    "docs/screenshots/mp-reconnected-phone-landscape.png",
+    "docs/screenshots/mp-room-create-limit-desktop.png",
+    "docs/screenshots/mp-room-create-limit-portrait.png",
+    "docs/screenshots/mp-party-finished-host.png",
+    "docs/screenshots/mp-party-finished-guest.png",
+    "docs/screenshots/mp-party-between-matches-host.png",
+    "docs/screenshots/mp-party-history-host.png",
+    "docs/screenshots/mp-party-phone-finished-portrait.png",
+    "docs/screenshots/mp-party-phone-finished-landscape.png",
+    "docs/screenshots/mp-party-phone-lobby-portrait.png",
+    "docs/screenshots/mp-party-phone-lobby-landscape.png",
+    "docs/screenshots/mp-party-phone-history-portrait.png",
+    "docs/screenshots/mp-party-phone-history-landscape.png",
+    "docs/screenshots/mp-party-4p-lobby-host.png",
+    "docs/screenshots/mp-party-4p-match-host.png",
+    "docs/screenshots/mp-discover-private-lobby-host.png",
+    "docs/screenshots/mp-discover-listed-lobby-host.png",
+    "docs/screenshots/mp-discover-browser-browser.png",
+    "docs/screenshots/mp-discover-empty-empty.png",
+    "docs/screenshots/mp-discover-home-phone-portrait.png",
+    "docs/screenshots/mp-discover-home-phone-landscape.png",
+    "docs/screenshots/mp-discover-home-phone-narrow.png",
+    "docs/screenshots/mp-discover-browser-phone-portrait.png",
+    "docs/screenshots/mp-discover-browser-phone-landscape.png",
+    "docs/screenshots/mp-discover-browser-phone-narrow.png",
+    "docs/screenshots/mp-discover-visibility-largetext-lobby.png",
+    "docs/screenshots/mp-discover-continue-phone-continue.png",
+    "docs/screenshots/mp-discover-keyboard-home-home.png",
+    "docs/screenshots/mp-discover-keyboard-browse-browse.png",
+    "docs/screenshots/mp-discover-keyboard-lobby-lobby.png",
+    "docs/screenshots/mp-public-stale-card-desktop.png",
+    "docs/screenshots/mp-public-stale-card-portrait.png",
+    "docs/screenshots/mp-public-stale-card-landscape.png",
+    "docs/screenshots/mp-queue-searching-desktop.png",
+    "docs/screenshots/mp-queue-match-found-desktop.png",
+    "docs/screenshots/mp-queue-home-phone-portrait.png",
+    "docs/screenshots/mp-queue-home-phone-landscape.png",
+    "docs/screenshots/mp-queue-home-phone-narrow.png",
+    "docs/screenshots/mp-queue-home-full-portrait.png",
+    "docs/screenshots/mp-queue-home-full-landscape.png",
+    "docs/screenshots/mp-queue-searching-phone-portrait.png",
+    "docs/screenshots/mp-queue-searching-phone-landscape.png",
+    "docs/screenshots/mp-queue-searching-phone-narrow.png",
+    "docs/screenshots/mp-queue-cancelled-phone-portrait.png",
+    "docs/screenshots/mp-queue-cancelled-phone-landscape.png",
+    "docs/screenshots/mp-queue-cancelled-phone-narrow.png"
   ],
   "playerCountRuns": {
     "3": {
@@ -181,7 +239,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "BQQX3",
+    "code": "MHK4Z",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {
@@ -198,7 +256,59 @@
     }
   },
   "mobileTouchJoin": {
-    "code": "9HF74",
+    "code": "MG6VG",
     "screenshot": "docs/screenshots/mp-mobile-join-input.png"
+  },
+  "discovery": {
+    "code": "G89HC",
+    "card": {
+      "code": "G89HC",
+      "hostName": "Marina",
+      "players": 1,
+      "capacity": 4,
+      "status": "waiting",
+      "timerMode": "casual"
+    }
+  },
+  "queueRuns": {
+    "2": {
+      "seats": [
+        0,
+        1
+      ],
+      "codes": [
+        "6N49K",
+        "6N49K"
+      ],
+      "timerMode": "casual"
+    },
+    "3": {
+      "seats": [
+        0,
+        1,
+        2
+      ],
+      "codes": [
+        "4RX7K",
+        "4RX7K",
+        "4RX7K"
+      ],
+      "timerMode": "casual"
+    },
+    "4": {
+      "seats": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "codes": [
+        "SMJ4V",
+        "SMJ4V",
+        "SMJ4V",
+        "SMJ4V"
+      ],
+      "timerMode": "casual"
+    }
   }
 }

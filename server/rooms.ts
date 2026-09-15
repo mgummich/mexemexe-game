@@ -21,8 +21,11 @@ import type { Card, DraftState, GameState, Meld, PlayerState, ReasonCode } from 
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import { timerExpireTurn } from '../src/rules/rules';
 import {
-  buildView, DEFAULT_ROOM_SETTINGS, normalizeRoomSettings, REACTION_COOLDOWN_MS,
-  type GameView, type RoomPlayerSummary, type RoomSettings, type SubmitTurnMeld, type WinningMove,
+  buildView, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, MAX_ACTIVITY, MAX_MATCH_HISTORY,
+  MAX_ROOM_LISTINGS, normalizeRoomSettings, REACTION_COOLDOWN_MS, TIMER_PRESETS,
+  type ActivityEvent, type ActivityKind, type GameView, type MatchSummary, type PartyState,
+  type ReactionId, type RoomListing, type RoomPlayerSummary, type RoomSettings, type RoomVisibility,
+  type SubmitTurnMeld, type WinningMove,
 } from '../src/net/protocol';
 
 // No vowels, no 0/O/1/I/L — unambiguous when read aloud or typed.
@@ -37,6 +40,10 @@ export const MAX_PLAYERS = 4;
  * `RoomInternal.hostSeat` and moves to the next-occupied seat if the current host leaves (D15) —
  * this constant is only the fallback for a nonexistent room. */
 const HOST_SEAT = 0;
+/** The terms every matchmade table is played under. The casual preset, deliberately: it is the
+ * room default friends already play, so a queued stranger meets nothing unfamiliar, and it is the
+ * server's value rather than anyone's proposal — no seat in a matchmade room can change it. */
+const MATCHMADE_SETTINGS = TIMER_PRESETS.casual;
 
 interface RoomManagerDeps {
   /** Injectable clock, for deterministic tests. */
@@ -75,6 +82,9 @@ interface Seat {
   missedTurns: number;
   /** When this seat's last accepted reaction was relayed, for the server-side cooldown. */
   lastReactionAt: number;
+  /** Matches this seat has won since it sat down. Survives a rematch, dies with the seat — a new
+   * player who takes a vacated chair starts at 0 and inherits nothing from its last occupant. */
+  wins: number;
 }
 
 interface RoomInternal {
@@ -95,6 +105,8 @@ interface RoomInternal {
   hostSeat: number;
   /** Host-chosen, frozen at `startGame`. The server is the only writer. */
   settings: RoomSettings;
+  /** Who may *find* this room. Always starts `private` — see setVisibility. */
+  visibility: RoomVisibility;
   /** When the current turn's clock started. null while the room has no running turn. */
   turnStartedAt: number | null;
   /** The current turn's budget: `settings.turnMs`, plus the Mexe bonus once claimed. */
@@ -104,6 +116,26 @@ interface RoomInternal {
   /** Public summary of the play that ended the match, set the moment it finishes. Read once by
    * the game_over broadcast and cleared when the room is recycled for a rematch. */
   winningMove: WinningMove | null;
+  /** Identifies the match currently in progress; null in a lobby. A rematch gets a fresh one, so
+   * "the room played again" is distinguishable from "the room re-sent the same match". */
+  matchId: string | null;
+  /** How many matches this room has started. The nth match's summary carries `seq: n`. */
+  matchSeq: number;
+  /** When the current match started, for the history entry's duration. */
+  matchStartedAt: number;
+  /** Bounded public history of finished matches, oldest first. */
+  history: MatchSummary[];
+  /** Bounded public event feed, oldest first. */
+  activity: ActivityEvent[];
+  /** Next activity sequence number. Monotonic for the life of the room. */
+  activitySeq: number;
+  /** True for a room the matchmaking queue allocated. Its terms are the server's canonical
+   * casual preset and nothing in the room may change them — there is no host settings step for
+   * players who never agreed to one with each other (§3e). */
+  matchmade: boolean;
+  /** True once the current match's result has been recorded. The single guard that makes a
+   * duplicate finish — a second broadcast, a retried tick — unable to award a second win. */
+  resultRecorded: boolean;
 }
 
 type CreateRoomResult =
@@ -128,6 +160,10 @@ type StartResult =
 
 type RoomSettingsResult =
   | { ok: true; settings: RoomSettings; changed: boolean }
+  | { ok: false; error: 'room_not_found' | 'not_host' | 'game_started' };
+
+type VisibilityResult =
+  | { ok: true; visibility: RoomVisibility; changed: boolean }
   | { ok: false; error: 'room_not_found' | 'not_host' | 'game_started' };
 
 type TurnResult =
@@ -156,6 +192,24 @@ function displayName(name: string, seat: number): string {
   return trimmed || `Player ${seat + 1}`;
 }
 
+/** A seat as it starts life, however it was filled. One place, so a newcomer taking a vacated
+ * chair can never inherit a leftover win count, ready bit or reaction cooldown from its previous
+ * occupant — the object is new, not reset. */
+function newSeat(seat: number, name: string, token: string): Seat {
+  return {
+    seat,
+    id: idOf(seat),
+    name: displayName(name, seat),
+    token,
+    ready: false,
+    connected: true,
+    disconnectedAt: null,
+    missedTurns: 0,
+    lastReactionAt: 0,
+    wins: 0,
+  };
+}
+
 export class RoomManager {
   private rooms = new Map<string, RoomInternal>();
   private readonly now: () => number;
@@ -180,28 +234,81 @@ export class RoomManager {
     return this.rooms.size;
   }
 
+  /**
+   * Append one public event to the room's feed, oldest dropped past MAX_ACTIVITY.
+   *
+   * Everything here is already public in a room payload — a seat, a display name, a preset
+   * reaction id. Nothing that identifies a card, a hand, a token or a connection is representable
+   * in an `ActivityEvent` at all, which is the point of the type being closed: privacy is a
+   * property of the shape, not of every call site remembering to be careful.
+   */
+  private note(room: RoomInternal, kind: ActivityKind, seat: Seat | null, reaction?: ReactionId): void {
+    const event: ActivityEvent = {
+      seq: ++room.activitySeq,
+      kind,
+      ...(seat ? { seat: seat.seat, name: seat.name } : {}),
+      ...(reaction ? { reaction } : {}),
+    };
+    room.activity.push(event);
+    if (room.activity.length > MAX_ACTIVITY) room.activity.splice(0, room.activity.length - MAX_ACTIVITY);
+  }
+
+  /**
+   * Record the finished match exactly once: one session win for the winner, one history entry,
+   * one feed line. `resultRecorded` is the whole guard — a second game_over broadcast, a retried
+   * tick, or a caller that recycles twice all find it already set and change nothing.
+   *
+   * A win goes to the seat that holds the winning player id *now*. A winner who left between the
+   * final turn and this call simply scores nothing; the history entry still names them, because
+   * the match still happened.
+   */
+  private recordResult(room: RoomInternal): void {
+    const state = room.state;
+    if (room.resultRecorded || !state || state.phase !== 'finished') return;
+    room.resultRecorded = true;
+    // Same definition the game_over broadcast uses: nobody emptied a hand, so the draw pile ran
+    // out and the fewest-cards rule picked the winner.
+    const stalemate = !state.players.some((p) => p.hand.length === 0);
+    const winnerIndex = state.players.findIndex((p) => p.id === state.winnerId);
+    const winnerSeat = winnerIndex === -1 ? null : winnerIndex;
+    const winner = winnerSeat === null ? null : room.seats[winnerSeat];
+    if (winner) winner.wins += 1;
+    room.history.push({
+      matchId: room.matchId ?? '',
+      seq: room.matchSeq,
+      winnerSeat,
+      winnerName: winner?.name ?? state.players[winnerIndex]?.name ?? null,
+      stalemate,
+      durationSec: Math.max(0, Math.round((this.now() - room.matchStartedAt) / 1000)),
+    });
+    if (room.history.length > MAX_MATCH_HISTORY) {
+      room.history.splice(0, room.history.length - MAX_MATCH_HISTORY);
+    }
+    this.note(room, stalemate ? 'stalemate' : 'won', winner ?? null);
+  }
+
+  /** The room's memory across matches, for the lobby payloads. Copies, so a caller cannot splice
+   * the room's own bounded lists. */
+  getParty(code: string): PartyState {
+    const room = this.rooms.get(code);
+    if (!room) return { matches: [], activity: [] };
+    return { matches: [...room.history], activity: [...room.activity] };
+  }
+
   /** Public host lookup for the socket layer's `hostSeat` broadcasts. */
   getHostSeat(code: string): number {
     const room = this.rooms.get(code);
     return room ? room.hostSeat : HOST_SEAT;
   }
 
-  createRoom(name: string): CreateRoomResult {
+  /** @param token pre-issued session token for seat 0. Only the matchmaking handoff passes one:
+   * a queued player already holds a token, and reusing it is what makes their reconnect land on
+   * the seat the queue became instead of on a second identity. */
+  createRoom(name: string, token = this.genToken()): CreateRoomResult {
     if (this.rooms.size >= this.maxRooms) return { ok: false, error: 'room_limit' };
     let code = this.genCode();
     while (this.rooms.has(code)) code = this.genCode(); // extremely unlikely, cheap to guard
-    const token = this.genToken();
-    const seat: Seat = {
-      seat: 0,
-      id: idOf(0),
-      name: displayName(name, 0),
-      token,
-      ready: false,
-      connected: true,
-      disconnectedAt: null,
-      missedTurns: 0,
-      lastReactionAt: 0,
-    };
+    const seat = newSeat(0, name, token);
     const room: RoomInternal = {
       code,
       seats: [seat, ...Array<Seat | null>(MAX_PLAYERS - 1).fill(null)],
@@ -214,15 +321,71 @@ export class RoomManager {
       // Reconnect grace starts at the deployment's configured value; picking a timer preset in
       // the lobby replaces it with that preset's own grace.
       settings: { ...DEFAULT_ROOM_SETTINGS, reconnectGraceMs: this.disconnectGraceMs },
+      // OD-01: private, always. There is no create-time option and no migration path that can
+      // produce anything else — a room becomes discoverable only by its host saying so later.
+      visibility: DEFAULT_ROOM_VISIBILITY,
       turnStartedAt: null,
       turnBudgetMs: 0,
       mexeBonusClaimed: false,
       winningMove: null,
+      matchId: null,
+      matchSeq: 0,
+      matchStartedAt: 0,
+      history: [],
+      activity: [],
+      activitySeq: 0,
+      matchmade: false,
+      resultRecorded: false,
     };
     this.rooms.set(code, room);
+    this.note(room, 'joined', seat);
     return { ok: true, code, seat: 0, token };
   }
 
+  /**
+   * The queue handoff, as one operation: a private room with the canonical casual terms, one
+   * seat per matched player in the order they were selected, and the match already dealt.
+   *
+   * Everything here is deliberately made of parts that already existed. The seats are ordinary
+   * `newSeat`s carrying the tokens the queue issued; the deal is the ordinary `startGame`, so
+   * capacity, seat gaps, turn order and the match id come from the one place that has always
+   * decided them. Nothing about a matchmade match is a second lifecycle — only its *allocation*
+   * is different, and that difference ends here.
+   *
+   * All or nothing: a room that cannot be dealt is deleted rather than left half-built, so the
+   * caller's only recovery is to put the group back in the queue.
+   */
+  createMatchRoom(players: { name: string; token: string }[]): CreateRoomResult {
+    if (players.length < MIN_PLAYERS || players.length > MAX_PLAYERS) return { ok: false, error: 'room_limit' };
+    const first = players[0]!;
+    const created = this.createRoom(first.name, first.token);
+    if (!created.ok) return created;
+    const room = this.rooms.get(created.code)!;
+    room.matchmade = true;
+    // Server-defined terms, identical for every matchmade table. Not negotiable before the match
+    // (nobody is in a lobby) and not changeable after it (see setRoomSettings).
+    room.settings = { ...MATCHMADE_SETTINGS };
+    players.slice(1).forEach((p, i) => {
+      const seat = newSeat(i + 1, p.name, p.token);
+      room.seats[i + 1] = seat;
+      this.note(room, 'joined', seat);
+    });
+    // Auto-ready: being matched *is* the agreement. Quick Match that made you press READY with
+    // three strangers would be neither quick nor a match.
+    for (const s of room.seats) if (s) s.ready = true;
+    const started = this.startGame(created.code, room.hostSeat);
+    if (!started.ok) {
+      this.rooms.delete(created.code);
+      return { ok: false, error: 'room_limit' };
+    }
+    return created;
+  }
+
+  /**
+   * Fill the lowest free seat. A room between matches is an ordinary lobby (`state === null`), so
+   * this is also the join-before-the-next-match path — the newcomer gets a brand-new seat object
+   * with zero wins and no rematch vote, never the departed player's.
+   */
   joinRoom(code: string, name: string): JoinRoomResult {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: 'room_not_found' };
@@ -230,18 +393,10 @@ export class RoomManager {
     const freeSeat = room.seats.findIndex((s) => s === null);
     if (freeSeat === -1) return { ok: false, error: 'room_full' };
     const token = this.genToken();
-    room.seats[freeSeat] = {
-      seat: freeSeat,
-      id: idOf(freeSeat),
-      name: displayName(name, freeSeat),
-      token,
-      ready: false,
-      connected: true,
-      disconnectedAt: null,
-      missedTurns: 0,
-      lastReactionAt: 0,
-    };
+    const seat = newSeat(freeSeat, name, token);
+    room.seats[freeSeat] = seat;
     room.lastActivityAt = this.now();
+    this.note(room, 'joined', seat);
     return { ok: true, seat: freeSeat, token, players: this.summarize(room) };
   }
 
@@ -251,6 +406,11 @@ export class RoomManager {
     const room = this.rooms.get(code);
     if (!room) return { roomClosed: false };
     const wasActive = room.state !== null;
+    const leaving = room.seats[seat];
+    // Noted before the seat is cleared: the feed line needs the name, and the seat object is the
+    // only place it lives. Clearing the seat is also what retires that player's rematch vote —
+    // there is no separate vote to clean up, because the ready bit went with the chair.
+    if (leaving) this.note(room, 'left', leaving);
     room.seats[seat] = null;
     room.lastActivityAt = this.now();
     const allGone = room.seats.every((s) => s === null);
@@ -274,6 +434,9 @@ export class RoomManager {
     if (room.state) return { ok: false, error: 'game_started' };
     const s = room.seats[seat];
     if (!s) return { ok: false, error: 'not_member' };
+    // Only the rising edge is an event. A re-send of the same bit is idempotent here and must not
+    // be able to fill the feed with repeats of one player tapping READY.
+    if (ready && !s.ready) this.note(room, 'ready', s);
     s.ready = ready;
     room.lastActivityAt = this.now();
     return { ok: true, started: false, players: this.summarize(room) };
@@ -293,21 +456,87 @@ export class RoomManager {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: 'room_not_found' };
     if (room.state) return { ok: false, error: 'game_started' };
-    if (seat !== room.hostSeat) return { ok: false, error: 'not_host' };
+    // Nobody holds fairness authority in a matchmade room, host seat included: its terms are the
+    // ones every queued player was matched under, and no seat agreed to let another change them.
+    if (room.matchmade || seat !== room.hostSeat) return { ok: false, error: 'not_host' };
     // Normalized again here: `setRoomSettings` is a public manager entry point, not only the
     // socket path, so it must not depend on the caller having gone through the wire parser.
     const next = normalizeRoomSettings(proposed);
     const changed = !sameSettings(room.settings, next);
     room.settings = next;
-    if (changed) for (const s of room.seats) if (s) s.ready = false;
+    if (changed) {
+      for (const s of room.seats) if (s) s.ready = false;
+      this.note(room, 'settings', room.seats[seat] ?? null);
+    }
     room.lastActivityAt = this.now();
     return { ok: true, settings: room.settings, changed };
   }
 
-  /** Start (or restart) the active seat's clock. A turn with no timer keeps a null start. */
+  /**
+   * Host-only, lobby-only change to who can find this room.
+   *
+   * Lobby-only for the same reason settings are: a room whose match is running has nothing to
+   * offer a browser anyway, and refusing outright is one rule instead of two. Unlike settings
+   * this does NOT clear ready bits — visibility changes nothing about the terms a seat agreed
+   * to play under, so resetting the lobby over it would be friction with no fairness behind it
+   * (ON-09 applies to fairness-sensitive changes only).
+   */
+  setVisibility(code: string, seat: number, visibility: RoomVisibility): VisibilityResult {
+    const room = this.rooms.get(code);
+    if (!room) return { ok: false, error: 'room_not_found' };
+    if (room.state) return { ok: false, error: 'game_started' };
+    // A matchmade room belongs to the players the server put in it. Letting a seat list it would
+    // hand a stranger's table to the room browser (§3e).
+    if (room.matchmade || seat !== room.hostSeat) return { ok: false, error: 'not_host' };
+    const changed = room.visibility !== visibility;
+    room.visibility = visibility;
+    room.lastActivityAt = this.now();
+    return { ok: true, visibility: room.visibility, changed };
+  }
+
+  getVisibility(code: string): RoomVisibility {
+    return this.rooms.get(code)?.visibility ?? DEFAULT_ROOM_VISIBILITY;
+  }
+
+  /**
+   * The discovery projection: every room that is *currently* eligible to be found, as the small
+   * public shape in protocol.ts and nothing else.
+   *
+   * Eligibility is recomputed from the live room on every call — there is no listing index to go
+   * stale, which is what makes an expired, closed or newly-private room disappear the moment it
+   * stops qualifying (OD-18) instead of when some cache notices. A room with a match in progress
+   * is omitted rather than shown as non-joinable: it cannot seat anyone until that match ends,
+   * and a card offering a seat that does not exist is worse than no card.
+   *
+   * Full lobbies are kept, marked `full`, so "the room I was about to tap just filled up" reads
+   * as a fact on screen rather than as a rejection after a tap.
+   */
+  listRooms(limit = MAX_ROOM_LISTINGS): RoomListing[] {
+    const out: RoomListing[] = [];
+    for (const room of this.rooms.values()) {
+      if (out.length >= limit) break;
+      if (room.visibility !== 'listed' || room.state !== null) continue;
+      const occupied = room.seats.filter((s): s is Seat => s !== null);
+      if (occupied.length === 0) continue;
+      const host = room.seats[room.hostSeat] ?? occupied[0]!;
+      out.push({
+        code: room.code,
+        hostName: host.name,
+        players: occupied.length,
+        capacity: MAX_PLAYERS,
+        status: occupied.length >= MAX_PLAYERS ? 'full' : 'waiting',
+        timerMode: room.settings.timerMode,
+      });
+    }
+    return out;
+  }
+
+  /** Start (or restart) the active seat's clock. A turn with no timer keeps a null start, and so
+   * does a match that just ended: a finished game has no turn to time, and a clock left running
+   * would keep counting down to a red 0:00 behind the results screen. */
   private startTurnClock(room: RoomInternal): void {
     room.mexeBonusClaimed = false;
-    if (room.settings.turnMs <= 0) {
+    if (room.settings.turnMs <= 0 || room.state?.phase !== 'playing') {
       room.turnStartedAt = null;
       room.turnBudgetMs = 0;
       return;
@@ -370,8 +599,19 @@ export class RoomManager {
     };
     room.rev = 1;
     room.lastActivityAt = this.now();
+    // A fresh match identity, so every client can tell this deal from the one it replaced, and a
+    // fresh result guard, so this match's finish is recordable exactly once.
+    room.matchId = this.genToken();
+    room.matchSeq += 1;
+    room.matchStartedAt = this.now();
+    room.resultRecorded = false;
     for (const s of occupied) s.missedTurns = 0;
+    // A ready bit means "these terms, this deal". The deal it agreed to has just been made, so it
+    // stops meaning anything — clearing it here is what stops a stale vote from counting towards
+    // the *next* match's start (the rematch votes start empty, every time).
+    for (const s of occupied) s.ready = false;
     this.startTurnClock(room);
+    this.note(room, 'match_started', room.seats[seat] ?? null);
     return { ok: true, started: true, players: this.summarize(room) };
   }
 
@@ -398,12 +638,28 @@ export class RoomManager {
    */
   private commitTurn(room: RoomInternal, seat: number, next: GameState): TurnResult {
     assertConservation(next);
+    const before = room.state;
     room.state = next;
     room.rev += 1;
     room.lastActivityAt = this.now();
     room.seats[seat]!.missedTurns = 0;
     this.startTurnClock(room);
+    this.noteCardCounts(room, before, next);
+    if (next.phase === 'finished') this.recordResult(room);
     return { ok: true, gameOver: next.phase === 'finished' };
+  }
+
+  /** "X has one card left", on the turn it becomes true. A hand *count* is public in every view,
+   * so this discloses nothing new — it just makes the most consequential count in the game
+   * impossible to miss. Only the falling edge into 1 is an event; a seat that sits on one card
+   * does not re-announce every turn. */
+  private noteCardCounts(room: RoomInternal, before: GameState | null, after: GameState): void {
+    after.players.forEach((p, i) => {
+      if (p.hand.length !== 1) return;
+      if ((before?.players[i]?.hand.length ?? 1) === 1) return;
+      const seat = room.seats[i];
+      if (seat) this.note(room, 'last_card', seat);
+    });
   }
 
   /** Full validation path per docs/MULTIPLAYER.md §5. */
@@ -508,6 +764,8 @@ export class RoomManager {
         room.lastActivityAt = t;
         active.missedTurns += 1;
         this.startTurnClock(room);
+        this.noteCardCounts(room, state, next);
+        if (next.phase === 'finished') this.recordResult(room);
         const seat = active.seat;
         if (active.missedTurns >= room.settings.missedTurnLimit) {
           this.rooms.delete(code);
@@ -536,12 +794,21 @@ export class RoomManager {
    * seat goes back to not-ready, which is what makes the next start an explicit, agreed one
    * rather than an instant re-deal. The room is still subject to the normal sweep, so an
    * abandoned table is reaped exactly as before.
+   *
+   * Party state is deliberately NOT cleared: session wins, the match history and the activity feed
+   * are the room's memory of the evening, and the whole point of keeping the room is keeping them.
+   * Everything match-scoped goes, including the match id — the next start mints a new one.
    */
   recycleForRematch(code: string): boolean {
     const room = this.rooms.get(code);
     if (!room) return false;
+    // The result is recorded when the match finishes, not here, so a caller that recycles twice
+    // (or recycles a room that never finished) cannot award anything. This is belt-and-braces:
+    // if the match did finish and nobody recorded it yet, it is recorded now, exactly once.
+    this.recordResult(room);
     room.state = null;
     room.rev = 0;
+    room.matchId = null;
     room.winningMove = null;
     room.turnStartedAt = null;
     room.turnBudgetMs = 0;
@@ -559,11 +826,13 @@ export class RoomManager {
    * Server-side reaction cooldown. The only gate on the relay: a seat that reacted less than
    * REACTION_COOLDOWN_MS ago is refused, whatever its client believes its own cooldown to be.
    */
-  claimReaction(code: string, seat: number): boolean {
-    const s = this.rooms.get(code)?.seats[seat];
+  claimReaction(code: string, seat: number, reaction?: ReactionId): boolean {
+    const room = this.rooms.get(code);
+    const s = room?.seats[seat];
     const t = this.now();
-    if (!s || t - s.lastReactionAt < REACTION_COOLDOWN_MS) return false;
+    if (!room || !s || t - s.lastReactionAt < REACTION_COOLDOWN_MS) return false;
     s.lastReactionAt = t;
+    if (reaction) this.note(room, 'reaction', s, reaction);
     return true;
   }
 
@@ -585,7 +854,7 @@ export class RoomManager {
         // A reconnecting seat receives the *current* remaining time, not a fresh budget: the
         // clock kept running while it was away, which is what stops a reconnect loop from
         // extending a turn indefinitely.
-        const view = room.state ? buildView(room.state, seat.seat, room.rev, room.settings, this.msLeft(room), room.seats.map((s) => s?.missedTurns ?? 0), room.mexeBonusClaimed) : null;
+        const view = room.state ? this.viewFor(room, seat.seat) : null;
         return { ok: true, code: room.code, seat: seat.seat, view, players: this.summarize(room) };
       }
     }
@@ -595,7 +864,16 @@ export class RoomManager {
   getView(code: string, seat: number): GameView | null {
     const room = this.rooms.get(code);
     if (!room || !room.state) return null;
-    return buildView(room.state, seat, room.rev, room.settings, this.msLeft(room), room.seats.map((s) => s?.missedTurns ?? 0), room.mexeBonusClaimed);
+    return this.viewFor(room, seat);
+  }
+
+  /** One place that turns a live room into a redacted view, so the reconnect path and the normal
+   * broadcast path can never drift apart on what a seat is told. */
+  private viewFor(room: RoomInternal, seat: number): GameView {
+    return buildView(
+      room.state!, seat, room.rev, room.settings, this.msLeft(room),
+      room.seats.map((s) => s?.missedTurns ?? 0), room.mexeBonusClaimed, room.matchId ?? '',
+    );
   }
 
   getPlayers(code: string): RoomPlayerSummary[] | null {
@@ -603,11 +881,18 @@ export class RoomManager {
     return room ? this.summarize(room) : null;
   }
 
-  /** Everything a lobby renders: who is in, the agreed settings, and whether they are frozen. */
-  getRoomInfo(code: string): { players: RoomPlayerSummary[]; settings: RoomSettings; locked: boolean } | null {
+  /** Everything a lobby renders: who is in, the agreed settings, whether they are frozen, and the
+   * room's memory across matches. */
+  getRoomInfo(code: string): { players: RoomPlayerSummary[]; settings: RoomSettings; locked: boolean; party: PartyState; visibility: RoomVisibility } | null {
     const room = this.rooms.get(code);
     if (!room) return null;
-    return { players: this.summarize(room), settings: room.settings, locked: room.state !== null };
+    return {
+      players: this.summarize(room),
+      settings: room.settings,
+      locked: room.state !== null,
+      party: this.getParty(code),
+      visibility: room.visibility,
+    };
   }
 
   /** Drop a room outright (finished match, corrupt state). The caller detaches its sockets. */
@@ -644,7 +929,7 @@ export class RoomManager {
 
   private summarize(room: RoomInternal): RoomPlayerSummary[] {
     return room.seats
-      .map((s, i) => (s ? { seat: i, name: s.name, ready: s.ready, connected: s.connected } : null))
+      .map((s, i) => (s ? { seat: i, name: s.name, ready: s.ready, connected: s.connected, wins: s.wins } : null))
       .filter((s): s is RoomPlayerSummary => s !== null);
   }
 }

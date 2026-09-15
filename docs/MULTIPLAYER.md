@@ -5,32 +5,52 @@ reconnect, and what the alpha does **not** do. The rules themselves are in
 [GAME_RULES.md](GAME_RULES.md); the client/server split in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Scope: 2–4-player private rooms, alpha quality. No accounts, matchmaking,
-ranking, chat, or cosmetics sync. The game labels the entry point
+Scope: 2–4-player rooms, alpha quality — private by code or link, optionally
+listed in a room browser, or formed for you by the casual matchmaking queue. No
+accounts, ranking, chat, or cosmetics sync. The game labels the entry point
 `ONLINE (ALPHA)`.
 
 ## 0. Limitations
 
-- **No accounts, matchmaking, ranked play, chat or spectators.** Private rooms
-  by 5-character code only.
-- **Online rematch keeps the room, not the stats** — a finished match hands its
-  room back to the lobby on the same code (`recycleForRematch`), with every seat
-  kept and every ready bit cleared. The win screen offers REMATCH alongside MENU.
-- **No rematch stats or winning-move text online** — the client never observes
+- **No accounts, ranked play, chat or spectators.** Rooms are private by
+  default and joined by invite link or 5-character code. A host may opt one room
+  into a listed room browser (§3d), and Quick Match will form a table out of
+  whoever is queued (§3e). There is no public directory, no rating, no skill
+  matching, and no way to find a room whose host did not list it.
+- **Matchmaking is casual only.** One FIFO queue, one compatibility dimension
+  (how many players you want), server-defined casual terms, no backfill of a
+  match in progress and no bots. See §3e for the policy and what it refuses to
+  become.
+- **Online rematch keeps the room *and* the room's score** — a finished match hands
+  its room back to the lobby on the same code (`recycleForRematch`), with every seat
+  kept and every ready bit cleared. Session wins, the match history and the activity
+  feed survive; the deal, the clocks and the votes do not. See §3c.
+- **No best-of / series mode.** Session win counters plus an explicit rematch vote
+  cover what a room of friends actually asks for ("are we 2-1?", "again?"), and a
+  series would add a second lifecycle — a series score to reset, a completion state
+  that has to refuse an accidental extra match, and a join policy for a series in
+  progress — on top of one that already works. Deferred deliberately, not forgotten.
+- **No per-turn stats online** — the client never observes
   per-turn state locally, so there is no play log to summarize. The stats line
   is hidden rather than showing zeros. Fixing it needs a protocol change.
 - **Opponent avatars are the generic player icon** — there are no accounts, so
   there is no avatar to show.
-- **Rate limiting is per connection, not per IP** — enough to stop a looping
-  client, not a determined attacker opening many sockets.
+- **Abuse controls are budgets, not protection from a determined attacker** —
+  message rate, failed joins and `resync` are budgeted per connection; sockets
+  and room creation are budgeted per client address (and behind a proxy that
+  address is only trustworthy once `MEXE_TRUSTED_PROXY_HOPS` says so). Enough to
+  stop a looping client or a create-and-drop loop, not a connection farm. See §9.
 - **A seat disconnected past the room's reconnect grace is played for you**:
   the server draws and ends that seat's turn so the match keeps moving. It never
   melds on your behalf. Losing `missedTurnLimit` turns in a row ends the match.
-- **The turn timer has three lobby presets** (Casual / Fast / Off). `custom` is a
-  protocol capability with validated bounds, not a lobby control — there is no
-  screen for six number pickers.
-- **Reconnect is a single bounded retry**, not a persistent loop; if it fails
-  the client returns you to the local menu with a message.
+- **The turn timer has three lobby presets** (Casual / Fast / Off), one tap
+  apart, plus a host-only CUSTOM screen behind them for a room that wants its
+  own numbers. The custom screen's buttons stop at `CUSTOM_BOUNDS`, the same
+  bounds the server clamps to, and send one proposal on APPLY rather than one
+  per field.
+- **Reconnect is a bounded retry loop**, not a persistent one: seven jittered
+  attempts spanning roughly the 60s seat-hold window, then the client returns
+  you to the local menu with a message. It never retries forever.
 
 ## 1. Responsibilities
 
@@ -85,10 +105,17 @@ cannot leak an opponent's hand in an online match.
    *recycles* the room instead of destroying it: match state, revision, clocks,
    missed-turn streaks and every ready bit are cleared, seats and host authority
    stay, and a fresh `room_state` goes out with `locked: false`. Clients render
-   the result from the `game_over` payload and can rematch on the same code. An
+   the result from the `game_over` payload and can rematch on the same code. The
+   winner's session win, the match's history entry and the closing feed line are
+   recorded once, when the match finishes, not when it is broadcast (§3c). An
    abandoned recycled room is reaped by the normal sweep like any other.
 6. **empty/abandoned** — room is destroyed when both sockets are gone past the
    grace window, or after an absolute idle timeout.
+
+Orthogonal to all of it: **visibility** (§3d), which decides who can *find* a
+room and never who may join one. Lifecycle, capacity and seat ownership are the
+only things that decide a join, for a discovered room exactly as for a typed
+code.
 
 ## 3b. Identity, names and invite links
 
@@ -115,10 +142,241 @@ socket opens — the server validates it exactly as it does a typed code. Sharin
 uses the Web Share API where the browser has one, with clipboard copy as the
 universal fallback.
 
+**Recent rooms** are local display history: `mexe.online.recent` in
+`localStorage`, at most `MAX_RECENT_ROOMS` entries of `{ code, host, at }`, aged
+out after six hours and read back through a validating parser (a corrupt or
+tampered entry is dropped, never repaired). They are what the online home's
+CONTINUE and RECENT shortcuts are built from. Deliberately a different key, a
+different storage area and a different shape from the session token: this list
+is meant to be shown, and nothing in it can reclaim a seat. An entry is dropped
+the moment the server answers `room_not_found`/`room_closed` for it.
+
+## 3d. Room visibility and discovery
+
+Every room is born `private` and there is no create-time option that says
+otherwise. `private` means reachable by invite link or code and invisible to
+everything else. A host may set `listed`, which adds the room to the room
+browser and changes nothing else.
+
+Visibility is server-owned. `set_room_visibility` is **host-only and
+lobby-only** (refused with `not_host` / `game_started`), and the answer is an
+authoritative `room_state` broadcast, never an echo of the request. Unlike a
+settings change it does **not** clear ready bits: visibility is not one of the
+terms a seat agreed to play under, so ON-09's re-agreement rule does not apply.
+
+Discovery reads through a separate, tiny projection — `RoomListing` in
+`protocol.ts`: `code`, `hostName`, `players`, `capacity`, `status`,
+`timerMode`. Not a trimmed room snapshot, a different type, so there is no
+token, seat, revision, hand count, activity feed or party history to leak by
+accident. Eligibility is recomputed from the live rooms on every `list_rooms`
+— there is no listing index to go stale, which is why a room that expires, goes
+private or starts a match disappears immediately:
+
+- `private` rooms: never listed.
+- rooms with a match in progress: omitted, not shown as non-joinable. They
+  cannot seat anyone until the match ends, and a card offering a seat that does
+  not exist is worse than no card. (A room recycled back to a lobby between
+  matches becomes listable again, and can accept a newcomer under §3c's rules.)
+- full lobbies: listed, marked `full`, with the join action disabled — "it just
+  filled up" is more useful as a fact on screen than as a rejection after a tap.
+
+Answers are bounded at `MAX_ROOM_LISTINGS` (20) and the per-connection budget is
+`hitListLimit` (12 per 10s, refused rather than answered — building the answer
+is the expensive half). The room code is published in a listing on purpose: it
+is a locator, not a credential, and what makes that safe is the existing
+guess-rate protection (§9), not its obscurity.
+
+A card is a snapshot of a moment, so a room that changed since the answer was
+built is ordinary traffic, not an error. When the server refuses a tapped card
+(`room_not_found`, `room_closed`, `room_full`, `game_started`) the browser keeps
+the screen, drops that one card and says why in a sentence — "essa sala não está
+mais disponível" for a room that is gone, the room's own copy for one that filled
+or started. The full-screen error phase is reserved for refusals that are about
+the player rather than about a card, because throwing away the list would cost
+them every other room over one that moved on. ATUALIZAR is the fix, and it is
+the button the notice sits above.
+
+Discovery is **additive**. If listing fails or is refused, the room browser says
+so on its own screen and creating a room, joining by code and joining by link
+keep working — none of them consults discovery at all.
+
+Every screen in `OnlineScene` is keyboard-operable: Tab/Shift+Tab and the up/down
+arrows walk a gold focus ring through the screen's buttons in reading order, and
+Enter/Space presses the one it is on (`PixelButton.press()` re-emits `pointerup`,
+so a keyboard press gets the same sound, the same animation and the same
+`onBlocked` refusal a click does). The ring appears only once the keyboard is
+used, is skipped on the code and name screens where Enter already means
+"submit", and starts at the top button of each new screen. Disabled buttons stay
+focusable on purpose — their refusal is the explanation the player is after.
+
+A redraw moves the ring with its *button*, not with its slot: the browser's list arriving pushes
+room cards in above ATUALIZAR, and a ring that kept index 0 through that would hand the next Enter
+to whichever card moved into the slot the player was actually pointing at. `collectFocusables`
+restores the ring by label, and only a genuinely new screen sends it back to the top button.
+
+## 3e. Casual matchmaking (Quick Match)
+
+Quick Match chooses *who plays together*. It is not a second game authority: the
+moment a group is formed the queue hands it to `createMatchRoom` and everything
+from §3 onward — seats, turn order, the clock, reconnect, missed turns, the
+rematch lobby — is the room lifecycle that already existed.
+
+**Identity.** A queue entry is keyed by a server-issued session token, exactly
+like a seat, and it is the *same* token the seat is later created with. That one
+decision is why matchmaking needs no recovery path of its own: `reconnect(token)`
+finds a seat if the match was committed and the queue entry if it was not, and a
+player can therefore never be put back in the queue after being seated, or
+duplicated into a second entry by a reload. Nothing is keyed by display name,
+socket or IP.
+
+**One player, one entry.** A duplicate `join_queue` is answered with the entry
+the session already has (never a second one), and a session already holding a
+seat is refused with `already_in_match`. The rule holds from the other side too:
+a session that is searching and then creates or joins a room by code leaves the
+queue at that moment and is told so with `queue_state: idle` — the seat it
+actually took wins over the one it was hoping for, the same precedence
+`reconnect` applies. Without that, the next group would form *around* a session
+already sitting somewhere else, leaving the room it left behind holding a seat
+marked connected with no transport on it. Exactly one connection speaks for an
+entry: a second tab that reconnects with the token takes it over and the old
+socket's authority is cleared, so a stale transport cannot cancel a search that
+has moved on.
+
+**Preferences.** One dimension, four values: `2`, `3`, `4`, or `any` (the
+default). Skill, region, language and device are not representable on the wire,
+so none of them can quietly become a matching dimension.
+
+**The policy**, in full, run event-driven on every join rather than on a poll:
+
+1. For each explicit size 2, then 3, then 4: while at least one waiting entry
+   *asks* for that size and enough compatible entries exist (that size plus
+   `any`), take the N oldest of them.
+2. Then, from the `any` entries left over: while two or more remain, seat
+   everyone waiting up to the capacity of four.
+
+Oldest-first throughout, no scoring, and never a group larger than a table.
+`any` means "play now": it never waits for a bigger table, and it never delays a
+match that could already start.
+
+**Allocation is one operation.** `takeGroups` removes a group from the queue as
+it forms it, so two passes cannot select the same entry; `createMatchRoom` then
+builds the room, seats every player with the token they queued with, freezes the
+canonical casual settings and deals the match — or deletes the half-built room
+and reports failure, in which case the group goes back into the queue in its
+original wait order and is told it is still searching. Nobody is dropped
+silently.
+
+**Matchmade rooms are not negotiable rooms.** Their terms are `TIMER_PRESETS.casual`,
+chosen by the server; `room.matchmade` refuses `set_room_settings` and
+`set_room_visibility` from every seat, host included, so a table of strangers has
+no fairness lever to pull on each other and can never be pushed into the room
+browser. There is no ready step either — being matched *is* the agreement, and
+the deal happens at allocation.
+
+**Missing players.** A player whose socket dropped between queueing and being
+matched is still seated, marked absent, and the room's ordinary reconnect grace
+and missed-turn policy decide what happens next. Deliberately the same policy a
+mid-match drop gets: matchmaking does not get a second abandonment system, and
+there is no backfill of a match in progress.
+
+**Bounds.** The queue is capped (`MAX_QUEUE_ENTRIES`, 200 — over it, joins are
+refused with `queue_busy`), entries expire after `QUEUE_TIMEOUT_MS` (2 minutes)
+and are swept by the existing interval, and join/cancel share one per-connection
+budget (`hitQueueLimit`) so a join/cancel loop cannot make the matcher run flat
+out.
+
+**What a client is told.** `queue_state` carries the caller's own status, their
+preference, their token while queued, and the table size on `matched` — and
+nothing else. No queue size, no position, no ETA and no roster: the queue is not
+a lobby, and another waiting stranger is not the caller's business until a room
+exists. The searching screen shows a cosmetic elapsed counter for the same
+reason it shows no estimate — there is no data behind an estimate, and an honest
+sentence beats an invented number.
+
+## 3c. The party session
+
+A room outlives its matches. What survives a rematch, and what does not:
+
+| Survives | Reset per match |
+|---|---|
+| room code, `roomId`, seats, session tokens | `matchId`, deck, hands, table, turn |
+| display names, host authority | clock state, Mexe bonus, missed-turn streaks |
+| session wins (`Seat.wins`) | ready/rematch votes |
+| match history, activity feed | winning-move summary |
+
+**Session wins.** One per finished match, awarded by `recordResult` to the seat
+holding the winning player id. `RoomInternal.resultRecorded` is the whole
+duplicate guard: a second `game_over` broadcast, a retried tick or a caller that
+recycles twice all find it already set and change nothing. A win lives on the
+*seat object*, so it leaves with the chair — a newcomer who takes a vacated seat
+gets a brand-new `Seat` (see `newSeat`) with zero wins, no ready bit and no
+reaction cooldown, never the departed player's. Room-session only: nothing here
+is persisted, and there is no account to persist it to.
+
+**The rematch vote is the ready bit.** There is no second flag. In a lobby a
+ready bit means "I agree to these terms and this start"; in the lobby a finished
+match recycled into, the same bit means "I want to play again" — the same
+agreement, a different sentence, and the client renders it as `QUER REVANCHE`
+once the room has a history. Consequences fall out rather than being coded
+twice: one player cannot force a rematch (`startGame` still requires every
+occupied seat ready), the votes are visible to the whole room (they ride
+`room_state`), a departing player's vote retires with their seat, and no stale
+vote can reach the next match (`startGame` clears every bit the moment the deal
+it agreed to is made).
+
+**Joining between matches.** A recycled room is an ordinary lobby
+(`state === null`), so `join_room` works on it unchanged and a mid-match join is
+still refused with `game_started`. The newcomer takes the lowest free seat.
+
+**Match history** (`MAX_MATCH_HISTORY`, 10) is public summary only: match id,
+sequence number, winning seat and name, whether it ended on the tiebreak, and
+duration in seconds. No hands, no seed, no revision. Oldest entries are dropped,
+so it does not grow with a long evening.
+
+**The activity feed** (`MAX_ACTIVITY`, 25) is structured, never prose: the server
+sends `{ seq, kind, seat?, name?, reaction? }` and the client localizes it. That
+is what stops a client from authoring a feed line and stops a translation from
+coming off the wire. The kinds are closed (`ACTIVITY_KINDS`): joined, left,
+ready, settings, match_started, last_card, won, stalemate, reaction. Privacy is a
+property of the *shape* — a card id, a token or a connection detail is not
+representable in an `ActivityEvent` at all, so it cannot leak by a call site
+forgetting to be careful. Per-turn play is deliberately not in the feed: the
+in-match "Ana drew 1" line (`GameScene.noteOpponentMove`) already says it, live
+and in public terms, and putting it here would push every room-level event out of
+a 25-slot buffer within one match.
+
+`last_card` fires on the *transition* into a one-card hand, once — a seat sitting
+on one card does not re-announce every turn. Hand counts are already public in
+every `GameView`, so this discloses nothing new; it makes the most consequential
+count in the game impossible to miss. The in-match HUD carries the same fact as
+size, wording and an icon, never colour alone.
+
+**Reactions** stay exactly what §9's threat model allows: a fixed preset list
+(`REACTIONS` — `nice`, `gg`, `oops`, `wow`), validated at the wire boundary, relayed as the server's own value,
+room-scoped, and gated by a per-seat cooldown (`REACTION_COOLDOWN_MS`) enforced
+server-side. A relayed reaction also appends to the feed, which is why the relay
+is followed by one `room_state` — bounded by the same cooldown, so it needs no
+budget of its own. A reaction never touches `rev`, the hash, the turn or a hand.
+
+Party state rides the lobby payloads (`room_joined`, `room_state`), never the
+per-turn `state_sync`: it changes at room granularity, and a match does not need
+it. `NetClient.lastRoomState` latches the most recent one, because the
+`room_state` carrying a new session score is broadcast in the same server tick as
+`game_over` — a frame before `WinScene` exists.
+
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 4` — bumped from 3 for room settings and the
+version (`PROTOCOL_VERSION = 8` — bumped from 7 for the casual matchmaking queue:
+the client gained `join_queue`/`cancel_queue` and the server gained `queue_state`,
+so a v7 client cannot queue at all and must not be left believing it can; v7 bumped
+from 6 for the public-room reaction set:
+`hurry` left `REACTIONS` and `gg` took its place, so a v6 client's reaction id is
+no longer one this server relays; v6 bumped from 5 for room visibility and discovery:
+`room_joined`/`room_state` gained `visibility`, and the client gained
+`set_room_visibility` and `list_rooms` with a new `room_list` answer; v5 bumped from 4 for the party session: `GameView`
+gained `matchId`, `RoomPlayerSummary` gained `wins`, and `room_joined`/`room_state`
+gained `party` (match history + activity feed); v4 bumped from 3 for room settings and the
 server turn timer: `GameView` gained `settings` and `turnMsLeft`, `room_joined`
 and `room_state` gained `settings`/`hostSeat`, and the client gained
 `set_room_settings` and `mexe_started`; v3 bumped from 2 in 1.2.0, when
@@ -143,6 +401,10 @@ submission that caused it.
 | `submit_turn` | `rev`, `melds: [{ id, cardIds[] }]` | card **ids only** |
 | `draw_end_turn` | `rev` | |
 | `reconnect` | `token` | resumes a seat in a live room |
+| `set_room_visibility` | `visibility: 'private' \| 'listed'` | host only, lobby only; answered with an authoritative `room_state`, never an echo. Does not clear ready bits (§3d) |
+| `list_rooms` | — | no filters are representable on the wire; the answer is bounded and rate-limited (§3d) |
+| `join_queue` | `target: 2 \| 3 \| 4 \| 'any'`, `name` | casual queue (§3e); idempotent per session, refused with `already_in_match` for a seated player and `queue_busy` at capacity |
+| `cancel_queue` | — | idempotent; answered with authoritative queue state, so a cancel that raced a formed match is told `matched` |
 | `resync` | — | "resend authoritative state"; never carries client state |
 | `ping` | — | |
 
@@ -150,8 +412,8 @@ submission that caused it.
 
 | type | payload | notes |
 |---|---|---|
-| `room_joined` | `code`, `seat`, `token`, `players`, `settings`, `hostSeat` | token is the reconnect key |
-| `room_state` | `players` (each entry carries its own `ready`/`connected`), `settings`, `hostSeat`, `locked` | lobby updates; `locked` is true once the match started and the settings are frozen |
+| `room_joined` | `code`, `seat`, `token`, `players`, `settings`, `hostSeat`, `party`, `visibility` | token is the reconnect key; `players[].wins` is the session score; `visibility` is always `private` for a new room |
+| `room_state` | `players` (each entry carries its own `ready`/`connected`/`wins`), `settings`, `hostSeat`, `locked`, `party`, `visibility` | lobby updates; `locked` is true once the match started and the settings are frozen. `ready` doubles as the rematch vote between matches (§3c). `visibility` is server-owned (§3d) |
 | `game_started` | `view` | broadcast per seat after host `start_game`; the server never sends shuffle seed, and `rev` lives inside `view.rev` |
 | `state_sync` | `view` (redacted, `rev` and `hash` inside it) | the only source of truth on the client |
 | `proposal_rejected` | `reqId`, `reasons: ReasonCode[]` | codes, not prose |
@@ -160,6 +422,8 @@ submission that caused it.
 | `player_reconnected` | `seat` | |
 | `game_over` | `winnerId`, `stalemate`, `view` | `view` carries the final redacted state so both clients render the same closing board |
 | `error` | `code`, `message`, `reqId?` | protocol-level problems; `reqId` echoes the request that failed, absent for server-initiated errors including `room_closed` (S1/S2: a reaped or abandoned room notifies every attached socket before dropping it) |
+| `queue_state` | `status`, `target`, `token?`, `players?` | the caller's own queue state and nothing else (§3e): `token` only while `queued`, `players` only on `matched`. Never a queue size, a position or another waiting player |
+| `room_list` | `reqId`, `rooms: RoomListing[]` | the discovery projection only (§3d): `code`, `hostName`, `players`, `capacity`, `status`, `timerMode`. Never a room snapshot, never a room the caller has not joined |
 | `pong` | — | |
 
 `ReasonCode` values are the existing localized keys (`reason.duplicateCard`,
@@ -257,21 +521,68 @@ the room would sit stuck forever with its remaining players stranded
 (Phase 18 finding 1, regression-tested in
 `tests/server/index.integration.test.ts`).
 
+A reconnect never moves the game. It re-sends authoritative state and nothing
+else: the returning seat gets the same redacted view every other seat is looking
+at (own hand identities, opponents as counts), the current turn and revision,
+the room's settings, and the clock's *current* remaining time. An inactive seat
+reconnecting leaves the turn where it was; a seat that reconnects after the turn
+moved on receives the new turn, not the one it left. A reconnect into a lobby —
+including the lobby a finished match was recycled into — returns `room_joined`
+with no view at all, so no stale playing state can survive a rematch. Pinned in
+`tests/server/reconnect.test.ts` (OR-01/02/06/07/08/09/16/25/26/27/28/29, at 2,
+3 and 4 seats).
+
 Seat presence changes — a disconnect, a reconnect, a hop — always re-broadcast
 `room_state` alongside the `player_disconnected`/`player_reconnected` event,
 because the lobby renders presence from `room_state` and would otherwise keep
 showing a stale marker.
 
-On the client, reconnect is **not** a persistent retry loop. `NetClient`
-attempts exactly one bounded reconnect (`RECONNECT_DELAY_MS` after an
-unexpected close) if a stored token exists; if that attempt also fails to
-stay open, the client falls back to the documented safe path — return to the
-local menu with an explicit message — rather than retrying indefinitely. This
-was scoped down from the original "grace window with an explicit countdown"
-idea in the initial design; the single-retry version is what's implemented
-and verified (`e2e-multiplayer/multiplayer.spec.ts` forces a socket drop and
-asserts the client reaches `'reconnecting'` then `'open'` with a resynced
-revision).
+On the client, reconnect is a **bounded** retry loop, never a persistent one.
+After an unexpected close with a stored token, `NetClient` works through
+`RECONNECT_DELAYS_MS` — `800, 2000, 4000, 8000, 12000, 16000, 20000` ms, each
+jittered upward by up to 25% so a server blip does not bring every client back
+on the same millisecond. That spans ~63s, which is the longest reconnect grace
+any preset offers, so the schedule runs out at about the moment the seat stops
+being worth holding. Then the client falls back to the documented safe path —
+return to the local menu with an explicit message. A successful open resets the
+budget, so a later drop gets the whole schedule again.
+
+Three things cut the loop short rather than letting it run out:
+
+- **`leaveRoom()`/`disconnect()`** — a deliberate exit is never retried.
+- **`invalid_token` or `room_closed`** — the session or the room is provably
+  gone, so further attempts could only arrive at the same error screen.
+- **the browser reporting no network** (`navigator.onLine === false`) — the loop
+  *parks* rather than spending an attempt on a guaranteed failure, and the
+  `online` event resumes it immediately. This is the Wi-Fi-to-cellular path: the
+  socket usually dies with no event the page can act on, and `online` is the
+  earliest reliable signal that a retry can succeed.
+
+`NetClient.retryNow()` pulls the next attempt forward without waiting out the
+current delay, for the two moments that are better evidence than a timer: the
+`online` event above, and the app returning to the foreground (both scenes call
+it from `onAppVisible` when the status is already `'reconnecting'`). It still
+spends an attempt, so a player who backgrounds and resumes twenty times cannot
+turn a bounded loop into an unbounded one, and it opens no socket beside the one
+the loop already owns.
+
+While the socket is down `GameScene` shows one line, repainted once a second:
+*"Conexão caiu. Seu lugar está guardado — 30s"*. The number counts down the
+room's `reconnectGraceMs` from the drop. It is an estimate the client
+interpolates, not an authority — the server owns the real deadline, and the
+countdown reaching zero decides nothing. Past zero the copy switches to *"Ainda
+reconectando. O servidor compra por você."*, which is literally what §7b's
+stalled-turn path does. The same gate that locks input on a dropped socket also
+blanks the "play cards or draw one" objective line, so the board never tells a
+player to act while it is refusing input.
+
+Verified in `e2e-multiplayer/multiplayer.spec.ts` (a forced socket drop reaches
+`'reconnecting'` then `'open'` with a resynced revision, and the same drop on a
+portrait and a landscape phone renders the held-seat copy with its countdown),
+and in `tests/net/reconnect.test.ts`, which drives the loop against a fake
+socket and fake timers: bounded attempt count, one socket per attempt, offline
+parking, `online` resumption, deliberate-leave cancellation and the two
+definitive-failure cases.
 
 ### 4a. Desync detection
 
@@ -318,7 +629,12 @@ fairness surface: `timerMode`, `turnMs`, `mexeBonusMs`, `warnMs`,
 A brand-new room starts on Casual, except that its reconnect grace comes from
 the deployment's `MEXE_DISCONNECT_GRACE_MS` until a preset is picked.
 
-**Who owns them.** The seat-0 host proposes, in the lobby only. The server
+**Who owns them.** The host proposes, in the lobby only — one tap on the summary
+line cycles Casual/Fast/Off, and the CUSTOM link opens a five-row screen
+(`OnlineScene.renderCustom`) whose −/+ buttons go dead at `CUSTOM_BOUNDS`, so
+the host never proposes a number the server would silently clamp. APPLY sends
+one `set_room_settings`; a per-field send would clear everyone's ready bit five
+times for one decision. The server
 normalizes (`normalizeRoomSettings` — a named preset ignores every other field;
 `custom` is clamped field by field; anything unrecognizable becomes the default
 preset) and broadcasts. Nothing is ever applied client-side. `startGame` freezes
@@ -340,6 +656,12 @@ for a timeout to commit. The same path serves an expired clock and a seat absent
 past the grace; both increment that seat's `missedTurns`, and any turn the seat
 actually takes resets it to zero.
 
+**When there is no clock.** `startTurnClock` refuses to start one for an untimed
+room *and* for a match that just finished, so a finished game reports
+`turnMsLeft: null` rather than counting down to a red 0:00 behind the results
+screen. A rematch (`recycleForRematch`) clears the clock, the bonus flag and
+every missed-turn streak, so the next match starts on a fresh budget.
+
 **The Mexe bonus.** Opening the Mexe editor sends `mexe_started`. The server
 grants `mexeBonusMs` once per turn, to the active seat only, and only while a
 clock is running — so re-opening the editor cannot hold a turn open. A
@@ -355,9 +677,18 @@ Every inbound frame is parsed inside a try/catch; a parse failure or a failed
 shape check replies `error` and, on repeated abuse, closes the socket. No
 inbound value is ever used as an object key, array index, or loop bound before
 being range-checked. Handlers are wrapped so a thrown `RulesError` becomes a
-rejection message, never an unhandled exception. The process installs
-`uncaughtException`/`unhandledRejection` handlers that log and keep serving —
-a crash would take every room down, which is the worst possible alpha failure.
+rejection message, never an unhandled exception. Per-room work is isolated: a
+room whose state can no longer advance legally is dropped and its sockets
+notified, rather than throwing out of the tick that serves every other room.
+
+Truly fatal failures are deliberate, not swallowed. `uncaughtException` logs
+`uncaught_exception` (the error *type*, never its text) to stderr and exits
+with status 1: every inbound message is already wrapped in its own try/catch,
+so reaching that handler means process state is unknown, and serving rooms
+from a half-applied state is worse than dropping them. The supervisor restarts
+the process (`restart: unless-stopped` in the compose files). `unhandledRejection`
+is logged without exiting — no room-mutating path is async. See
+[OPERATIONS.md](OPERATIONS.md).
 
 ## 9. Security assumptions and anti-cheat
 
@@ -366,12 +697,44 @@ token; anyone with a code can attempt to join an open room; the alpha is for
 friends, not for hostile scale. Mitigated: hidden-information leaks (redacted
 views), forged cards (id rehydration), out-of-turn play (seat check), replay
 and double-submit (revision + in-flight lock), malformed input (boundary
-validation), seed manipulation (server-chosen seed). Explicitly *not*
-mitigated in the alpha: denial of service, room-code brute force at scale,
-timing/behavioural collusion. Rate limiting is a per-connection message
-counter — enough to stop an accidental loop, not a determined attacker opening
-many sockets. Frame size (16 KiB) and socket liveness are enforced at the
-server; a client-supplied state hash is never accepted, only ever sent.
+validation), seed manipulation (server-chosen seed).
+
+Resource abuse is bounded rather than solved. The controls, smallest first:
+a per-connection message-rate guard closes a looping client (`1008`); ten
+failed room-code lookups close the guessing connection; room creation is
+budgeted per source per minute (`MEXE_MAX_ROOM_CREATES_PER_IP`, refused with
+`room_create_limit`), which is what stops a create-then-drop loop parking rooms
+against `MEXE_MAX_ROOMS`; full-state `resync` is capped per connection and
+dropped, not answered, above the cap; global and per-IP connection caps refuse
+sockets at the door; a 15s heartbeat terminates transports that missed a probe,
+so a half-open socket cannot hold a seat `connected` until TCP gives up. Every
+budget is windowed and its map pruned by the existing sweep, so no counter
+collection grows with traffic.
+
+Credentials use `node:crypto`, never the gameplay RNG: session tokens are
+`randomUUID`, room codes are `randomInt` over the 28-symbol alphabet and
+retried on collision. The gameplay deal stays seeded and deterministic, and its
+seed is server-chosen and never sent. A room code is a public locator, not a
+credential; the session token is the only thing that owns a seat, and exactly
+one transport may hold a seat at a time (a reconnect evicts the previous one).
+
+The token never leaves the tab for anyone but the server that issued it. It
+lives in `sessionStorage` paired with that endpoint, and `NetClient` replays it
+only when the endpoint it is about to connect to matches — which is what makes
+the documented `?ws=` override (§10) unable to turn a crafted link on the real
+origin into seat theft. A token stored by an older build has no endpoint beside
+it and is simply discarded.
+
+Every per-source budget keys on the client address, which behind a proxy means
+`MEXE_TRUSTED_PROXY_HOPS` must state how many proxies are in front: `X-Forwarded-For`
+is client-settable and is ignored at the default of 0, and read only that many
+entries from the right once set. `Origin` is a stated policy — production must
+name its allowed origins or say `*` — and never authentication; see
+[OPERATIONS.md](OPERATIONS.md) for why a missing header is still accepted and
+why the server refuses to start on silence. Explicitly *not* mitigated: denial of service at volume,
+room-code brute force from a large connection farm, timing/behavioural
+collusion. Frame size (16 KiB) is enforced at the server; a client-supplied
+state hash is never accepted, only ever sent.
 
 ## 10. Deployment notes
 
@@ -380,14 +743,53 @@ resolves the WS URL from build-time configuration with a same-host default;
 a page served over HTTPS must use `wss://`, which is the most common
 first-deployment failure and is called out in [SELF_HOSTING.md](SELF_HOSTING.md). The server takes its
 port from the environment, exposes a trivial health check, caps concurrent
-rooms, and reaps idle rooms on a timer. Local development runs both with two
+rooms and connections, budgets room creation per source, optionally pins the
+allowed browser origins, and reaps idle, empty and abandoned rooms on a timer. Local development runs both with two
 commands; a single `docker compose` service pair is the deployment shape.
 
 ## 11. Tests
 
 Server unit suites (`tests/server/`) cover room lifecycle, legal and rejected
 turns, redaction, reconnect and a malformed-message battery; the integration
-suite spawns the real process and drives raw `ws` clients. `npm run
+suite spawns the real process and drives raw `ws` clients (shared harness in
+`tests/server/harness.ts`). `tests/server/party.test.ts` and
+`tests/server/party.integration.test.ts` carry the `OS-*` party-session
+acceptance: session wins and their duplicate guard, rematch voting, between-match
+leave/join, bounded history and feed, and the room-scoped, rate-limited,
+ownership-checked reaction path over real sockets.
+`tests/server/discovery.test.ts` carries the `OD-*` discovery acceptance in two
+halves: a socket-free `RoomManager` block for what the projection *is* (private
+by default, eligibility, the exact field set, the bound) and an integration
+block for what a client can reach (visibility authority and its lifecycle rule,
+listing privacy and cross-room isolation, seat reclaim versus a discovered join,
+stale/full/in-match rooms, the list budget, and that create/join-by-code survive
+an exhausted one). `tests/net/recent-rooms.test.ts` covers the local
+display-history list, including that it stores no credential and that corrupt
+storage is dropped rather than repaired.
+`tests/server/public-rooms.test.ts` carries the `OP-*` public-readiness
+acceptance, split the same way: a `RoomManager` block for what churn does to the
+room model (one seat per join, a same-name newcomer who owns nothing, the last
+seat going to exactly one caller, an idempotent second leave, host authority
+following the lowest occupied seat, the in-match and recycled-lobby join rules,
+the closed reaction enum, and a feed of public facts only) and a wire block for
+what strangers can actually race (a socket hammering `join_room`, four clients
+racing three seats, host transfer across a live churn, a double `leave_room`, a
+reconnect that reclaims rather than duplicates, reaction spam and cross-room
+isolation, a stale listing, and 2/3/4-seat rooms starting with per-seat hands).
+`tests/server/matchmaking.test.ts` and `tests/server/queue.integration.test.ts`
+carry the `OM-*` matchmaking acceptance, split the same way: a socket-free block
+for the policy and the handoff (membership and expiry, 2/3/4 and `any` group
+formation, oldest-first selection, unique assignment under a 400-entry load,
+canonical casual settings, the refusal of settings/visibility in a matchmade
+room, and an allocation failure that leaves no half-built room) and a wire block
+for what a client can actually race (idempotent join and cancel, a seated player
+refused, a cancel that lost to a committed match, reconnect into the queue versus
+into the committed match, a superseded socket that cannot cancel, malformed
+preferences, and the join/cancel budget).
+`tests/server/hardening.test.ts` carries the
+`OH-*` hardening acceptance: the room-creation budget, the Origin policy, the
+resync bound, reconnect bursts, cross-room isolation under a malformed client,
+room resurrection, and a concurrent-room load that has to return to baseline. `npm run
 verify:multiplayer` runs two-plus real browser clients against the real server
 and gates on client console errors, server stderr, accepted illegal proposals,
 hand privacy and state-hash agreement. Details in [TESTING.md](TESTING.md).
@@ -400,18 +802,33 @@ Files:
   APIs): message types, `buildView` (redaction), `parseClientMessage`
   (boundary validator).
 - `src/net/client.ts` — `NetClient`, the browser WebSocket wrapper: connect/
-  reconnect (single bounded retry), status events, message trace, ping.
+  reconnect (the bounded retry schedule in §0), status events, message trace,
+  ping, and the session token in `sessionStorage` — stored beside the endpoint
+  that issued it, and replayed only to that endpoint (§9).
 - `src/net/viewToState.ts` — projects a `GameView` back into a local-shaped
   `GameState` (placeholder cards for hidden hands/draw pile) so the existing
   offline renderer can draw it unchanged.
-- `src/scenes/OnlineScene.ts` — the lobby scene (idle/join/lobby/error),
-  including the in-canvas keyboard join-code entry.
+- `src/scenes/OnlineScene.ts` — the lobby scene
+  (idle/join/name/lobby/custom/party/browse/queue/matched/error), including the
+  in-canvas keyboard join-code entry, the online home's Quick Match entry and
+  CONTINUE/RECENT shortcuts, the searching and MATCH FOUND screens, the room
+  browser, and the host's visibility badge.
 - `server/index.ts` — the WebSocket server process: message dispatch,
   broadcast helpers, health check, sweep interval, crash guards.
 - `server/rooms.ts` — `RoomManager`: room lifecycle, seat/ready state, seed
-  generation, turn validation and application, reconnect, sweep.
+  generation, turn validation and application, reconnect, sweep, and
+  `createMatchRoom` (the queue's one allocation entry point).
+- `server/matchmaking.ts` — `MatchQueue`: the casual queue and its grouping
+  policy (§3e). No sockets and no timers of its own; the caller drives `expire`.
 - `server/connections.ts` — per-connection state, socket attach/detach/evict,
-  the flood guard, and closing every socket attached to a reaped room.
+  the windowed abuse budgets (flood, failed joins, room creation, resync, queue),
+  the queue-entry ownership a connection holds, the
+  Origin policy, the heartbeat liveness split, and closing every socket attached
+  to a reaped room.
+- `server/config.ts` — env-derived caps and limits, validated once at startup.
+- `server/log.ts` — level-gated structured logging with redaction enforced at
+  the logger, not at call sites.
+- `server/metrics.ts` — aggregate Prometheus counters, no per-player series.
 
 Payload bounds in `parseClientMessage`: a `submit_turn` carries the whole draft
 table plus the hand cards being played, so it is bounded by the deck

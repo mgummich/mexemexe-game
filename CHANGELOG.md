@@ -4,6 +4,36 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
+## Unreleased — online release-candidate pass
+
+### Fixed: a search that had already found a chair could still be matched again
+
+A session that joined the Quick Match queue and then created or joined a room by
+code stayed in the queue. The next group formed around it, moved its socket to
+the matchmade table, and left the room it had just sat down in holding a seat
+marked connected with no transport on it — which made that room invisible to the
+sweep, to the idle backstop and to the stalled-turn check, so anyone else in it
+was stranded on it for the life of the process. Taking a seat now leaves the
+queue, and the searching screen is told so. Regression test:
+`tests/server/queue.integration.test.ts`.
+
+### Fixed: a crafted link could ask the game for its seat credential
+
+The client resolves its server from `?ws=` first (documented, and how LAN and
+self-hosted setups point at their own server), but it replayed the stored
+reconnect token to whatever server that resolved to. A link on the real origin
+naming someone else's server was therefore enough to be handed a live seat
+token. The token is now stored beside the endpoint that issued it and replayed
+only to that endpoint; a token from an older build carries no endpoint and is
+discarded. Regression test: `tests/net/reconnect.test.ts`.
+
+### Documentation
+
+`docs/MULTIPLAYER.md` said rate limiting was per connection and not per IP,
+which stopped being true when the per-address budgets landed; the turn-timer
+note in `docs/GAME_RULES.md` listed the three presets and not the custom screen
+behind them. Both now describe what ships.
+
 ## 1.9.2 — 2026-09-14
 
 ### Fixed: the board could go dead mid-match

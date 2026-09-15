@@ -4,13 +4,20 @@
  * an exception the caller has to catch.
  */
 import { playlog } from '../core/playlog';
+import { onConnectivityChange } from '../core/pwa';
 import { resolveWsUrl } from '../config';
 import { PROTOCOL_VERSION } from './protocol';
-import type { ClientMessage, ReactionId, RoomSettings, ServerMessage, SubmitTurnMeld } from './protocol';
+import type {
+  ClientMessage, QueueTarget, ReactionId, RoomSettings, RoomStateMsg, RoomVisibility, ServerMessage,
+  SubmitTurnMeld,
+} from './protocol';
 
 export type ConnStatus = 'connecting' | 'open' | 'closed' | 'error' | 'reconnecting';
 
 const TOKEN_KEY = 'mexe.online.token';
+/** Separator between the endpoint a token was issued by and the token itself, inside TOKEN_KEY.
+ * A NUL occurs in neither half: it is not representable in a URL, and a token is randomUUID(). */
+const TOKEN_SEP = '\u0000';
 /** localStorage (not sessionStorage): a display name is meant to survive the tab, the reconnect
  * token deliberately is not. */
 const NAME_KEY = 'mexe.online.name';
@@ -24,24 +31,45 @@ export const MIN_NAME_LENGTH = 2;
 const PING_INTERVAL_MS = 20_000;
 const TRACE_CAP = 80;
 const STATUS_TRACE_CAP = 40;
-/** C1: single bounded retry — one reconnect attempt this long after an unexpected close. */
-const RECONNECT_DELAY_MS = 800;
+/**
+ * Bounded auto-reconnect schedule: the delay before attempt N after an unexpected close. A real
+ * mobile drop (Wi-Fi handover, tunnel, screen lock) routinely outlasts one retry, and the server
+ * holds the seat for the room's reconnect grace — 30s or 60s under every preset — so the schedule
+ * spans that window (~63s total) and then gives up rather than retrying forever.
+ */
+const RECONNECT_DELAYS_MS = [800, 2000, 4000, 8000, 12_000, 16_000, 20_000];
+/** Fraction of each delay added at random, so N clients dropped by one event do not all retry on
+ * the same millisecond. Never subtracted: a delay must not shrink below its schedule slot. */
+const RECONNECT_JITTER = 0.25;
 
 type ServerListener = (msg: ServerMessage) => void;
 
-/** sessionStorage throws in Safari with site data blocked/webviews with storage disabled —
- * these keep a throw from aborting the socket callback it's called inside of. */
+/**
+ * The reconnect token, but only for the endpoint that issued it. A token reclaims a seat, and
+ * `resolveWsUrl` honours a `?ws=` query override (see src/config.ts) — so without this pairing a
+ * crafted link on the real origin would make the client hand its live seat token to whatever
+ * server the link named. Storing the endpoint beside the token makes that link useless: it opens
+ * a socket to a stranger and says nothing.
+ *
+ * sessionStorage throws in Safari with site data blocked/webviews with storage disabled — the
+ * try/catch keeps a throw from aborting the socket callback this is called inside of.
+ */
 function readToken(): string | null {
+  let stored: string | null = null;
   try {
-    return sessionStorage.getItem(TOKEN_KEY);
+    stored = sessionStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
   }
+  if (stored === null) return null;
+  const sep = stored.indexOf(TOKEN_SEP);
+  if (sep < 0) return null; // pre-pairing value left by an older build — not replayable anywhere
+  return stored.slice(0, sep) === resolveWsUrl() ? stored.slice(sep + 1) : null;
 }
 
 function writeToken(token: string): void {
   try {
-    sessionStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(TOKEN_KEY, `${resolveWsUrl()}${TOKEN_SEP}${token}`);
   } catch {
     // storage blocked — reconnect just won't be possible, not fatal
   }
@@ -73,6 +101,86 @@ export function writeDisplayName(name: string): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Recent rooms (local display history)
+// ---------------------------------------------------------------------------
+
+/** Deliberately a *different* storage key, a different storage area and a different shape from
+ * the reconnect token: this list is display history the player is meant to see, and the token is
+ * a credential. Nothing that can reclaim a seat is representable in a `RecentRoom`. */
+const RECENT_KEY = 'mexe.online.recent';
+
+/** Short list on purpose. The point is "the room we were just in", not an account history — six
+ * stale codes would cost a player more reading than typing five characters would. */
+export const MAX_RECENT_ROOMS = 5;
+
+/**
+ * How long an entry is worth showing. Rooms die far sooner than this (the server's idle backstop
+ * is minutes), so this is not a liveness claim — it is the point past which offering the room is
+ * more likely to be a dead end than a shortcut. A surviving-but-dead entry is still handled the
+ * only way it can be: the join is tried and the server says no.
+ */
+const RECENT_TTL_MS = 6 * 60 * 60 * 1000;
+
+export interface RecentRoom {
+  /** Public room code. A locator, never a credential — see RoomListing in protocol.ts. */
+  code: string;
+  /** Host display name when we were last there, purely so the entry reads as a place. */
+  host: string;
+  /** Epoch ms of the last visit, for ordering and ageing out. */
+  at: number;
+}
+
+/** Persisted data is a trust boundary: anything unparseable, wrong-shaped or expired is dropped
+ * rather than repaired, so a corrupt key can never become a join attempt on garbage. */
+export function readRecentRooms(now = Date.now()): RecentRoom[] {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(RECENT_KEY);
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: RecentRoom[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    if (typeof o.code !== 'string' || typeof o.at !== 'number') continue;
+    const code = o.code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    if (code.length === 0 || now - o.at > RECENT_TTL_MS) continue;
+    if (out.some((r) => r.code === code)) continue;
+    out.push({ code, host: typeof o.host === 'string' ? o.host.slice(0, MAX_NAME_LENGTH) : '', at: o.at });
+    if (out.length >= MAX_RECENT_ROOMS) break;
+  }
+  return out.sort((a, b) => b.at - a.at);
+}
+
+function writeRecentRooms(rooms: RecentRoom[]): void {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(rooms.slice(0, MAX_RECENT_ROOMS)));
+  } catch {
+    // storage blocked — the list just won't survive a reload
+  }
+}
+
+/** Record (or refresh) a room we actually got into. Most recent first, deduped by code. */
+export function rememberRoom(code: string, host: string, now = Date.now()): void {
+  const kept = readRecentRooms(now).filter((r) => r.code !== code);
+  writeRecentRooms([{ code, host: host.slice(0, MAX_NAME_LENGTH), at: now }, ...kept]);
+}
+
+/** Drop an entry the server has just told us is gone, so a dead room stops being offered. */
+export function forgetRoom(code: string, now = Date.now()): void {
+  writeRecentRooms(readRecentRooms(now).filter((r) => r.code !== code));
+}
+
 export class NetClient {
   private ws: WebSocket | null = null;
   private reqCounter = 0;
@@ -83,19 +191,27 @@ export class NetClient {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   /** Set by disconnect()/leaveRoom() so onclose knows not to retry a deliberate close. */
   private explicitClose = false;
-  /** Bounds the retry to one attempt per unexpected close — cleared again on a successful open. */
-  private reconnectAttempted = false;
+  /** How many reconnect attempts this drop has already spent. Indexes RECONNECT_DELAYS_MS; reset
+   * on every successful open, so a later drop gets the full schedule again. */
+  private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Unsubscribe for the online/offline listeners. One per client, ever — a re-`connect()` (or an
+   * orientation change that re-renders the scene) must not stack a second pair. */
+  private connectivityUnsub: (() => void) | null = null;
 
   /** Bounded trace of every message sent/received, newest last — for e2e/debug-api. */
   trace: { dir: 'out' | 'in'; type: string }[] = [];
   /** Bounded history of every status this client has been in, newest last — for e2e/debug-api.
    * `status()` alone cannot prove a *transient* state happened: 'reconnecting' only lasts
-   * RECONNECT_DELAY_MS plus one connect round-trip, so a verification step that samples it after
-   * any other unbounded await (a screenshot, a wait on the other client) can arrive once it is
+   * the first backoff delay plus one connect round-trip, so a verification step that samples it
+   * after any other unbounded await (a screenshot, a wait on the other client) can arrive once it is
    * already back to 'open'. That raced on CI. Asserting against this history instead is
    * order-independent. */
   statusTrace: ConnStatus[] = [];
+  /** The most recent `room_state`, or null before the first one. Read by scenes that need the
+   * party state (seats, session wins, history, activity) without owning a subscription from
+   * before it arrived — see the assignment in `connect()` for why. */
+  lastRoomState: RoomStateMsg | null = null;
 
   getStatus(): ConnStatus {
     return this.status;
@@ -121,15 +237,13 @@ export class NetClient {
     return () => set!.delete(listener);
   }
 
-  /** @param isRetry internal — true when this call is the single bounded reconnect attempt (C1),
-   * so it keeps the 'reconnecting' status instead of flashing back to 'connecting'. */
+  /** @param isRetry internal — true when this call is one of the bounded reconnect attempts, so
+   * it keeps the 'reconnecting' status instead of flashing back to 'connecting'. */
   connect(isRetry = false): void {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
     this.explicitClose = false;
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.clearReconnectTimer();
+    this.wireConnectivity();
     if (!isRetry) this.setStatus('connecting');
     let ws: WebSocket;
     try {
@@ -150,7 +264,7 @@ export class NetClient {
     ws.onopen = () => {
       if (this.ws !== ws) return;
       if (isRetry) playlog.record('net:reconnect');
-      this.reconnectAttempted = false;
+      this.reconnectAttempt = 0;
       this.setStatus('open');
       this.startPing();
       const token = readToken();
@@ -169,16 +283,7 @@ export class NetClient {
         this.setStatus('error', 'unreachable');
         return;
       }
-      const token = readToken();
-      if (!this.explicitClose && token && !this.reconnectAttempted) {
-        this.reconnectAttempted = true;
-        this.setStatus('reconnecting');
-        this.reconnectTimer = setTimeout(() => {
-          this.reconnectTimer = null;
-          this.connect(true);
-        }, RECONNECT_DELAY_MS);
-        return;
-      }
+      if (!this.explicitClose && readToken() && this.scheduleReconnect()) return;
       this.setStatus('closed');
     };
     ws.onerror = () => {
@@ -197,10 +302,28 @@ export class NetClient {
       }
       this.pushTrace('in', msg.type);
       if (msg.type === 'room_joined') writeToken(msg.token);
-      // The stored token is provably dead: keep it and every later entry into the online lobby
-      // re-sends it, gets invalid_token again, and lands on the same error screen — including
-      // the retry. Dropping it turns that into a normal, joinable lobby.
-      if (msg.type === 'error' && msg.code === 'invalid_token') clearToken();
+      // A queue entry is a session like a seat is, and it is keyed by the same token — storing it
+      // here is what makes a reload or a resumed phone reconnect into the search it left. The
+      // states that end an entry drop it, so a dead token never becomes the next visit's
+      // reconnect attempt.
+      if (msg.type === 'queue_state') {
+        if (msg.status === 'queued' && msg.token) writeToken(msg.token);
+        else if (msg.status === 'idle' || msg.status === 'expired') clearToken();
+      }
+      // Latched so a scene that starts *after* a push can still read it. The room_state carrying
+      // the session score arrives in the same server tick as game_over, i.e. a frame before
+      // WinScene exists — without this latch the result screen would have to wait for the next
+      // broadcast to show the score of the match it is announcing.
+      if (msg.type === 'room_state') this.lastRoomState = msg;
+      // `invalid_token`/`room_closed` are definitive: the session or the room is gone, so no
+      // number of further attempts can restore the seat. Keeping the token would make every
+      // later entry into the online lobby re-send it, fail the same way and land on the same
+      // error screen; keeping the loop alive would do the same without even being asked.
+      if (msg.type === 'error' && (msg.code === 'invalid_token' || msg.code === 'room_closed')) {
+        clearToken();
+        this.clearReconnectTimer();
+        this.reconnectAttempt = RECONNECT_DELAYS_MS.length;
+      }
       if (msg.type === 'proposal_rejected') playlog.record('net:reject', { reason: msg.reasons[0] ?? '' });
       const set = this.listeners.get(msg.type);
       if (set) for (const cb of set) cb(msg);
@@ -216,18 +339,90 @@ export class NetClient {
 
   /** Verification-only: closes the underlying socket as if the network died — unlike disconnect()/
    * leaveRoom() this leaves explicitClose false and the reconnect token in place, so onclose runs
-   * the normal C1 single-retry reconnect path. Used by verify:multiplayer to exercise reconnect. */
+   * the normal bounded reconnect loop. Used by verify:multiplayer to exercise reconnect. */
   forceDrop(): void {
     this.ws?.close();
+  }
+
+  /** How many reconnect attempts are still available for the current drop. 0 means the loop has
+   * given up (or never started). Observability for the reconnect tests, which otherwise could
+   * only infer the budget from socket counts. */
+  reconnectAttemptsLeft(): number {
+    return Math.max(0, RECONNECT_DELAYS_MS.length - this.reconnectAttempt);
+  }
+
+  /**
+   * Queue the next bounded reconnect attempt. Returns false when the schedule is exhausted, which
+   * is the caller's signal to go terminal. Parks instead of retrying while the browser reports no
+   * network: a retry with the radio off would spend an attempt on a guaranteed failure, and the
+   * `online` event (see wireConnectivity) resumes the loop the moment the radio is back.
+   */
+  private scheduleReconnect(): boolean {
+    if (this.reconnectAttempt >= RECONNECT_DELAYS_MS.length) return false;
+    this.setStatus('reconnecting');
+    // Parked, not scheduled: the `online` event resumes the loop (see wireConnectivity).
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+    const base = RECONNECT_DELAYS_MS[this.reconnectAttempt]!;
+    this.reconnectAttempt += 1;
+    this.clearReconnectTimer();
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect(true);
+    }, base + Math.random() * base * RECONNECT_JITTER);
+    return true;
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+  }
+
+  /**
+   * Wi-Fi to mobile data, a tunnel, airplane mode: the socket usually dies without any event the
+   * page can act on, and the browser's `online` event is the earliest reliable signal that a
+   * retry can succeed. Subscribed once per client — a re-`connect()`, a scene rebuild or an
+   * orientation change must not stack a second pair of listeners.
+   */
+  private wireConnectivity(): void {
+    if (this.connectivityUnsub || typeof window === 'undefined') return;
+    this.connectivityUnsub = onConnectivityChange((offline) => {
+      if (offline) {
+        // Do not close the socket: the OS may hand it back intact on a short interruption, and a
+        // close we caused ourselves would spend an attempt for nothing.
+        this.clearReconnectTimer();
+        return;
+      }
+      // Network is back: retry now instead of sitting out the rest of a backoff delay that was
+      // measured against a network that no longer exists.
+      this.retryNow();
+    });
+  }
+
+  /**
+   * Try the next reconnect attempt immediately instead of waiting out the current backoff delay.
+   * For the two moments that are better evidence than a timer: the browser reporting the network
+   * back, and the app returning to the foreground with a socket that may have died while
+   * suspended. Still spends an attempt, so a player who backgrounds and resumes repeatedly cannot
+   * turn a bounded loop into an unbounded one. No-op when connected, deliberately closed, without
+   * a session token, or once the schedule is exhausted.
+   */
+  retryNow(): void {
+    if (this.explicitClose || !readToken()) return;
+    if (this.status === 'open' || this.status === 'connecting') return;
+    if (this.reconnectAttempt >= RECONNECT_DELAYS_MS.length) return;
+    this.clearReconnectTimer();
+    this.reconnectAttempt += 1;
+    this.setStatus('reconnecting');
+    this.connect(true);
   }
 
   /** Closes the socket without touching the reconnect token — used when the scene just tears down. */
   disconnect(): void {
     this.explicitClose = true;
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.connectivityUnsub?.();
+    this.connectivityUnsub = null;
+    this.reconnectAttempt = 0;
+    this.clearReconnectTimer();
     this.stopPing();
     if (this.ws) {
       try {
@@ -256,6 +451,29 @@ export class NetClient {
    * applied locally, so a non-host or a mid-match send simply comes back as an error. */
   setRoomSettings(settings: RoomSettings): void {
     this.sendRaw({ v: PROTOCOL_VERSION, type: 'set_room_settings', reqId: this.nextReqId(), settings });
+  }
+
+  /** Host-only lobby proposal for who can find this room. Same shape as setRoomSettings: the
+   * server decides, broadcasts, and a non-host or mid-match send comes back as an error. */
+  setVisibility(visibility: RoomVisibility): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'set_room_visibility', reqId: this.nextReqId(), visibility });
+  }
+
+  /** Enter the casual queue. Idempotent on the server: a second call from a session that is
+   * already searching is answered with the entry it already has, never a second one. */
+  joinQueue(target: QueueTarget, name: string): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'join_queue', reqId: this.nextReqId(), target, name });
+  }
+
+  /** Leave the queue. Idempotent, and answered with authoritative queue state — a cancel that
+   * raced a formed match is told `matched`, not `idle`. */
+  cancelQueue(): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'cancel_queue', reqId: this.nextReqId() });
+  }
+
+  /** Ask for the currently discoverable rooms. Answered with one bounded `room_list`. */
+  listRooms(): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'list_rooms', reqId: this.nextReqId() });
   }
 
   /** Claim this turn's one-off Mexe extension. Safe to call more than once: the server grants it

@@ -9,6 +9,7 @@ export const SERVER_ERROR_CODES = [
   'room_not_found',
   'game_started',
   'room_limit',
+  'room_create_limit',
   'already_in_room',
   'no_room',
   'not_member',
@@ -19,6 +20,8 @@ export const SERVER_ERROR_CODES = [
   'room_closed',
   'server_shutdown',
   'rate_limited',
+  'already_in_match',
+  'queue_busy',
   'bad_message',
   'internal_error',
 ] as const;

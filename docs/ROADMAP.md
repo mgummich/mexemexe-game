@@ -22,8 +22,6 @@ Nothing is mid-flight. The repository is at a released, green state.
 
 ## Planned next
 
-- **Custom timer UI** — `custom` timer values are validated end to end on the
-  wire but have no lobby control; three presets cover a room of friends.
 - **Tutorial depth** — multi-turn steps: confirm a turn, then watch an opponent
   move.
 - **Rules panel sectioning** — the in-game help is one long panel; split it by
@@ -50,7 +48,9 @@ Nothing is mid-flight. The repository is at a released, green state.
 
 ## Not planned now
 
-- Accounts, matchmaking, ranked play, chat, spectators.
+- Accounts, ranked play, skill rating, chat, spectators. Casual matchmaking
+  *is* shipped — one FIFO queue, a player-count preference and server-chosen
+  casual terms (see [MULTIPLAYER.md](MULTIPLAYER.md) §3e); nothing above it is.
 - Cosmetics synced across the network (they are strictly client-side).
 - Native app builds — the PWA is the install story.
 - New AI personalities beyond the existing four (difficulty tiers now exist).

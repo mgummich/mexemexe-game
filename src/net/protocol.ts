@@ -5,7 +5,11 @@
  */
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 
-export const PROTOCOL_VERSION = 4;
+/** Bumped to 8 for the casual matchmaking queue: the client gained `join_queue`/`cancel_queue`
+ * and the server gained `queue_state`. A v7 client cannot queue at all, so it must not be left
+ * believing it can. (7 was the public-room reaction set: `hurry` left `REACTIONS` and `gg` took
+ * its place, so a v6 client's reaction id is no longer one this server will relay.) */
+export const PROTOCOL_VERSION = 8;
 
 // ---------------------------------------------------------------------------
 // Room settings (docs/MULTIPLAYER.md §7)
@@ -47,17 +51,175 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = TIMER_PRESETS.casual;
  * The complete set of things one player can say to another online. A fixed preset list instead
  * of free text: nothing here can carry an insult, a link or a real name, so no moderation
  * surface is created. The server validates against this exact list and rate-limits per seat.
+ *
+ * Every entry has to stay benign when the other seats are strangers, not friends. That is why
+ * there is no "hurry up": among friends it is a joke, and in a public room it is a nag one tap
+ * away from being spammed at whoever is thinking. `gg` replaced it — the one thing a stranger
+ * most wants to be able to say, and the hardest one to weaponize.
  */
-export const REACTIONS = ['nice', 'oops', 'hurry', 'wow'] as const;
+export const REACTIONS = ['nice', 'gg', 'oops', 'wow'] as const;
 export type ReactionId = (typeof REACTIONS)[number];
 
 /** Minimum gap between two reactions from the same seat. Enforced by the server — a client-side
  * cooldown alone would be one `devtools` call away from a spam channel. */
 export const REACTION_COOLDOWN_MS = 3_000;
 
+// ---------------------------------------------------------------------------
+// Room visibility and discovery (docs/MULTIPLAYER.md §3d)
+// ---------------------------------------------------------------------------
+
+/**
+ * Who is allowed to find a room, as opposed to who is allowed to join it.
+ *
+ * `private` is the only default there will ever be: a fresh room is reachable by its invite link
+ * or its code and by nothing else. `listed` is an explicit host decision to also appear in the
+ * room browser, and it changes discovery only — lifecycle, capacity and seat ownership decide
+ * joining either way, exactly as they did before discovery existed.
+ */
+export type RoomVisibility = 'private' | 'listed';
+
+export const DEFAULT_ROOM_VISIBILITY: RoomVisibility = 'private';
+
+export function isRoomVisibility(v: unknown): v is RoomVisibility {
+  return v === 'private' || v === 'listed';
+}
+
+/** What a browser card says about a room it is offering. Derived from the room, never stored. */
+export type RoomListingStatus = 'waiting' | 'full';
+
+/**
+ * The entire public face of a listed room — a deliberately separate, tiny projection rather than
+ * a trimmed `RoomStateMsg`. Nothing here is a secret, and nothing here is *derivable* from a
+ * secret: no token, no seat id, no hand, no revision, no activity, no party history. A room that
+ * is not `listed` never becomes one of these at all.
+ *
+ * The code is in here on purpose: it is a locator, not a credential, and a browser card the
+ * player cannot act on would be pointless. Guess-rate protection (server/connections.ts) is what
+ * makes the code safe to publish, not its obscurity.
+ */
+export interface RoomListing {
+  code: string;
+  /** The host seat's display name — already public to anyone holding the code. */
+  hostName: string;
+  players: number;
+  capacity: number;
+  status: RoomListingStatus;
+  /** Enough for "Casual / Fast / no clock" on a card; not the six-field settings object. */
+  timerMode: TimerMode;
+}
+
+/** Hard cap on one `room_list` answer. Bounded so enumeration cannot be turned into a scrape,
+ * and so a busy server's answer stays one small frame. Well above what a browser screen shows. */
+export const MAX_ROOM_LISTINGS = 20;
+
+// ---------------------------------------------------------------------------
+// Casual matchmaking queue (docs/MULTIPLAYER.md §3e)
+// ---------------------------------------------------------------------------
+
+/**
+ * How many players the queued person wants at the table. `'any'` is the default and means
+ * "whoever is waiting, 2 to 4" — it is the only preference that can be honoured immediately at
+ * any queue size, which is why it is what Quick Match asks for unless the player says otherwise.
+ *
+ * Deliberately the whole preference model: nothing about skill, region, language or device is
+ * representable here, so none of it can quietly become a matching dimension later.
+ */
+export const QUEUE_TARGETS = [2, 3, 4, 'any'] as const;
+export type QueueTarget = (typeof QUEUE_TARGETS)[number];
+export const DEFAULT_QUEUE_TARGET: QueueTarget = 'any';
+
+export function isQueueTarget(v: unknown): v is QueueTarget {
+  return v === 2 || v === 3 || v === 4 || v === 'any';
+}
+
+/**
+ * The entire queue state a client is ever told about, and all of it is about the caller:
+ *
+ * - `idle` — not queued (also the answer to a cancel, however it raced).
+ * - `queued` — waiting. `token` is the session key for this entry; the seat the entry eventually
+ *   becomes is issued the *same* token, which is what makes a reconnect land on the queue before
+ *   a match and on the match after it, with no second recovery path.
+ * - `matched` — a room exists and this player has a seat in it. `players` is its size, for the
+ *   MATCH FOUND line. The `room_joined`/`game_started` pair follows immediately.
+ * - `expired` — waited past the server's queue lifetime without a match.
+ *
+ * There is deliberately no queue size, no position, no ETA and no list of who else is waiting:
+ * the queue is not a lobby, and a stranger's presence is not the caller's business until a room
+ * actually exists.
+ */
+export type QueueStatus = 'idle' | 'queued' | 'matched' | 'expired';
+
+export interface QueueStateMsg {
+  v: number;
+  type: 'queue_state';
+  /** Echoes the request that produced this state, absent when the server pushed it. */
+  reqId?: string;
+  status: QueueStatus;
+  target: QueueTarget;
+  /** Present only while `queued`: the reconnect key for this entry. */
+  token?: string;
+  /** Present only on `matched`: how many players the formed room seats. */
+  players?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Party session (docs/MULTIPLAYER.md §3c)
+// ---------------------------------------------------------------------------
+
+/**
+ * The public things that can happen in a room. Structured, never prose: the server sends a kind
+ * plus the public facts, and the client localizes. That is what keeps a client from authoring a
+ * feed line, and what keeps a translation from having to come off the wire.
+ */
+export const ACTIVITY_KINDS = [
+  'joined', 'left', 'ready', 'settings', 'match_started', 'last_card', 'won', 'stalemate', 'reaction',
+] as const;
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
+
+export interface ActivityEvent {
+  /** Monotonic within the room. Ordering without a clock, and a stable key for the renderer. */
+  seq: number;
+  kind: ActivityKind;
+  /** Public seat reference. Absent for room-level events with no actor. */
+  seat?: number;
+  /** The actor's display name *when the event happened*, so a line still reads after they leave.
+   * A name is already public in every room payload — this copies it, it does not disclose it. */
+  name?: string;
+  reaction?: ReactionId;
+}
+
+/** One finished match, in public terms only. Deliberately no hands, no seed, no revision. */
+export interface MatchSummary {
+  matchId: string;
+  /** 1-based position in this room's own sequence of matches. */
+  seq: number;
+  /** Winning seat, or null if the winner had already left the room by the time it was recorded. */
+  winnerSeat: number | null;
+  winnerName: string | null;
+  /** True when the draw pile ran out and the fewest-cards rule picked the winner. */
+  stalemate: boolean;
+  durationSec: number;
+}
+
+/** What a room carries across matches beyond its seats. Both lists are bounded on the server. */
+export interface PartyState {
+  matches: MatchSummary[];
+  activity: ActivityEvent[];
+}
+
+/** Bounds on the two party collections. Small on purpose: this is a room's short-term memory, not
+ * an account history, and an unbounded list would grow with every turn of a long session. */
+export const MAX_MATCH_HISTORY = 10;
+export const MAX_ACTIVITY = 25;
+
+/** Placeholder for a client that has not been told about a room's party state yet. */
+export const EMPTY_PARTY: PartyState = { matches: [], activity: [] };
+
 /** Inclusive bounds for a `custom` timer. A value outside its range is clamped, not rejected —
- * a hostile payload must not be able to create a 1 ms turn or a room that never times out. */
-const CUSTOM_BOUNDS = {
+ * a hostile payload must not be able to create a 1 ms turn or a room that never times out.
+ * Exported so the lobby's custom controls stop at the same numbers the server enforces, rather
+ * than keeping a second copy that can drift out of agreement with this one. */
+export const CUSTOM_BOUNDS = {
   turnMs: [15_000, 600_000],
   mexeBonusMs: [0, 300_000],
   warnMs: [0, 60_000],
@@ -111,6 +273,10 @@ interface PlayerView {
 export interface GameView {
   /** Seat this view was built for. */
   seat: number;
+  /** Identifies the match this view belongs to. A rematch in the same room gets a new one, which
+   * is how a client tells "the room played again" from "the room re-sent the same match". Opaque
+   * and server-chosen; it is not a credential and carries nothing about the deal. */
+  matchId: string;
   players: PlayerView[];
   table: Meld[];
   drawCount: number;
@@ -213,9 +379,11 @@ export function buildView(
   turnMsLeft: number | null = null,
   missedTurns: number[] = [],
   mexeBonusClaimed = false,
+  matchId = '',
 ): GameView {
   const view: GameView = {
     seat,
+    matchId,
     players: state.players.map((p, i) => ({
       seat: i,
       id: p.id,
@@ -335,6 +503,41 @@ interface ReactionMsg {
   reaction: ReactionId;
 }
 
+/** "Put me in the casual queue." Carries the display name for the seat it will become and the
+ * only preference the matcher honours. Idempotent: a second one from a session that is already
+ * queued is answered with its current entry, never a second one. */
+interface JoinQueueMsg {
+  v: number;
+  type: 'join_queue';
+  reqId: string;
+  target: QueueTarget;
+  name: string;
+}
+
+/** "Take me out of the queue." Idempotent, and answered with the caller's authoritative queue
+ * state rather than with a success flag — a cancel that raced a match is told `matched`. */
+interface CancelQueueMsg {
+  v: number;
+  type: 'cancel_queue';
+  reqId: string;
+}
+
+/** Host-only, lobby-only: change who can *find* this room. Never changes who may join it. */
+interface SetRoomVisibilityMsg {
+  v: number;
+  type: 'set_room_visibility';
+  reqId: string;
+  visibility: RoomVisibility;
+}
+
+/** "What listed rooms can I join right now?" Carries no filters: the server decides eligibility
+ * and the answer is already bounded, so there is nothing for a client to widen. */
+interface ListRoomsMsg {
+  v: number;
+  type: 'list_rooms';
+  reqId: string;
+}
+
 export type ClientMessage =
   | CreateRoomMsg
   | JoinRoomMsg
@@ -348,7 +551,11 @@ export type ClientMessage =
   | ReconnectMsg
   | PingMsg
   | ResyncMsg
-  | ReactionMsg;
+  | ReactionMsg
+  | SetRoomVisibilityMsg
+  | ListRoomsMsg
+  | JoinQueueMsg
+  | CancelQueueMsg;
 
 // ---------------------------------------------------------------------------
 // Server -> client messages
@@ -357,8 +564,14 @@ export type ClientMessage =
 export interface RoomPlayerSummary {
   seat: number;
   name: string;
+  /** In a lobby this is "I am ready to play"; in the lobby a finished match recycled into, the
+   * same bit *is* the rematch vote. One flag, because they are the same agreement — see
+   * docs/MULTIPLAYER.md §3c. Cleared for everyone when a match starts or the settings change. */
   ready: boolean;
   connected: boolean;
+  /** Matches this seat has won since it sat down. Room-session only: it is not persisted, not an
+   * account stat, and it leaves with the seat (a new player in the same chair starts at 0). */
+  wins: number;
 }
 
 interface RoomJoinedMsg {
@@ -373,8 +586,10 @@ interface RoomJoinedMsg {
    * Starts as seat 0 (the creator) but moves to the next-lowest occupied seat if seat 0 leaves
    * (D15) — never assume it is 0. */
   hostSeat: number;
+  party: PartyState;
+  visibility: RoomVisibility;
 }
-interface RoomStateMsg {
+export interface RoomStateMsg {
   v: number;
   type: 'room_state';
   players: RoomPlayerSummary[];
@@ -382,6 +597,19 @@ interface RoomStateMsg {
   hostSeat: number;
   /** True once the match has started — settings are frozen from this point. */
   locked: boolean;
+  /** The room's memory across matches: session wins live on `players`, the rest lives here. */
+  party: PartyState;
+  /** Server-owned. A client renders this and may propose a change; it never applies one. */
+  visibility: RoomVisibility;
+}
+
+/** Answer to `list_rooms`. Bounded by MAX_ROOM_LISTINGS and built from the listing projection
+ * only — a full room snapshot is never sent for a room the caller has not joined. */
+export interface RoomListMsg {
+  v: number;
+  type: 'room_list';
+  reqId: string;
+  rooms: RoomListing[];
 }
 /** Match start. Deliberately carries no shuffle seed: the seed reproduces both hands and the
  * whole draw pile through the shared deal functions, so it must never leave the server. */
@@ -468,7 +696,9 @@ export type ServerMessage =
   | GameOverMsg
   | ErrorMsg
   | PongMsg
-  | PlayerReactionMsg;
+  | PlayerReactionMsg
+  | RoomListMsg
+  | QueueStateMsg;
 
 // ---------------------------------------------------------------------------
 // Boundary validator — the only place untrusted socket text becomes a typed
@@ -533,6 +763,22 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
       // Normalizing here means the room manager can never be handed an out-of-range value, and
       // an omitted/garbage payload becomes the default preset instead of a parse failure.
       return { v: PROTOCOL_VERSION, type: 'set_room_settings', reqId, settings: normalizeRoomSettings(o.settings) };
+    case 'set_room_visibility': {
+      if (!isRoomVisibility(o.visibility)) return { error: 'bad visibility' };
+      return { v: PROTOCOL_VERSION, type: 'set_room_visibility', reqId, visibility: o.visibility };
+    }
+    case 'join_queue': {
+      // An unrecognized target is refused rather than coerced to the default: a client that
+      // asked for something this server does not do must not be quietly given a different table.
+      if (!isQueueTarget(o.target) || !isStr(o.name)) return { error: 'bad join_queue payload' };
+      return { v: PROTOCOL_VERSION, type: 'join_queue', reqId, target: o.target, name: o.name };
+    }
+    case 'cancel_queue':
+      return { v: PROTOCOL_VERSION, type: 'cancel_queue', reqId };
+    case 'list_rooms':
+      // No filters on the wire: an oversized or hostile filter payload is not rejected, it is
+      // simply not representable.
+      return { v: PROTOCOL_VERSION, type: 'list_rooms', reqId };
     case 'mexe_started':
       return { v: PROTOCOL_VERSION, type: 'mexe_started', reqId };
     case 'start_game':

@@ -277,9 +277,27 @@ export class PixelButton extends Phaser.GameObjects.Container {
     return this;
   }
 
+  /**
+   * Fire this button as if it had been tapped — the keyboard path (see OnlineScene's focus ring).
+   * Deliberately re-emits `pointerup` instead of calling the click handler: a keyboard press then
+   * gets the same sound, the same press-and-pop, and the same `onBlocked` refusal a pointer does,
+   * because it goes through the one handler rather than a parallel copy of it.
+   */
+  press(): this {
+    this.emit('pointerup');
+    return this;
+  }
+
   setLabel(text: string): this {
     this.txt.setText(text);
     return this;
+  }
+
+  /** The text on the button, for a caller that needs to say *which* button it means — the
+   * keyboard focus ring's verification surface, where an index is only meaningful until the
+   * next layout change. */
+  labelText(): string {
+    return this.txt.text;
   }
 
   /** Gold ring overlay marking a "chosen" state (e.g. the active player-count chip) — independent of hover/pressed/disabled. */
