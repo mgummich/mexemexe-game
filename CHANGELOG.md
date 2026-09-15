@@ -4,7 +4,9 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased — menu and online papercuts
+## 1.10.1 — 2026-09-15
+
+### menu and online papercuts
 
 ### Fixed: screens that offered something that could not work
 
