@@ -506,6 +506,14 @@ export class OnlineScene extends Phaser.Scene {
         if (failedCode && (msg.code === 'room_not_found' || msg.code === 'room_closed')) {
           forgetRoom(failedCode);
           this.recent = readRecentRooms();
+          // A shortcut that has expired is not an error the player made. Retiring the card and
+          // saying so on the entry screen keeps every other way in one tap away; the full-screen
+          // error phase would charge a dead CONTINUAR the price of the whole screen.
+          if (this.phase === 'idle') {
+            this.queueNotice = errorMessage(msg.code);
+            this.rebuild();
+            return;
+          }
         }
         // Discovery is additive: a refused room list must not throw the player off a screen from
         // which create/join-by-code still work. It degrades in place instead.
@@ -661,6 +669,10 @@ export class OnlineScene extends Phaser.Scene {
   }
 
   private backToMenu(): void {
+    // A room we were alone in dies with our exit, so remembering it would put a CONTINUAR on the
+    // entry screen whose only possible answer is room_not_found. Leaving a populated room still
+    // leaves something to come back to.
+    if (this.code !== null && this.players.length <= 1) forgetRoom(this.code);
     this.client.leaveRoom();
     debugApi.online = null;
     gotoScene(this, 'menu');
@@ -1632,7 +1644,10 @@ export class OnlineScene extends Phaser.Scene {
       const allReady = enoughPlayers && notReady.length === 0;
       // Landscape seats START beside READY; a 270-wide portrait world has no room beside anything,
       // so it stacks underneath instead of running off the right edge.
-      const startX = stacked ? cx() : cx() + (350 - 240);
+      // Far enough from READY to read as a separate button, near enough that its right edge
+      // (95 + 82/2 = 136) stays inside the 280-wide backdrop panel's half-width of 140. At the
+      // old +110 the button hung off the panel on every desktop screen.
+      const startX = stacked ? cx() : cx() + 95;
       const start = new PixelButton(this, startX, stacked ? vy(231) : vy(216), t('online.start'), () => this.fireOnce('start', 3000, () => this.client.startGame()), {
         textureBase: 'btn-feito', w: stacked ? 110 : 82, h: stacked ? 24 : 20, size: 7,
       });
@@ -1646,7 +1661,9 @@ export class OnlineScene extends Phaser.Scene {
               names: notReady.map((p) => p.name).join(', '),
             });
         this.add
-          .text(startX, stacked ? vy(243) : vy(232), reason, {
+          // Centred on the panel in landscape, not under START: wrapped at 200 it would run
+          // off the panel's right edge from an off-centre anchor.
+          .text(stacked ? startX : cx(), stacked ? vy(243) : vy(232), reason, {
             ...fontStyle(6, '#c0b8a8'), align: 'center', wordWrap: { width: panelW(200) },
           })
           .setOrigin(0.5);
