@@ -694,6 +694,7 @@ export class GameScene extends Phaser.Scene {
       setVisibility: () => { /* visibility is frozen once the match starts */ },
       openBrowse: () => { /* the lobby owns the room browser; there is none mid-match */ },
       listings: () => [],
+      browseNotice: () => null,
       recentRooms: () => readRecentRooms().map((r) => ({ code: r.code, host: r.host })),
       comprar: () => this.onComprar(),
       /** Verification-only: submit a raw (possibly illegal) proposal straight to the server,

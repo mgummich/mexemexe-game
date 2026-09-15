@@ -57,6 +57,12 @@ interface MexeOnlineDebugApi {
   openBrowse: () => void;
   /** Verification-only: the last `room_list` answer, exactly as it came off the wire. */
   listings: () => RoomListing[];
+  /** Verification-only: the line the room browser is showing about a card that could not be
+   * joined, or null when the list is not answering for anything. */
+  browseNotice: () => string | null;
+  /** Verification-only: leave the current room the way VOLTAR does, without the scene change —
+   * the only way a test can retire a room on demand instead of waiting out the sweep. */
+  leaveRoom?: () => void;
   /** Verification-only: this device's local recent-room display history. */
   recentRooms: () => { code: string; host: string }[];
   /** In-match draw-and-end-turn; a thin alias over the same action COMPRAR triggers. */

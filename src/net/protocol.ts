@@ -5,7 +5,9 @@
  */
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 
-export const PROTOCOL_VERSION = 6;
+/** Bumped to 7 with the public-room reaction set: `hurry` left `REACTIONS` and `gg` took its
+ * place, so a v6 client's reaction id is no longer one this server will relay. */
+export const PROTOCOL_VERSION = 7;
 
 // ---------------------------------------------------------------------------
 // Room settings (docs/MULTIPLAYER.md §7)
@@ -47,8 +49,13 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = TIMER_PRESETS.casual;
  * The complete set of things one player can say to another online. A fixed preset list instead
  * of free text: nothing here can carry an insult, a link or a real name, so no moderation
  * surface is created. The server validates against this exact list and rate-limits per seat.
+ *
+ * Every entry has to stay benign when the other seats are strangers, not friends. That is why
+ * there is no "hurry up": among friends it is a joke, and in a public room it is a nag one tap
+ * away from being spammed at whoever is thinking. `gg` replaced it — the one thing a stranger
+ * most wants to be able to say, and the hardest one to weaponize.
  */
-export const REACTIONS = ['nice', 'oops', 'hurry', 'wow'] as const;
+export const REACTIONS = ['nice', 'gg', 'oops', 'wow'] as const;
 export type ReactionId = (typeof REACTIONS)[number];
 
 /** Minimum gap between two reactions from the same seat. Enforced by the server — a client-side

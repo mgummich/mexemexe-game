@@ -56,6 +56,11 @@ function browseRows(portrait: boolean): number {
   return portrait ? 3 : 4;
 }
 
+/** Refusals that mean "this card described a room that has since moved on", as opposed to
+ * something wrong with the player or the connection. All four are ordinary traffic for a list
+ * built from a snapshot, so they are answered on the browser instead of on the error screen. */
+const STALE_LISTING_CODES: readonly string[] = ['room_not_found', 'room_closed', 'room_full', 'game_started'];
+
 /** Recent-room codes offered as one-tap shortcuts under the entry screen's buttons. The stored
  * list is longer (MAX_RECENT_ROOMS); more than three on screen is clutter, not recall. */
 const RECENT_SHOWN = 3;
@@ -145,6 +150,10 @@ export class OnlineScene extends Phaser.Scene {
    * asks the server, which is free to answer "full" or "gone". */
   private listings: RoomListing[] = [];
   private browseState: 'loading' | 'ready' | 'failed' = 'loading';
+  /** Why the last card tap did not get the player into a room, shown on the browser itself. A
+   * listing is a snapshot of a moment, so "it filled up / it started / it is gone" is ordinary
+   * traffic, not an error screen: the answer belongs next to the list it invalidated. */
+  private browseNotice: string | null = null;
   /** Rooms this device recently got into, read from local display history (never the token). */
   private recent: RecentRoom[] = [];
   /** Code of the join currently in flight, so a refusal can retire a dead recent-room entry
@@ -420,6 +429,21 @@ export class OnlineScene extends Phaser.Scene {
           this.rebuild();
           return;
         }
+        // A card the server refused. Every one of these is a room that changed between the answer
+        // that drew the card and the tap on it — it filled, it started, or it expired — so the
+        // card is retired and the reason is said on the browser. Throwing the player onto the
+        // full-screen error phase would cost them the list for something that is not an error.
+        if (this.phase === 'browse' && failedCode !== null && STALE_LISTING_CODES.includes(msg.code)) {
+          this.listings = this.listings.filter((r) => r.code !== failedCode);
+          // "Check the code and try again" is the right sentence for a typed code and the wrong
+          // one for a tapped card — nobody typed anything. A vanished room gets its own line.
+          this.browseNotice =
+            msg.code === 'room_full' || msg.code === 'game_started'
+              ? errorMessage(msg.code)
+              : t('online.browseGone');
+          this.rebuild();
+          return;
+        }
         // Player sees a translated, actionable sentence — never the raw dev-facing `msg.message`
         // or `msg.code`. The raw code stays available via `client.trace`/debug API for logs.
         this.errorMsg = errorMessage(msg.code);
@@ -453,7 +477,9 @@ export class OnlineScene extends Phaser.Scene {
       trace: () => this.client.trace,
       statusTrace: () => this.client.statusTrace,
       createRoom: (name) => this.client.createRoom(name ?? this.playerName()),
-      joinRoom: (code, name) => this.client.joinRoom(code, name ?? this.playerName()),
+      // Through the scene's own join path, not straight at the socket: a verification join has
+      // to be the same join a card tap is, refusal handling included.
+      joinRoom: (code, name) => this.joinCode(code, name),
       displayName: () => this.playerName(),
       react: (reaction) => this.client.sendReaction(reaction),
       setReady: (ready) => {
@@ -483,6 +509,8 @@ export class OnlineScene extends Phaser.Scene {
         this.refreshListings();
       },
       listings: () => this.listings,
+      browseNotice: () => this.browseNotice,
+      leaveRoom: () => this.client.leaveRoom(),
       recentRooms: () => this.recent.map((r) => ({ code: r.code, host: r.host })),
       comprar: () => { /* no in-match action while still in the lobby */ },
       submitRaw: () => { /* not applicable in the lobby */ },
@@ -628,9 +656,9 @@ export class OnlineScene extends Phaser.Scene {
    * than a typed one: the server validates lifecycle, capacity and seat ownership identically,
    * and a live session token has already reclaimed its seat before any of this runs.
    */
-  private joinCode(code: string): void {
+  private joinCode(code: string, name?: string): void {
     this.pendingJoinCode = code;
-    this.client.joinRoom(code, this.playerName());
+    this.client.joinRoom(code, name ?? this.playerName());
   }
 
   /**
@@ -879,6 +907,7 @@ export class OnlineScene extends Phaser.Scene {
       return;
     }
     this.browseState = 'loading';
+    this.browseNotice = null;
     this.client.listRooms();
     this.rebuild();
   }
@@ -895,6 +924,9 @@ export class OnlineScene extends Phaser.Scene {
    */
   private renderBrowse(): void {
     label(this, cx(), vy(62), t('online.browseTitle'), 11, '#f7d23e');
+    // One line, for the player who has never been in a room with strangers: what this list is
+    // and what happens after the tap. Anything longer belongs in the room, not in front of it.
+    label(this, cx(), vy(74), t('online.browseIntro'), 6, '#8a7f6e');
 
     const portrait = view().portrait;
     const rowW = Math.min(panelW(260), view().w - 24);
@@ -947,6 +979,16 @@ export class OnlineScene extends Phaser.Scene {
       if (this.listings.length > shown.length) {
         label(this, cx(), vy(top + shown.length * step), t('online.browseMore', { n: this.listings.length - shown.length }), 6, '#8a7f6e');
       }
+    }
+
+    // Above ATUALIZAR, because that is the action the notice asks for: the list it belongs to
+    // is now one card shorter, and a refresh is how it gets honest again.
+    if (this.browseNotice !== null) {
+      this.add
+        .text(cx(), portrait ? vy(212) : vy(200), this.browseNotice, {
+          ...fontStyle(7, '#f7d23e'), align: 'center', wordWrap: { width: rowW },
+        })
+        .setOrigin(0.5);
     }
 
     new PixelButton(this, cx(), portrait ? vy(228) : vy(216), t('online.browseRefresh'), () => {

@@ -177,6 +177,16 @@ is the expensive half). The room code is published in a listing on purpose: it
 is a locator, not a credential, and what makes that safe is the existing
 guess-rate protection (§9), not its obscurity.
 
+A card is a snapshot of a moment, so a room that changed since the answer was
+built is ordinary traffic, not an error. When the server refuses a tapped card
+(`room_not_found`, `room_closed`, `room_full`, `game_started`) the browser keeps
+the screen, drops that one card and says why in a sentence — "essa sala não está
+mais disponível" for a room that is gone, the room's own copy for one that filled
+or started. The full-screen error phase is reserved for refusals that are about
+the player rather than about a card, because throwing away the list would cost
+them every other room over one that moved on. ATUALIZAR is the fix, and it is
+the button the notice sits above.
+
 Discovery is **additive**. If listing fails or is refused, the room browser says
 so on its own screen and creating a room, joining by code and joining by link
 keep working — none of them consults discovery at all.
@@ -249,7 +259,7 @@ count in the game impossible to miss. The in-match HUD carries the same fact as
 size, wording and an icon, never colour alone.
 
 **Reactions** stay exactly what §9's threat model allows: a fixed preset list
-(`REACTIONS`), validated at the wire boundary, relayed as the server's own value,
+(`REACTIONS` — `nice`, `gg`, `oops`, `wow`), validated at the wire boundary, relayed as the server's own value,
 room-scoped, and gated by a per-seat cooldown (`REACTION_COOLDOWN_MS`) enforced
 server-side. A relayed reaction also appends to the feed, which is why the relay
 is followed by one `room_state` — bounded by the same cooldown, so it needs no
@@ -264,7 +274,9 @@ it. `NetClient.lastRoomState` latches the most recent one, because the
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 6` — bumped from 5 for room visibility and discovery:
+version (`PROTOCOL_VERSION = 7` — bumped from 6 for the public-room reaction set:
+`hurry` left `REACTIONS` and `gg` took its place, so a v6 client's reaction id is
+no longer one this server relays; v6 bumped from 5 for room visibility and discovery:
 `room_joined`/`room_state` gained `visibility`, and the client gained
 `set_room_visibility` and `list_rooms` with a new `room_list` answer; v5 bumped from 4 for the party session: `GameView`
 gained `matchId`, `RoomPlayerSummary` gained `wins`, and `room_joined`/`room_state`
@@ -648,6 +660,16 @@ stale/full/in-match rooms, the list budget, and that create/join-by-code survive
 an exhausted one). `tests/net/recent-rooms.test.ts` covers the local
 display-history list, including that it stores no credential and that corrupt
 storage is dropped rather than repaired.
+`tests/server/public-rooms.test.ts` carries the `OP-*` public-readiness
+acceptance, split the same way: a `RoomManager` block for what churn does to the
+room model (one seat per join, a same-name newcomer who owns nothing, the last
+seat going to exactly one caller, an idempotent second leave, host authority
+following the lowest occupied seat, the in-match and recycled-lobby join rules,
+the closed reaction enum, and a feed of public facts only) and a wire block for
+what strangers can actually race (a socket hammering `join_room`, four clients
+racing three seats, host transfer across a live churn, a double `leave_room`, a
+reconnect that reclaims rather than duplicates, reaction spam and cross-room
+isolation, a stale listing, and 2/3/4-seat rooms starting with per-seat hands).
 `tests/server/hardening.test.ts` carries the
 `OH-*` hardening acceptance: the room-creation budget, the Origin policy, the
 resync bound, reconnect bursts, cross-room isolation under a malformed client,

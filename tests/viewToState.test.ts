@@ -29,9 +29,10 @@ function state(): GameState {
 
 describe('protocol', () => {
   // Bumped with every wire change so a client and a server from different builds refuse each
-  // other instead of half-understanding one another. 6 added room visibility + discovery.
-  it('PROTOCOL_VERSION is 6', () => {
-    expect(PROTOCOL_VERSION).toBe(6);
+  // other instead of half-understanding one another. 6 added room visibility + discovery;
+  // 7 changed the reaction enum (`hurry` out, `gg` in) for public rooms.
+  it('PROTOCOL_VERSION is 7', () => {
+    expect(PROTOCOL_VERSION).toBe(7);
   });
 
   it('buildView carries the rules config', () => {

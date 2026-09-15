@@ -1492,3 +1492,75 @@ test('OD-A11Y: the online home, the browser and the lobby are reachable from the
   appendLog({ screenshots });
   await page.context().close();
 });
+
+test('OP-16/OP-36/OP-37/OP-38: a card whose room is gone is answered on the browser, not on an error screen', async ({
+  browser,
+}) => {
+  const screenshots: string[] = [];
+  // Two listed rooms: one that will die between the answer and the tap, and one that must still
+  // be there afterwards — a stale card has to cost the player that card and nothing else.
+  const dying = await newClient(browser);
+  await dying.evaluate(() => window.__MEXE__.online!.createRoom('Fantasma'));
+  await dying.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  await dying.evaluate(() => window.__MEXE__.online!.setVisibility('listed'));
+  await dying.waitForFunction(() => window.__MEXE__.online!.visibility() === 'listed', undefined, { timeout: 10_000 });
+  const deadCode = (await dying.evaluate(() => window.__MEXE__.online!.code()))!;
+
+  const alive = await newClient(browser);
+  await alive.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await alive.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  await alive.evaluate(() => window.__MEXE__.online!.setVisibility('listed'));
+  await alive.waitForFunction(() => window.__MEXE__.online!.visibility() === 'listed', undefined, { timeout: 10_000 });
+  const liveCode = (await alive.evaluate(() => window.__MEXE__.online!.code()))!;
+
+  // Desktop, portrait and landscape all take the same path, because "the room I tapped is gone"
+  // is the one public-browser moment a stranger is most likely to hit on any of them.
+  const desktop = await newClient(browser);
+  const portrait = await newPhoneClient(browser);
+  const landscape = await newPhoneClient(browser, { width: 844, height: 390 });
+  const viewers = { desktop, portrait, landscape };
+
+  for (const p of Object.values(viewers)) {
+    await p.evaluate(() => window.__MEXE__.online!.openBrowse());
+    await p.waitForFunction(
+      (c) => window.__MEXE__.online!.listings().some((r) => r.code === c),
+      deadCode,
+      { timeout: 10_000 },
+    );
+  }
+
+  // The host walks out, so the room is gone — while three browsers are still drawing its card.
+  await dying.evaluate(() => window.__MEXE__.online!.leaveRoom!());
+  await dying.context().close();
+
+  for (const p of Object.values(viewers)) {
+    await p.evaluate((c) => window.__MEXE__.online!.joinRoom(c), deadCode);
+    await p.waitForFunction(() => window.__MEXE__.online!.browseNotice() !== null, undefined, { timeout: 10_000 });
+    // Still on the browser, one card lighter, with the live room still offered.
+    expect(await p.evaluate(() => window.__MEXE__.online!.phase())).toBe('browse');
+    const listings = await p.evaluate(() => window.__MEXE__.online!.listings());
+    expect(listings.some((r) => r.code === deadCode)).toBe(false);
+    expect(listings.some((r) => r.code === liveCode)).toBe(true);
+    // Player-facing sentence, never a protocol code.
+    const notice = (await p.evaluate(() => window.__MEXE__.online!.browseNotice()))!;
+    expect(notice).not.toMatch(/room_not_found|room_closed|ROOM_|_LIMITED/);
+    expect(notice.length).toBeGreaterThan(8);
+  }
+  await shot(viewers, 'public-stale-card', screenshots);
+
+  // …and the next tap, on a room that does exist, gets in. A refusal is not a dead end.
+  await desktop.evaluate((c) => window.__MEXE__.online!.joinRoom(c), liveCode);
+  await desktop.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+  expect(await desktop.evaluate(() => window.__MEXE__.online!.code())).toBe(liveCode);
+
+  for (const p of [portrait, landscape]) {
+    const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  }
+  for (const p of [alive, ...Object.values(viewers)]) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of [alive, ...Object.values(viewers)]) await p.context().close();
+});

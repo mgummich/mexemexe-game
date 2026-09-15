@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-15T09:49:34.568Z",
-  "roomCode": "WBB86",
+  "generatedAt": "2026-09-15T10:22:21.572Z",
+  "roomCode": "NTJ29",
   "seed": 2,
   "revisionsObserved": [
     1,
@@ -18,7 +18,7 @@
   },
   "server": {
     "stdout": [
-      "{\"ts\":\"2026-09-15T09:49:26.143Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":6,\"maxRooms\":500}\n"
+      "{\"ts\":\"2026-09-15T10:22:12.830Z\",\"level\":\"info\",\"event\":\"server_listening\",\"port\":8799,\"host\":\"0.0.0.0\",\"mode\":\"development\",\"protocol\":7,\"maxRooms\":500}\n"
     ],
     "stderr": []
   },
@@ -201,7 +201,10 @@
     "docs/screenshots/mp-discover-continue-phone-continue.png",
     "docs/screenshots/mp-discover-keyboard-home-home.png",
     "docs/screenshots/mp-discover-keyboard-browse-browse.png",
-    "docs/screenshots/mp-discover-keyboard-lobby-lobby.png"
+    "docs/screenshots/mp-discover-keyboard-lobby-lobby.png",
+    "docs/screenshots/mp-public-stale-card-desktop.png",
+    "docs/screenshots/mp-public-stale-card-portrait.png",
+    "docs/screenshots/mp-public-stale-card-landscape.png"
   ],
   "playerCountRuns": {
     "3": {
@@ -223,7 +226,7 @@
     }
   },
   "keyboardJoin": {
-    "code": "JZ3PT",
+    "code": "ST6BP",
     "screenshot": "docs/screenshots/mp-join-input.png"
   },
   "handPrivacy": {
@@ -240,13 +243,13 @@
     }
   },
   "mobileTouchJoin": {
-    "code": "RNB7Y",
+    "code": "CRSD6",
     "screenshot": "docs/screenshots/mp-mobile-join-input.png"
   },
   "discovery": {
-    "code": "36HST",
+    "code": "D9SNF",
     "card": {
-      "code": "36HST",
+      "code": "D9SNF",
       "hostName": "Marina",
       "players": 1,
       "capacity": 4,
