@@ -6,6 +6,7 @@ import { headToHeadRecord, matchStoryKey } from '../core/results-summary';
 import { settings } from '../core/settings';
 import { t } from '../localization/i18n';
 import type { NetClient } from '../net/client';
+import type { RoomPlayerSummary } from '../net/protocol';
 import type { Meld } from '../rules/types';
 import { CARD_H, CARD_W } from '../assets/manifest';
 import { computeMeldLayout } from '../table/layout';
@@ -133,7 +134,9 @@ export class WinScene extends Phaser.Scene {
     // dead-end MENU, 3 otherwise) instead of a fixed offset from the top content — a fixed offset
     // let the last button run past the world's bottom edge on any short landscape viewport (an
     // iPhone in landscape), since nothing accounted for how tall the stack itself is.
-    const stackExtent = data.online ? 33 : 53; // bottom-most button's edge, relative to buttonY0
+    // Three buttons either way now: online is REMATCH / INVITE / LEAVE ROOM, local is
+    // REMATCH / CHANGE PLAYERS / MENU. Same extent, so the clamp below is the same sum.
+    const stackExtent = 53; // bottom-most button's edge, relative to buttonY0
     const buttonY0Max = view().h - 4 - stackExtent;
     // buttonY0 is the FIRST button's centre, so its own top edge sits FIRST_BTN_HALF above it —
     // a content/button gap smaller than that (the original bug) puts the button's top edge
@@ -203,6 +206,22 @@ export class WinScene extends Phaser.Scene {
         .setOrigin(0.5, 0));
       y += reactionH;
     }
+    // The room's running score belongs on the screen that announces a winner — otherwise the only
+    // place to learn "we're 2-1 up" is a lobby you have to leave this screen to reach.
+    let scoreLine: Phaser.GameObjects.Text | null = null;
+    let voteLine: Phaser.GameObjects.Text | null = null;
+    if (data.online) {
+      scoreLine = this.add
+        .text(cx(), y, '', { ...fontStyle(8, CHROME_GOLD_TEXT), align: 'center', wordWrap: { width: panelW(360) } })
+        .setOrigin(0.5, 0);
+      y += 11;
+      voteLine = this.add
+        .text(cx(), y, '', { ...fontStyle(7, '#d8c890'), align: 'center', wordWrap: { width: panelW(360) } })
+        .setOrigin(0.5, 0);
+      y += 10;
+      tail.push(scoreLine, voteLine);
+    }
+
     const buttonY0 = Math.max(vy(190) + off, Math.min(buttonY0Max, y + GAP + FIRST_BTN_HALF));
 
     debugApi.winButtonY = buttonY0;
@@ -214,7 +233,12 @@ export class WinScene extends Phaser.Scene {
       tail.push(new PixelButton(this, cx(), buttonY0, t('win.rematch'), () => {
         gotoScene(this, 'online', { client, code, seat });
       }, { textureBase: 'btn-feito', w: 140, h: 22, size: 9, primary: true }));
-      tail.push(new PixelButton(this, cx(), buttonY0 + 24, t('win.menu'), () => {
+      // OS-35: the room is still live and still has the same code, so "get one more person in for
+      // the next one" has to be reachable from here — not only from a lobby you have to walk to.
+      tail.push(new PixelButton(this, cx(), buttonY0 + 24, t('online.inviteNext'), () => {
+        this.shareRoom(code);
+      }, { textureBase: 'btn-comprar', w: 160, h: 18, size: 7 }));
+      tail.push(new PixelButton(this, cx(), buttonY0 + 44, t('win.menu'), () => {
         client.leaveRoom();
         debugApi.online = null;
         gotoScene(this, 'menu');
@@ -225,12 +249,23 @@ export class WinScene extends Phaser.Scene {
       // (and its host authority, see server/rooms.ts leaveRoom) still works once someone else
       // joins — but the player is told what actually happened.
       const leftNotice = this.add
-        .text(cx(), buttonY0 + 44, '', { ...fontStyle(7, '#ff6b5e'), align: 'center', wordWrap: { width: panelW(360) } })
+        .text(cx(), buttonY0 + 64, '', { ...fontStyle(7, '#ff6b5e'), align: 'center', wordWrap: { width: panelW(360) } })
         .setOrigin(0.5, 0);
       tail.push(leftNotice);
-      const unsub = client.on('room_state', (msg) => {
-        if (msg.players.length < 2) leftNotice.setText(t('online.opponentLeftAfterMatch'));
-      });
+      const applyRoom = (players: RoomPlayerSummary[]): void => {
+        if (players.length < 2) leftNotice.setText(t('online.opponentLeftAfterMatch'));
+        scoreLine?.setText(
+          `${t('online.sessionScore')}: ${players.map((p) => `${p.name} ${p.wins}`).join(' · ')}`,
+        );
+        // The rematch vote IS the ready bit in a recycled lobby, so this is the live answer to
+        // "who wants to play again" without anyone leaving the result screen to find out.
+        const wanting = players.filter((p) => p.ready).map((p) => p.name);
+        voteLine?.setText(wanting.length === 0 ? '' : t('online.rematchVotes', { names: wanting.join(', ') }));
+      };
+      // The room_state carrying the new score is broadcast in the same server tick as game_over,
+      // i.e. before this scene exists — read the client's latch first, then stay subscribed.
+      if (client.lastRoomState) applyRoom(client.lastRoomState.players);
+      const unsub = client.on('room_state', (msg) => applyRoom(msg.players));
       this.events.once('shutdown', unsub);
     } else {
       // RESULT-04/11/12: one dominant CTA that deals the next hand with the same lineup and
@@ -251,6 +286,29 @@ export class WinScene extends Phaser.Scene {
     this.stage(story, feelMs('expressive'));
     this.stage(board.objects, feelMs('major'));
     this.stage(tail, feelMs('major') + feelMs('normal'));
+  }
+
+  /** Hand the room's invite to the device's share sheet, falling back to the clipboard. Same two
+   * paths the lobby uses; kept here rather than shared because each is three lines and the two
+   * screens format nothing else in common. */
+  private shareRoom(code: string): void {
+    const url = new URL(location.href);
+    url.searchParams.set('room', code);
+    url.hash = '';
+    const link = url.toString();
+    const flash = (key: string): void => {
+      const el = label(this, cx(), vy(30), t(key), 8, '#3ec06a');
+      this.time.delayedCall(1500, () => { if (el.active) el.destroy(); });
+    };
+    if (typeof navigator.share === 'function') {
+      navigator.share({ text: t('online.shareText', { code }), url: link })
+        .then(() => flash('online.shared'))
+        .catch(() => { /* share sheet dismissed — not an error */ });
+      return;
+    }
+    navigator.clipboard?.writeText(code).then(() => flash('online.copied')).catch(() => {
+      // clipboard denied — the code is on the lobby screen one tap away, nothing else to do
+    });
   }
 
   /**

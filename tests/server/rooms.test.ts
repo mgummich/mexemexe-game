@@ -120,7 +120,7 @@ describe('room lifecycle', () => {
     const { code, seat, token } = mustCreate(mgr, 'Alice');
     expect(seat).toBe(0);
     expect(token).toBeTruthy();
-    expect(mgr.getPlayers(code)).toEqual([{ seat: 0, name: 'Alice', ready: false, connected: true }]);
+    expect(mgr.getPlayers(code)).toEqual([{ seat: 0, name: 'Alice', ready: false, connected: true, wins: 0 }]);
   });
 
   it('joins as seat 1', () => {
@@ -498,12 +498,12 @@ describe('disconnect / reconnect', () => {
     const { code, token } = mustCreate(mgr, 'Alice');
     mgr.joinRoom(code, 'Bob');
     mgr.disconnect(code, 0);
-    expect(mgr.getPlayers(code)).toContainEqual({ seat: 0, name: 'Alice', ready: false, connected: false });
+    expect(mgr.getPlayers(code)).toContainEqual({ seat: 0, name: 'Alice', ready: false, connected: false, wins: 0 });
 
     const result = mgr.reconnect(token);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.seat).toBe(0);
-    expect(mgr.getPlayers(code)).toContainEqual({ seat: 0, name: 'Alice', ready: false, connected: true });
+    expect(mgr.getPlayers(code)).toContainEqual({ seat: 0, name: 'Alice', ready: false, connected: true, wins: 0 });
   });
 
   it('rejects reconnect with a bad token', () => {

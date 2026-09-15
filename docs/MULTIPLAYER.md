@@ -13,10 +13,16 @@ ranking, chat, or cosmetics sync. The game labels the entry point
 
 - **No accounts, matchmaking, ranked play, chat or spectators.** Private rooms
   by 5-character code only.
-- **Online rematch keeps the room, not the stats** — a finished match hands its
-  room back to the lobby on the same code (`recycleForRematch`), with every seat
-  kept and every ready bit cleared. The win screen offers REMATCH alongside MENU.
-- **No rematch stats or winning-move text online** — the client never observes
+- **Online rematch keeps the room *and* the room's score** — a finished match hands
+  its room back to the lobby on the same code (`recycleForRematch`), with every seat
+  kept and every ready bit cleared. Session wins, the match history and the activity
+  feed survive; the deal, the clocks and the votes do not. See §3c.
+- **No best-of / series mode.** Session win counters plus an explicit rematch vote
+  cover what a room of friends actually asks for ("are we 2-1?", "again?"), and a
+  series would add a second lifecycle — a series score to reset, a completion state
+  that has to refuse an accidental extra match, and a join policy for a series in
+  progress — on top of one that already works. Deferred deliberately, not forgotten.
+- **No per-turn stats online** — the client never observes
   per-turn state locally, so there is no play log to summarize. The stats line
   is hidden rather than showing zeros. Fixing it needs a protocol change.
 - **Opponent avatars are the generic player icon** — there are no accounts, so
@@ -88,7 +94,9 @@ cannot leak an opponent's hand in an online match.
    *recycles* the room instead of destroying it: match state, revision, clocks,
    missed-turn streaks and every ready bit are cleared, seats and host authority
    stay, and a fresh `room_state` goes out with `locked: false`. Clients render
-   the result from the `game_over` payload and can rematch on the same code. An
+   the result from the `game_over` payload and can rematch on the same code. The
+   winner's session win, the match's history entry and the closing feed line are
+   recorded once, when the match finishes, not when it is broadcast (§3c). An
    abandoned recycled room is reaped by the normal sweep like any other.
 6. **empty/abandoned** — room is destroyed when both sockets are gone past the
    grace window, or after an absolute idle timeout.
@@ -118,10 +126,83 @@ socket opens — the server validates it exactly as it does a typed code. Sharin
 uses the Web Share API where the browser has one, with clipboard copy as the
 universal fallback.
 
+## 3c. The party session
+
+A room outlives its matches. What survives a rematch, and what does not:
+
+| Survives | Reset per match |
+|---|---|
+| room code, `roomId`, seats, session tokens | `matchId`, deck, hands, table, turn |
+| display names, host authority | clock state, Mexe bonus, missed-turn streaks |
+| session wins (`Seat.wins`) | ready/rematch votes |
+| match history, activity feed | winning-move summary |
+
+**Session wins.** One per finished match, awarded by `recordResult` to the seat
+holding the winning player id. `RoomInternal.resultRecorded` is the whole
+duplicate guard: a second `game_over` broadcast, a retried tick or a caller that
+recycles twice all find it already set and change nothing. A win lives on the
+*seat object*, so it leaves with the chair — a newcomer who takes a vacated seat
+gets a brand-new `Seat` (see `newSeat`) with zero wins, no ready bit and no
+reaction cooldown, never the departed player's. Room-session only: nothing here
+is persisted, and there is no account to persist it to.
+
+**The rematch vote is the ready bit.** There is no second flag. In a lobby a
+ready bit means "I agree to these terms and this start"; in the lobby a finished
+match recycled into, the same bit means "I want to play again" — the same
+agreement, a different sentence, and the client renders it as `QUER REVANCHE`
+once the room has a history. Consequences fall out rather than being coded
+twice: one player cannot force a rematch (`startGame` still requires every
+occupied seat ready), the votes are visible to the whole room (they ride
+`room_state`), a departing player's vote retires with their seat, and no stale
+vote can reach the next match (`startGame` clears every bit the moment the deal
+it agreed to is made).
+
+**Joining between matches.** A recycled room is an ordinary lobby
+(`state === null`), so `join_room` works on it unchanged and a mid-match join is
+still refused with `game_started`. The newcomer takes the lowest free seat.
+
+**Match history** (`MAX_MATCH_HISTORY`, 10) is public summary only: match id,
+sequence number, winning seat and name, whether it ended on the tiebreak, and
+duration in seconds. No hands, no seed, no revision. Oldest entries are dropped,
+so it does not grow with a long evening.
+
+**The activity feed** (`MAX_ACTIVITY`, 25) is structured, never prose: the server
+sends `{ seq, kind, seat?, name?, reaction? }` and the client localizes it. That
+is what stops a client from authoring a feed line and stops a translation from
+coming off the wire. The kinds are closed (`ACTIVITY_KINDS`): joined, left,
+ready, settings, match_started, last_card, won, stalemate, reaction. Privacy is a
+property of the *shape* — a card id, a token or a connection detail is not
+representable in an `ActivityEvent` at all, so it cannot leak by a call site
+forgetting to be careful. Per-turn play is deliberately not in the feed: the
+in-match "Ana drew 1" line (`GameScene.noteOpponentMove`) already says it, live
+and in public terms, and putting it here would push every room-level event out of
+a 25-slot buffer within one match.
+
+`last_card` fires on the *transition* into a one-card hand, once — a seat sitting
+on one card does not re-announce every turn. Hand counts are already public in
+every `GameView`, so this discloses nothing new; it makes the most consequential
+count in the game impossible to miss. The in-match HUD carries the same fact as
+size, wording and an icon, never colour alone.
+
+**Reactions** stay exactly what §9's threat model allows: a fixed preset list
+(`REACTIONS`), validated at the wire boundary, relayed as the server's own value,
+room-scoped, and gated by a per-seat cooldown (`REACTION_COOLDOWN_MS`) enforced
+server-side. A relayed reaction also appends to the feed, which is why the relay
+is followed by one `room_state` — bounded by the same cooldown, so it needs no
+budget of its own. A reaction never touches `rev`, the hash, the turn or a hand.
+
+Party state rides the lobby payloads (`room_joined`, `room_state`), never the
+per-turn `state_sync`: it changes at room granularity, and a match does not need
+it. `NetClient.lastRoomState` latches the most recent one, because the
+`room_state` carrying a new session score is broadcast in the same server tick as
+`game_over` — a frame before `WinScene` exists.
+
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 4` — bumped from 3 for room settings and the
+version (`PROTOCOL_VERSION = 5` — bumped from 4 for the party session: `GameView`
+gained `matchId`, `RoomPlayerSummary` gained `wins`, and `room_joined`/`room_state`
+gained `party` (match history + activity feed); v4 bumped from 3 for room settings and the
 server turn timer: `GameView` gained `settings` and `turnMsLeft`, `room_joined`
 and `room_state` gained `settings`/`hostSeat`, and the client gained
 `set_room_settings` and `mexe_started`; v3 bumped from 2 in 1.2.0, when
@@ -153,8 +234,8 @@ submission that caused it.
 
 | type | payload | notes |
 |---|---|---|
-| `room_joined` | `code`, `seat`, `token`, `players`, `settings`, `hostSeat` | token is the reconnect key |
-| `room_state` | `players` (each entry carries its own `ready`/`connected`), `settings`, `hostSeat`, `locked` | lobby updates; `locked` is true once the match started and the settings are frozen |
+| `room_joined` | `code`, `seat`, `token`, `players`, `settings`, `hostSeat`, `party` | token is the reconnect key; `players[].wins` is the session score |
+| `room_state` | `players` (each entry carries its own `ready`/`connected`/`wins`), `settings`, `hostSeat`, `locked`, `party` | lobby updates; `locked` is true once the match started and the settings are frozen. `ready` doubles as the rematch vote between matches (§3c) |
 | `game_started` | `view` | broadcast per seat after host `start_game`; the server never sends shuffle seed, and `rev` lives inside `view.rev` |
 | `state_sync` | `view` (redacted, `rev` and `hash` inside it) | the only source of truth on the client |
 | `proposal_rejected` | `reqId`, `reasons: ReasonCode[]` | codes, not prose |
@@ -484,7 +565,12 @@ commands; a single `docker compose` service pair is the deployment shape.
 Server unit suites (`tests/server/`) cover room lifecycle, legal and rejected
 turns, redaction, reconnect and a malformed-message battery; the integration
 suite spawns the real process and drives raw `ws` clients (shared harness in
-`tests/server/harness.ts`). `tests/server/hardening.test.ts` carries the
+`tests/server/harness.ts`). `tests/server/party.test.ts` and
+`tests/server/party.integration.test.ts` carry the `OS-*` party-session
+acceptance: session wins and their duplicate guard, rematch voting, between-match
+leave/join, bounded history and feed, and the room-scoped, rate-limited,
+ownership-checked reaction path over real sockets.
+`tests/server/hardening.test.ts` carries the
 `OH-*` hardening acceptance: the room-creation budget, the Origin policy, the
 resync bound, reconnect bursts, cross-room isolation under a malformed client,
 room resurrection, and a concurrent-room load that has to return to baseline. `npm run

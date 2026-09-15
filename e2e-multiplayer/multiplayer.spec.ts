@@ -1081,3 +1081,208 @@ test('room-creation budget: the refusal reads as plain copy on desktop and on a 
     budgetProc.kill('SIGTERM');
   }
 });
+
+// ---------- Online Phase 5: the party session across matches ----------
+
+/** Drive a started online match to a real, server-decided finish by having whichever seat is
+ * active draw and pass. With TEST_SEED the draw pile is 94 cards, so the pile runs out and the
+ * server ends the match on the fewest-cards rule — no client ever decides anything. */
+async function playToFinish(pages: Page[]): Promise<void> {
+  for (let i = 0; i < 400; i++) {
+    const done = await pages[0]!.evaluate(() => window.__MEXE__.scene === 'win');
+    if (done) return;
+    for (const p of pages) {
+      const mine = await p.evaluate(() => {
+        const s = window.__MEXE__.state?.();
+        return !!s && s.winnerId === null && s.activePlayerIndex === window.__MEXE__.online?.seat();
+      });
+      if (!mine) continue;
+      await p.evaluate(() => window.__MEXE__.online!.comprar());
+      break;
+    }
+    await pages[0]!.waitForTimeout(25);
+  }
+  throw new Error('match did not finish within the draw-pile budget');
+}
+
+/** Lobby -> started match, for a room whose seats are already filled. */
+async function readyAndStart(host: Page, pages: Page[]): Promise<void> {
+  for (const p of pages) await p.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await host.waitForFunction(
+    (n) => {
+      const players = window.__MEXE__.online!.players();
+      return players.length === n && players.every((p) => p.ready);
+    },
+    pages.length,
+    { timeout: 10_000 },
+  );
+  await host.evaluate(() => window.__MEXE__.online!.startGame());
+  for (const p of pages) await p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 15_000 });
+}
+
+test('OS-01..OS-16/OS-35: the room survives a match, scores it, and rematches on the same code', async ({ browser }) => {
+  const screenshots: string[] = [];
+  const host = await newClient(browser);
+  const guest = await newClient(browser);
+
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+  await guest.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Joao'), code);
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+
+  await readyAndStart(host, [host, guest]);
+  const firstMatchId = await host.evaluate(() => window.__MEXE__.online!.matchId());
+  expect(firstMatchId).toBeTruthy();
+
+  await playToFinish([host, guest]);
+  for (const p of [host, guest]) await p.waitForFunction(() => window.__MEXE__.scene === 'win', undefined, { timeout: 15_000 });
+  // The result screen reveals in stages (celebration, then the numbers, then the controls) — wait
+  // the whole sequence out, or the evidence photographs an empty board.
+  await host.waitForTimeout(1500);
+  // OS-35: the finished-match screen shows the room's score and still offers the invite.
+  await shot({ host, guest }, 'party-finished', screenshots);
+
+  // OS-06/OS-16: exactly one win was awarded, and the match is in the room's public history.
+  await host.waitForFunction(
+    () => (window.__MEXE__.online?.party().matches.length ?? 0) === 1,
+    undefined,
+    { timeout: 10_000 },
+  );
+
+  // OS-01/OS-03: REMATCH walks back into the *same* room on the *same* code.
+  const buttonY = await host.evaluate(() => window.__MEXE__.winButtonY);
+  expect(buttonY).not.toBeNull();
+  for (const p of [host, guest]) {
+    const y = (await p.evaluate(() => window.__MEXE__.winButtonY))!;
+    const [bx, by] = toScreen(240, y);
+    await p.mouse.click(bx, by);
+    await p.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
+  }
+  expect(await host.evaluate(() => window.__MEXE__.online!.code())).toBe(code);
+
+  // OS-06/OS-08: the between-match lobby shows the session score and an empty rematch vote.
+  await host.waitForFunction(
+    () => window.__MEXE__.online!.players().reduce((n, p) => n + p.wins, 0) === 1,
+    undefined,
+    { timeout: 10_000 },
+  );
+  const lobby = await host.evaluate(() => ({
+    players: window.__MEXE__.online!.players(),
+    party: window.__MEXE__.online!.party(),
+  }));
+  expect(lobby.players.every((p) => !p.ready)).toBe(true);
+  expect(lobby.players.reduce((n, p) => n + p.wins, 0)).toBe(1);
+  expect(lobby.party.matches).toHaveLength(1);
+  // OS-19: nothing in the feed names a card.
+  expect(JSON.stringify(lobby.party.activity)).not.toMatch(/(hearts|spades|clubs|diamonds)-\d/);
+  await shot({ host }, 'party-between-matches', screenshots);
+
+  // OS-16/OS-18: the history screen itself.
+  await host.evaluate(() => window.__MEXE__.online!.openParty());
+  await shot({ host }, 'party-history', screenshots);
+  await host.evaluate(() => window.__MEXE__.online!.openParty());
+
+  // OS-02/OS-09/OS-10: one vote is not enough; both votes start exactly one new match, with a
+  // different matchId than the one that just ended.
+  await host.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await host.evaluate(() => window.__MEXE__.online!.startGame());
+  await host.waitForTimeout(400);
+  expect(await host.evaluate(() => window.__MEXE__.scene)).toBe('online');
+
+  await readyAndStart(host, [host, guest]);
+  const secondMatchId = await host.evaluate(() => window.__MEXE__.online!.matchId());
+  expect(secondMatchId).toBeTruthy();
+  expect(secondMatchId).not.toBe(firstMatchId);
+
+  for (const p of [host, guest]) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('OS-36/OS-37: the between-match social UI reads on a phone, portrait and landscape', async ({ browser }) => {
+  const screenshots: string[] = [];
+  const portrait = await newPhoneClient(browser);
+  const landscape = await newPhoneClient(browser, { width: 844, height: 390 });
+
+  await portrait.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await portrait.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await portrait.evaluate(() => window.__MEXE__.online!.code()))!;
+  await landscape.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Joao'), code);
+  await landscape.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+
+  await readyAndStart(portrait, [portrait, landscape]);
+  await playToFinish([portrait, landscape]);
+  for (const p of [portrait, landscape]) await p.waitForFunction(() => window.__MEXE__.scene === 'win', undefined, { timeout: 15_000 });
+  await portrait.waitForTimeout(1500);
+  await shot({ portrait, landscape }, 'party-phone-finished', screenshots);
+
+  for (const p of [portrait, landscape]) {
+    const y = (await p.evaluate(() => window.__MEXE__.winButtonY))!;
+    const point = await p.evaluate((ly) => {
+      const c = document.querySelector('canvas')!.getBoundingClientRect();
+      const world = window.__MEXE__.viewport();
+      return { x: c.left + 0.5 * c.width, y: c.top + (ly / world.h) * c.height };
+    }, y);
+    await p.mouse.click(point.x, point.y);
+    await p.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
+  }
+  await portrait.waitForFunction(
+    () => window.__MEXE__.online!.players().reduce((n, p) => n + p.wins, 0) === 1,
+    undefined,
+    { timeout: 10_000 },
+  );
+  await shot({ portrait, landscape }, 'party-phone-lobby', screenshots);
+
+  for (const p of [portrait, landscape]) await p.evaluate(() => window.__MEXE__.online!.openParty());
+  await shot({ portrait, landscape }, 'party-phone-history', screenshots);
+
+  // No page-level horizontal overflow on either orientation.
+  for (const p of [portrait, landscape]) {
+    const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of [portrait, landscape]) await p.context().close();
+});
+
+test('OS-28..OS-30: a 4-seat room names the active seat, the score and the feed for everyone', async ({ browser }) => {
+  const screenshots: string[] = [];
+  const pages = await Promise.all(Array.from({ length: 4 }, () => newClient(browser)));
+  const host = pages[0]!;
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+  const names = ['', 'Joao', 'Lia', 'Ana'];
+  for (let seat = 1; seat < 4; seat++) {
+    await pages[seat]!.evaluate(({ c, n }) => window.__MEXE__.online!.joinRoom(c, n), { c: code, n: names[seat]! });
+    await pages[seat]!.waitForFunction((expected) => window.__MEXE__.online?.seat() === expected, seat, { timeout: 10_000 });
+  }
+  // A reaction from one seat reaches every seat in the room, and only this room.
+  await pages[1]!.evaluate(() => window.__MEXE__.online!.react!('nice'));
+  await host.waitForFunction(
+    () => window.__MEXE__.online!.party().activity.some((e) => e.kind === 'reaction'),
+    undefined,
+    { timeout: 10_000 },
+  );
+  await shot({ host }, 'party-4p-lobby', screenshots);
+
+  await readyAndStart(host, pages);
+  // Every client agrees on which seat is active — the indicator is state, not a local guess.
+  const actives = await Promise.all(pages.map((p) => p.evaluate(() => window.__MEXE__.state?.()?.activePlayerIndex ?? -1)));
+  expect(new Set(actives).size).toBe(1);
+  expect(actives[0]).toBe(0);
+  await shot({ host }, 'party-4p-match', screenshots);
+
+  for (const p of pages) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(trackConsoleErrors(p)).toEqual([]);
+  }
+  appendLog({ screenshots });
+  for (const p of pages) await p.context().close();
+});

@@ -2,7 +2,7 @@ import type { DraftState, GameState } from '../rules/types';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { ConnStatus } from '../net/client';
-import type { ReactionId, RoomPlayerSummary, RoomSettings, SubmitTurnMeld } from '../net/protocol';
+import type { PartyState, ReactionId, RoomPlayerSummary, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import type { HelperMode } from '../ui/helpers';
 import { view, type ViewProfile } from '../ui/viewport';
 
@@ -60,6 +60,14 @@ interface MexeOnlineDebugApi {
   /** Verification-only: send one preset reaction to the room. The server still owns the
    * cooldown, so a call inside it is dropped there, not here. */
   react?: (reaction: ReactionId) => void;
+  /** Verification-only: the room's party state (match history + public activity feed) as the
+   * server last reported it. Session wins live on `players()`, one per seat. */
+  party: () => PartyState;
+  /** Verification-only: the match id of the view this client is rendering, or null in a lobby.
+   * A rematch mints a new one, which is what proves the room started a *different* match. */
+  matchId: () => string | null;
+  /** Verification-only: open the lobby's room-history screen, the way its link does. */
+  openParty: () => void;
 }
 
 /** Results-screen summary (see WinScene) — e2e can assert on it since the win/loss row text and

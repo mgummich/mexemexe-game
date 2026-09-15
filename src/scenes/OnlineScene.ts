@@ -7,8 +7,9 @@ import { t } from '../localization/i18n';
 import { MAX_NAME_LENGTH, MIN_NAME_LENGTH, NetClient, readDisplayName, writeDisplayName, type ConnStatus } from '../net/client';
 import { errorMessage } from '../net/errors';
 import {
-  CUSTOM_BOUNDS, DEFAULT_ROOM_SETTINGS, REACTION_COOLDOWN_MS, REACTIONS, TIMER_PRESETS,
-  type GameView, type ReactionId, type RoomPlayerSummary, type RoomSettings, type TimerMode,
+  CUSTOM_BOUNDS, DEFAULT_ROOM_SETTINGS, EMPTY_PARTY, REACTION_COOLDOWN_MS, REACTIONS, TIMER_PRESETS,
+  type ActivityEvent, type GameView, type PartyState, type ReactionId, type RoomPlayerSummary,
+  type RoomSettings, type TimerMode,
 } from '../net/protocol';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
@@ -66,7 +67,7 @@ function sanitizeName(raw: string): string {
  */
 export class OnlineScene extends Phaser.Scene {
   private client!: NetClient;
-  private phase: 'idle' | 'join' | 'name' | 'lobby' | 'custom' | 'error' = 'idle';
+  private phase: 'idle' | 'join' | 'name' | 'lobby' | 'custom' | 'party' | 'error' = 'idle';
   /** The custom screen's working copy. Edited freely while that screen is open and sent as one
    * proposal on APLICAR — a field-by-field send would clear everyone's ready bit five times for
    * one decision. Null whenever the screen is closed. */
@@ -81,6 +82,9 @@ export class OnlineScene extends Phaser.Scene {
    * summary sends a proposal and the next `room_state` is what actually changes this. */
   private roomSettings: RoomSettings = DEFAULT_ROOM_SETTINGS;
   private hostSeat = 0;
+  /** The room's memory across matches, exactly as the server last reported it. Never written
+   * locally — a session win the client could invent would be a score the server never awarded. */
+  private party: PartyState = EMPTY_PARTY;
   private settingsLocked = false;
   private ready = false;
   private errorMsg: string | null = null;
@@ -154,6 +158,7 @@ export class OnlineScene extends Phaser.Scene {
     this.codeInput = '';
     this.nameInput = '';
     this.lastReaction = null;
+    this.party = EMPTY_PARTY;
     this.rematch = false;
     this.settingsChangedNotice = false;
     this.nameError = false;
@@ -299,6 +304,7 @@ export class OnlineScene extends Phaser.Scene {
         this.players = msg.players;
         this.roomSettings = msg.settings;
         this.hostSeat = msg.hostSeat;
+        this.party = msg.party;
         this.phase = 'lobby';
         this.rebuild();
       }),
@@ -317,6 +323,7 @@ export class OnlineScene extends Phaser.Scene {
         this.players = msg.players;
         this.roomSettings = msg.settings;
         this.hostSeat = msg.hostSeat;
+        this.party = msg.party;
         this.settingsLocked = msg.locked;
         this.rebuild();
       }),
@@ -382,6 +389,13 @@ export class OnlineScene extends Phaser.Scene {
       startGame: () => this.client.startGame(),
       setRoomSettings: (s) => this.client.setRoomSettings(s),
       roomSettings: () => this.roomSettings,
+      party: () => this.party,
+      matchId: () => null,
+      openParty: () => {
+        if (this.phase !== 'lobby' || this.code === null) return;
+        this.phase = 'party';
+        this.rebuild();
+      },
       openCustomSettings: () => this.openCustomSettings(),
       turnMsLeft: () => null,
       comprar: () => { /* no in-match action while still in the lobby */ },
@@ -507,6 +521,14 @@ export class OnlineScene extends Phaser.Scene {
     });
   }
 
+  /** One tap, one outcome: hand the invite to the device's share sheet where there is one, and
+   * fall back to the clipboard everywhere else. Used by the waiting-seat row and the between-match
+   * invite, so "get someone in here" is never two decisions. */
+  private inviteSomeone(): void {
+    if (typeof navigator.share === 'function') this.shareCode();
+    else this.copyCode();
+  }
+
   private copyCode(): void {
     if (!this.code) return;
     navigator.clipboard?.writeText(this.code).then(() => this.flashCopied('online.copied')).catch(() => {
@@ -568,6 +590,8 @@ export class OnlineScene extends Phaser.Scene {
       this.renderName();
     } else if (this.phase === 'custom' && this.code !== null) {
       this.renderCustom();
+    } else if (this.phase === 'party' && this.code !== null) {
+      this.renderParty();
     } else if (this.phase === 'lobby' && this.code !== null) {
       this.renderLobby();
     } else {
@@ -577,8 +601,9 @@ export class OnlineScene extends Phaser.Scene {
     // Portrait stacks START (and its reason line) under READY, so VOLTAR moves down to clear them.
     // On the custom screen the same button means "back to the lobby, change nothing" — leaving the
     // room from a settings screen would be a trap, and the draft is deliberately thrown away.
-    const leavingRoom = this.phase !== 'custom';
-    new PixelButton(this, cx(), view().portrait ? vy(260) : vy(245), t(leavingRoom ? 'online.back' : 'online.customCancel'), () => {
+    const leavingRoom = this.phase !== 'custom' && this.phase !== 'party';
+    const backLabel = leavingRoom ? 'online.back' : this.phase === 'custom' ? 'online.customCancel' : 'online.back';
+    new PixelButton(this, cx(), view().portrait ? vy(260) : vy(245), t(backLabel), () => {
       if (!leavingRoom) {
         this.customDraft = null;
         this.phase = 'lobby';
@@ -590,7 +615,7 @@ export class OnlineScene extends Phaser.Scene {
       if (this.inFlight.has('leave')) return;
       this.inFlight.add('leave');
       this.backToMenu();
-    }, { textureBase: 'btn-comprar', w: leavingRoom ? 110 : 150, h: view().portrait ? 24 : 18, size: 7 });
+    }, { textureBase: 'btn-comprar', w: this.phase === 'custom' ? 150 : 110, h: view().portrait ? 24 : 18, size: 7 });
   }
 
   /** ONLINE-22: the entry screen says who you will show up as before you commit to a room, and
@@ -771,10 +796,21 @@ export class OnlineScene extends Phaser.Scene {
     return this.players.find((p) => p.seat === seat)?.name ?? t('online.emptySeat');
   }
 
+  /** True once this room has finished at least one match: the lobby is then a *between-matches*
+   * lobby, where a ready bit means "I want a rematch" rather than "I want to start". Same bit,
+   * different sentence — see docs/MULTIPLAYER.md §3c. */
+  private betweenMatches(): boolean {
+    return this.party.matches.length > 0;
+  }
+
   /**
    * ONLINE-04/05/07: one row per seat at the table — a coloured badge with the seat's initial, the
    * name, the host marker, and the ready state spelled out in words. Colour is never the only
    * carrier: every row states READY/WAITING (and OFFLINE) as text.
+   *
+   * Once the room has a history, the same row also carries that seat's session wins, immediately
+   * left of the status word. It costs no extra line — which is what keeps four seats, a score and
+   * a status readable on a 360-wide phone.
    */
   private renderSeatRow(y: number, player: RoomPlayerSummary | null, seat: number): void {
     const rowW = Math.min(panelW(240), view().w - 30);
@@ -798,14 +834,29 @@ export class OnlineScene extends Phaser.Scene {
       .text(left + 20, y, nameText, fontStyle(8, filled ? (isMe ? '#f7d23e' : '#f7f2e7') : '#8a7f6e'))
       .setOrigin(0, 0.5);
 
-    if (!filled) return;
+    if (!filled) {
+      // An empty chair is an invitation, not dead space: it says what it is waiting for and hands
+      // over the share/copy path on tap, which is the action a player actually wants there.
+      this.add.text(left + rowW, y, t('online.waitingPlayer'), fontStyle(7, '#8a7f6e')).setOrigin(1, 0.5);
+      const invite = label(this, left + 20 + nameEl.width + 10, y, t('online.invitePlayer'), 6, '#f7d23e').setOrigin(0, 0.5);
+      invite
+        .setInteractive(
+          new Phaser.Geom.Rectangle(-10, -12, invite.width + 20, Math.max(invite.height + 16, 30)),
+          Phaser.Geom.Rectangle.Contains,
+        )
+        .on('pointerup', () => this.inviteSomeone());
+      return;
+    }
+    const readyWord = this.betweenMatches() ? t('online.wantsRematch') : t('online.playerReady');
     const statusText = !player.connected
       ? t('online.status.closed')
       : player.ready
-        ? `✓ ${t('online.playerReady')}`
+        ? `✓ ${readyWord}`
         : t('online.playerWaiting');
     const statusColor = !player.connected ? '#d83a3a' : player.ready ? '#3ec06a' : '#c0b8a8';
-    const statusEl = this.add.text(left + rowW, y, statusText, fontStyle(7, statusColor)).setOrigin(1, 0.5);
+    const statusEl = this.add
+      .text(left + rowW, y, this.betweenMatches() ? `${player.wins} · ${statusText}` : statusText, fontStyle(7, statusColor))
+      .setOrigin(1, 0.5);
     // Name plus badges plus status has to fit one row on a 390-wide phone too. The status word is
     // the one that must never be cut (it is the state of the seat), so the name side gives way —
     // trimmed character by character, never overlapped.
@@ -835,20 +886,81 @@ export class OnlineScene extends Phaser.Scene {
     });
   }
 
+
+  /** One structured event as a sentence. The server sends a kind and public facts; every word
+   * here comes from the local dictionary, so a feed line can never be client-authored text. */
+  private activityLine(e: ActivityEvent): string {
+    const name = e.name ?? t('online.emptySeat');
+    if (e.kind === 'reaction') {
+      return t('online.activity.reaction', { name, reaction: e.reaction ? t(`online.reaction.${e.reaction}`) : '' });
+    }
+    return t(`online.activity.${e.kind}`, { name });
+  }
+
+  /**
+   * Progressive disclosure for everything the room remembers: the session score, the matches it
+   * has played, and what has happened lately. It lives on its own screen rather than in the lobby
+   * because the lobby's job is "who is here and are we starting", and three more blocks there is
+   * what makes a 360-wide phone unreadable.
+   */
+  private renderParty(): void {
+    const portrait = view().portrait;
+    label(this, cx(), vy(58), t('online.partyTitle'), 10, '#f7f2e7');
+    const rowW = Math.min(panelW(250), view().w - 30);
+    const left = cx() - rowW / 2;
+
+    // Session score first: it is the one number anyone came to this screen for.
+    label(this, left + 2, vy(74), t('online.sessionScore'), 7, '#f7d23e').setOrigin(0, 0.5);
+    const ranked = [...this.players].sort((a, b) => b.wins - a.wins || a.seat - b.seat);
+    ranked.slice(0, MAX_SEATS).forEach((p, i) => {
+      const y = vy(84 + i * 10);
+      label(this, left + 6, y, p.name, 7, p.seat === this.seat ? '#f7d23e' : '#f7f2e7').setOrigin(0, 0.5);
+      const wins = p.wins === 0 ? t('online.winsNone') : p.wins === 1 ? t('online.winsOne') : t('online.wins', { n: p.wins });
+      label(this, left + rowW - 4, y, wins, 7, '#c0b8a8').setOrigin(1, 0.5);
+    });
+
+    // Then the matches, newest first, bounded by what fits rather than by a scroll nobody can see.
+    const matchesTop = 84 + ranked.length * 10 + 8;
+    label(this, left + 2, vy(matchesTop), t('online.matches'), 7, '#f7d23e').setOrigin(0, 0.5);
+    const matches = [...this.party.matches].reverse().slice(0, portrait ? 5 : 4);
+    if (matches.length === 0) label(this, left + 6, vy(matchesTop + 10), t('online.noMatches'), 6, '#8a7f6e').setOrigin(0, 0.5);
+    matches.forEach((m, i) => {
+      const key = m.stalemate ? 'online.matchLineStalemate' : 'online.matchLine';
+      label(this, left + 6, vy(matchesTop + 10 + i * 9), t(key, { n: m.seq, name: m.winnerName ?? t('online.emptySeat') }), 6, '#f7f2e7')
+        .setOrigin(0, 0.5);
+    });
+
+    const activityTop = matchesTop + 10 + Math.max(1, matches.length) * 9 + 6;
+    label(this, left + 2, vy(activityTop), t('online.activity'), 7, '#f7d23e').setOrigin(0, 0.5);
+    const feed = [...this.party.activity].reverse().slice(0, portrait ? 8 : 5);
+    if (feed.length === 0) label(this, left + 6, vy(activityTop + 10), t('online.noActivity'), 6, '#8a7f6e').setOrigin(0, 0.5);
+    feed.forEach((e, i) => {
+      label(this, left + 6, vy(activityTop + 10 + i * 9), this.activityLine(e), 6, '#c0b8a8').setOrigin(0, 0.5);
+    });
+  }
+
   private renderLobby(): void {
     label(this, cx(), vy(74), this.code ?? '', 20, '#f7f2e7');
     // room-code text and its buttons must stay comfortably tappable in portrait
     const btnH = view().portrait ? 24 : 16;
     const canShare = typeof navigator.share === 'function';
-    const offset = canShare ? 48 : 0;
-    new PixelButton(this, cx() - offset, vy(94), t('online.copy'), () => this.copyCode(), {
-      textureBase: 'btn-comprar', w: 88, h: btnH, size: 7,
-    });
-    if (canShare) {
-      new PixelButton(this, cx() + offset, vy(94), t('online.share'), () => this.shareCode(), {
-        textureBase: 'btn-comprar', w: 88, h: btnH, size: 7,
+    // Three actions at most — copy, share, history — laid out as one evenly spaced strip rather
+    // than at hand-tuned offsets, so the row stays inside the panel whether or not this browser
+    // has a share sheet. The history button is the progressive-disclosure door to the room's
+    // score, its matches and its feed; the lobby itself stays "who is here, are we starting".
+    const actions: { key: string; run: () => void }[] = [
+      { key: 'online.copy', run: () => this.copyCode() },
+      ...(canShare ? [{ key: 'online.share', run: () => this.shareCode() }] : []),
+      { key: 'online.partyOpen', run: () => { this.phase = 'party'; this.rebuild(); } },
+    ];
+    const bw = actions.length > 2 ? 76 : 100;
+    const gap = 6;
+    const total = actions.length * bw + (actions.length - 1) * gap;
+    actions.forEach((a, i) => {
+      new PixelButton(this, cx() - total / 2 + bw / 2 + i * (bw + gap), vy(94), t(a.key), a.run, {
+        textureBase: 'btn-comprar', w: bw, h: btnH, size: 7,
       });
-    }
+    });
 
     this.renderRoomSummary();
 
@@ -867,7 +979,11 @@ export class OnlineScene extends Phaser.Scene {
         })
         .setOrigin(0.5);
     } else if (this.rematch) {
-      label(this, cx(), vy(180), t('online.rematch'), 6, '#f7d23e');
+      this.add
+        .text(cx(), vy(180), t('online.rematch'), {
+          ...fontStyle(6, '#f7d23e'), align: 'center', wordWrap: { width: panelW(240) },
+        })
+        .setOrigin(0.5);
     } else if (this.lastReaction) {
       label(
         this, cx(), vy(180),
@@ -907,9 +1023,11 @@ export class OnlineScene extends Phaser.Scene {
       // ONLINE-06: a greyed-out button with no stated reason is the single most common lobby
       // complaint, and "someone isn't ready" is barely better — name the seats being waited on.
       if (!allReady) {
-        const reason = enoughPlayers
-          ? t('online.startNeedReadyNames', { names: notReady.map((p) => p.name).join(', ') })
-          : t('online.startNeedPlayers');
+        const reason = !enoughPlayers
+          ? t('online.startNeedPlayers')
+          : t(this.betweenMatches() ? 'online.waitingRematch' : 'online.startNeedReadyNames', {
+              names: notReady.map((p) => p.name).join(', '),
+            });
         this.add
           .text(startX, stacked ? vy(243) : vy(232), reason, {
             ...fontStyle(6, '#c0b8a8'), align: 'center', wordWrap: { width: panelW(200) },

@@ -7,7 +7,7 @@ import { playlog } from '../core/playlog';
 import { onConnectivityChange } from '../core/pwa';
 import { resolveWsUrl } from '../config';
 import { PROTOCOL_VERSION } from './protocol';
-import type { ClientMessage, ReactionId, RoomSettings, ServerMessage, SubmitTurnMeld } from './protocol';
+import type { ClientMessage, ReactionId, RoomSettings, RoomStateMsg, ServerMessage, SubmitTurnMeld } from './protocol';
 
 export type ConnStatus = 'connecting' | 'open' | 'closed' | 'error' | 'reconnecting';
 
@@ -109,6 +109,10 @@ export class NetClient {
    * already back to 'open'. That raced on CI. Asserting against this history instead is
    * order-independent. */
   statusTrace: ConnStatus[] = [];
+  /** The most recent `room_state`, or null before the first one. Read by scenes that need the
+   * party state (seats, session wins, history, activity) without owning a subscription from
+   * before it arrived — see the assignment in `connect()` for why. */
+  lastRoomState: RoomStateMsg | null = null;
 
   getStatus(): ConnStatus {
     return this.status;
@@ -199,6 +203,11 @@ export class NetClient {
       }
       this.pushTrace('in', msg.type);
       if (msg.type === 'room_joined') writeToken(msg.token);
+      // Latched so a scene that starts *after* a push can still read it. The room_state carrying
+      // the session score arrives in the same server tick as game_over, i.e. a frame before
+      // WinScene exists — without this latch the result screen would have to wait for the next
+      // broadcast to show the score of the match it is announcing.
+      if (msg.type === 'room_state') this.lastRoomState = msg;
       // `invalid_token`/`room_closed` are definitive: the session or the room is gone, so no
       // number of further attempts can restore the seat. Keeping the token would make every
       // later entry into the online lobby re-send it, fail the same way and land on the same

@@ -18,7 +18,7 @@ import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_B
 import { t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
-import { digestOfState, stateHash } from '../net/protocol';
+import { digestOfState, EMPTY_PARTY, stateHash } from '../net/protocol';
 import type { ErrorMsg, GameOverMsg, GameView, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import { viewToState } from '../net/viewToState';
 import { analyzeMeld, sortMeldCards } from '../rules/rules';
@@ -234,6 +234,9 @@ export class GameScene extends Phaser.Scene {
     /** Last state_sync's missedTurns per seat — read by onOnlineTurnTimeout to size the warning
      * and to know whether a timeout is about to hit the room's missedTurnLimit. */
     missedTurns: number[];
+    /** The match this scene is rendering. A rematch mints a new one; this scene never sees the
+     * change (a new match arrives as a fresh scene start), so it is a constant here. */
+    matchId: string;
   } | null = null;
   /** Set in onOnlineTurnTimeout when a timeout is about to push a seat to missedTurnLimit, so the
    * room_closed that follows can show the specific "match ended" copy instead of the generic one. */
@@ -468,6 +471,7 @@ export class GameScene extends Phaser.Scene {
           seat: config.online.seat,
           code: config.online.code,
           lastRev: config.online.view.rev,
+          matchId: config.online.view.matchId,
           mexeBonusClaimed: config.online.view.mexeBonusClaimed,
           missedTurns: config.online.view.missedTurns,
         }
@@ -675,6 +679,11 @@ export class GameScene extends Phaser.Scene {
       startGame: () => { /* not applicable mid-match */ },
       setRoomSettings: () => { /* fairness settings are frozen once the match starts */ },
       roomSettings: () => this.onlineSettings,
+      // The party state rides on room_state, which a match does not receive — the client's latched
+      // copy from the lobby is the right answer here, not a stale empty one.
+      party: () => client.lastRoomState?.party ?? EMPTY_PARTY,
+      matchId: () => this.online?.matchId ?? null,
+      openParty: () => { /* the lobby owns the history screen; there is none mid-match */ },
       openCustomSettings: () => { /* the lobby owns the settings screen; there is none mid-match */ },
       turnMsLeft: () => (this.turnDeadlineAt === null ? null : Math.max(0, this.turnDeadlineAt - Date.now())),
       comprar: () => this.onComprar(),

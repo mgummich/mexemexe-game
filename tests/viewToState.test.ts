@@ -28,8 +28,8 @@ function state(): GameState {
 }
 
 describe('protocol', () => {
-  it('PROTOCOL_VERSION is 4', () => {
-    expect(PROTOCOL_VERSION).toBe(4);
+  it('PROTOCOL_VERSION is 5', () => {
+    expect(PROTOCOL_VERSION).toBe(5);
   });
 
   it('buildView carries the rules config', () => {

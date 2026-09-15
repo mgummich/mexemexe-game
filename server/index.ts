@@ -6,7 +6,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { DEFAULT_ROOM_SETTINGS, parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
+import { DEFAULT_ROOM_SETTINGS, EMPTY_PARTY, parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../src/net/protocol';
 import { RoomManager } from './rooms';
 import { config } from './config';
 import { createLogger, errorFields } from './log';
@@ -150,7 +150,7 @@ function broadcastRoomState(code: string): void {
   for (const ws of bySeat.values()) {
     send(ws, {
       v: PROTOCOL_VERSION, type: 'room_state',
-      players: info.players, settings: info.settings, hostSeat, locked: info.locked,
+      players: info.players, settings: info.settings, hostSeat, locked: info.locked, party: info.party,
     });
   }
 }
@@ -164,6 +164,7 @@ function roomJoined(code: string, seat: number, token: string): ServerMessage {
     players: info?.players ?? [],
     settings: info?.settings ?? DEFAULT_ROOM_SETTINGS,
     hostSeat: rooms.getHostSeat(code),
+    party: info?.party ?? EMPTY_PARTY,
   };
 }
 
@@ -383,7 +384,8 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       if (info) {
         send(ws, {
           v: PROTOCOL_VERSION, type: 'room_state',
-          players: info.players, settings: info.settings, hostSeat: rooms.getHostSeat(conn.code), locked: info.locked,
+          players: info.players, settings: info.settings, hostSeat: rooms.getHostSeat(conn.code),
+          locked: info.locked, party: info.party,
         });
       }
       const view = rooms.getView(conn.code, conn.seat);
@@ -397,11 +399,15 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       }
       // Silently dropped inside the cooldown: a reaction refused for going too fast is not a
       // failure the player needs an error screen for, and answering would itself be a channel.
-      if (!rooms.claimReaction(conn.code, conn.seat)) return;
+      if (!rooms.claimReaction(conn.code, conn.seat, msg.reaction)) return;
       const seat = conn.seat;
       for (const sock of sockets.get(conn.code)?.values() ?? []) {
         send(sock, { v: PROTOCOL_VERSION, type: 'player_reaction', seat, reaction: msg.reaction });
       }
+      // The reaction also went into the room's public feed, and `room_state` is the only carrier
+      // for that. Cheap by construction: the per-seat cooldown caps this at one small broadcast
+      // per seat per REACTION_COOLDOWN_MS, which is why no extra budget is needed here.
+      broadcastRoomState(conn.code);
       return;
     }
     case 'ping':

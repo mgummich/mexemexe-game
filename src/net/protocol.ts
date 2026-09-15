@@ -5,7 +5,7 @@
  */
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 // ---------------------------------------------------------------------------
 // Room settings (docs/MULTIPLAYER.md §7)
@@ -54,6 +54,59 @@ export type ReactionId = (typeof REACTIONS)[number];
 /** Minimum gap between two reactions from the same seat. Enforced by the server — a client-side
  * cooldown alone would be one `devtools` call away from a spam channel. */
 export const REACTION_COOLDOWN_MS = 3_000;
+
+// ---------------------------------------------------------------------------
+// Party session (docs/MULTIPLAYER.md §3c)
+// ---------------------------------------------------------------------------
+
+/**
+ * The public things that can happen in a room. Structured, never prose: the server sends a kind
+ * plus the public facts, and the client localizes. That is what keeps a client from authoring a
+ * feed line, and what keeps a translation from having to come off the wire.
+ */
+export const ACTIVITY_KINDS = [
+  'joined', 'left', 'ready', 'settings', 'match_started', 'last_card', 'won', 'stalemate', 'reaction',
+] as const;
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
+
+export interface ActivityEvent {
+  /** Monotonic within the room. Ordering without a clock, and a stable key for the renderer. */
+  seq: number;
+  kind: ActivityKind;
+  /** Public seat reference. Absent for room-level events with no actor. */
+  seat?: number;
+  /** The actor's display name *when the event happened*, so a line still reads after they leave.
+   * A name is already public in every room payload — this copies it, it does not disclose it. */
+  name?: string;
+  reaction?: ReactionId;
+}
+
+/** One finished match, in public terms only. Deliberately no hands, no seed, no revision. */
+export interface MatchSummary {
+  matchId: string;
+  /** 1-based position in this room's own sequence of matches. */
+  seq: number;
+  /** Winning seat, or null if the winner had already left the room by the time it was recorded. */
+  winnerSeat: number | null;
+  winnerName: string | null;
+  /** True when the draw pile ran out and the fewest-cards rule picked the winner. */
+  stalemate: boolean;
+  durationSec: number;
+}
+
+/** What a room carries across matches beyond its seats. Both lists are bounded on the server. */
+export interface PartyState {
+  matches: MatchSummary[];
+  activity: ActivityEvent[];
+}
+
+/** Bounds on the two party collections. Small on purpose: this is a room's short-term memory, not
+ * an account history, and an unbounded list would grow with every turn of a long session. */
+export const MAX_MATCH_HISTORY = 10;
+export const MAX_ACTIVITY = 25;
+
+/** Placeholder for a client that has not been told about a room's party state yet. */
+export const EMPTY_PARTY: PartyState = { matches: [], activity: [] };
 
 /** Inclusive bounds for a `custom` timer. A value outside its range is clamped, not rejected —
  * a hostile payload must not be able to create a 1 ms turn or a room that never times out.
@@ -113,6 +166,10 @@ interface PlayerView {
 export interface GameView {
   /** Seat this view was built for. */
   seat: number;
+  /** Identifies the match this view belongs to. A rematch in the same room gets a new one, which
+   * is how a client tells "the room played again" from "the room re-sent the same match". Opaque
+   * and server-chosen; it is not a credential and carries nothing about the deal. */
+  matchId: string;
   players: PlayerView[];
   table: Meld[];
   drawCount: number;
@@ -215,9 +272,11 @@ export function buildView(
   turnMsLeft: number | null = null,
   missedTurns: number[] = [],
   mexeBonusClaimed = false,
+  matchId = '',
 ): GameView {
   const view: GameView = {
     seat,
+    matchId,
     players: state.players.map((p, i) => ({
       seat: i,
       id: p.id,
@@ -359,8 +418,14 @@ export type ClientMessage =
 export interface RoomPlayerSummary {
   seat: number;
   name: string;
+  /** In a lobby this is "I am ready to play"; in the lobby a finished match recycled into, the
+   * same bit *is* the rematch vote. One flag, because they are the same agreement — see
+   * docs/MULTIPLAYER.md §3c. Cleared for everyone when a match starts or the settings change. */
   ready: boolean;
   connected: boolean;
+  /** Matches this seat has won since it sat down. Room-session only: it is not persisted, not an
+   * account stat, and it leaves with the seat (a new player in the same chair starts at 0). */
+  wins: number;
 }
 
 interface RoomJoinedMsg {
@@ -375,8 +440,9 @@ interface RoomJoinedMsg {
    * Starts as seat 0 (the creator) but moves to the next-lowest occupied seat if seat 0 leaves
    * (D15) — never assume it is 0. */
   hostSeat: number;
+  party: PartyState;
 }
-interface RoomStateMsg {
+export interface RoomStateMsg {
   v: number;
   type: 'room_state';
   players: RoomPlayerSummary[];
@@ -384,6 +450,8 @@ interface RoomStateMsg {
   hostSeat: number;
   /** True once the match has started — settings are frozen from this point. */
   locked: boolean;
+  /** The room's memory across matches: session wins live on `players`, the rest lives here. */
+  party: PartyState;
 }
 /** Match start. Deliberately carries no shuffle seed: the seed reproduces both hands and the
  * whole draw pile through the shared deal functions, so it must never leave the server. */
