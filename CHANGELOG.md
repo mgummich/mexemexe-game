@@ -4,6 +4,43 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
+## Unreleased — menu and online papercuts
+
+### Fixed: screens that offered something that could not work
+
+Four papercuts reported from play, all the same shape.
+
+- The menu treated "tutorial not completed" as "first run", so a player who
+  skipped the lesson and then finished a match still got APRENDER A JOGAR as the
+  big green button on every visit. First run now also requires
+  `gamesStarted === 0`.
+- The lobby's START sat at `cx()+110` with a half-width of 41, hanging 11px off
+  the 280-wide backdrop panel on every desktop screen. It moved to `cx()+95`,
+  and its "waiting on ..." line is centred on the panel rather than on an
+  off-centre anchor it overflowed from.
+- Creating a room and backing out left a CONTINUAR whose room the server had
+  already destroyed, because we were its only occupant. Leaving a room we were
+  alone in now forgets it.
+- A recent-room shortcut the server says is gone dropped the player onto the
+  full-screen error phase. The card is still retired, but the reason is said on
+  the entry screen, so every other way in stays one tap away.
+
+The E2E menu specs no longer assume the first-run layout after a match has been
+played.
+
+### Documentation
+
+`docs/SELF_HOSTING.md` told self-hosters to pull an image tag that did not
+exist, and described compose files that were not in the repository. The tag now
+matches what the release workflow publishes, and the compose files ship
+alongside the docs.
+
+### Packaging
+
+`package-lock.json` carried the version from before the last release. The
+release script now bumps the lockfile with `package.json`, so the two cannot
+drift apart again.
+
 ## 1.10.0 — 2026-09-15
 
 ### Fixed: a search that had already found a chair could still be matched again
