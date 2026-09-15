@@ -21,6 +21,9 @@ STATE.md
 STATE.template.md
 mexe_improvements_plan_and_prompt.md
 
+# Traefik ACME account key and issued certificates (server-side only, never commit).
+traefik/acme.json
+
 # MkDocs: local build output and the virtualenv used to run it.
 .site/
 .venv/

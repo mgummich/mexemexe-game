@@ -31,7 +31,9 @@ Both are built from the same `Dockerfile` via build targets, sharing one
 - Change a port by editing `ports` in `docker-compose.yml` (e.g. `"3000:80"`).
 - Update: `git pull && docker compose up -d --build`.
 - Stop: `docker compose down`.
-- Static game only (no online play): `docker compose up -d --build mexe`.
+- Static game only (no online play): `docker compose up -d --build --no-deps mexe`.
+  `--no-deps` is needed because `mexe` waits for `mexe-server` to report healthy
+  (`depends_on: condition: service_healthy`) and would otherwise start it too.
 - Server health check: `curl http://localhost:8787/health` →
   `{"ok":true,"uptimeSec":142,"rooms":3,"connections":7,"protocol":3}`.
 
@@ -69,7 +71,7 @@ the WebSocket endpoint somewhere other than `/ws`.
 rebuilding the `mexe` image:
 
 ```bash
-VITE_WS_URL=wss://mexe.example.com/ws docker compose up -d --build mexe
+VITE_WS_URL=wss://mexe.example.com/ws docker compose up -d --build --no-deps mexe
 ```
 
 ## Behind a reverse proxy (HTTPS)
@@ -93,7 +95,7 @@ mexe.example.com {
 Then build with a matching URL:
 
 ```bash
-VITE_WS_URL=wss://mexe.example.com/ws docker compose up -d --build mexe
+VITE_WS_URL=wss://mexe.example.com/ws docker compose up -d --build --no-deps mexe
 ```
 
 ### Traefik

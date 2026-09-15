@@ -8,6 +8,11 @@ services:
         VITE_WS_URL: ${VITE_WS_URL:-}
     ports:
       - "8080:80"
+    depends_on:
+      # Startup order only: the web container is static and local play never needs the
+      # server, but online alpha testers should not reach a page whose server is not up yet.
+      mexe-server:
+        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
@@ -47,6 +52,10 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
+      # Without these, the first verdict waits a full interval and the web container idles
+      # ~30s after the server is already answering. Needs Docker Engine 25+ / Compose 2.24+.
+      start_period: 30s
+      start_interval: 2s
     logging:
       driver: json-file
       options:
