@@ -149,6 +149,9 @@ export class OnlineScene extends Phaser.Scene {
   private autoJoinCode: string | null = null;
   /** ON-05: set when the last name submission had too few visible characters to be a name. */
   private nameError = false;
+  /** Screen the name editor was opened from, so committing (or backing out of) a name typed on
+   * the way into a room returns to the code the player was already entering. */
+  private nameReturn: 'idle' | 'join' = 'idle';
   /** ON-09: shown until the player readies again after the host changed the room's fairness
    * settings and the server cleared everyone's ready bit. */
   private settingsChangedNotice = false;
@@ -840,7 +843,7 @@ export class OnlineScene extends Phaser.Scene {
     }
     writeDisplayName(name);
     this.nameError = false;
-    this.phase = 'idle';
+    this.phase = this.nameReturn;
     this.rebuild();
   }
 
@@ -962,7 +965,8 @@ export class OnlineScene extends Phaser.Scene {
       this.collectFocusables();
       return;
     }
-    const isSubScreen = this.phase === 'custom' || this.phase === 'party' || this.phase === 'browse' || this.phase === 'queue';
+    const isSubScreen = this.phase === 'custom' || this.phase === 'party' || this.phase === 'browse'
+      || this.phase === 'queue' || this.phase === 'name';
     const leavingRoom = !isSubScreen;
     const backLabel = this.phase === 'custom' ? 'online.customCancel' : 'online.back';
     new PixelButton(this, cx(), view().portrait ? vy(260) : vy(245), t(backLabel), () => {
@@ -971,7 +975,10 @@ export class OnlineScene extends Phaser.Scene {
         // Backing out of a search *is* cancelling it: leaving the entry behind would keep the
         // player matchable from a screen that no longer says they are searching.
         if (this.phase === 'queue') this.cancelQueue();
-        this.phase = this.phase === 'browse' || this.phase === 'queue' ? 'idle' : 'lobby';
+        // Backing out of the name editor discards the edit and returns to the screen that opened
+        // it — which, coming from JOIN, still holds a half-typed code.
+        this.phase = this.phase === 'name' ? this.nameReturn
+          : this.phase === 'browse' || this.phase === 'queue' ? 'idle' : 'lobby';
         this.rebuild();
         return;
       }
@@ -999,21 +1006,7 @@ export class OnlineScene extends Phaser.Scene {
    * discovery outage degrades on its own screen instead of taking CREATE/JOIN down with it.
    */
   private renderEntry(): void {
-    const nameLine = label(this, cx(), vy(62), t('online.playingAs', { name: this.playerName() }), 8, '#f7f2e7');
-    nameLine
-      // A text line's own bounds are a thin strip; a coarse pointer needs a real target, so the
-      // hit area is grown to the touch floor without moving the text.
-      .setInteractive(
-        new Phaser.Geom.Rectangle(-20, -16, nameLine.width + 40, Math.max(nameLine.height + 16, 34)),
-        Phaser.Geom.Rectangle.Contains,
-      )
-      .on('pointerup', () => {
-        this.phase = 'name';
-        this.nameError = false;
-        this.nameInput = readDisplayName() ?? '';
-        this.rebuild();
-      });
-    label(this, cx(), vy(72), t('online.changeName'), 6, '#8a7f6e');
+    this.renderNameLine(62, 72);
 
     // Quick Match is the primary action: one tap into a table with strangers, with the only
     // choice that changes what it does — how many of them — directly under it.
@@ -1245,6 +1238,28 @@ export class OnlineScene extends Phaser.Scene {
     }, { textureBase: 'btn-comprar', w: 120, h: portrait ? 22 : 18, size: 7 });
   }
 
+  /** Who this device will show up as, and the tap that changes it. Offered on every screen that
+   * can still be the last one before a seat is taken — the name is only editable up to that
+   * point, so a screen that leads into a room must carry it. */
+  private renderNameLine(y: number, captionY: number): void {
+    const nameLine = label(this, cx(), vy(y), t('online.playingAs', { name: this.playerName() }), 8, '#f7f2e7');
+    nameLine
+      // A text line's own bounds are a thin strip; a coarse pointer needs a real target, so the
+      // hit area is grown to the touch floor without moving the text.
+      .setInteractive(
+        new Phaser.Geom.Rectangle(-20, -16, nameLine.width + 40, Math.max(nameLine.height + 16, 34)),
+        Phaser.Geom.Rectangle.Contains,
+      )
+      .on('pointerup', () => {
+        this.nameReturn = this.phase === 'join' ? 'join' : 'idle';
+        this.phase = 'name';
+        this.nameError = false;
+        this.nameInput = readDisplayName() ?? '';
+        this.rebuild();
+      });
+    label(this, cx(), vy(captionY), t('online.changeName'), 6, '#8a7f6e');
+  }
+
   private renderJoin(): void {
     label(this, cx(), vy(86), t('online.enterCodePrompt'), 9, '#f7f2e7');
     const shown = this.codeInput.padEnd(CODE_LENGTH, '_');
@@ -1258,6 +1273,7 @@ export class OnlineScene extends Phaser.Scene {
       textureBase: 'btn-feito', w: 120, h: 22, size: 8, onBlocked: () => this.flashOfflineReason(),
     });
     confirm.setEnabled(this.codeInput.length > 0 && this.canAct('join'));
+    this.renderNameLine(206, 216);
   }
 
   /** Name entry, deliberately the same shape as the code screen so there is one thing to learn. */

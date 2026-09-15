@@ -1736,3 +1736,39 @@ test('OM-05/OM-38/OM-39: Quick Match, the searching screen and cancel read on a 
   appendLog({ screenshots });
   for (const p of Object.values(phones)) await p.context().close();
 });
+
+test('the name can be set from the join screen, without losing the half-typed code', async ({ browser }) => {
+  const host = await newClient(browser);
+  const guest = await newClient(browser);
+
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Host'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+
+  const [jx, jy] = toScreen(240, 156); // OnlineScene JOIN button
+  await guest.mouse.click(jx, jy);
+  await guest.waitForFunction(() => window.__MEXE__.online!.phase() === 'join', undefined, { timeout: 10_000 });
+
+  // Half the code typed, then the detour: the name line on the join screen opens the editor,
+  // and committing comes back here rather than dumping the player on the home screen.
+  await guest.keyboard.type(code.slice(0, 3), { delay: 40 });
+  const [nx, ny] = toScreen(240, 206); // "playing as" line on the join screen
+  await guest.mouse.click(nx, ny);
+  await guest.waitForFunction(() => window.__MEXE__.online!.phase() === 'name', undefined, { timeout: 10_000 });
+  await guest.keyboard.type('Convidada', { delay: 40 });
+  await guest.keyboard.press('Enter');
+  await guest.waitForFunction(() => window.__MEXE__.online!.phase() === 'join', undefined, { timeout: 10_000 });
+
+  // The code buffer survived the detour: only the remaining characters are typed here.
+  await guest.keyboard.type(code.slice(3), { delay: 40 });
+  await guest.keyboard.press('Enter');
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+
+  // The seat carries the name typed on the way in, as the host sees it.
+  await host.waitForFunction(() => window.__MEXE__.online!.players().length === 2, undefined, { timeout: 10_000 });
+  const guestName = await host.evaluate(() => window.__MEXE__.online!.players().find((p) => p.seat === 1)?.name);
+  expect(guestName).toBe('Convidada');
+
+  for (const p of [host, guest]) expect(trackConsoleErrors(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
