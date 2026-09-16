@@ -150,6 +150,9 @@ export class OnlineScene extends Phaser.Scene {
   /** Which buffer the hidden DOM input is currently mirroring, so switching screens rebuilds it
    * with the right length/sanitizer instead of typing a name into the code buffer. */
   private inputFor: 'code' | 'name' = 'code';
+  /** The last DOM key event `wireCodeEntry` acted on, so a repeat delivery of the same event is
+   * ignored rather than replayed against whatever screen the first delivery moved to. */
+  private lastKeyEvent: KeyboardEvent | null = null;
   /** Name-entry buffer, mirrored the same way `codeInput` is. */
   private nameInput = '';
   /** Set when this scene was entered from a finished match (ONLINE-23): same room, same code,
@@ -266,6 +269,8 @@ export class OnlineScene extends Phaser.Scene {
     this.errorMsg = null;
     this.codeInput = '';
     this.nameInput = '';
+    // Holding a DOM event across a scene restart would keep it alive for nothing.
+    this.lastKeyEvent = null;
     this.lastReaction = null;
     this.party = EMPTY_PARTY;
     this.rematch = false;
@@ -725,6 +730,13 @@ export class OnlineScene extends Phaser.Scene {
    * same sanitizer the DOM input uses, so a buffer is always a submittable value. */
   private wireCodeEntry(): void {
     const onKey = (ev: KeyboardEvent): void => {
+      // Phaser can hand the same DOM event to this listener twice — a keydown and its keyup
+      // landing in one frame (an ordinary quick Enter tap) drains the queue in a way that emits
+      // the keydown again. Acting on it twice is not cosmetic here: the first Enter commits the
+      // name and switches the screen back to the code, and the second one then submits the
+      // half-typed code that screen is still holding. One event, one action.
+      if (ev === this.lastKeyEvent) return;
+      this.lastKeyEvent = ev;
       const naming = this.phase === 'name';
       if (this.phase !== 'join' && !naming) {
         this.onNavKey(ev);
