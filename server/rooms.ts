@@ -71,7 +71,6 @@ function defaultGenSeed(): number {
 
 interface Seat {
   seat: number;
-  id: string; // matches GameState.players[seat].id, e.g. "p0"
   name: string;
   token: string;
   ready: boolean;
@@ -207,7 +206,6 @@ function displayName(name: string, seat: number): string {
 function newSeat(seat: number, name: string, token: string): Seat {
   return {
     seat,
-    id: idOf(seat),
     name: displayName(name, seat),
     token,
     ready: false,
@@ -783,14 +781,19 @@ export class RoomManager {
         active.missedTurns += 1;
         this.startTurnClock(room);
         this.noteCardCounts(room, state, next);
-        if (next.phase === 'finished') this.recordResult(room);
+        const finished = next.phase === 'finished';
+        if (finished) this.recordResult(room);
         const seat = active.seat;
-        if (active.missedTurns >= room.settings.missedTurnLimit) {
+        // A finish wins over the missed-turn limit. The limit exists to stop a walked-away seat
+        // holding the others on a board that only ever advances by draw — a board that just
+        // ended is not that board, and closing the room here would replace a result screen with
+        // "a player missed too many turns" and throw away the rematch lobby.
+        if (!finished && active.missedTurns >= room.settings.missedTurnLimit) {
           this.rooms.delete(code);
           advanced.push({ code, gameOver: false, closed: true, timedOut: seat });
           continue;
         }
-        advanced.push({ code, gameOver: next.phase === 'finished', timedOut: seat });
+        advanced.push({ code, gameOver: finished, timedOut: seat });
       } catch {
         this.rooms.delete(code);
         advanced.push({ code, gameOver: false, crashed: true });

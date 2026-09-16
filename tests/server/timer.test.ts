@@ -313,3 +313,45 @@ describe('reconnect grace and anti-stall', () => {
     expect(mgr.advanceStalledTurns()).toEqual([]);
   });
 });
+
+describe('a timeout that both finishes the match and crosses the missed-turn limit', () => {
+  it('reports the finish, not a closed room — the match has a winner to render', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(
+      clock,
+      normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 1 }),
+    );
+    // Drain the pile with real draws, so both streaks are 0 and the next timeout is each seat's
+    // first miss. Draw-pile exhaustion is what ends the match on that timeout.
+    for (let seat = 0; mgr.getRoom('ROOM')!.state!.drawPile.length > 0; seat ^= 1) {
+      const result = mgr.drawEndTurn('ROOM', seat, mgr.getRoom('ROOM')!.rev);
+      if (!result.ok) throw new Error(`drain: ${result.reasons.join(',')}`);
+    }
+    clock.t += 45_000;
+    const advanced = mgr.advanceStalledTurns();
+    expect(advanced).toEqual([{ code: 'ROOM', gameOver: true, timedOut: 0 }]);
+    // The room survives the finish exactly as any other match's does, so game_over can be
+    // broadcast and the lobby recycled for a rematch.
+    expect(mgr.getRoomInfo('ROOM')).not.toBeNull();
+  });
+});
+
+describe('a gapped match on the clock', () => {
+  it('times out the chair whose turn it is, not the player index that shares its number', () => {
+    const clock = { t: 1000 };
+    const mgr = manager(clock);
+    mgr.createRoom('Alice'); // chair 0
+    mgr.joinRoom('ROOM', 'Bob'); // chair 1
+    mgr.joinRoom('ROOM', 'Carol'); // chair 2
+    mgr.leaveRoom('ROOM', 1); // chairs 0 and 2 remain: player index 1 is chair 2
+    mgr.setRoomSettings('ROOM', 0, TIMER_PRESETS.fast);
+    mgr.setReady('ROOM', 0, true);
+    mgr.setReady('ROOM', 2, true);
+    mgr.startGame('ROOM', 0);
+    mgr.drawEndTurn('ROOM', 0, mgr.getRoom('ROOM')!.rev); // chair 2 is now on the clock
+    clock.t += 45_000;
+    // The room seat on the wire is chair 2, and the streak lands on player index 1 in the view.
+    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, timedOut: 2 }]);
+    expect(mgr.getView('ROOM', 0)!.missedTurns).toEqual([0, 1]);
+  });
+});

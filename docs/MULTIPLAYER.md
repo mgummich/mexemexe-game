@@ -687,7 +687,14 @@ a Mexe draft never leaves the client until FEITO, so the server's turn-start
 state *is* the table it falls back to. There is no half-finished rearrangement
 for a timeout to commit. The same path serves an expired clock and a seat absent
 past the grace; both increment that seat's `missedTurns`, and any turn the seat
-actually takes resets it to zero.
+actually takes resets it to zero. A timeout that *finishes* the match — the draw
+it plays was the one that emptied the pile — is a finish and nothing else, even
+when the same miss crosses `missedTurnLimit`: the limit exists to stop a
+walked-away seat holding the others on a board that only ever advances by draw,
+and a board that just ended is not that board. Closing the room there would
+replace a result screen with "a player missed too many turns" and throw away the
+rematch lobby the match had already earned
+(`tests/server/timer.test.ts`, "reports the finish, not a closed room").
 
 **When there is no clock.** `startTurnClock` refuses to start one for an untimed
 room *and* for a match that just finished, so a finished game reports
