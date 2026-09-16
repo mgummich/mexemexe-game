@@ -4,7 +4,9 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased
+## 1.11.0 — 2026-09-16
+
+### Changes
 
 ### lobby stabilization
 
