@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { RearrangerAi, SimpleAi } from '../src/ai/ai';
 import { applyConfirmedTurn, drawAndEndTurn, validateTable } from '../src/rules/rules';
-import type { Card, GameState } from '../src/rules/types';
+import type { GameState } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
 import { createNewGame } from '../src/game-state/store';
 import { DraftEditor } from '../src/mexe-mode/draft';
 import { n } from './helpers/cards';
+import { expectCardConservation, TOTAL_CARDS } from './helpers/invariants';
 
 /**
  * Seeded gameplay probes. Deterministic only — no Math.random anywhere. Reuses the
@@ -14,17 +15,10 @@ import { n } from './helpers/cards';
  * invariant set on EVERY turn rather than only at the end.
  */
 const SEEDS = Array.from({ length: 40 }, (_, i) => i + 1);
-const TOTAL_CARDS = DEFAULT_RULES.deckCount * (52 + DEFAULT_RULES.jokersPerDeck); // 108
 const TURN_CAP = 2000;
 
-function allCards(state: GameState): Card[] {
-  return [...state.players.flatMap((p) => p.hand), ...state.table.flatMap((m) => m.cards), ...state.drawPile];
-}
-
 function assertInvariants(state: GameState, prevActive: number): void {
-  const cards = allCards(state);
-  expect(cards).toHaveLength(TOTAL_CARDS);
-  expect(new Set(cards.map((c) => c.id)).size).toBe(TOTAL_CARDS);
+  expectCardConservation(state, TOTAL_CARDS);
   expect(validateTable(state.table)).toBe(true);
   expect(state.activePlayerIndex).toBeGreaterThanOrEqual(0);
   expect(state.activePlayerIndex).toBeLessThan(state.players.length);

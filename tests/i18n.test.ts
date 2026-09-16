@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { localeKeys, setLocale, t } from '../src/localization/i18n';
 import type { ReasonCode } from '../src/rules/types';
@@ -36,32 +38,6 @@ const REASON_CODES: ReasonCode[] = [
   'reason.unknownCard',
 ];
 
-// A representative sample of keys this Phase 9 pass added or reads from — not the whole ~300-key
-// dictionary (that's what the parity check below is for), just a smoke test that both locales
-// actually carry them.
-const NEW_KEYS = [
-  'objective.start',
-  'objective.invalidEdit',
-  'objective.readyToConfirm',
-  'win.statLine',
-  'game.onlineBadge',
-  // Phase 14: helper modes, the mobile Mexe editor, zoom/focus, and the rules-panel UI help.
-  'settings.helperMode',
-  'settings.helperMode.beginner',
-  'settings.helperMode.standard',
-  'settings.helperMode.expert',
-  'mobile.editorToggle',
-  'mobile.editorNewMeld',
-  'mobile.editorSelectMeld',
-  'mobile.editorEmpty',
-  'mobile.editorClose',
-  'tooltip.mexeEditor',
-  'tooltip.zoomIn',
-  'tooltip.zoomOut',
-  'tooltip.meldFocus',
-  'rules.uiHelp',
-];
-
 describe('i18n', () => {
   it('every reason code resolves to non-empty copy in both locales', () => {
     for (const locale of LOCALES) {
@@ -74,17 +50,38 @@ describe('i18n', () => {
     }
   });
 
-  it('every new key resolves to non-empty, locale-specific copy', () => {
-    for (const key of NEW_KEYS) {
-      setLocale('pt');
-      const pt = t(key);
-      setLocale('en');
-      const en = t(key);
-      expect(pt, key).not.toBe('');
-      expect(en, key).not.toBe('');
-      expect(pt, key).not.toBe(key);
-      expect(en, key).not.toBe(key);
+  // Exhaustive, not a hand-maintained sample: parity only proves both locales declare the same
+  // keys, so a key defined as '' or left as its own name still ships a blank/raw string to a
+  // player. GQA-19.
+  it('every declared key resolves to non-empty copy that is not the key itself, in both locales', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale);
+      for (const key of localeKeys(locale)) {
+        const text = t(key);
+        expect(text, `${locale}/${key} is blank`).not.toBe('');
+        expect(text, `${locale}/${key} fell back to the raw key`).not.toBe(key);
+      }
     }
+  });
+
+  // The other direction: a t('...') call site whose key was never declared renders the raw key
+  // on screen. Literal call sites only — dynamically built keys are covered by the reason-code
+  // and parity checks above.
+  it('every t() string literal in src/ is a declared key', () => {
+    const declared = new Set(localeKeys('pt'));
+    const used = new Set<string>();
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.ts')) {
+          for (const m of readFileSync(full, 'utf8').matchAll(/\bt\('([a-zA-Z0-9._]+)'/g)) used.add(m[1]!);
+        }
+      }
+    };
+    walk('src');
+    expect(used.size).toBeGreaterThan(100); // the walk actually found call sites
+    expect([...used].filter((k) => !declared.has(k)), 'keys used in src/ but never declared').toEqual([]);
   });
 
   it('interpolates {params} into the returned string', () => {

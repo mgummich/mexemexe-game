@@ -836,7 +836,10 @@ hand privacy and state-hash agreement.
 
 `e2e-multiplayer/lobby.spec.ts` carries the `LB-*` lobby acceptance and runs on
 **Chromium, Firefox and WebKit** — a Chrome pass is not evidence for another
-engine's socket lifecycle or storage. One browser context per player, so every
+engine's socket lifecycle or storage. On a PR only the Chromium project runs
+(`verify:multiplayer:chromium`); the Firefox/WebKit replay is a nightly job, so
+engine parity is a within-a-day guarantee rather than a per-review one. See
+[TESTING.md](TESTING.md). One browser context per player, so every
 client has its own storage, its own session and its own socket. Its assertions
 are on `lobbySeats()`, the rows the lobby actually *painted*: the internal
 roster and the screen can disagree, and that disagreement is the bug class the

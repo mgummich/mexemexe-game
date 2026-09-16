@@ -4,6 +4,7 @@ import { DEFAULT_ROOM_SETTINGS, digestOfState, digestOfView, parseClientMessage,
 import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
 import { createRng } from '../../src/core/rng';
 import type { Card } from '../../src/rules/types';
+import { expectCardConservation } from '../helpers/invariants';
 
 function testManager(
   seed = 1,
@@ -501,11 +502,7 @@ describe('draw / end turn', () => {
     const drawResult = mgr.drawEndTurn(code, 1, 2);
     expect(drawResult.ok).toBe(true);
     const afterDraw = mgr.getRoom(code)!.state!;
-    for (const state of [afterSubmit, afterDraw]) {
-      const all = [...state.players.flatMap((p) => p.hand), ...state.table.flatMap((m) => m.cards), ...state.drawPile];
-      expect(all).toHaveLength(108);
-      expect(new Set(all.map((c) => c.id)).size).toBe(108);
-    }
+    for (const state of [afterSubmit, afterDraw]) expectCardConservation(state);
   });
 
   it('rejects draw_end_turn from the wrong player or a stale rev', () => {

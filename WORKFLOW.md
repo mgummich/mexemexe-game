@@ -470,12 +470,16 @@ Verbose output should be saved to `tmp/agent-logs/` or an equivalent ignored dir
 
 ## 13. Suggested command wrapper
 
+**Not built.** `scripts/run-check.mjs` does not exist today; agents pipe verbose
+output to `tmp/agent-logs/` by hand (§12). This section is the shape to build if
+the manual step ever becomes worth automating.
+
 Prefer one wrapper rather than custom quiet-mode logic in every tool.
 
 Suggested interface:
 
 ```bash
-node scripts/run-check.mjs rules -- npm run test:rules
+node scripts/run-check.mjs unit -- npm run test
 node scripts/run-check.mjs build -- npm run build
 ```
 
@@ -496,9 +500,10 @@ Keep the wrapper simple; do not build a logging framework.
 
 ## 14. Spec lifecycle
 
-Large features live in `docs/specs/`.
+Large features live in `docs/specs/`. The directory is created on demand and is
+empty today — no spec is open.
 
-Use `docs/specs/PHASE_TEMPLATE.md`.
+A phase spec is a plain Markdown file; there is no template file to copy.
 
 A phase spec should contain feature-specific facts only:
 - goal

@@ -22,6 +22,7 @@ import type { DraftState, GameState, RulesConfig } from '../src/rules/types';
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import { createNewGame } from '../src/game-state/store';
 import { n, j } from './helpers/cards';
+import { allCards, expectCardConservation } from './helpers/invariants';
 
 describe('createDeck', () => {
   it('default config: 108 cards, 4 jokers, 104 naturals, all ids unique', () => {
@@ -407,17 +408,16 @@ describe('applyConfirmedTurn', () => {
     expect(next.phase).toBe('finished');
   });
 
-  it('card conservation: total cards across hands + table + drawPile is unchanged by a confirm', () => {
+  it('card conservation: the exact card ids across hands + table + drawPile survive a confirm', () => {
     const state = fixtureState();
-    const countCards = (s: GameState): number =>
-      s.players.reduce((n, p) => n + p.hand.length, 0) + s.table.reduce((n, m) => n + m.cards.length, 0) + s.drawPile.length;
-    const before = countCards(state);
+    const before = allCards(state).map((c) => c.id);
     const draft: DraftState = {
       melds: [state.table[0]!, { id: 'd1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] }],
       handCardsPlayed: [],
     };
     const next = applyConfirmedTurn(state, draft);
-    expect(countCards(next)).toBe(before);
+    // Id-set, not a count: a lost card paired with a duplicated one keeps the total intact.
+    expectCardConservation(next, before);
   });
 
   it('never grows a hand: no draw happens at turn start', () => {

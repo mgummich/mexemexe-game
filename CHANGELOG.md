@@ -4,7 +4,50 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased
+## Unreleased — Gaming QA audit
+
+### Fixed
+
+- **A missing asset never failed a gate, although `ASSETS.md` said it did.**
+  `BootScene` substitutes procedural fallback art for any file the manifest
+  declares but the build does not ship, so the game boots and nothing throws —
+  the placeholder just quietly ships. `window.__MEXE__.missingAssets` was
+  printed by `scripts/check-verify.mjs` and then ignored. It now fails
+  `npm run verify`, which is what the documentation had always promised. All 127
+  captured shots are clean today, so this is a guard, not a repair.
+
+### Changes
+
+- **One shared card-conservation assertion.** `tests/helpers/invariants.ts`
+  exports `expectCardConservation`, re-used by the rules, probe and server-room
+  suites instead of four bespoke re-implementations. It compares the *id set*,
+  not a total: the weakest of the old copies counted cards only, so one lost
+  card paired with one duplicated card would have passed it.
+- **Localization is checked exhaustively instead of by sample.** A
+  hand-maintained list of ~20 "new keys" is gone. Every one of the 453 declared
+  keys must now resolve to non-empty copy that is not its own name, in both
+  locales, and every `t('...')` string literal in `src/` must be a declared key
+  — the two ways a raw or blank string reaches a player.
+- **The setup journey proves the lineup was applied.** `setup:
+  seat/personality picker` reached the game scene and stopped there; it now
+  asserts the dealt match is the four seats and three distinct opponents that
+  were picked (GQA-20).
+
+### Documentation
+
+- `docs/TESTING.md` is now the single canonical QA document: philosophy,
+  per-level ownership, the new-test admission rule, what is deliberately left to
+  human playtesting, the 21-row Gaming QA risk matrix with the strongest proving
+  test for each risk, and an explicit PR / nightly / release gate split.
+- Corrected stale claims: the PR multiplayer job is Chromium-only (the
+  three-engine lobby replay is nightly), the release gate includes
+  `verify:pwa`, `scripts/run-check.mjs` does not exist, `docs/specs/` is created
+  on demand, and `playwright.config.ts`'s comments said 83/86 tests for a suite
+  that holds 133.
+
+## 1.11.0 — 2026-09-16
+
+### Changes
 
 ### lobby stabilization
 

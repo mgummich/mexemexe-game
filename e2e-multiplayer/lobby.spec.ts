@@ -1,4 +1,5 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -14,30 +15,49 @@ import {
  * client can hold a correct roster and still drop an occupied seat off the screen.
  */
 
-const LOG_PATH = path.join(OUT_DIR, 'verify-lobby-log.json');
-// One port per engine so the three projects never race each other's server, and none of them is
-// the server's own DEFAULT_PORT (8787) — a dev server (or anything else) already on that port
-// answers the health check and the WebSocket never reaches the room manager under test.
-const PORTS: Record<string, number> = { chromium: 8778, firefox: 8779, webkit: 8777 };
+// One shard per worker, merged per engine by scripts/check-verify-multiplayer.mjs. A single
+// shared file cannot survive parallel workers: two read-modify-write cycles interleave and one
+// worker's evidence disappears. Same shape as multiplayer.spec.ts's shards.
+const PARTS_DIR = path.join(OUT_DIR, 'verify-lobby-log-parts');
+// One port block per engine, one slot per parallel worker, so neither the three projects nor the
+// workers within one project ever race each other's server. None of them is the server's own
+// DEFAULT_PORT (8787) — a dev server (or anything else) already on that port answers the health
+// check and the WebSocket never reaches the room manager under test. See multiplayer.spec.ts for
+// the blocks below 8820.
+const PORTS: Record<string, number> = { chromium: 8820, firefox: 8830, webkit: 8840 };
+const PARALLEL_INDEX = Number(process.env.TEST_PARALLEL_INDEX ?? 0);
+
+// Each test builds its own room from scratch against its worker's own server — nothing here is
+// ordered, and serial was the whole cost of this suite on CI.
+test.describe.configure({ mode: 'parallel' });
 
 let server: TestServer;
 const evidence: Record<string, unknown> = {};
 const screenshots: string[] = [];
 
 test.beforeAll(async ({}, testInfo) => {
-  server = await startTestServer(PORTS[testInfo.project.name] ?? 8785);
+  server = await startTestServer((PORTS[testInfo.project.name] ?? 8850) + PARALLEL_INDEX);
 });
 
 test.afterAll(async ({}, testInfo) => {
   server.stop();
-  fs.mkdirSync(OUT_DIR, { recursive: true });
-  const log = fs.existsSync(LOG_PATH) ? JSON.parse(fs.readFileSync(LOG_PATH, 'utf8')) : {};
-  log[testInfo.project.name] = {
-    ...evidence,
-    screenshots,
-    serverStderr: server.stderr.filter((l) => l.trim().length > 0),
-  };
-  fs.writeFileSync(LOG_PATH, JSON.stringify(log, null, 2));
+  fs.mkdirSync(PARTS_DIR, { recursive: true });
+  // Named per project, not once per module: one worker process can run this file for two
+  // projects in turn, and a single module-level path would have the second afterAll overwrite
+  // the first engine's evidence.
+  fs.writeFileSync(
+    path.join(PARTS_DIR, `${testInfo.project.name}-${randomUUID()}.json`),
+    JSON.stringify(
+      {
+        engine: testInfo.project.name,
+        ...evidence,
+        screenshots,
+        serverStderr: server.stderr.filter((l) => l.trim().length > 0),
+      },
+      null,
+      2,
+    ),
+  );
 });
 
 // ---------- lobby vocabulary ----------
@@ -144,18 +164,53 @@ async function startMatch(host: Page, pages: Page[]): Promise<string> {
 
 /** Drain the draw pile to a server-decided finish; nobody fakes game_over. */
 async function playToFinish(pages: Page[]): Promise<void> {
+  // Resolve player index -> page once. It is fixed for the length of a match, and asking every
+  // page "is it your turn?" on every draw was this helper's whole cost: one CDP round-trip per
+  // client per iteration, on top of the draw itself. That is why the cost scaled with seats
+  // rather than with draws — the 4-seat match needs *fewer* draws than the 2-seat one (80 vs 94,
+  // 108 cards less the deal) yet ran far longer, and LB-18/LB-20 timed out at 180s on CI while
+  // the 2- and 3-seat variants landed at 1.7m and 2.9m. One state read plus one comprar per draw
+  // now, whatever the seat count.
+  const byIndex = new Map<number, Page>();
+  for (const p of pages) {
+    const idx = await p.evaluate(() => window.__MEXE__.online?.localSeat?.());
+    if (idx !== undefined) byIndex.set(idx, p);
+  }
   for (let i = 0; i < 600; i++) {
-    if (await pages[0]!.evaluate(() => window.__MEXE__.scene === 'win')) return;
-    for (const p of pages) {
-      const mine = await p.evaluate(() => {
+    const active = await pages[0]!.evaluate(() => {
+      if (window.__MEXE__.scene === 'win') return 'done' as const;
+      const s = window.__MEXE__.state?.();
+      return s && s.winnerId === null ? s.activePlayerIndex : null;
+    });
+    if (active === 'done') return;
+    const turn = active === null ? undefined : byIndex.get(active);
+    // The candidate still checks its *own* state before drawing, exactly as before: pages[0]'s
+    // view can be a broadcast ahead of the seat it names, and drawing for a seat whose client
+    // does not yet believe it is on turn is a refusal, not a draw.
+    const drew =
+      turn &&
+      (await turn.evaluate(() => {
         const s = window.__MEXE__.state?.();
-        return !!s && s.winnerId === null && s.activePlayerIndex === window.__MEXE__.online?.localSeat?.();
-      });
-      if (!mine) continue;
-      await p.evaluate(() => window.__MEXE__.online!.comprar());
-      break;
+        if (!s || s.winnerId !== null || s.activePlayerIndex !== window.__MEXE__.online?.localSeat?.()) return false;
+        window.__MEXE__.online!.comprar();
+        return true;
+      }));
+    if (!drew) {
+      await pages[0]!.waitForTimeout(20);
+      continue;
     }
-    await pages[0]!.waitForTimeout(20);
+    // Wait in the browser for the turn to actually move, instead of polling for it one CDP
+    // round-trip at a time. The old fixed 20ms sleep meant a draw normally cost two iterations:
+    // one that drew, then one that found the same active index still rendered and did nothing.
+    await pages[0]!.waitForFunction(
+      (prev) => {
+        if (window.__MEXE__.scene === 'win') return true;
+        const s = window.__MEXE__.state?.();
+        return !!s && (s.winnerId !== null || s.activePlayerIndex !== prev);
+      },
+      active,
+      { timeout: 15_000 },
+    );
   }
   throw new Error('match did not finish within draw-pile budget');
 }
@@ -478,7 +533,13 @@ for (const n of [2, 3, 4]) {
 // ---------- LB-19, LB-21..LB-24: endurance and between-match churn ----------
 
 test('LB-19/LB-21/LB-22/LB-23/LB-24: three matches across departures, a replacement and a host transfer', async ({ browser }) => {
-  test.setTimeout(300_000);
+  // Three full matches, five contexts, a departure chain, a replacement and a host transfer —
+  // the heaviest test in the repo, and the budget is headroom over measured work rather than
+  // cover for a race. Serial local run after the playToFinish rewrite: 1.0m, against LB-18's
+  // 28.2s. This suite runs about 4x slower on a shared runner (4.6m local vs 18.1m on CI), which
+  // put the old 300s budget ~20% above the projection — close enough that a slow runner tipped
+  // it over, which is exactly what happened.
+  test.setTimeout(420_000);
   const pages = await clients(browser, 5);
   const [a, b, c, d, e] = pages as [Page, Page, Page, Page, Page];
   const code = await createRoom(a, 'Ana');

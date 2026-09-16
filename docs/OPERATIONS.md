@@ -290,10 +290,12 @@ rollback; there is nothing else to restore.
 | `npm run verify:preview`    | Built-client smoke: assets resolve, no secrets in the bundle.         |
 | `npm run verify:multiplayer`| Online 2P/3P/4P, reconnect/resync, illegal-move rejection, hand privacy. |
 | `npm run verify:cross`      | Cross-viewport layout checks.                                         |
+| `npm run verify:pwa`        | Offline boot, offline play and the update handover.                   |
 | `npm run test:server`       | Server unit tests only (fast inner loop).                             |
 
-Release gate: `verify`, `verify:preview` and `verify:multiplayer` must all pass, with zero
-console errors and zero server stderr lines.
+Release gate: `verify`, `verify:preview`, `verify:multiplayer` and `verify:pwa` must all pass,
+with zero console errors and zero server stderr lines. `verify:multiplayer` here means the
+three-engine form, not the Chromium-only PR variant — see [TESTING.md](TESTING.md).
 
 ## Known limits
 

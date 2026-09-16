@@ -149,6 +149,15 @@ test('setup: seat/personality picker', async ({ page }) => {
   // survive that animation, not just the old straight fade.
   await page.mouse.click(...toScreen(300, 248));
   await page.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 5000 });
+  // GQA-20: reaching the game scene is not evidence the lineup was applied. The match must be
+  // dealt with the 4 seats picked above, seat 0 human, the other three distinct AI opponents.
+  const lineup = await page.evaluate(() =>
+    window.__MEXE__.state!()!.players.map((p) => ({ name: p.name, isAi: p.isAi })),
+  );
+  expect(lineup).toHaveLength(4);
+  expect(lineup[0]!.isAi).toBe(false);
+  expect(lineup.slice(1).every((p) => p.isAi)).toBe(true);
+  expect(new Set(lineup.slice(1).map((p) => p.name)).size).toBe(3);
 });
 
 test('setup-large-text: the lineup still fits the panel at +25% font scale', async ({ page }) => {

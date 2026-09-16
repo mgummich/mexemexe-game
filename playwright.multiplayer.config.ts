@@ -5,10 +5,22 @@ import { defineConfig, devices } from '@playwright/test';
 // the local `npm run verify` run, which never touches this file.
 export default defineConfig({
   testDir: 'e2e-multiplayer',
+  globalSetup: './e2e-multiplayer/global-setup.ts',
   // 108-card deck means the deterministic stalemate drain takes ~94 draw rounds now
   // (was ~38 pre-adaptation) — give the single spec more room than the default 60s.
   timeout: 180_000,
-  workers: 1, // single spec, single shared WS server on a fixed test port
+  // Both specs are `mode: 'parallel'` and every worker spawns its own server on its own port
+  // (8799+ / 8810+ / 8820+ per parallelIndex — see the port-block map at the top of
+  // multiplayer.spec.ts), which is what took this suite off the PR critical path.
+  //
+  // Two, not three. Three was measured at 4.6m locally but read 16.1m on a shared ubuntu-latest
+  // runner — no gain at all over the serial run it replaced — and starved the three heaviest
+  // tests into their own timeouts (LB-18/LB-20 and OD-28/OD-29 past 180s, the LB-19..LB-24
+  // three-match endurance run past 300s), while lighter tests that normally take seconds took
+  // over a minute. Every test here drives 2-4 browser contexts plus a server against 4 shared
+  // cores, so the third worker only added contention. Raising the timeouts instead would have
+  // hidden the contention rather than fixed it.
+  workers: 2,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
     baseURL: 'http://localhost:4173',

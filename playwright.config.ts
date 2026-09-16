@@ -3,11 +3,11 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: 'e2e',
   globalSetup: './e2e/global-setup.ts',
-  // All 86 tests live in one file, so without this Playwright treats it as one serial worker.
+  // All 133 tests live in one file, so without this Playwright treats it as one serial worker.
   fullyParallel: true,
   timeout: 60_000,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
-  // Measured on ubuntu-latest for this 83-test suite: serial+trace 7m49, serial no-trace 5m16
+  // Measured on ubuntu-latest for this suite (133 tests): serial+trace 7m49, serial no-trace 5m16
   // (+48% wall clock). Tracing is also behaviour-changing, not just slow: the tracer's own
   // overhead ate into the frame budget the fps gates measure (table-zoomed read 42 vs a floor
   // of 50 while traced). So tracing is off here by default; set MEXE_TRACE=1 to get
