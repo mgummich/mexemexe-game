@@ -195,7 +195,22 @@ async function playToFinish(pages: Page[]): Promise<void> {
         window.__MEXE__.online!.comprar();
         return true;
       }));
-    if (!drew) await pages[0]!.waitForTimeout(20);
+    if (!drew) {
+      await pages[0]!.waitForTimeout(20);
+      continue;
+    }
+    // Wait in the browser for the turn to actually move, instead of polling for it one CDP
+    // round-trip at a time. The old fixed 20ms sleep meant a draw normally cost two iterations:
+    // one that drew, then one that found the same active index still rendered and did nothing.
+    await pages[0]!.waitForFunction(
+      (prev) => {
+        if (window.__MEXE__.scene === 'win') return true;
+        const s = window.__MEXE__.state?.();
+        return !!s && (s.winnerId !== null || s.activePlayerIndex !== prev);
+      },
+      active,
+      { timeout: 15_000 },
+    );
   }
   throw new Error('match did not finish within draw-pile budget');
 }
@@ -518,7 +533,13 @@ for (const n of [2, 3, 4]) {
 // ---------- LB-19, LB-21..LB-24: endurance and between-match churn ----------
 
 test('LB-19/LB-21/LB-22/LB-23/LB-24: three matches across departures, a replacement and a host transfer', async ({ browser }) => {
-  test.setTimeout(300_000);
+  // Three full matches, five contexts, a departure chain, a replacement and a host transfer —
+  // the heaviest test in the repo, and the budget is headroom over measured work rather than
+  // cover for a race. Serial local run after the playToFinish rewrite: 1.0m, against LB-18's
+  // 28.2s. This suite runs about 4x slower on a shared runner (4.6m local vs 18.1m on CI), which
+  // put the old 300s budget ~20% above the projection — close enough that a slow runner tipped
+  // it over, which is exactly what happened.
+  test.setTimeout(420_000);
   const pages = await clients(browser, 5);
   const [a, b, c, d, e] = pages as [Page, Page, Page, Page, Page];
   const code = await createRoom(a, 'Ana');
