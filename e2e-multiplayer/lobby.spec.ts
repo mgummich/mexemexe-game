@@ -164,18 +164,38 @@ async function startMatch(host: Page, pages: Page[]): Promise<string> {
 
 /** Drain the draw pile to a server-decided finish; nobody fakes game_over. */
 async function playToFinish(pages: Page[]): Promise<void> {
+  // Resolve player index -> page once. It is fixed for the length of a match, and asking every
+  // page "is it your turn?" on every draw was this helper's whole cost: one CDP round-trip per
+  // client per iteration, on top of the draw itself. That is why the cost scaled with seats
+  // rather than with draws — the 4-seat match needs *fewer* draws than the 2-seat one (80 vs 94,
+  // 108 cards less the deal) yet ran far longer, and LB-18/LB-20 timed out at 180s on CI while
+  // the 2- and 3-seat variants landed at 1.7m and 2.9m. One state read plus one comprar per draw
+  // now, whatever the seat count.
+  const byIndex = new Map<number, Page>();
+  for (const p of pages) {
+    const idx = await p.evaluate(() => window.__MEXE__.online?.localSeat?.());
+    if (idx !== undefined) byIndex.set(idx, p);
+  }
   for (let i = 0; i < 600; i++) {
-    if (await pages[0]!.evaluate(() => window.__MEXE__.scene === 'win')) return;
-    for (const p of pages) {
-      const mine = await p.evaluate(() => {
+    const active = await pages[0]!.evaluate(() => {
+      if (window.__MEXE__.scene === 'win') return 'done' as const;
+      const s = window.__MEXE__.state?.();
+      return s && s.winnerId === null ? s.activePlayerIndex : null;
+    });
+    if (active === 'done') return;
+    const turn = active === null ? undefined : byIndex.get(active);
+    // The candidate still checks its *own* state before drawing, exactly as before: pages[0]'s
+    // view can be a broadcast ahead of the seat it names, and drawing for a seat whose client
+    // does not yet believe it is on turn is a refusal, not a draw.
+    const drew =
+      turn &&
+      (await turn.evaluate(() => {
         const s = window.__MEXE__.state?.();
-        return !!s && s.winnerId === null && s.activePlayerIndex === window.__MEXE__.online?.localSeat?.();
-      });
-      if (!mine) continue;
-      await p.evaluate(() => window.__MEXE__.online!.comprar());
-      break;
-    }
-    await pages[0]!.waitForTimeout(20);
+        if (!s || s.winnerId !== null || s.activePlayerIndex !== window.__MEXE__.online?.localSeat?.()) return false;
+        window.__MEXE__.online!.comprar();
+        return true;
+      }));
+    if (!drew) await pages[0]!.waitForTimeout(20);
   }
   throw new Error('match did not finish within draw-pile budget');
 }
