@@ -112,11 +112,15 @@ stripped from exports, and `?playlog=0` turns it off. See
 
 `.github/workflows/ci.yml` runs on every push and PR, in parallel jobs: lint +
 unit tests + build, multiplayer verification, PWA verification, the e2e
-screenshot suite with its gate, and cross-browser layout. Failures upload
-`test-results/` and the relevant log as artifacts.
+screenshot suite with its gate, and cross-browser layout. The multiplayer job
+installs Chromium, Firefox and WebKit, because its gate script refuses to pass
+without per-engine lobby evidence; it is the longest job on a PR for the same
+reason. Failures upload `test-results/` and the relevant log as artifacts.
 
 `.github/workflows/nightly.yml` re-runs the flakier surfaces with tracing and
-repeats (WebKit cross-browser, perf with `--repeat-each=5`, multiplayer).
+repeats (WebKit cross-browser, perf with `--repeat-each=5`, and the multiplayer
+suite on Chromium under tracing, whose point is losing races a fast machine
+always wins).
 `codeql.yml` scans the source; `pages.yml` deploys game + docs on `main`;
 `release.yml` publishes a GitHub Release when a `vX.Y.Z` tag is pushed.
 

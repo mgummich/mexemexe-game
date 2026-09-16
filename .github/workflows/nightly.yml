@@ -122,7 +122,7 @@ jobs:
     # how the double-click create_room duplicate was found (5/5 reproduction under tracing, 0/5
     # without). It costs wall clock (verify:multiplayer 2m14 -> 5m02), so it lives here instead
     # of on every PR, and it doubles as the traced-diagnostics run for this suite.
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -131,7 +131,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: MEXE_TRACE=1 npm run verify:multiplayer
+      - run: npm run build
+      # Chromium only, and therefore the suite rather than `verify:multiplayer`: this job exists
+      # to lose races under tracing, and its gate script requires per-engine lobby evidence the
+      # three-engine PR job already produces. Tracing roughly doubles the wall clock.
+      - run: MEXE_TRACE=1 npx playwright test -c playwright.multiplayer.config.ts --project=chromium
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
