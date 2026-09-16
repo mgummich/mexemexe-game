@@ -1268,6 +1268,27 @@ async function tapWorld(p: Page, wx: number, wy: number): Promise<void> {
   await p.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
 }
 
+/** Tap until the world reacts. A single pointer can be dropped outright on a loaded runner —
+ * CI lost the dismissing tap on the meld-focus backdrop and then sat on a 60s waitForFunction —
+ * because the frame that would have drained it rebuilt the object it was aimed at, and Phaser
+ * only hit-tests objects that were already in the input list when the frame started. A person
+ * hitting a dead button taps it again; so does this. A genuinely broken interaction still fails,
+ * it just costs three taps instead of the test timeout. Only for taps that are idempotent
+ * (dismissals, toggles back to a known state) — never for one that mutates the draft. */
+async function tapWorldUntil(p: Page, wx: number, wy: number, done: () => boolean, tries = 3): Promise<void> {
+  for (let i = 0; i < tries - 1; i++) {
+    await tapWorld(p, wx, wy);
+    try {
+      await p.waitForFunction(done, undefined, { timeout: 2_000 });
+      return;
+    } catch {
+      // pointer dropped — tap again
+    }
+  }
+  await tapWorld(p, wx, wy);
+  await p.waitForFunction(done, undefined, { timeout: 2_000 });
+}
+
 /** Tap a rendered card by id — the touch path, no drag involved. */
 /** Cards are still flying to their places during the opening deal, so a live coordinate read then
  * points at where a card *was*. Every tap helper waits this out before measuring. */
@@ -2960,9 +2981,10 @@ test('meld-focus: opens a read-only large view of one meld with its invalid reas
 
     await snap(page, 'meld-focus');
 
-    // dismiss by tapping outside the panel (top-left corner, well clear of the centered panel)
-    await tapWorld(p, 4, 4);
-    await p.waitForFunction(() => window.__MEXE__.mexe!.focusedMeldId() === null);
+    // dismiss by tapping outside the panel (top-left corner, well clear of the centered panel).
+    // Re-tapping, not a single tap: the backdrop dismisses on pointerup, and that one pointerup
+    // is droppable on a loaded runner (see tapWorldUntil).
+    await tapWorldUntil(p, 4, 4, () => window.__MEXE__.mexe!.focusedMeldId() === null);
   });
 });
 

@@ -11,6 +11,16 @@ if (!fs.existsSync(LOG)) {
 const log = JSON.parse(fs.readFileSync(LOG, 'utf8'));
 let failed = false;
 
+// Which engines must have lobby evidence is a CI-schedule decision, not a property of the run:
+// the PR gate runs chromium only (Firefox/WebKit lobby coverage runs nightly, where the extra
+// ~15 minutes is free), so the caller passes --engines=. Default is all three, which is what
+// `npm run verify:multiplayer` runs locally and nightly.
+const ENGINE_FLAG = '--engines=';
+const ENGINES = (process.argv.find((a) => a.startsWith(ENGINE_FLAG))?.slice(ENGINE_FLAG.length) ?? 'chromium,firefox,webkit')
+  .split(',')
+  .map((e) => e.trim())
+  .filter(Boolean);
+
 for (const [name, client] of Object.entries(log.clients ?? {})) {
   const errs = [...(client.consoleErrors ?? []), ...(client.pageErrors ?? [])];
   if (errs.length) {
@@ -117,15 +127,16 @@ for (const shot of EXPECTED_DEMO_SHOTS) {
   }
 }
 
-// Lobby state-machine gate (e2e-multiplayer/lobby.spec.ts), one entry per browser engine. A
-// Chrome pass is not evidence for Firefox or WebKit, so all three must be present and clean.
+// Lobby state-machine gate (e2e-multiplayer/lobby.spec.ts), one entry per browser engine that
+// this run was asked to cover. A Chrome pass is not evidence for Firefox or WebKit, which is why
+// the nightly matrix still demands all three.
 const LOBBY_LOG = 'docs/screenshots/verify-lobby-log.json';
 if (!fs.existsSync(LOBBY_LOG)) {
   failed = true;
   console.error('verify:multiplayer: missing', LOBBY_LOG);
 } else {
   const lobby = JSON.parse(fs.readFileSync(LOBBY_LOG, 'utf8'));
-  for (const engine of ['chromium', 'firefox', 'webkit']) {
+  for (const engine of ENGINES) {
     const run = lobby[engine];
     if (!run) {
       failed = true;
@@ -158,9 +169,11 @@ if (!fs.existsSync(LOBBY_LOG)) {
   }
 }
 
-// iOS-viewport WebKit gate (e2e-multiplayer/ios-lobby.spec.ts).
+// iOS-viewport WebKit gate (e2e-multiplayer/ios-lobby.spec.ts) — only WebKit produces it.
 const IOS_LOG = 'docs/screenshots/verify-lobby-ios-log.json';
-if (!fs.existsSync(IOS_LOG)) {
+if (!ENGINES.includes('webkit')) {
+  console.log('verify:multiplayer: skipping the iOS WebKit gate (engines:', ENGINES.join(','), ')');
+} else if (!fs.existsSync(IOS_LOG)) {
   failed = true;
   console.error('verify:multiplayer: missing', IOS_LOG);
 } else {

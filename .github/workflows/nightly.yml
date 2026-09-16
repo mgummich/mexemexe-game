@@ -115,6 +115,34 @@ jobs:
             docs/screenshots/verify-log-parts/
           retention-days: 7
 
+  multiplayer-all-engines:
+    name: Multiplayer, all engines
+    runs-on: ubuntu-latest
+    # The engine parity the PR job gave up (see ci.yml's multiplayer job): the lobby state machine
+    # on Chromium, Firefox and WebKit plus the iOS-viewport WebKit spec, gated by the full
+    # check-verify-multiplayer.mjs (all three engines demanded, since nothing here is engine-
+    # limited). Measured ~18m on a shared runner.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run verify:multiplayer
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: multiplayer-all-engines-artifacts
+          path: |
+            test-results/
+            docs/screenshots/verify-multiplayer-log.json
+            docs/screenshots/verify-lobby-log.json
+            docs/screenshots/verify-lobby-ios-log.json
+          retention-days: 7
+
   multiplayer-traced:
     name: Multiplayer, traced (race stress)
     runs-on: ubuntu-latest
@@ -133,8 +161,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run build
       # Chromium only, and therefore the suite rather than `verify:multiplayer`: this job exists
-      # to lose races under tracing, and its gate script requires per-engine lobby evidence the
-      # three-engine PR job already produces. Tracing roughly doubles the wall clock.
+      # to lose races under tracing, and the Firefox/WebKit lobby evidence its gate would want
+      # comes from multiplayer-all-engines above. Tracing roughly doubles the wall clock.
       - run: MEXE_TRACE=1 npx playwright test -c playwright.multiplayer.config.ts --project=chromium
       - uses: actions/upload-artifact@v7
         if: failure()
