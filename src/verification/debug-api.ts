@@ -9,11 +9,27 @@ import type {
 import type { HelperMode } from '../ui/helpers';
 import { view, type ViewProfile } from '../ui/viewport';
 
+/** One seat row exactly as the lobby PAINTED it on the last rebuild. Recorded at render time by
+ * `OnlineScene.renderSeatRow`, so it proves what is on screen rather than what the client was
+ * told — the two can disagree, which is the whole class of bug it exists to catch. */
+export interface RenderedSeatRow {
+  seat: number;
+  /** '' for an empty chair. */
+  name: string;
+  you: boolean;
+  host: boolean;
+  status: 'empty' | 'waiting' | 'ready' | 'offline';
+  wins: number;
+}
+
 /** Online-alpha e2e surface — present from OnlineScene entry through the online match, null otherwise. */
 interface MexeOnlineDebugApi {
   status: () => ConnStatus;
   code: () => string | null;
   seat: () => number | null;
+  /** Verification-only: this client's dense player index inside the running match. Equal to
+   * `seat()` unless the room has a seat gap (see GameView.seats). Absent in the lobby. */
+  localSeat?: () => number;
   rev: () => number | null;
   /** Verification-only: lobby player list (name/ready/connected) — empty mid-match. */
   players: () => RoomPlayerSummary[];
@@ -76,6 +92,13 @@ interface MexeOnlineDebugApi {
   leaveRoom?: () => void;
   /** Verification-only: this device's local recent-room display history. */
   recentRooms: () => { code: string; host: string }[];
+  /** Verification-only: the seat rows the lobby actually rendered, in row order. Empty off the
+   * lobby screen. Asserting on this (not on `players()`) is what makes a vanished occupied seat
+   * visible to a test. */
+  lobbySeats?: () => RenderedSeatRow[];
+  /** Verification-only: the lobby's in-place refusal line (not ready / not host / already
+   * started), or null when nothing is being explained. */
+  lobbyNotice?: () => string | null;
   /** In-match draw-and-end-turn; a thin alias over the same action COMPRAR triggers. */
   comprar: () => void;
   /** Verification-only: submit a proposal straight to the server, bypassing the editor's

@@ -1,0 +1,266 @@
+{
+  "chromium": {
+    "lb01": {
+      "seats": [
+        0,
+        1
+      ],
+      "code": "H3JZV"
+    },
+    "lb02": {
+      "seats": [
+        0,
+        1,
+        2
+      ],
+      "code": "S3MJR"
+    },
+    "lb03": {
+      "seats": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "code": "2D754"
+    },
+    "seatGaps": [
+      {
+        "seat": 0,
+        "name": "Ana",
+        "status": "waiting"
+      },
+      {
+        "seat": 1,
+        "name": "",
+        "status": "empty"
+      },
+      {
+        "seat": 2,
+        "name": "",
+        "status": "empty"
+      },
+      {
+        "seat": 3,
+        "name": "Dora",
+        "status": "waiting"
+      }
+    ],
+    "hostTransfer": {
+      "from": 0,
+      "to": 2
+    },
+    "rematch2p": {
+      "code": "WTZF9",
+      "firstId": "59f11aae-4b9d-4a3d-a7bd-a0bff37abd6d",
+      "secondId": "6be4bd8f-8298-40d4-918b-446b3ff479be"
+    },
+    "rematch3p": {
+      "code": "99WTY",
+      "firstId": "f343ce49-f70b-4d79-b9cc-f55957d0ac17",
+      "secondId": "5179b77f-27ae-4dc1-9045-4c5b8f9aa587"
+    },
+    "rematch4p": {
+      "code": "RCF9Q",
+      "firstId": "ce4fe6a3-897a-482b-a69c-f37bc9c0912e",
+      "secondId": "c34b9a7e-da9e-45e6-8581-a14fe64142b4"
+    },
+    "endurance": {
+      "code": "5PMYN",
+      "matchIds": [
+        "26b45050-3aa1-40a1-9a96-70e9e14ae12f",
+        "1c6262ed-9b89-43c5-a42d-9af79b1ea3b7",
+        "7abae0ca-3960-4504-b091-ffaff51c792f"
+      ]
+    },
+    "reload": {
+      "seats": [
+        0,
+        1,
+        2
+      ]
+    },
+    "screenshots": [
+      "docs/screenshots/lb-seats-full-full.png",
+      "docs/screenshots/lb-seat-gaps-gaps.png",
+      "docs/screenshots/lb-endurance-match3-endurance.png"
+    ],
+    "serverStderr": []
+  },
+  "firefox": {
+    "lb01": {
+      "seats": [
+        0,
+        1
+      ],
+      "code": "Y4F5J"
+    },
+    "lb02": {
+      "seats": [
+        0,
+        1,
+        2
+      ],
+      "code": "G7FTG"
+    },
+    "lb03": {
+      "seats": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "code": "8PCV2"
+    },
+    "seatGaps": [
+      {
+        "seat": 0,
+        "name": "Ana",
+        "status": "waiting"
+      },
+      {
+        "seat": 1,
+        "name": "",
+        "status": "empty"
+      },
+      {
+        "seat": 2,
+        "name": "",
+        "status": "empty"
+      },
+      {
+        "seat": 3,
+        "name": "Dora",
+        "status": "waiting"
+      }
+    ],
+    "hostTransfer": {
+      "from": 0,
+      "to": 2
+    },
+    "rematch2p": {
+      "code": "2WRQ2",
+      "firstId": "69c1b152-1d6d-4251-8eb3-510a1beb7e96",
+      "secondId": "0f34dbed-ecad-4adb-910a-cf39195c7ec8"
+    },
+    "rematch3p": {
+      "code": "PWY5C",
+      "firstId": "cf0def67-cda7-460f-93ab-6f3a418616c3",
+      "secondId": "d971fae2-08be-423c-8b79-8ec027f4abef"
+    },
+    "rematch4p": {
+      "code": "MM4GW",
+      "firstId": "9158f7be-55fd-4e04-aec7-2783c6c54a46",
+      "secondId": "7cab3cf6-a031-4a5a-b17e-5b4063f41617"
+    },
+    "endurance": {
+      "code": "BSK22",
+      "matchIds": [
+        "4f5f5bca-7e7b-4780-bab0-fb8d046d0702",
+        "30544af7-9b43-47bc-ab37-c07c2a405f8d",
+        "28fc7415-cb63-45f6-9281-46e72d48883b"
+      ]
+    },
+    "reload": {
+      "seats": [
+        0,
+        1,
+        2
+      ]
+    },
+    "screenshots": [
+      "docs/screenshots/lb-seats-full-full.png",
+      "docs/screenshots/lb-seat-gaps-gaps.png",
+      "docs/screenshots/lb-endurance-match3-endurance.png"
+    ],
+    "serverStderr": []
+  },
+  "webkit": {
+    "lb01": {
+      "seats": [
+        0,
+        1
+      ],
+      "code": "FWC5X"
+    },
+    "lb02": {
+      "seats": [
+        0,
+        1,
+        2
+      ],
+      "code": "BNVGH"
+    },
+    "lb03": {
+      "seats": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "code": "Y2DR8"
+    },
+    "seatGaps": [
+      {
+        "seat": 0,
+        "name": "Ana",
+        "status": "waiting"
+      },
+      {
+        "seat": 1,
+        "name": "",
+        "status": "empty"
+      },
+      {
+        "seat": 2,
+        "name": "",
+        "status": "empty"
+      },
+      {
+        "seat": 3,
+        "name": "Dora",
+        "status": "waiting"
+      }
+    ],
+    "hostTransfer": {
+      "from": 0,
+      "to": 2
+    },
+    "rematch2p": {
+      "code": "HFPHP",
+      "firstId": "bc75e9c7-2962-4cda-a2f8-871dc4694ad1",
+      "secondId": "18b7d4ef-41a4-4dba-b50d-dc9b132ce3e1"
+    },
+    "rematch3p": {
+      "code": "X2JKF",
+      "firstId": "958a0115-9464-4958-b014-1347efba7afd",
+      "secondId": "3a00c0b9-8bea-462b-866a-a0efbd817113"
+    },
+    "rematch4p": {
+      "code": "3VQST",
+      "firstId": "aa0d13a7-7b20-4e65-93da-aab2236c9b22",
+      "secondId": "12c53957-b270-40ba-a096-c77326a54d45"
+    },
+    "endurance": {
+      "code": "MR2RZ",
+      "matchIds": [
+        "0041e4a5-2c74-47f3-8d6f-3c98fba0f309",
+        "eb9a324e-6557-4d22-b355-85344e53dc10",
+        "2e9d56b3-9b27-4cc9-9526-0da8d37074a8"
+      ]
+    },
+    "reload": {
+      "seats": [
+        0,
+        1,
+        2
+      ]
+    },
+    "screenshots": [
+      "docs/screenshots/lb-seats-full-full.png",
+      "docs/screenshots/lb-seat-gaps-gaps.png",
+      "docs/screenshots/lb-endurance-match3-endurance.png"
+    ],
+    "serverStderr": []
+  }
+}

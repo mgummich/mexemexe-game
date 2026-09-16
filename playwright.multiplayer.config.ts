@@ -1,4 +1,4 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 // Separate config from playwright.config.ts on purpose: the multiplayer spec spawns its own
 // WS server (see e2e-multiplayer/multiplayer.spec.ts) so a server crash there can never fail
@@ -22,6 +22,16 @@ export default defineConfig({
     trace: process.env.MEXE_TRACE ? 'retain-on-failure' : 'off',
     screenshot: 'only-on-failure',
   },
+  // Chromium runs the whole suite. Firefox and WebKit run the lobby state-machine suite (and,
+  // for WebKit, the iOS-viewport one): a Chrome PASS is not evidence for either engine's
+  // WebSocket lifecycle, storage or orientation behaviour, and those are exactly where the
+  // lobby's invariants live. Each spec file starts its own server on its own port.
+  projects: [
+    // iOS viewports are WebKit's gate; running them on Chrome too would prove nothing extra.
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, testIgnore: /ios-lobby\.spec\.ts$/ },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] }, testMatch: /[/\\]lobby\.spec\.ts$/ },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] }, testMatch: /[/\\](lobby|ios-lobby)\.spec\.ts$/ },
+  ],
   webServer: {
     command: 'npm run preview',
     url: 'http://localhost:4173',

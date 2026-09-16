@@ -1758,6 +1758,10 @@ test('the name can be set from the join screen, without losing the half-typed co
   await guest.keyboard.type('Convidada', { delay: 40 });
   await guest.keyboard.press('Enter');
   await guest.waitForFunction(() => window.__MEXE__.online!.phase() === 'join', undefined, { timeout: 10_000 });
+  // That one Enter committed the name and nothing else. Phaser can deliver a keydown and its
+  // keyup in the same frame as two `keydown` emits, and the second one used to land on the code
+  // screen this one just returned to — submitting the half-typed code as a join.
+  expect(await guest.evaluate(() => window.__MEXE__.online!.trace().map((m) => m.type))).not.toContain('join_room');
 
   // The code buffer survived the detour: only the remaining characters are typed here.
   await guest.keyboard.type(code.slice(3), { delay: 40 });

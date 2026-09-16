@@ -71,7 +71,6 @@ function defaultGenSeed(): number {
 
 interface Seat {
   seat: number;
-  id: string; // matches GameState.players[seat].id, e.g. "p0"
   name: string;
   token: string;
   ready: boolean;
@@ -119,6 +118,15 @@ interface RoomInternal {
   /** Identifies the match currently in progress; null in a lobby. A rematch gets a fresh one, so
    * "the room played again" is distinguishable from "the room re-sent the same match". */
   matchId: string | null;
+  /** Room seat of each player in the running match, by `GameState` player index — the one place
+   * the two numbering schemes are related. They are equal only when the occupied seats happen to
+   * be 0..n-1: `GameState` is a dense, turn-ordered array (the rules engine rotates an index),
+   * while a room seat is a stable chair that survives its occupant leaving. Empty in a lobby.
+   *
+   * Before this existed the two were assumed identical and a lobby with a gap (seats 0, 2, 3
+   * after seat 1 walked out between matches) was refused a start outright, which left the room
+   * permanently unable to play again. */
+  matchSeats: number[];
   /** How many matches this room has started. The nth match's summary carries `seq: n`. */
   matchSeq: number;
   /** When the current match started, for the history entry's duration. */
@@ -156,7 +164,7 @@ type ReadyResult =
 
 type StartResult =
   | { ok: true; started: true; players: RoomPlayerSummary[] }
-  | { ok: false; error: 'room_not_found' | 'not_host' | 'not_ready' | 'seat_gap' | 'game_started' };
+  | { ok: false; error: 'room_not_found' | 'not_host' | 'not_ready' | 'game_started' };
 
 type RoomSettingsResult =
   | { ok: true; settings: RoomSettings; changed: boolean }
@@ -198,7 +206,6 @@ function displayName(name: string, seat: number): string {
 function newSeat(seat: number, name: string, token: string): Seat {
   return {
     seat,
-    id: idOf(seat),
     name: displayName(name, seat),
     token,
     ready: false,
@@ -270,7 +277,7 @@ export class RoomManager {
     // out and the fewest-cards rule picked the winner.
     const stalemate = !state.players.some((p) => p.hand.length === 0);
     const winnerIndex = state.players.findIndex((p) => p.id === state.winnerId);
-    const winnerSeat = winnerIndex === -1 ? null : winnerIndex;
+    const winnerSeat = winnerIndex === -1 ? null : room.matchSeats[winnerIndex] ?? null;
     const winner = winnerSeat === null ? null : room.seats[winnerSeat];
     if (winner) winner.wins += 1;
     room.history.push({
@@ -336,6 +343,7 @@ export class RoomManager {
       activitySeq: 0,
       matchmade: false,
       resultRecorded: false,
+      matchSeats: [],
     };
     this.rooms.set(code, room);
     this.note(room, 'joined', seat);
@@ -582,9 +590,11 @@ export class RoomManager {
     if (occupied.length < MIN_PLAYERS || occupied.some((s) => !s.ready || !s.connected)) {
       return { ok: false, error: 'not_ready' };
     }
-    // GameState indexes players by turn seat. Never compact a lobby gap (e.g. seats 0 and 2),
-    // because that would make socket seat 2 point at a nonexistent player after start.
-    if (room.seats.slice(0, occupied.length).some((s) => s === null)) return { ok: false, error: 'seat_gap' };
+    // A lobby gap (e.g. seats 0, 2 and 3) is dealt, not refused: `matchSeats` records which room
+    // seat each dense player index belongs to, and every seat-taking entry point below translates
+    // through it. Seats themselves are never compacted — they are the stable chairs reconnect,
+    // turn order and the score are keyed on.
+    room.matchSeats = occupied.map((s) => s.seat);
 
     const seed = this.genSeed();
     const rng = createRng(seed);
@@ -626,7 +636,7 @@ export class RoomManager {
     if (room.processing) return { ok: false, reasons: ['reason.alreadySubmitted'] };
     const state = room.state;
     if (state.phase !== 'playing') return { ok: false, reasons: ['reason.notYourTurn'] };
-    if (state.activePlayerIndex !== seat) return { ok: false, reasons: ['reason.notYourTurn'] };
+    if (state.activePlayerIndex !== this.playerIndex(room, seat)) return { ok: false, reasons: ['reason.notYourTurn'] };
     if (rev !== room.rev) return { ok: false, reasons: ['reason.staleRevision'] };
     return { ok: true, room, state };
   }
@@ -657,9 +667,14 @@ export class RoomManager {
     after.players.forEach((p, i) => {
       if (p.hand.length !== 1) return;
       if ((before?.players[i]?.hand.length ?? 1) === 1) return;
-      const seat = room.seats[i];
+      const seat = room.seats[room.matchSeats[i] ?? i];
       if (seat) this.note(room, 'last_card', seat);
     });
+  }
+
+  /** Room seat -> dense `GameState` player index for the running match, or -1 off the table. */
+  private playerIndex(room: RoomInternal, seat: number): number {
+    return room.matchSeats.indexOf(seat);
   }
 
   /** Full validation path per docs/MULTIPLAYER.md §5. */
@@ -678,7 +693,8 @@ export class RoomManager {
       // and this way it is correctly rejected as `reason.unknownCard` here
       // rather than relying on the downstream `foreignCard` check (S6).
       const byId = new Map<string, Card>();
-      for (const c of state.players[seat]!.hand) byId.set(c.id, c);
+      const me = this.playerIndex(room, seat);
+      for (const c of state.players[me]!.hand) byId.set(c.id, c);
       for (const m of state.table) for (const c of m.cards) byId.set(c.id, c);
 
       const draftMelds: Meld[] = [];
@@ -700,7 +716,7 @@ export class RoomManager {
       // Hand counts are public in every view, so their difference is public too — this is the
       // whole "how did they finish" summary, with no card identity in it.
       if (next.phase === 'finished') {
-        room.winningMove = { seat, cardsPlayed: state.players[seat]!.hand.length - next.players[seat]!.hand.length };
+        room.winningMove = { seat, cardsPlayed: state.players[me]!.hand.length - next.players[me]!.hand.length };
       }
       return this.commitTurn(room, seat, next);
     } finally {
@@ -743,7 +759,7 @@ export class RoomManager {
     for (const [code, room] of this.rooms) {
       const state = room.state;
       if (!state || state.phase !== 'playing') continue;
-      const active = room.seats[state.activePlayerIndex];
+      const active = room.seats[room.matchSeats[state.activePlayerIndex] ?? state.activePlayerIndex];
       if (!active) continue;
       if (!room.seats.some((s) => s !== null && s.connected)) continue;
 
@@ -765,14 +781,19 @@ export class RoomManager {
         active.missedTurns += 1;
         this.startTurnClock(room);
         this.noteCardCounts(room, state, next);
-        if (next.phase === 'finished') this.recordResult(room);
+        const finished = next.phase === 'finished';
+        if (finished) this.recordResult(room);
         const seat = active.seat;
-        if (active.missedTurns >= room.settings.missedTurnLimit) {
+        // A finish wins over the missed-turn limit. The limit exists to stop a walked-away seat
+        // holding the others on a board that only ever advances by draw — a board that just
+        // ended is not that board, and closing the room here would replace a result screen with
+        // "a player missed too many turns" and throw away the rematch lobby.
+        if (!finished && active.missedTurns >= room.settings.missedTurnLimit) {
           this.rooms.delete(code);
           advanced.push({ code, gameOver: false, closed: true, timedOut: seat });
           continue;
         }
-        advanced.push({ code, gameOver: next.phase === 'finished', timedOut: seat });
+        advanced.push({ code, gameOver: finished, timedOut: seat });
       } catch {
         this.rooms.delete(code);
         advanced.push({ code, gameOver: false, crashed: true });
@@ -809,6 +830,7 @@ export class RoomManager {
     room.state = null;
     room.rev = 0;
     room.matchId = null;
+    room.matchSeats = [];
     room.winningMove = null;
     room.turnStartedAt = null;
     room.turnBudgetMs = 0;
@@ -871,8 +893,10 @@ export class RoomManager {
    * broadcast path can never drift apart on what a seat is told. */
   private viewFor(room: RoomInternal, seat: number): GameView {
     return buildView(
-      room.state!, seat, room.rev, room.settings, this.msLeft(room),
-      room.seats.map((s) => s?.missedTurns ?? 0), room.mexeBonusClaimed, room.matchId ?? '',
+      room.state!, this.playerIndex(room, seat), room.rev, room.settings, this.msLeft(room),
+      // Both arrays are indexed by dense player index, like everything else inside a view.
+      room.matchSeats.map((s) => room.seats[s]?.missedTurns ?? 0), room.mexeBonusClaimed,
+      room.matchId ?? '', room.matchSeats,
     );
   }
 

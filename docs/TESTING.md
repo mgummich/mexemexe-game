@@ -46,6 +46,15 @@ flood guard, caps), `config.test.ts`, `log.test.ts` (redaction), and
 seat ownership, hand privacy in a real frame, and a clean session writing
 nothing to stderr.
 
+`lobby-soak.test.ts` is the seeded counterpart to the named `LB-*` browser
+scenarios: a deterministic random walk of join/leave/ready/disconnect/
+reconnect/start/play/rematch against a real `RoomManager` (10 seeds x 1200
+steps), re-checking every room invariant after each step — seat uniqueness, the
+roster matching who actually joined, host authority on an occupied chair, a
+token never resolving to another seat, the lock following the match state, and
+the seat/player-index mapping inside a view (MULTIPLAYER.md §3f). A failure
+prints the step log and the seed replays it exactly.
+
 These also run as part of `npm run test`.
 
 ## Lint — `npm run lint`
@@ -59,7 +68,7 @@ ESLint over `src tests e2e e2e-cross e2e-multiplayer e2e-pwa server`, then
 |---|---|---|---|
 | Screenshots + perf | `playwright.config.ts` (`e2e/`) | `npm run screenshot` | Boots the built game, drives Mexe Mode through the debug API, captures `docs/screenshots/*.png`, records fps and console errors into `verify-log.json` |
 | Cross-browser layout | `playwright.cross.config.ts` (`e2e-cross/`) | `npm run verify:cross` | Canvas fits, centres and keeps 16:9 on Chrome, Firefox, Safari, Pixel 7, iPhone 14 (both orientations) and iPad; rotation and mobile tap gameplay |
-| Multiplayer | `playwright.multiplayer.config.ts` (`e2e-multiplayer/`) | `npm run verify:multiplayer` | Two-plus real clients against the real server: legal turns, illegal-proposal rejection, hand privacy, 3P/4P rotation, reconnect/resync |
+| Multiplayer | `playwright.multiplayer.config.ts` (`e2e-multiplayer/`) | `npm run verify:multiplayer` | Two-plus real clients against the real server: legal turns, illegal-proposal rejection, hand privacy, 3P/4P rotation, reconnect/resync. Three projects: `chromium` runs everything, `firefox` and `webkit` run the `LB-*` lobby state-machine suite, `webkit` also the iOS-viewport one |
 | PWA / offline | `playwright.pwa.config.ts` (`e2e-pwa/`) | `npm run verify:pwa` | Service worker registers, offline reload boots to the menu, offline local/AI/tutorial play, online disabled offline, the update handover |
 
 All four serve the production build via `npm run preview` — the service worker
@@ -71,7 +80,7 @@ shipped bundle.
 | Gate | What it adds |
 |---|---|
 | `npm run verify` | `test` + `lint` + `screenshot` + `scripts/check-verify.mjs`: no console/page errors, every expected screenshot present, fps floors met. |
-| `npm run verify:multiplayer` | Build + the multiplayer suite + `scripts/check-verify-multiplayer.mjs`: no client console errors, no server stderr, no accepted illegal proposal, hand privacy held, state hashes agree. |
+| `npm run verify:multiplayer` | Build + the multiplayer suite on Chromium, Firefox and WebKit + `scripts/check-verify-multiplayer.mjs`: no client console errors, no server stderr, no accepted illegal proposal, hand privacy held, state hashes agree, and per-engine lobby evidence (rendered seat gaps, a three-match endurance run, the iOS orientation/rematch gate). |
 | `npm run verify:cross` | Build + the cross-browser layout suite. |
 | `npm run verify:pwa` | Build + the offline/update suite. |
 | `npm run verify:preview` | Build + `scripts/check-preview.mjs`: `dist/` serves, every asset reference resolves, no credential-shaped strings in the bundle. |
@@ -103,11 +112,15 @@ stripped from exports, and `?playlog=0` turns it off. See
 
 `.github/workflows/ci.yml` runs on every push and PR, in parallel jobs: lint +
 unit tests + build, multiplayer verification, PWA verification, the e2e
-screenshot suite with its gate, and cross-browser layout. Failures upload
-`test-results/` and the relevant log as artifacts.
+screenshot suite with its gate, and cross-browser layout. The multiplayer job
+installs Chromium, Firefox and WebKit, because its gate script refuses to pass
+without per-engine lobby evidence; it is the longest job on a PR for the same
+reason. Failures upload `test-results/` and the relevant log as artifacts.
 
 `.github/workflows/nightly.yml` re-runs the flakier surfaces with tracing and
-repeats (WebKit cross-browser, perf with `--repeat-each=5`, multiplayer).
+repeats (WebKit cross-browser, perf with `--repeat-each=5`, and the multiplayer
+suite on Chromium under tracing, whose point is losing races a fast machine
+always wins).
 `codeql.yml` scans the source; `pages.yml` deploys game + docs on `main`;
 `release.yml` publishes a GitHub Release when a `vX.Y.Z` tag is pushed.
 

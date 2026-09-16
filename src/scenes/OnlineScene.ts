@@ -18,7 +18,7 @@ import {
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
-import { debugApi } from '../verification/debug-api';
+import { debugApi, type RenderedSeatRow } from '../verification/debug-api';
 
 /** Room codes are always this long — see server/rooms.ts CODE_LENGTH. */
 const CODE_LENGTH = 5;
@@ -60,6 +60,10 @@ function browseRows(portrait: boolean): number {
  * something wrong with the player or the connection. All four are ordinary traffic for a list
  * built from a snapshot, so they are answered on the browser instead of on the error screen. */
 const STALE_LISTING_CODES: readonly string[] = ['room_not_found', 'room_closed', 'room_full', 'game_started'];
+/** Refusals the lobby answers in place. Each one says something about the room's current state
+ * that the player can act on from the lobby they are already looking at — unlike `room_closed` or
+ * `invalid_token`, which mean the seat itself is gone and the error screen is the honest answer. */
+const LOBBY_NOTICE_CODES: readonly string[] = ['not_ready', 'not_host', 'game_started', 'rate_limited', 'room_full'];
 
 /**
  * How long MATCH FOUND stays on screen before the table does. Long enough to read three words and
@@ -119,7 +123,13 @@ export class OnlineScene extends Phaser.Scene {
    * locally — a session win the client could invent would be a score the server never awarded. */
   private party: PartyState = EMPTY_PARTY;
   private settingsLocked = false;
-  private ready = false;
+  /** Server truth, never a local mirror: our own seat's ready bit exactly as the last
+   * `room_joined`/`room_state` reported it. A tap sends `set_ready` and the server's answer is
+   * what re-renders the button, so a reconnect, a reload or a settings reset can never leave the
+   * button disagreeing with the row it sits under. */
+  private get ready(): boolean {
+    return this.players.find((p) => p.seat === this.seat)?.ready ?? false;
+  }
   private errorMsg: string | null = null;
   private status: ConnStatus = 'closed';
   private unsubs: (() => void)[] = [];
@@ -140,6 +150,9 @@ export class OnlineScene extends Phaser.Scene {
   /** Which buffer the hidden DOM input is currently mirroring, so switching screens rebuilds it
    * with the right length/sanitizer instead of typing a name into the code buffer. */
   private inputFor: 'code' | 'name' = 'code';
+  /** The last DOM key event `wireCodeEntry` acted on, so a repeat delivery of the same event is
+   * ignored rather than replayed against whatever screen the first delivery moved to. */
+  private lastKeyEvent: KeyboardEvent | null = null;
   /** Name-entry buffer, mirrored the same way `codeInput` is. */
   private nameInput = '';
   /** Set when this scene was entered from a finished match (ONLINE-23): same room, same code,
@@ -155,6 +168,13 @@ export class OnlineScene extends Phaser.Scene {
   /** ON-09: shown until the player readies again after the host changed the room's fairness
    * settings and the server cleared everyone's ready bit. */
   private settingsChangedNotice = false;
+  /** A server refusal that is *about the room's current state* rather than about the player's
+   * place in it — not everyone is ready, the caller is not the host, the match already started.
+   * Shown on the lobby itself and cleared on the next action: the player is still seated, every
+   * other control still works, and replacing the lobby with a full-screen error would both cost
+   * them the screen they were acting on and leave this client believing it holds no seat while
+   * the server still holds one. Same reasoning as the room browser's own notice (§3d). */
+  private lobbyNotice: string | null = null;
   /** Last reaction the room sent, shown briefly in the lobby. */
   private lastReaction: { seat: number; reaction: ReactionId } | null = null;
   private resume: { client: NetClient; code: string; seat: number } | null = null;
@@ -171,6 +191,11 @@ export class OnlineScene extends Phaser.Scene {
   private browseNotice: string | null = null;
   /** Rooms this device recently got into, read from local display history (never the token). */
   private recent: RecentRoom[] = [];
+  /** What the seat rows actually PAINTED on the last rebuild, in row order — recorded by
+   * `renderSeatRow` as it draws. Canvas text is unreadable to Playwright, and the internal
+   * `players` list is exactly the thing a rendering bug can disagree with, so a lobby test that
+   * only asserts `players()` cannot see a seat that vanished off the screen. */
+  private renderedSeats: RenderedSeatRow[] = [];
   /** Code of the join currently in flight, so a refusal can retire a dead recent-room entry
    * instead of offering it again next time. Cleared by the answer, whichever way it goes. */
   private pendingJoinCode: string | null = null;
@@ -241,20 +266,28 @@ export class OnlineScene extends Phaser.Scene {
     this.code = null;
     this.seat = null;
     this.players = [];
-    this.ready = false;
     this.errorMsg = null;
     this.codeInput = '';
     this.nameInput = '';
+    // Holding a DOM event across a scene restart would keep it alive for nothing.
+    this.lastKeyEvent = null;
     this.lastReaction = null;
     this.party = EMPTY_PARTY;
     this.rematch = false;
     this.settingsChangedNotice = false;
+    this.lobbyNotice = null;
     this.nameError = false;
     this.inFlight.clear();
     this.visibility = DEFAULT_ROOM_VISIBILITY;
     this.listings = [];
     this.browseState = 'loading';
     this.pendingJoinCode = null;
+    this.browseNotice = null;
+    // Room-scoped server truth. Field initializers are not a reset (see D1 below): a scene
+    // restart into room B must never render room A's host, terms or lock state for a frame.
+    this.hostSeat = 0;
+    this.roomSettings = DEFAULT_ROOM_SETTINGS;
+    this.settingsLocked = false;
     this.focusables = [];
     this.focusIndex = -1;
     this.focusPhase = null;
@@ -435,16 +468,14 @@ export class OnlineScene extends Phaser.Scene {
       }),
       this.client.on('room_state', (msg) => {
         this.inFlight.delete('ready');
-        // The room re-opened as a lobby: seats are back to not-ready, so our own flag must be too,
-        // or READY would render as already pressed and its next tap would send `false`.
-        if (msg.locked === false && this.settingsLocked) this.ready = false;
-        // ON-09: the host changed the room's terms, so the server cleared every ready bit. The
-        // server's word is the only source of it — mirror it locally and say why, otherwise READY
-        // renders as still pressed and the player never learns the terms moved.
-        else if (this.ready && msg.players.some((p) => p.seat === this.seat && !p.ready)) {
-          this.ready = false;
-          this.settingsChangedNotice = true;
-        }
+        // ON-09: the host changed the room's terms, so the server cleared every ready bit. Say
+        // why, or the bit drops off the row with no explanation. Read off the server's own
+        // transition (ready -> not ready) rather than a local flag; the match->lobby recycle
+        // clears the same bit and is not a settings change, so it is excluded.
+        const recycled = this.settingsLocked && !msg.locked;
+        const wasReady = this.ready;
+        const nowReady = msg.players.find((p) => p.seat === this.seat)?.ready ?? false;
+        if (wasReady && !nowReady && !recycled) this.settingsChangedNotice = true;
         this.players = msg.players;
         this.roomSettings = msg.settings;
         this.hostSeat = msg.hostSeat;
@@ -540,6 +571,21 @@ export class OnlineScene extends Phaser.Scene {
           this.rebuild();
           return;
         }
+        // A refusal about the room's state, answered on the lobby instead of costing it. The room
+        // is still there and this client is still in it — only the action was refused.
+        if (this.phase === 'lobby' && LOBBY_NOTICE_CODES.includes(msg.code)) {
+          const shown = errorMessage(msg.code);
+          this.lobbyNotice = shown;
+          this.rebuild();
+          // Retires only the line it was started for — a second refusal in the same four seconds
+          // owns its own timer, and this one must not cut the newer line short.
+          this.time.delayedCall(4000, () => {
+            if (this.lobbyNotice !== shown) return;
+            this.lobbyNotice = null;
+            this.rebuild();
+          });
+          return;
+        }
         // Player sees a translated, actionable sentence — never the raw dev-facing `msg.message`
         // or `msg.code`. The raw code stays available via `client.trace`/debug API for logs.
         this.errorMsg = errorMessage(msg.code);
@@ -600,10 +646,7 @@ export class OnlineScene extends Phaser.Scene {
       joinRoom: (code, name) => this.joinCode(code, name),
       displayName: () => this.playerName(),
       react: (reaction) => this.client.sendReaction(reaction),
-      setReady: (ready) => {
-        this.ready = ready;
-        this.client.setReady(ready);
-      },
+      setReady: (ready) => this.client.setReady(ready),
       startGame: () => this.client.startGame(),
       setRoomSettings: (s) => this.client.setRoomSettings(s),
       roomSettings: () => this.roomSettings,
@@ -640,6 +683,8 @@ export class OnlineScene extends Phaser.Scene {
       browseNotice: () => this.browseNotice,
       leaveRoom: () => this.client.leaveRoom(),
       recentRooms: () => this.recent.map((r) => ({ code: r.code, host: r.host })),
+      lobbySeats: () => this.renderedSeats,
+      lobbyNotice: () => this.lobbyNotice,
       comprar: () => { /* no in-match action while still in the lobby */ },
       submitRaw: () => { /* not applicable in the lobby */ },
       forceDrop: () => this.client.forceDrop(),
@@ -685,6 +730,13 @@ export class OnlineScene extends Phaser.Scene {
    * same sanitizer the DOM input uses, so a buffer is always a submittable value. */
   private wireCodeEntry(): void {
     const onKey = (ev: KeyboardEvent): void => {
+      // Phaser can hand the same DOM event to this listener twice — a keydown and its keyup
+      // landing in one frame (an ordinary quick Enter tap) drains the queue in a way that emits
+      // the keydown again. Acting on it twice is not cosmetic here: the first Enter commits the
+      // name and switches the screen back to the code, and the second one then submits the
+      // half-typed code that screen is still holding. One event, one action.
+      if (ev === this.lastKeyEvent) return;
+      this.lastKeyEvent = ev;
       const naming = this.phase === 'name';
       if (this.phase !== 'join' && !naming) {
         this.onNavKey(ev);
@@ -897,6 +949,7 @@ export class OnlineScene extends Phaser.Scene {
   }
 
   private rebuild(): void {
+    this.renderedSeats = [];
     this.tweens.killAll();
     this.children.removeAll(true);
     // Destroyed with the rest of the display list; the once-a-second tick checks for it.
@@ -1446,6 +1499,7 @@ export class OnlineScene extends Phaser.Scene {
       .setOrigin(0, 0.5);
 
     if (!filled) {
+      this.renderedSeats.push({ seat, name: '', you: false, host: false, status: 'empty', wins: 0 });
       // An empty chair is an invitation, not dead space: it says what it is waiting for and hands
       // over the share/copy path on tap, which is the action a player actually wants there.
       this.add.text(left + rowW, y, t('online.waitingPlayer'), fontStyle(7, '#8a7f6e')).setOrigin(1, 0.5);
@@ -1468,6 +1522,14 @@ export class OnlineScene extends Phaser.Scene {
     const statusEl = this.add
       .text(left + rowW, y, this.betweenMatches() ? `${player.wins} · ${statusText}` : statusText, fontStyle(7, statusColor))
       .setOrigin(1, 0.5);
+    this.renderedSeats.push({
+      seat,
+      name,
+      you: isMe,
+      host: seat === this.hostSeat,
+      status: !player.connected ? 'offline' : player.ready ? 'ready' : 'waiting',
+      wins: player.wins,
+    });
     // Name plus badges plus status has to fit one row on a 390-wide phone too. The status word is
     // the one that must never be cut (it is the state of the seat), so the name side gives way —
     // trimmed character by character, never overlapped.
@@ -1612,12 +1674,23 @@ export class OnlineScene extends Phaser.Scene {
     // Seat rows start below the summary line and its host hint, not at a fixed 128 — the two
     // lines above would otherwise sit on top of the first seat. One spare row is drawn while the
     // table is not full, so "someone else can still join" is visible rather than implied.
-    const seatCount = Math.min(MAX_SEATS, this.players.length + (this.players.length < MAX_SEATS ? 1 : 0));
+    // Counted from the highest OCCUPIED seat, never from players.length: seats never move, so a
+    // room holding seats 0 and 3 has two players and four rows. Sizing by length dropped the
+    // occupant of every seat above a gap off the screen entirely (LB-04/05/06).
+    const highestOccupied = this.players.reduce((max, p) => Math.max(max, p.seat), -1);
+    const spare = this.players.length < MAX_SEATS ? 1 : 0;
+    const seatCount = Math.min(MAX_SEATS, Math.max(highestOccupied + 1, this.players.length + spare));
     for (let seat = 0; seat < seatCount; seat++) {
       this.renderSeatRow(vy(132 + seat * 13), this.players.find((p) => p.seat === seat) ?? null, seat);
     }
 
-    if (this.settingsChangedNotice) {
+    if (this.lobbyNotice) {
+      this.add
+        .text(cx(), vy(180), this.lobbyNotice, {
+          ...fontStyle(6, '#ff9b5e'), align: 'center', wordWrap: { width: panelW(240) },
+        })
+        .setOrigin(0.5);
+    } else if (this.settingsChangedNotice) {
       this.add
         .text(cx(), vy(180), t('online.settingsChanged'), {
           ...fontStyle(6, '#f7d23e'), align: 'center', wordWrap: { width: panelW(240) },
@@ -1646,10 +1719,10 @@ export class OnlineScene extends Phaser.Scene {
     const stacked = view().portrait;
     const readyBtn = new PixelButton(this, cx(), stacked ? vy(208) : vy(216), this.ready ? t('online.readyOn') : t('online.ready'), () => {
       this.fireOnce('ready', 300, () => {
-        this.ready = !this.ready;
         this.rematch = false;
         this.settingsChangedNotice = false;
-        this.client.setReady(this.ready);
+        this.lobbyNotice = null;
+        this.client.setReady(!this.ready);
       });
     }, { textureBase: 'btn-feito', w: 100, h: 20, size: 8, primary: true });
     readyBtn.setEnabled(!this.inFlight.has('ready'));

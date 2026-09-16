@@ -226,7 +226,13 @@ export class GameScene extends Phaser.Scene {
   private localSeat = 0;
   private online: {
     client: NetClient;
+    /** This client's ROOM seat — the stable chair, used for the handoff back into the lobby.
+     * Not a player index: see `seats` and `localSeat`. */
     seat: number;
+    /** Room seat per player index, from the view. Translates the room seats that arrive on
+     * `turn_timeout`/`player_disconnected`/`player_reconnected`/`winningMove` into the dense
+     * indices everything in this scene (and in `GameState`) counts by. */
+    seats: number[];
     code: string;
     lastRev: number;
     /** Last state_sync's mexeBonusClaimed — the false->true edge is what triggers the notice. */
@@ -411,7 +417,9 @@ export class GameScene extends Phaser.Scene {
     this.tutorialCompletedRecorded = false;
 
     // online
-    this.localSeat = this.config.online ? this.config.online.seat : 0;
+    // A player index into `GameState.players`, never a room seat — the two differ whenever the
+    // room has a seat gap (see GameView.seats).
+    this.localSeat = this.config.online ? this.config.online.view.seat : 0;
     this.pendingMissedLimitClose = false;
     this.setOnlinePending(false);
     this.onlineDesyncs = 0;
@@ -469,6 +477,7 @@ export class GameScene extends Phaser.Scene {
       ? {
           client: config.online.client,
           seat: config.online.seat,
+          seats: config.online.view.seats,
           code: config.online.code,
           lastRev: config.online.view.rev,
           matchId: config.online.view.matchId,
@@ -649,15 +658,23 @@ export class GameScene extends Phaser.Scene {
     debugApi.ready = true;
   }
 
+  /** Room seat -> dense player index. Falls back to the identity mapping, which is what a room
+   * with no seat gap has anyway. */
+  private playerIndexOf(roomSeat: number): number {
+    const i = this.online?.seats.indexOf(roomSeat) ?? -1;
+    return i === -1 ? roomSeat : i;
+  }
+
   /** Socket wiring + debug-api surface for an online match. Never runs offline. */
   private wireOnline(client: NetClient): void {
     this.unsubs.push(
       client.on('state_sync', (msg) => this.onOnlineStateSync(msg.view)),
       client.on('proposal_rejected', (msg) => this.onOnlineRejected(msg.reasons)),
       client.on('game_over', (msg) => this.onOnlineGameOver(msg)),
-      client.on('turn_timeout', (msg) => this.onOnlineTurnTimeout(msg.seat)),
-      client.on('player_disconnected', (msg) => this.onOnlineOpponentEvent(msg.seat, true)),
-      client.on('player_reconnected', (msg) => this.onOnlineOpponentEvent(msg.seat, false)),
+      // Room seats on the wire, player indices in this scene — translated once, here.
+      client.on('turn_timeout', (msg) => this.onOnlineTurnTimeout(this.playerIndexOf(msg.seat))),
+      client.on('player_disconnected', (msg) => this.onOnlineOpponentEvent(this.playerIndexOf(msg.seat), true)),
+      client.on('player_reconnected', (msg) => this.onOnlineOpponentEvent(this.playerIndexOf(msg.seat), false)),
       client.on('error', (msg) => this.onOnlineTerminalError(msg)),
       client.onStatus((s) => this.onOnlineStatusChange(s)),
     );
@@ -665,6 +682,7 @@ export class GameScene extends Phaser.Scene {
       status: () => client.getStatus(),
       code: () => this.online?.code ?? null,
       seat: () => this.online?.seat ?? null,
+      localSeat: () => this.localSeat,
       rev: () => this.online?.lastRev ?? null,
       players: () => [],
       notice: () => this.onlineNoticeText?.text ?? '',
@@ -765,6 +783,7 @@ export class GameScene extends Phaser.Scene {
     const bonusJustClaimed = view.mexeBonusClaimed && !this.online.mexeBonusClaimed;
     this.online.mexeBonusClaimed = view.mexeBonusClaimed;
     this.online.missedTurns = view.missedTurns;
+    this.online.seats = view.seats;
     if (hadDraft) this.setOnlineNotice(t('online.draftDropped'));
     else if (bonusJustClaimed) {
       this.setOnlineNotice(t('online.mexeBonusGranted', { s: Math.round(view.settings.mexeBonusMs / 1000) }));
@@ -837,7 +856,7 @@ export class GameScene extends Phaser.Scene {
     // The room survives a finished match now, so the results screen needs the way back into it.
     // The winning move is named in public terms the server already publishes — how many cards the
     // winner put down — never the cards themselves.
-    const mover = msg.winningMove ? state.players[msg.winningMove.seat] : undefined;
+    const mover = msg.winningMove ? state.players[this.playerIndexOf(msg.winningMove.seat)] : undefined;
     const winningMoveText = mover && msg.winningMove
       ? t('game.lastMove.played', { name: mover.name, n: msg.winningMove.cardsPlayed })
       : '';
