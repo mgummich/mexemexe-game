@@ -36,6 +36,13 @@ for (const s of shots) {
     failed = true;
     console.error(`verify: missing screenshot ${s.screenshot}`);
   }
+  // A fallback texture means the shipped build is missing a file the manifest declares: the game
+  // still boots (BootScene substitutes procedural art) so nothing throws, which is exactly why it
+  // needs a gate rather than a log line. ASSETS.md has always documented this as fatal.
+  if (s.missingAssets.length) {
+    failed = true;
+    console.error(`verify: ${s.name} fell back to placeholder art for:`, s.missingAssets);
+  }
   // fps is gated in e2e/screenshot.spec.ts itself, by the three @perf tests' own scene-appropriate,
   // measured floors (50 unzoomed, 30 crowded-max on CI, 20 zoomed) — a second, coarser floor here
   // over every shot could only disagree with those, and for non-perf shots the reading is
