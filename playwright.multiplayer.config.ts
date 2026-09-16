@@ -5,10 +5,17 @@ import { defineConfig, devices } from '@playwright/test';
 // the local `npm run verify` run, which never touches this file.
 export default defineConfig({
   testDir: 'e2e-multiplayer',
+  globalSetup: './e2e-multiplayer/global-setup.ts',
   // 108-card deck means the deterministic stalemate drain takes ~94 draw rounds now
   // (was ~38 pre-adaptation) — give the single spec more room than the default 60s.
   timeout: 180_000,
-  workers: 1, // single spec, single shared WS server on a fixed test port
+  // multiplayer.spec.ts is `mode: 'parallel'` and each worker spawns its own server on
+  // 8799 + parallelIndex, which is what took this suite off the PR critical path (~16m serial on
+  // a shared runner). Three, not more: every test drives 2-4 browser contexts plus a server, and
+  // ubuntu-latest has 4 cores — past that the contexts starve each other and the suite's own
+  // timeouts start firing. The lobby specs stay one-worker-per-file (no parallel mode), so their
+  // fixed per-engine ports are still safe.
+  workers: 3,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: {
     baseURL: 'http://localhost:4173',

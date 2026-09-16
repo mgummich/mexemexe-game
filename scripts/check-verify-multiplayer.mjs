@@ -1,14 +1,37 @@
-// Final gate for verify:multiplayer: inspects the multiplayer Playwright log and fails on any
-// client console error, any server error/crash, any missing screenshot, or any illegal
-// proposal that was accepted. Mirrors scripts/check-verify.mjs.
+// Final gate for verify:multiplayer: merges multiplayer.spec.ts's per-worker evidence shards,
+// writes the merged result back to verify-multiplayer-log.json (so the CI artifact upload and
+// doc consumers keep finding it there), then fails on any client console error, any server
+// error/crash, any missing screenshot, or any illegal proposal that was accepted. Mirrors
+// scripts/check-verify.mjs.
 import fs from 'node:fs';
+import path from 'node:path';
 
 const LOG = 'docs/screenshots/verify-multiplayer-log.json';
-if (!fs.existsSync(LOG)) {
-  console.error('verify:multiplayer: missing', LOG);
+const PARTS_DIR = 'docs/screenshots/verify-multiplayer-log-parts';
+if (!fs.existsSync(PARTS_DIR)) {
+  console.error('verify:multiplayer: missing', PARTS_DIR);
   process.exit(1);
 }
-const log = JSON.parse(fs.readFileSync(LOG, 'utf8'));
+const partFiles = fs.readdirSync(PARTS_DIR).filter((f) => f.endsWith('.json')).sort();
+if (partFiles.length === 0) {
+  console.error('verify:multiplayer: no shards in', PARTS_DIR);
+  process.exit(1);
+}
+// Screenshots and server output are the union of every shard — each worker ran its own server,
+// and one crashed server anywhere has to fail the gate. Every other key is written by exactly
+// one test, so a plain assign is enough; sorted filenames keep the order deterministic.
+const log = { server: { stdout: [], stderr: [] }, screenshots: [] };
+for (const f of partFiles) {
+  const part = JSON.parse(fs.readFileSync(path.join(PARTS_DIR, f), 'utf8'));
+  for (const [k, v] of Object.entries(part)) {
+    if (k === 'screenshots') log.screenshots.push(...v);
+    else if (k === 'server') {
+      log.server.stdout.push(...(v.stdout ?? []));
+      log.server.stderr.push(...(v.stderr ?? []));
+    } else log[k] = v;
+  }
+}
+fs.writeFileSync(LOG, JSON.stringify(log, null, 2) + '\n');
 let failed = false;
 
 // Which engines must have lobby evidence is a CI-schedule decision, not a property of the run:
@@ -131,11 +154,24 @@ for (const shot of EXPECTED_DEMO_SHOTS) {
 // this run was asked to cover. A Chrome pass is not evidence for Firefox or WebKit, which is why
 // the nightly matrix still demands all three.
 const LOBBY_LOG = 'docs/screenshots/verify-lobby-log.json';
-if (!fs.existsSync(LOBBY_LOG)) {
+const LOBBY_PARTS_DIR = 'docs/screenshots/verify-lobby-log-parts';
+if (!fs.existsSync(LOBBY_PARTS_DIR)) {
   failed = true;
-  console.error('verify:multiplayer: missing', LOBBY_LOG);
+  console.error('verify:multiplayer: missing', LOBBY_PARTS_DIR);
 } else {
-  const lobby = JSON.parse(fs.readFileSync(LOBBY_LOG, 'utf8'));
+  // lobby.spec.ts runs parallel, so each engine's evidence arrives in as many shards as there
+  // were workers. Merge per engine — screenshots and server stderr are the union, every other
+  // key is written by exactly one test — then write the merged result back to verify-lobby-log
+  // .json for the artifact upload and doc consumers.
+  const lobby = {};
+  for (const f of fs.readdirSync(LOBBY_PARTS_DIR).filter((n) => n.endsWith('.json')).sort()) {
+    const { engine, screenshots = [], serverStderr = [], ...rest } = JSON.parse(fs.readFileSync(path.join(LOBBY_PARTS_DIR, f), 'utf8'));
+    const run = (lobby[engine] ??= { screenshots: [], serverStderr: [] });
+    run.screenshots.push(...screenshots);
+    run.serverStderr.push(...serverStderr);
+    Object.assign(run, rest);
+  }
+  fs.writeFileSync(LOBBY_LOG, JSON.stringify(lobby, null, 2) + '\n');
   for (const engine of ENGINES) {
     const run = lobby[engine];
     if (!run) {

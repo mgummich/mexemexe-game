@@ -5,6 +5,8 @@ playwright-report/
 coverage/
 verify-log.json
 verify-log-parts/
+verify-multiplayer-log-parts/
+verify-lobby-log-parts/
 *.log
 .DS_Store
 .playwright-mcp/

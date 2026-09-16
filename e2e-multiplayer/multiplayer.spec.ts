@@ -1,5 +1,6 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -11,8 +12,21 @@ import path from 'node:path';
  */
 
 const OUT_DIR = 'docs/screenshots';
-const LOG_PATH = path.join(OUT_DIR, 'verify-multiplayer-log.json');
-const WS_PORT = 8799;
+// One evidence shard per worker process, merged back into verify-multiplayer-log.json by
+// scripts/check-verify-multiplayer.mjs — the shape e2e/screenshot.spec.ts already uses. The old
+// single shared file cannot survive parallel workers: two read-modify-write cycles interleave and
+// one worker's evidence silently disappears.
+const PARTS_DIR = path.join(OUT_DIR, 'verify-multiplayer-log-parts');
+const PART_PATH = path.join(PARTS_DIR, `${randomUUID()}.json`);
+// This file runs parallel (see the describe.configure below), so every worker spawns its own
+// server and needs its own port. parallelIndex, not workerIndex: it is bounded by the worker
+// count, so the ports stay in a known small range instead of climbing with every restart.
+//
+// Port blocks across this directory, one slot per parallel worker: 8799-8809 this file's server,
+// 8810-8819 its room-creation-budget server, 8820+ the lobby spec (see lobby.spec.ts), 8776 the
+// iOS lobby spec. None of them is the server's own DEFAULT_PORT (8787).
+const PARALLEL_INDEX = Number(process.env.TEST_PARALLEL_INDEX ?? 0);
+const WS_PORT = 8799 + PARALLEL_INDEX;
 const WS_URL = `ws://localhost:${WS_PORT}`;
 // Fixed so the deal is deterministic: seat 0's hand contains a ready-made legal run
 // (diamonds J-Q-K), and the draw pile always holds 108 - 2*7 = 94 cards (used below to
@@ -38,6 +52,12 @@ async function waitForHealth(url: string, timeoutMs = 15_000): Promise<void> {
   throw new Error(`server health check timed out: ${url}`);
 }
 
+// Every test here builds its own rooms from scratch against its worker's own server, so nothing
+// in this file is ordered — running it parallel is what takes the CI job off the critical path
+// (it was ~16m serial, the longest job on every PR). Workers come from
+// playwright.multiplayer.config.ts; the lobby specs stay one-worker-per-file.
+test.describe.configure({ mode: 'parallel' });
+
 test.beforeAll(async () => {
   // Run the local tsx binary directly (not via `npx`/`npm run`) — npm/npx write their own
   // "notice" lines to stderr, which would otherwise look like a server error to the gate.
@@ -54,6 +74,9 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   serverProc.kill('SIGTERM');
+  // Per worker, not per suite: each worker runs its own server, and a crash in any of them has
+  // to reach the gate. The gate concatenates every shard's server output.
+  appendLog({ server: { stdout: serverStdout, stderr: serverStderr } });
 });
 
 const SCALE = 1280 / 480; // logical 480x270 canvas fills the 1280x720 viewport (Scale.FIT)
@@ -291,28 +314,22 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
   const traceB = await pageB.evaluate(() => window.__MEXE__.online?.trace() ?? []);
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  fs.writeFileSync(
-    LOG_PATH,
-    JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        roomCode: code,
-        seed: TEST_SEED,
-        revisionsObserved,
-        clients: {
-          a: { consoleErrors: consoleErrorsByPage.get(pageA) ?? [], pageErrors: errorsA },
-          b: { consoleErrors: consoleErrorsByPage.get(pageB) ?? [], pageErrors: errorsB },
-        },
-        server: { stdout: serverStdout, stderr: serverStderr },
-        trace: { a: traceA, b: traceB },
-        illegalProposal: { reasons: rejectionReasons, accepted: illegalProposalAccepted },
-        reconnect,
-        screenshots,
-      },
-      null,
-      2,
-    ),
-  );
+  // Server output is not recorded here any more — afterAll writes it once per worker, so a crash
+  // in a worker this test never ran on still reaches the gate.
+  appendLog({
+    generatedAt: new Date().toISOString(),
+    roomCode: code,
+    seed: TEST_SEED,
+    revisionsObserved,
+    clients: {
+      a: { consoleErrors: consoleErrorsByPage.get(pageA) ?? [], pageErrors: errorsA },
+      b: { consoleErrors: consoleErrorsByPage.get(pageB) ?? [], pageErrors: errorsB },
+    },
+    trace: { a: traceA, b: traceB },
+    illegalProposal: { reasons: rejectionReasons, accepted: illegalProposalAccepted },
+    reconnect,
+    screenshots,
+  });
 
   await pageA.context().close();
   await pageB.context().close();
@@ -446,11 +463,9 @@ test('three and four clients: host starts ready room and turns rotate through ev
     };
     for (const page of pages) await page.context().close();
   }
-  // The 2P test writes the shared evidence log first; append 3P/4P seats and screenshots so
-  // one artifact records every alpha player-count run rather than leaving evidence implicit.
-  const log = JSON.parse(fs.readFileSync(LOG_PATH, 'utf8')) as Record<string, unknown>;
-  log.playerCountRuns = playerCountRuns;
-  fs.writeFileSync(LOG_PATH, JSON.stringify(log, null, 2));
+  // 3P/4P seats and screenshots, so one artifact records every alpha player-count run rather
+  // than leaving the evidence implicit.
+  appendLog({ playerCountRuns });
 });
 
 test('in-canvas join code, hand privacy, and an explicit resync round-trip', async ({ browser }) => {
@@ -525,27 +540,28 @@ test('in-canvas join code, hand privacy, and an explicit resync round-trip', asy
   ];
   expect(errors).toEqual([]);
 
-  const log = JSON.parse(fs.readFileSync(LOG_PATH, 'utf8')) as Record<string, unknown>;
-  log.keyboardJoin = { code, screenshot: joinShot };
-  log.handPrivacy = privacy;
-  log.resync = { revisionBefore: revBefore, revisionAfter: revAfter, desyncs };
-  log.screenshots = [...((log.screenshots as string[]) ?? []), ...screenshots];
-  log.server = { stdout: serverStdout, stderr: serverStderr };
-  fs.writeFileSync(LOG_PATH, JSON.stringify(log, null, 2));
+  appendLog({
+    keyboardJoin: { code, screenshot: joinShot },
+    handPrivacy: privacy,
+    resync: { revisionBefore: revBefore, revisionAfter: revAfter, desyncs },
+    screenshots,
+  });
 
   await host.context().close();
   await guest.context().close();
 });
 
-/** Appends a screenshot path (and optional extra fields) to the shared evidence log written by
- * the first test above, the same way the keyboard-join test already does. */
+/** Appends a screenshot path (and optional extra fields) to this worker's evidence shard. Reads
+ * and writes only PART_PATH, so parallel workers never overwrite each other; the shards are
+ * merged into verify-multiplayer-log.json by scripts/check-verify-multiplayer.mjs. */
 function appendLog(extra: Record<string, unknown>): void {
-  const log = JSON.parse(fs.readFileSync(LOG_PATH, 'utf8')) as Record<string, unknown>;
+  fs.mkdirSync(PARTS_DIR, { recursive: true });
+  const log = fs.existsSync(PART_PATH) ? (JSON.parse(fs.readFileSync(PART_PATH, 'utf8')) as Record<string, unknown>) : {};
   for (const [k, v] of Object.entries(extra)) {
     if (k === 'screenshots') log.screenshots = [...((log.screenshots as string[]) ?? []), ...(v as string[])];
     else log[k] = v;
   }
-  fs.writeFileSync(LOG_PATH, JSON.stringify(log, null, 2));
+  fs.writeFileSync(PART_PATH, JSON.stringify(log, null, 2));
 }
 
 test('server unavailable: shows a recoverable, non-frozen state and the player can retry', async ({ browser }) => {
@@ -1029,7 +1045,10 @@ test('room-creation budget: the refusal reads as plain copy on desktop and on a 
   const screenshots: string[] = [];
   // Its own server on its own port, with a budget of one room per minute: the shared server runs
   // the default of 20 and every other test in this file would have to work around a tighter one.
-  const BUDGET_PORT = 8800;
+  // Per worker, like every port in this file — 8800 was worker 1's own server once this spec went
+  // parallel, and this test then spent its budget against a server with the default budget and
+  // waited 10s for a refusal that was never coming.
+  const BUDGET_PORT = 8810 + PARALLEL_INDEX;
   const budgetProc = spawn(path.join(process.cwd(), 'node_modules', '.bin', 'tsx'), ['server/index.ts'], {
     cwd: process.cwd(),
     env: {

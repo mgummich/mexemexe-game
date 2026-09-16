@@ -1,4 +1,5 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -14,30 +15,49 @@ import {
  * client can hold a correct roster and still drop an occupied seat off the screen.
  */
 
-const LOG_PATH = path.join(OUT_DIR, 'verify-lobby-log.json');
-// One port per engine so the three projects never race each other's server, and none of them is
-// the server's own DEFAULT_PORT (8787) — a dev server (or anything else) already on that port
-// answers the health check and the WebSocket never reaches the room manager under test.
-const PORTS: Record<string, number> = { chromium: 8778, firefox: 8779, webkit: 8777 };
+// One shard per worker, merged per engine by scripts/check-verify-multiplayer.mjs. A single
+// shared file cannot survive parallel workers: two read-modify-write cycles interleave and one
+// worker's evidence disappears. Same shape as multiplayer.spec.ts's shards.
+const PARTS_DIR = path.join(OUT_DIR, 'verify-lobby-log-parts');
+// One port block per engine, one slot per parallel worker, so neither the three projects nor the
+// workers within one project ever race each other's server. None of them is the server's own
+// DEFAULT_PORT (8787) — a dev server (or anything else) already on that port answers the health
+// check and the WebSocket never reaches the room manager under test. See multiplayer.spec.ts for
+// the blocks below 8820.
+const PORTS: Record<string, number> = { chromium: 8820, firefox: 8830, webkit: 8840 };
+const PARALLEL_INDEX = Number(process.env.TEST_PARALLEL_INDEX ?? 0);
+
+// Each test builds its own room from scratch against its worker's own server — nothing here is
+// ordered, and serial was the whole cost of this suite on CI.
+test.describe.configure({ mode: 'parallel' });
 
 let server: TestServer;
 const evidence: Record<string, unknown> = {};
 const screenshots: string[] = [];
 
 test.beforeAll(async ({}, testInfo) => {
-  server = await startTestServer(PORTS[testInfo.project.name] ?? 8785);
+  server = await startTestServer((PORTS[testInfo.project.name] ?? 8850) + PARALLEL_INDEX);
 });
 
 test.afterAll(async ({}, testInfo) => {
   server.stop();
-  fs.mkdirSync(OUT_DIR, { recursive: true });
-  const log = fs.existsSync(LOG_PATH) ? JSON.parse(fs.readFileSync(LOG_PATH, 'utf8')) : {};
-  log[testInfo.project.name] = {
-    ...evidence,
-    screenshots,
-    serverStderr: server.stderr.filter((l) => l.trim().length > 0),
-  };
-  fs.writeFileSync(LOG_PATH, JSON.stringify(log, null, 2));
+  fs.mkdirSync(PARTS_DIR, { recursive: true });
+  // Named per project, not once per module: one worker process can run this file for two
+  // projects in turn, and a single module-level path would have the second afterAll overwrite
+  // the first engine's evidence.
+  fs.writeFileSync(
+    path.join(PARTS_DIR, `${testInfo.project.name}-${randomUUID()}.json`),
+    JSON.stringify(
+      {
+        engine: testInfo.project.name,
+        ...evidence,
+        screenshots,
+        serverStderr: server.stderr.filter((l) => l.trim().length > 0),
+      },
+      null,
+      2,
+    ),
+  );
 });
 
 // ---------- lobby vocabulary ----------
