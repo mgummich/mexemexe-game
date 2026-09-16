@@ -31,9 +31,12 @@ jobs:
   multiplayer:
     name: Multiplayer verification
     runs-on: ubuntu-latest
-    # The suite runs ~10m locally and roughly 3x that on a shared runner: the lobby state machine
-    # is driven on three engines and every test spawns a real server and 2-4 browser contexts.
-    timeout-minutes: 45
+    # Chromium only on the PR path. The three-engine run was the longest job on every PR (~18m)
+    # and most of that is the lobby state machine replayed on Firefox and WebKit; that replay now
+    # runs in the nightly `multiplayer-all-engines` job instead. Engine parity is therefore a
+    # nightly guarantee, not a per-PR one — a WebSocket/storage/orientation regression that only
+    # shows on Firefox or WebKit is caught within a day rather than at review time.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -41,13 +44,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # All three engines: a Chrome pass is not evidence for another engine's WebSocket
-      # lifecycle, storage or orientation behaviour, which is where the lobby's invariants live.
-      # check-verify-multiplayer.mjs requires per-engine lobby evidence and fails without it.
-      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npx playwright install --with-deps chromium
       # Spawns the real WS server and gates on server stderr, client console errors, accepted
-      # illegal proposals and missing screenshots (scripts/check-verify-multiplayer.mjs).
-      - run: npm run verify:multiplayer
+      # illegal proposals and missing screenshots (scripts/check-verify-multiplayer.mjs). The
+      # --engines=chromium the script gets from this npm script is what keeps it from demanding
+      # the Firefox/WebKit lobby evidence this run no longer produces.
+      - run: npm run verify:multiplayer:chromium
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
