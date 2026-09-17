@@ -3,6 +3,9 @@
 MEXEMEXE! is a Vite + TypeScript + Phaser client with an optional Node +
 `ws` server for online rooms. This document describes the code as it is
 built; the ruleset it implements lives in [GAME_RULES.md](GAME_RULES.md).
+The measured baseline behind the maps below — module-by-module evidence, the
+dependency-edge classification and the architecture risk register — is
+[ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md).
 
 ## Layering
 
@@ -11,12 +14,19 @@ rules/          pure functions, no Phaser/DOM/Date/random   ← the only rules a
 core/           event bus, seeded rng, settings, persistence, play log, PWA, lifecycle
 game-state/     GameStore: turn lifecycle over rules/
 mexe-mode/      table draft editor (break/split/merge/move, undo/redo/reset)
-ai/             SimpleAi, RearrangerAi, personalities        ← rules + game-state only
+ai/             SimpleAi, RearrangerAi, personalities        ← rules + mexe-mode only
 net/            wire protocol, WebSocket client, view→state projection
 table/ ui/ scenes/ assets/ audio/ cosmetics/                  ← Phaser + DOM layer
 localization/ tutorial/ demo/ verification/                   ← support
 server/         authoritative room server (imports src/net/protocol + src/rules)
 ```
+
+`core/` is where the layering is weakest: it is a bucket of six roles rather
+than one layer, and four of its modules import *upward* into `ui/`,
+`cosmetics/`, `ai/` and `verification/` (settings→ui/helpers,
+persistence→cosmetics, playlog→ui/viewport, pwa→verification). Treat "put it in
+core" as a smell, not a default — see
+[ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md) ARCH-009.
 
 **Hard rule:** `src/rules` is pure and deterministic — no Phaser, no DOM, no
 `Date`, no `Math.random`. Everything in it is testable in Vitest without a
@@ -43,7 +53,7 @@ legality.
 | `src/tutorial` | scripted steps, fixture table, step director |
 | `src/demo` | `?showcase=` scenarios used by the screenshot suite |
 | `src/verification` | `window.__MEXE__` debug API (see [TESTING.md](TESTING.md)) |
-| `server/` | `index.ts` process + health check, `rooms.ts` room/turn authority, `connections.ts` socket registry, `config.ts` env parsing, `log.ts` redacting logger |
+| `server/` | `index.ts` process + HTTP health/metrics + socket dispatch + broadcast, `rooms.ts` room/turn authority, `connections.ts` socket registry and rate-limit windows, `matchmaking.ts` casual FIFO queue, `metrics.ts` counters + Prometheus text, `config.ts` env parsing, `log.ts` redacting logger |
 
 ## Data model
 
@@ -120,8 +130,21 @@ MenuScene → SetupScene → GameScene
    └─ then:  checkWinner → WinScene, else START_TURN(next)
 ```
 
-Typed events on the bus: `game:ready`, `turn:start`, `draft:changed`,
-`turn:confirmed`, `turn:drawn`, `game:won`, `ai:thought`.
+Events on the bus, and what each one actually is:
+
+| Event | Publisher | Subscribers | Kind |
+|---|---|---|---|
+| `turn:start` | `GameStore.postTurn` | `GameScene.onTurnStart`, playlog | **control flow** — advances the local turn cycle. Online, `GameScene` calls `onTurnStart()` directly instead. |
+| `game:won` | `GameStore.postTurn` | `GameScene.onWin`, playlog | **control flow** |
+| `turn:confirmed`, `turn:drawn` | `GameStore` | playlog | notification |
+| `viewport:changed` | `main.ts` resize handler | every scene, playlog | notification |
+| `ai:thought` | `GameScene.runAiTurn` | *none* — the same value is written straight to `debugApi.lastAiThought` | dead |
+| `game:ready`, `draft:changed` | *none* | *none* | declared in `GameEvents`, never used |
+
+The control-flow entries are why `GameScene` guards every async continuation
+with `sceneGone` and a store-identity check: the bus is a process-global
+singleton, so an event can reach a scene that has already shut down. See
+ARCH-006/ARCH-008 in [ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md).
 
 ## Online game flow
 
@@ -169,6 +192,91 @@ See [ASSETS.md](ASSETS.md).
 - AI exceptions → fall back to drawing and ending the turn.
 - Corrupt save → fresh game with a warning (`src/core/error-recovery.ts`).
 - `window.onerror` → captured into `__MEXE__.errors` for Playwright.
+
+## System context
+
+```text
+Browser tab
+ ├─ main.ts                  composition root: Phaser game, locale, PWA, resize, error recovery
+ ├─ scenes/ (Phaser)         render + input + (today) match orchestration
+ ├─ game-state + mexe-mode   committed local state and the turn's draft
+ ├─ rules/                   the legality authority — shared with the server verbatim
+ ├─ ai/                      local opponents (no network, no Phaser)
+ ├─ core/ + localization/    settings, save, playlog, PWA, bus, copy
+ ├─ verification/            window.__MEXE__ surface for Playwright
+ ├─ localStorage             mexe-save (settings/progress/cosmetics), online name + reconnect token
+ ├─ service worker           offline shell + assets (see PWA_OFFLINE.md)
+ └─ net/client.ts ── WebSocket ──┐
+                                 ▼
+                    Node + ws server (optional, online only)
+                     ├─ index.ts        process, HTTP health/metrics, dispatch, broadcast, timers
+                     ├─ rooms.ts        RoomManager — the authoritative room/match aggregate
+                     ├─ matchmaking.ts  casual FIFO queue
+                     ├─ connections.ts  socket registry + rate limits
+                     └─ imports src/rules + src/net/protocol   ← same legality, same wire types
+```
+
+Actors: the local player (pointer/keyboard/touch), the AI (in-process, seeded),
+remote players (via the server only), Phaser, the browser platform
+(storage, service worker, vibration, clipboard, share), and the Playwright
+suites (through `window.__MEXE__`, never through internals).
+
+## Ownership and authority
+
+| Concern | Authority | Everyone else |
+|---|---|---|
+| meld legality, turn legality, winner, draw | `src/rules` | may only ask, never decide |
+| committed local game state | `GameStore` (`src/game-state`) | reads through `get()`; treat as read-only |
+| Mexe draft | `DraftEditor` (`src/mexe-mode`) | never serialized, never sent until FEITO |
+| AI choice | `src/ai` behind `AiPlayer.decide` | scene only schedules and presents it |
+| online match state, `rev`, deal seed, turn timer, room membership, host, ready, reconnect seat | the server's `RoomManager` | clients render the per-seat view they are given |
+| hidden information | `buildView` redaction (`src/net/protocol.ts`) | no client path may reconstruct an opponent hand |
+| settings, progress, cosmetics | `src/core/settings` over `persistence` | no scene-local copies |
+| layout, sizing, orientation | `src/ui/viewport` + `src/ui/regions` + `src/table` | scenes consume, never re-derive |
+
+Two ownership facts worth knowing before changing anything:
+
+- **The server does not use `GameStore`.** `GameStore` emits on the global bus,
+  and one process holds many rooms, so `server/rooms.ts` calls the same `src/rules`
+  functions directly and builds its own deal. Turn application is shared; event
+  announcement is client-only. (ARCH-004.)
+- **`GameScene` currently owns more than presentation** — online state
+  adaptation, AI scheduling and the online turn clock live there. That is a
+  known concentration, not the intended end state. (ARCH-001/ARCH-002.)
+
+## Side-effect boundaries
+
+| Effect | Allowed in |
+|---|---|
+| Phaser, DOM, input | `src/scenes`, `src/ui`, `src/main.ts` |
+| `localStorage` | `src/core/persistence.ts` and `src/net/client.ts` — nowhere else |
+| timers, `Date.now` | scenes, `src/net/client.ts`, `server/` (the `RoomManager` clock is injected) |
+| randomness | seeded `createRng` for anything a seed must replay; `Math.random` only in non-gameplay paths (reconnect jitter, sfx detune, one cosmetic AI emote roll) |
+| WebSocket | `src/net/client.ts`, `server/index.ts` |
+| service worker, connectivity | `src/core/pwa.ts` |
+| audio, haptics | `src/audio`, `src/core/haptics.ts` |
+| clipboard, share, URL params | `OnlineScene`, `src/config.ts`, `src/verification/debug-api.ts`, `src/demo` |
+| **none of the above** | `src/rules`, `src/mexe-mode`, `src/game-state`, `src/table`, `src/net/protocol.ts`, `src/net/viewToState.ts` |
+
+The last row is the one that matters most and the one nothing currently
+enforces mechanically — see ARCH-019.
+
+## Lifecycles and cleanup
+
+| Lifecycle | Owner | Must be released |
+|---|---|---|
+| boot | `src/main.ts` | nothing (page lifetime) |
+| local match / tutorial | `GameScene` | bus + settings + app-visibility subscriptions, AI timer, hesitation timer, guard timer, emote timers, ambience, the `pointercancel` listener, playlog human seat |
+| online lobby | `OnlineScene` | `NetClient`, bus + connectivity subscriptions, the offscreen DOM input, debug hooks |
+| online match | `GameScene` (client) / room (server) | socket subscriptions, pending-proposal timeout, turn-timer tick, reconnect ticker |
+| reconnect | `NetClient` schedule + server grace window | reconnect timer; the seat is released by the server's grace expiry or `sweep` |
+| rematch | `RoomManager.recycleForRematch` | the room is reused in place, not recreated |
+| server process | `server/index.ts:shutdown` | three intervals, the WebSocket server, the HTTP server, with a 5s hard-exit backstop |
+
+Every scene releases through `this.events.once('shutdown', …)`. `GameScene`
+additionally resets ~45 fields in `resetForNewMatch()` because the scene is
+relaunched rather than reconstructed — a new field needs an entry there, not a
+field initializer.
 
 ## Where new code goes
 

@@ -9,6 +9,7 @@ in code comments. Link to them instead.**
 | Task routing, execution process, output modes | `WORKFLOW.md` |
 | Gameplay rules | `docs/GAME_RULES.md` |
 | Module map, layering, ownership | `docs/ARCHITECTURE.md` |
+| Architecture risk register, audit evidence | `docs/ARCHITECTURE_AUDIT.md` |
 | Setup, scripts, troubleshooting | `docs/DEVELOPMENT.md` |
 | Tests and verification gates | `docs/TESTING.md` |
 | Online protocol and authority | `docs/MULTIPLAYER.md` |
