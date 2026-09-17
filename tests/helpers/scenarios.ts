@@ -106,20 +106,40 @@ export function finishedMatch(): GameState {
 }
 
 /**
+ * How far `seedWithTriple` searches. A triple is common enough that seed 1 usually hits; the
+ * limit exists so a deal change that removes every hit fails with a message instead of hanging.
+ */
+const SEED_SEARCH_LIMIT = 400;
+
+/**
  * A deal seed whose seat-0 hand holds a same-rank triple in distinct suits — i.e. one legal meld
  * that can be played straight out of a real deal. Searched rather than hardcoded so a rules or
  * shuffle change moves the seed instead of silently breaking the test that depends on it.
+ *
+ * Cached per seat count — the party and rooms suites call this once per test — and the cards are
+ * copied out so a caller cannot mutate the cache.
  */
+const tripleSeeds = new Map<number, { seed: number; triple: Card[] }>();
+
 export function seedWithTriple(seats = 2): { seed: number; triple: Card[] } {
-  for (let seed = 1; seed < 400; seed++) {
+  const memo = tripleSeeds.get(seats);
+  if (memo) return { seed: memo.seed, triple: [...memo.triple] };
+  for (let seed = 1; seed <= SEED_SEARCH_LIMIT; seed++) {
     const hand = dealInitialHands(shuffleDeck(createDeck(), createRng(seed)), seats).hands[0]!;
     for (const rank of new Set(hand.filter((c) => !c.isJoker).map((c) => c.rank))) {
       const sameRank = hand.filter((c) => c.rank === rank);
       const distinctSuits = sameRank.filter((c, i) => sameRank.findIndex((o) => o.suit === c.suit) === i);
-      if (distinctSuits.length >= 3) return { seed, triple: distinctSuits.slice(0, 3) };
+      if (distinctSuits.length >= 3) {
+        const found = { seed, triple: distinctSuits.slice(0, 3) };
+        tripleSeeds.set(seats, found);
+        return { seed: found.seed, triple: [...found.triple] };
+      }
     }
   }
-  throw new Error('no seed with a triple in the seat-0 hand (fixture bug)');
+  throw new Error(
+    `no seed in 1..${SEED_SEARCH_LIMIT} deals a same-rank triple to seat 0 of a ${seats}-seat match ` +
+      '(fixture bug: widen SEED_SEARCH_LIMIT, or the deal/shuffle changed)',
+  );
 }
 
 /**

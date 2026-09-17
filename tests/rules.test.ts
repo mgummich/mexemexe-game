@@ -19,12 +19,12 @@ import {
   timerExpireTurn,
   validateTable,
 } from '../src/rules/rules';
-import type { DraftState, GameState, RulesConfig } from '../src/rules/types';
+import type { Card, DraftState, GameState, RulesConfig } from '../src/rules/types';
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import { createNewGame } from '../src/rules/rules';
 import { n, j, withHand } from './helpers/cards';
 import { allCards, expectCardConservation } from './helpers/invariants';
-import { gameState, invalid } from './helpers/scenarios';
+import { gameState, invalid, legalDraft } from './helpers/scenarios';
 
 describe('createDeck', () => {
   it('default config: 108 cards, 4 jokers, 104 naturals, all ids unique', () => {
@@ -904,6 +904,88 @@ describe('one joker per meld', () => {
     const r = canConfirmTurn(s, draft);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reasons).toContain('reason.tooManyJokers');
+  });
+});
+
+describe('reusing a committed joker in another meld (SCN-06, SCN-12)', () => {
+  /**
+   * The Mexe move the rules must allow and the one they must refuse are the same edit seen from
+   * either side: a joker already on the table is pulled into a new meld. It is legal exactly when
+   * the meld it leaves is still a meld without it. The joker is a physical card throughout — its
+   * id never changes and no assigned face is written into it (INV-G4).
+   */
+  function stateWithJokerGroup(naturals: Card[], joker: Card): GameState {
+    const base = gameState();
+    return {
+      ...base,
+      players: [
+        { ...base.players[0]!, hand: [n('hearts', 10), n('hearts', 12)] },
+        base.players[1]!,
+      ],
+      table: [{ id: 't1', cards: [...naturals, joker] }],
+    };
+  }
+
+  it('accepts the move when the meld the joker leaves survives without it', () => {
+    const joker = j(0, 1);
+    const s = stateWithJokerGroup([n('hearts', 9), n('spades', 9), n('clubs', 9)], joker);
+    const before = allCards(s).map((c) => c.id);
+    const draft: DraftState = {
+      melds: [
+        { id: 't1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] },
+        { id: 'd1', cards: [n('hearts', 10), joker, n('hearts', 12)] }, // 10-J(joker)-Q
+      ],
+      handCardsPlayed: [],
+    };
+    expect(canConfirmTurn(s, draft)).toEqual({ ok: true });
+
+    const next = applyConfirmedTurn(s, draft);
+    expect(validateTable(next.table)).toBe(true);
+    expectCardConservation(next, before);
+    const moved = next.table.find((m) => m.id === 'd1')!.cards.find((c) => c.isJoker)!;
+    expect(moved).toMatchObject({ id: joker.id, isJoker: true, suit: null, rank: null });
+  });
+
+  it('refuses the move when it leaves a pair behind', () => {
+    const joker = j(0, 1);
+    const s = stateWithJokerGroup([n('hearts', 9), n('spades', 9)], joker);
+    const draft: DraftState = {
+      melds: [
+        { id: 't1', cards: [n('hearts', 9), n('spades', 9)] },
+        { id: 'd1', cards: [n('hearts', 10), joker, n('hearts', 12)] },
+      ],
+      handCardsPlayed: [],
+    };
+    const r = canConfirmTurn(s, draft);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reasons).toContain('reason.meldTooSmall');
+  });
+});
+
+describe('the gameState() fixture contract', () => {
+  /**
+   * `gameState()` is the default state for the rules, application, AI and server suites, so a
+   * change to its hand or table can break all four at once with failures that name the symptom
+   * and not the cause. This test owns the promises its doc comment makes: whoever edits the
+   * default sees one named failure here first.
+   */
+  it('is a valid state whose seat-0 turn is legal (SCN-03)', () => {
+    const state = gameState();
+    expect(state.phase).toBe('playing');
+    expect(state.winnerId).toBeNull();
+    expect(state.activePlayerIndex).toBe(0);
+    expect(state.players[0]!.isAi).toBe(false);
+    expect(state.drawPile.length).toBeGreaterThan(0);
+    expect(validateTable(state.table)).toBe(true);
+    expectCardConservation(state, allCards(state).map((c) => c.id));
+
+    // The promise every suite leans on: `legalDraft` really is confirmable, and playing it
+    // leaves the hand one card shorter rather than throwing.
+    const draft = legalDraft(state);
+    expect(canConfirmTurn(state, draft).ok).toBe(true);
+    const next = applyConfirmedTurn(state, draft);
+    expect(next.players[0]!.hand).toHaveLength(state.players[0]!.hand.length - 1);
+    expect(next.phase).toBe('playing');
   });
 });
 

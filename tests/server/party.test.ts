@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
 import { testManager } from './manager';
 import { MAX_ACTIVITY, MAX_MATCH_HISTORY, parseClientMessage, PROTOCOL_VERSION, REACTION_COOLDOWN_MS } from '../../src/net/protocol';
-import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
-import { createRng } from '../../src/rules/rng';
 import type { Card } from '../../src/rules/types';
 import { withHand } from '../helpers/cards';
+import { seedWithTriple } from '../helpers/scenarios';
 
 /** Clock the manager reads, so the reaction cooldown can be advanced deterministically. */
 function startedRoom(clock: { t: number }, seed: number): { mgr: RoomManager; code: string } {
@@ -17,19 +16,6 @@ function startedRoom(clock: { t: number }, seed: number): { mgr: RoomManager; co
   mgr.setReady(created.code, 1, true);
   mgr.startGame(created.code, 0);
   return { mgr, code: created.code };
-}
-
-/** A seed whose seat-0 hand holds a same-rank triple, so a legal winning meld exists. */
-function seedWithTriple(): { seed: number; triple: Card[] } {
-  for (let seed = 1; seed < 400; seed++) {
-    const hand = dealInitialHands(shuffleDeck(createDeck(), createRng(seed)), 2).hands[0]!;
-    for (const rank of new Set(hand.map((c) => c.rank))) {
-      const sameRank = hand.filter((c) => c.rank === rank);
-      const distinctSuits = sameRank.filter((c, i) => sameRank.findIndex((o) => o.suit === c.suit) === i);
-      if (distinctSuits.length >= 3) return { seed, triple: distinctSuits.slice(0, 3) };
-    }
-  }
-  throw new Error('no seed with a triple');
 }
 
 /** Rig seat 0 to be holding exactly `triple` and nothing else, then play it — the shortest legal

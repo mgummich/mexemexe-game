@@ -250,8 +250,9 @@ Phaser cannot run here, which is why layout, snapping, tap-destination and
 helper logic live as pure modules under `src/table` and `src/ui`.
 
 - `tests/rules.test.ts` — the rules engine: decks, deals, runs, groups, joker
-  assignment, the one-joker-per-meld limit, ace low/high and the no-wrap case,
-  `canConfirmTurn`, win and draw-pile-exhaustion, serialization.
+  assignment, the one-joker-per-meld limit, reusing a committed joker in another
+  meld (legal only when the meld it leaves survives without it), ace low/high and
+  the no-wrap case, `canConfirmTurn`, win and draw-pile-exhaustion, serialization.
 - `tests/helpers/scenarios.ts` — the canonical states (`gameState`, `dealtMatch`,
   `tableRearrangement`, `oneCardFromWinning`, `finishedMatch`, `legalDraft`,
   `seedWithTriple`, `invalid.*`) shared by the rules, application, AI and server
@@ -265,8 +266,10 @@ helper logic live as pure modules under `src/table` and `src/ui`.
   reaches no global bus (ARCH-004).
 - `tests/match.test.ts` — **local match orchestration without Phaser**
   (`LocalMatch`): confirm, draw, refusal, finish, AI turn routing, disposal
-  (a search that yields past the end of the match is dropped), and that a
-  listener on a finished match never hears the next one.
+  (a search that yields past the end of the match is dropped), a Mexe
+  rearrangement built by the real `DraftEditor` and confirmed through the
+  ordinary dispatch path, and that a listener on a finished match never hears the
+  next one.
 - `tests/online-session.test.ts` — **online application state without a socket**
   (`OnlineSession`) driven by recorded server frames: a fresh frame, a stale
   revision, a digest mismatch and its resync policy, a dropped draft, the Mexe

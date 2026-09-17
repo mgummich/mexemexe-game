@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { LocalMatch, type MatchEvent } from '../src/game-state/match';
+import { DraftEditor } from '../src/mexe-mode/draft';
+import { validateTable } from '../src/rules/rules';
 import type { GameState } from '../src/rules/types';
-import { gameState as state, legalDraft, oneCardFromWinning } from './helpers/scenarios';
+import { allCards, expectCardConservation } from './helpers/invariants';
+import { gameState as state, legalDraft, oneCardFromWinning, tableRearrangement } from './helpers/scenarios';
 
 /**
  * The local match orchestration, exercised with no Phaser anywhere in the process (ARCH-001).
@@ -47,6 +50,40 @@ describe('LocalMatch', () => {
     expect(out).toMatchObject({ ok: true, finished: true });
     expect(match.state()).toMatchObject({ phase: 'finished', winnerId: 'p0' });
     expect(seen.map((e) => e.type)).toEqual(['turn:confirmed', 'game:won']);
+
+    // The match is over for everyone, including the seat the turn passed to (INV-S4).
+    const finished = match.state();
+    expect(match.dispatch({ type: 'drawAndEndTurn', actorIndex: 1 })).toEqual({
+      ok: false, reasons: ['reason.notYourTurn'],
+    });
+    expect(match.state()).toBe(finished);
+    expect(seen).toHaveLength(2);
+  });
+
+  /**
+   * SCN-09/SCN-12 at the application level: a real `DraftEditor` sequence — the same calls the
+   * table makes when a player drags cards — goes through the ordinary dispatch path. The rule
+   * cases live in `rules`/`draft`; what this proves is that the editor, the kernel and the match
+   * agree about one non-trivial turn, and that nothing is lost between them.
+   */
+  it('commits a Mexe rearrangement built by the real editor, conserving every card', () => {
+    const start = tableRearrangement();
+    const match = new LocalMatch(start, { localSeat: 0, personalities: [null, 'cida'] });
+    const before = allCards(start).map((c) => c.id);
+
+    const editor = new DraftEditor(start);
+    editor.playHandCard('hearts-2-d0', 't1', 0); // extend the committed run downwards
+    editor.playHandCard('spades-9-d0', null); // ...and build a second meld from scratch
+    const group = editor.getDraft().melds.find((m) => m.id !== 't1')!.id;
+    editor.playHandCard('clubs-9-d0', group);
+    editor.playHandCard('diamonds-9-d0', group);
+
+    const out = match.dispatch({ type: 'confirmTurn', actorIndex: 0, draft: editor.getDraft() });
+    expect(out).toMatchObject({ ok: true, cardsPlayed: 4, finished: false });
+    expect(validateTable(match.state().table)).toBe(true);
+    expectCardConservation(match.state(), before);
+    expect(match.state().players[0]!.hand.map((c) => c.id)).toEqual(['hearts-6-d0']);
+    expect(match.state().activePlayerIndex).toBe(1);
   });
 
   it('refuses an out-of-turn action, changes nothing and announces nothing', () => {
