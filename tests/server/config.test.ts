@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from '../../server/config';
+import { DEFAULT_DISCONNECT_GRACE_MS, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_MAX_ROOMS, RoomManager } from '../../server/rooms';
 
 describe('loadConfig', () => {
   it('defaults with an empty env', () => {
@@ -14,6 +15,20 @@ describe('loadConfig', () => {
     expect(cfg.disconnectGraceMs).toBe(30_000);
     expect(cfg.idleTimeoutMs).toBe(10 * 60_000);
     expect(cfg.testSeed).toBeUndefined();
+  });
+
+  it('takes its room defaults from the room aggregate, so a bare RoomManager and a deployment agree', () => {
+    const cfg = loadConfig({});
+    expect(cfg.maxRooms).toBe(DEFAULT_MAX_ROOMS);
+    expect(cfg.disconnectGraceMs).toBe(DEFAULT_DISCONNECT_GRACE_MS);
+    expect(cfg.idleTimeoutMs).toBe(DEFAULT_IDLE_TIMEOUT_MS);
+    // And the default a RoomManager built with no deps actually applies is that same number:
+    // a room created without env config seeds its reconnect grace from it.
+    const rooms = new RoomManager();
+    const created = rooms.createRoom('Host');
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(rooms.getRoomInfo(created.code)!.settings.reconnectGraceMs).toBe(DEFAULT_DISCONNECT_GRACE_MS);
   });
 
   it('rejects a non-numeric PORT, naming the var', () => {

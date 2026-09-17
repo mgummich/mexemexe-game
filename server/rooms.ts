@@ -20,7 +20,7 @@ import type { Card, DraftState, GameState, Meld, ReasonCode } from '../src/rules
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import {
   buildView, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, MAX_ACTIVITY, MAX_MATCH_HISTORY,
-  MAX_ROOM_LISTINGS, normalizeRoomSettings, REACTION_COOLDOWN_MS, TIMER_PRESETS,
+  MAX_ROOM_LISTINGS, MAX_SEATS, normalizeRoomSettings, REACTION_COOLDOWN_MS, ROOM_CODE_LENGTH, TIMER_PRESETS,
   type ActivityEvent, type ActivityKind, type GameView, type MatchSummary, type PartyState,
   type ReactionId, type RoomListing, type RoomPlayerSummary, type RoomSettings, type RoomVisibility,
   type SubmitTurnMeld, type WinningMove,
@@ -28,12 +28,17 @@ import {
 
 // No vowels, no 0/O/1/I/L — unambiguous when read aloud or typed.
 const CODE_ALPHABET = 'BCDFGHJKMNPQRSTVWXYZ23456789';
-const CODE_LENGTH = 5;
-const DEFAULT_DISCONNECT_GRACE_MS = 30_000;
-const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_MAX_ROOMS = 500;
+/**
+ * Fallbacks for the tuning knobs `server/config.ts` exposes to the environment. Owned here
+ * because they are this aggregate's own defaults; `loadConfig` imports them so a deployment and
+ * a bare `new RoomManager()` (tests) can never drift to different numbers.
+ */
+export const DEFAULT_DISCONNECT_GRACE_MS = 30_000;
+export const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
+export const DEFAULT_MAX_ROOMS = 500;
+/** Smallest table the rules will deal (`createNewGame` refuses fewer). The largest is MAX_SEATS,
+ * which is the wire contract both runtimes share. */
 const MIN_PLAYERS = 2;
-export const MAX_PLAYERS = 4;
 /** A fresh room's host is seat 0 (its creator). Host authority is otherwise tracked per-room in
  * `RoomInternal.hostSeat` and moves to the next-occupied seat if the current host leaves (D15) —
  * this constant is only the fallback for a nonexistent room. */
@@ -42,6 +47,17 @@ const HOST_SEAT = 0;
  * room default friends already play, so a queued stranger meets nothing unfamiliar, and it is the
  * server's value rather than anyone's proposal — no seat in a matchmade room can change it. */
 const MATCHMADE_SETTINGS = TIMER_PRESETS.casual;
+
+/** One room's outcome from a turn-clock tick. `crashed` carries its `error` for the host to log. */
+export interface StalledTurnResult {
+  code: string;
+  gameOver: boolean;
+  crashed?: boolean;
+  /** Present only with `crashed` — the thrown value, for `errorFields()` at the host. */
+  error?: unknown;
+  closed?: boolean;
+  timedOut?: number;
+}
 
 interface RoomManagerDeps {
   /** Injectable clock, for deterministic tests. */
@@ -59,7 +75,7 @@ interface RoomManagerDeps {
 
 function defaultGenCode(): string {
   let out = '';
-  for (let i = 0; i < CODE_LENGTH; i++) out += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
+  for (let i = 0; i < ROOM_CODE_LENGTH; i++) out += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
   return out;
 }
 
@@ -86,7 +102,7 @@ interface Seat {
 
 interface RoomInternal {
   code: string;
-  seats: (Seat | null)[]; // length MAX_PLAYERS, index === stable clockwise seat
+  seats: (Seat | null)[]; // length MAX_SEATS, index === stable clockwise seat
   state: GameState | null;
   rev: number;
   // Defensive re-entrancy guard only: the manager is fully synchronous between the check and
@@ -312,7 +328,7 @@ export class RoomManager {
     const seat = newSeat(0, name, token);
     const room: RoomInternal = {
       code,
-      seats: [seat, ...Array<Seat | null>(MAX_PLAYERS - 1).fill(null)],
+      seats: [seat, ...Array<Seat | null>(MAX_SEATS - 1).fill(null)],
       state: null,
       rev: 0,
       processing: false,
@@ -358,7 +374,7 @@ export class RoomManager {
    * caller's only recovery is to put the group back in the queue.
    */
   createMatchRoom(players: { name: string; token: string }[]): CreateRoomResult {
-    if (players.length < MIN_PLAYERS || players.length > MAX_PLAYERS) return { ok: false, error: 'room_limit' };
+    if (players.length < MIN_PLAYERS || players.length > MAX_SEATS) return { ok: false, error: 'room_limit' };
     const first = players[0]!;
     const created = this.createRoom(first.name, first.token);
     if (!created.ok) return created;
@@ -525,8 +541,8 @@ export class RoomManager {
         code: room.code,
         hostName: host.name,
         players: occupied.length,
-        capacity: MAX_PLAYERS,
-        status: occupied.length >= MAX_PLAYERS ? 'full' : 'waiting',
+        capacity: MAX_SEATS,
+        status: occupied.length >= MAX_SEATS ? 'full' : 'waiting',
         timerMode: room.settings.timerMode,
       });
     }
@@ -743,9 +759,9 @@ export class RoomManager {
    * job. A seat that loses `settings.missedTurnLimit` turns in a row ends the match, so a player
    * who has walked away cannot keep the others on a board that only ever advances by draw.
    */
-  advanceStalledTurns(): { code: string; gameOver: boolean; crashed?: boolean; closed?: boolean; timedOut?: number }[] {
+  advanceStalledTurns(): StalledTurnResult[] {
     const t = this.now();
-    const advanced: { code: string; gameOver: boolean; crashed?: boolean; closed?: boolean; timedOut?: number }[] = [];
+    const advanced: StalledTurnResult[] = [];
     for (const [code, room] of this.rooms) {
       const state = room.state;
       if (!state || state.phase !== 'playing') continue;
@@ -784,9 +800,13 @@ export class RoomManager {
           continue;
         }
         advanced.push({ code, gameOver: finished, timedOut: seat });
-      } catch {
+      } catch (err) {
+        // Reaching here means a server invariant did not hold (assertConservation) or a rules
+        // transition threw on state this process built — a bug, never player input. The room is
+        // dropped so nothing keeps playing on it, and `error` is handed to the caller so the
+        // failure is logged rather than disappearing into a `crashed` boolean.
         this.rooms.delete(code);
-        advanced.push({ code, gameOver: false, crashed: true });
+        advanced.push({ code, gameOver: false, crashed: true, error: err });
       }
     }
     return advanced;

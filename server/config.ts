@@ -4,6 +4,8 @@
  * singleton below is the only thing that calls `process.exit`.
  */
 
+import { DEFAULT_DISCONNECT_GRACE_MS, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_MAX_ROOMS } from './rooms';
+
 export class ConfigError extends Error {}
 
 export type Mode = 'development' | 'production';
@@ -32,17 +34,14 @@ export interface Config {
 
 const DEFAULT_PORT = 8787;
 const DEFAULT_HOST = '0.0.0.0';
-// Same defaults RoomManager already hardcodes (server/rooms.ts) — moved here so they're
-// configurable, not changed.
-const DEFAULT_MAX_ROOMS = 500;
+// Room capacity, reconnect grace and idle lifetime are the room aggregate's own defaults
+// (server/rooms.ts) — imported, not restated, so env-configured and bare RoomManager runs agree.
 const DEFAULT_MAX_CONNECTIONS = 2_000;
 const DEFAULT_MAX_CONNECTIONS_PER_IP = 20;
 // Rooms one source may create per minute. Generous for a household or a shared NAT, far under
 // the rate needed to park MEXE_MAX_ROOMS of abandoned rooms before the sweep reclaims them.
 const DEFAULT_MAX_ROOM_CREATES_PER_IP = 20;
 const DEFAULT_TRUSTED_PROXY_HOPS = 0;
-const DEFAULT_DISCONNECT_GRACE_MS = 30_000;
-const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 
 /** Same, but zero is a meaningful value ("no proxies"), so only negatives and garbage fail. */
 function parseNonNegativeInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {

@@ -441,8 +441,18 @@ function fewestCardsWinner(state: GameState): string {
   return [...state.players].sort((a, b) => a.hand.length - b.hand.length)[0]!.id;
 }
 
-/** Wire/save envelope version. Bump when GameState's shape changes incompatibly. */
-const GAME_STATE_VERSION = 2;
+/**
+ * Snapshot envelope version. **Supported versions: 2 only.** There are no migrations and no
+ * supported old versions: nothing in the product writes a game snapshot to storage (settings and
+ * progress live in their own `mexe-save` envelope, `src/core/persistence.ts`; an online match is
+ * restored from the server, never from disk), so no v1 payload exists in any player's browser to
+ * migrate. A snapshot that is not v2 is refused, not repaired.
+ *
+ * If a future feature does persist a snapshot, bump this on any incompatible `GameState` change
+ * and add the migration *here*, before the validation below — a migrated payload still has to
+ * pass every check a fresh one does.
+ */
+export const GAME_STATE_VERSION = 2;
 
 interface GameStateEnvelopeV2 {
   version: 2;
@@ -454,6 +464,12 @@ export function serializeGameState(state: GameState): string {
   return JSON.stringify(envelope);
 }
 
+/**
+ * Untrusted snapshot → trusted `GameState`, or a throw. Order: parse, version, shape, then the
+ * gameplay invariants (`cardsConserved`, `validateTable`) — the same ones the server asserts, so
+ * persistence never restates a rule. Anything refused throws a `RulesError` carrying an input
+ * error code (`corruptSave` / `unsupportedSaveVersion`); the caller recovers, it is not a bug.
+ */
 export function deserializeGameState(json: string): GameState {
   let parsed: unknown;
   try {
@@ -461,17 +477,15 @@ export function deserializeGameState(json: string): GameState {
   } catch {
     throw new RulesError('corrupt save: not JSON', 'corruptSave');
   }
-  if (parsed && typeof parsed === 'object' && 'version' in parsed) {
-    if ((parsed as { version: unknown }).version !== GAME_STATE_VERSION) {
-      throw new RulesError('corrupt save: unsupported version', 'corruptSave');
-    }
+  // The envelope is required. A bare state carries no version, so accepting one would mean
+  // trusting a shape no writer of this format produces and no reader can date.
+  if (!parsed || typeof parsed !== 'object' || !('version' in parsed) || !('state' in parsed)) {
+    throw new RulesError('corrupt save: not a versioned snapshot', 'corruptSave');
   }
-  // Accept both the versioned envelope and the old bare-state shape (tests).
-  const unwrapped =
-    parsed && typeof parsed === 'object' && 'version' in parsed && 'state' in parsed
-      ? (parsed as GameStateEnvelopeV2).state
-      : parsed;
-  const s = unwrapped as GameState;
+  if ((parsed as { version: unknown }).version !== GAME_STATE_VERSION) {
+    throw new RulesError('corrupt save: unsupported version', 'unsupportedSaveVersion');
+  }
+  const s = (parsed as GameStateEnvelopeV2).state as GameState;
   if (
     !s ||
     !Array.isArray(s.players) ||

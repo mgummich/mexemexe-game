@@ -7,7 +7,7 @@
  * authoritative from there. There is no second gameplay path for queued matches.
  */
 import { randomUUID } from 'node:crypto';
-import type { QueueTarget } from '../src/net/protocol';
+import { MAX_SEATS, type QueueTarget } from '../src/net/protocol';
 
 /** How long an entry may wait before it expires and the player is sent back to the online home.
  * Long enough that a quiet server still forms a table, short enough that nobody sits on a
@@ -20,8 +20,8 @@ export const MAX_QUEUE_ENTRIES = 200;
 
 /** Group sizes a room can have, smallest first — the order explicit preferences are honoured in. */
 const SIZES = [2, 3, 4] as const;
-/** Room capacity — server/rooms.ts MAX_PLAYERS. A group is never larger than a table. */
-const MAX_GROUP = 4;
+/** A group is never larger than a table. */
+const MAX_GROUP = MAX_SEATS;
 
 export interface QueueEntry {
   /** Session key for this entry. Becomes the *seat* token of the room it is matched into, which

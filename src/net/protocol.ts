@@ -12,6 +12,54 @@ import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/ty
 export const PROTOCOL_VERSION = 9;
 
 // ---------------------------------------------------------------------------
+// Shared room shape (one owner for facts both runtimes state)
+// ---------------------------------------------------------------------------
+
+/** Characters in a room code. The server generates them (`server/rooms.ts`) and the client
+ * renders/parses input against the same length — one contract, stated once. */
+export const ROOM_CODE_LENGTH = 5;
+
+/** Seats a room has, and therefore the largest match. Player *count* legality for a deal is the
+ * rules' own (`createNewGame` refuses outside 2-4); this is the table's size. */
+export const MAX_SEATS = 4;
+
+// ---------------------------------------------------------------------------
+// Error codes (docs/MULTIPLAYER.md §5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every `code` an `ErrorMsg` can carry. The wire contract, so the server cannot invent a code the
+ * client has no copy for: `sendError` takes this union, and `src/net/errors.ts` maps each entry to
+ * player-facing copy (its test walks this list). Codes are stable, presentation-neutral and
+ * never localized — the translated sentence is the client's, the code is the protocol's.
+ *
+ * All of these are *expected* refusals. An unexpected server-side failure is `internal_error`,
+ * whose detail stays in the server log and never reaches a client.
+ */
+export const SERVER_ERROR_CODES = [
+  'room_full',
+  'room_not_found',
+  'game_started',
+  'room_limit',
+  'room_create_limit',
+  'already_in_room',
+  'no_room',
+  'not_member',
+  'not_host',
+  'not_ready',
+  'invalid_token',
+  'room_closed',
+  'server_shutdown',
+  'rate_limited',
+  'already_in_match',
+  'queue_busy',
+  'bad_message',
+  'internal_error',
+] as const;
+
+export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number];
+
+// ---------------------------------------------------------------------------
 // Room settings (docs/MULTIPLAYER.md §7)
 // ---------------------------------------------------------------------------
 
@@ -685,7 +733,7 @@ interface PlayerReactionMsg {
 export interface ErrorMsg {
   v: number;
   type: 'error';
-  code: string;
+  code: ServerErrorCode;
   message: string;
   /** Echoes the request that failed, when the failure was caused by one. Absent for
    * server-initiated errors such as `room_closed`. */
@@ -758,8 +806,9 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
       return { v: PROTOCOL_VERSION, type: 'create_room', reqId, name: o.name };
     }
     case 'join_room': {
-      // Real codes are 5 chars (server/rooms.ts CODE_LENGTH); anything much longer is garbage
-      // or a probe and gets rejected before it reaches the room manager.
+      // Real codes are ROOM_CODE_LENGTH chars; the wire cap is deliberately looser (a probe is
+      // rejected here, an almost-right code is refused by the room manager with `room_not_found`,
+      // which is the honest answer to give a typo).
       if (!isStr(o.code) || o.code.length === 0 || o.code.length > 16 || !isStr(o.name)) {
         return { error: 'bad join_room payload' };
       }

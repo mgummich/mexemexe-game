@@ -3,7 +3,7 @@ import { RoomManager } from '../../server/rooms';
 import { DEFAULT_ROOM_SETTINGS, digestOfState, digestOfView, parseClientMessage, PROTOCOL_VERSION, stateHash, TIMER_PRESETS } from '../../src/net/protocol';
 import { createDeck, createNewGame, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
 import { createRng } from '../../src/rules/rng';
-import type { Card } from '../../src/rules/types';
+import { RulesError, type Card } from '../../src/rules/types';
 import { expectCardConservation } from '../helpers/invariants';
 
 function testManager(
@@ -883,10 +883,14 @@ describe('per-room isolation and crash policy', () => {
     mgr.disconnect('CODE1', 0);
     mgr.disconnect('CODE2', 0);
     clock.t += 1000;
-    expect(mgr.advanceStalledTurns()).toEqual([
-      { code: 'CODE1', gameOver: false, crashed: true },
+    const advanced = mgr.advanceStalledTurns();
+    expect(advanced).toEqual([
+      { code: 'CODE1', gameOver: false, crashed: true, error: expect.any(RulesError) },
       { code: 'CODE2', gameOver: false, timedOut: 0 },
     ]);
+    // The invariant violation travels with the result instead of being swallowed — server/index.ts
+    // logs it (`room_crashed`) before closing the room's sockets.
+    expect((advanced[0]!.error as RulesError).code).toBe('corruptState');
     expect(mgr.getRoom('CODE1')).toBeNull();
     expect(mgr.getRoom('CODE2')!.state!.activePlayerIndex).toBe(1);
   });

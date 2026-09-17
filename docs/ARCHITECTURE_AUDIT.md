@@ -998,6 +998,49 @@ finding above — no competing ID space.
 | `playlog` subscribes for process lifetime (ARCH-007) | per-lifecycle subscription | bakes "one live match per page" into observability | ARCH-006 | 3 |
 | `server/index.ts` is composition root + dispatcher + broadcaster + limiter (ARCH-013) | dispatch/broadcast separated from process wiring | protocol growth lands in a 365-line `handleMessage` | none | 4 |
 
+## 14. Wave 2C — failure, configuration and persistence
+
+Audited and largely **confirmed**; the model was already coherent, so this wave
+named it in [ARCHITECTURE.md](ARCHITECTURE.md) (*Failure model*, *Configuration
+ownership*, *Persistence*) and closed the gaps that let a contract drift.
+
+Confirmed as built, no change needed:
+
+- Expected refusals are already data everywhere that matters: `ReasonCode`,
+  `ActionOutcome`, `RoomManager` result unions, `parseClientMessage`'s
+  `{ error }`, `ErrorMsg.code`. No caller infers a failure from unchanged state.
+- `OnlineScene` already branches on `msg.code`, never on `msg.message`, and
+  translates through `errorMessage()`.
+- The server never sends internal detail: `errorFields` logs the error *class*
+  in production, the logger redacts free-text keys, and a handler throw becomes
+  `internal_error` with a fixed string.
+- Room settings have one bounds owner (`CUSTOM_BOUNDS` + `normalizeRoomSettings`
+  in `src/net/protocol.ts`); the lobby UI reads them rather than restating them.
+- Env is validated once, in `loadConfig(env)`, and a bad value exits naming the
+  variable. No other server module reads `process.env`.
+- `parseSave` already validates per field and cannot throw; storage being
+  blocked or full is handled at every call site.
+- No online authoritative state is persisted; the reconnect token is the only
+  credential and is the one value kept in `sessionStorage`, endpoint-paired.
+
+Changed in this wave:
+
+| Gap | Was | Now |
+|---|---|---|
+| Server error codes had two owners | `SERVER_ERROR_CODES` was a client-side list; `sendError(code: string)` could emit anything | the list and `ServerErrorCode` live in `src/net/protocol.ts`; `sendError` and `ErrorMsg.code` take the union, so a code with no client copy does not compile |
+| Connection failures carried free text | `setStatus('error', String(err))`, and `OnlineScene` matched `message === 'unreachable'` | `ConnReason` (`unreachable` \| `socket_failed`); the raw exception is warned to the console, not routed into the UI. Dead `getLastStatusMessage()` deleted |
+| A crashed room's error vanished | `catch { … crashed: true }` in `advanceStalledTurns` | the thrown value travels out on `StalledTurnResult.error`; `server/index.ts` logs `room_crashed` before closing the sockets |
+| `RulesError.code` was `string` | any string, expected and unexpected mixed | `RulesInputErrorCode` (expected, untrusted input) vs `RulesInvariantErrorCode` (a bug), documented at the type |
+| Snapshot versioning was implicit | an unversioned bare state was accepted "(tests)"; a wrong version and corrupt JSON shared one code | the envelope is required; a wrong version is `unsupportedSaveVersion`. Policy stated: v2 only, no supported old versions, no migrations |
+| `ROOM_CODE_LENGTH` / seat count stated three times | `CODE_LENGTH` in `server/rooms.ts` *and* `OnlineScene`, `MAX_PLAYERS` in `rooms.ts` with copies in `matchmaking.ts` and `OnlineScene` | both in `src/net/protocol.ts`, imported by all four. The looser 16-char wire cap stays, documented as a deliberate difference |
+| Room capacity/grace/idle defaults stated twice | the same numbers in `server/rooms.ts` and `server/config.ts` | `rooms.ts` owns and exports them; `loadConfig` imports them as its fallbacks |
+
+Deliberately **not** done: no `Result<T, E>` conversion of functions that
+already refuse clearly, no error/config/storage framework, no migration
+machinery for a version that never shipped, no new configurable value, and no
+counter or telemetry added for the crash path (`log.error` to stderr is the
+diagnostic, and `verify:multiplayer` asserts a clean run leaves stderr empty).
+
 ## Evidence gaps
 
 - Runtime behaviour was not exercised in this phase: no game, browser or

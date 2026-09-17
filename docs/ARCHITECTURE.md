@@ -236,14 +236,120 @@ never crashes the game. Fallbacks are reported in
 `window.__MEXE__.missingAssets`, and verification fails if that is non-empty.
 See [ASSETS.md](ASSETS.md).
 
-## Failure isolation
+## Failure model
 
-- Rules throw typed errors, caught at the UI boundary — never a dead scene.
-- Missing assets → procedural fallback textures.
-- Audio failures → silent no-op.
-- AI exceptions → fall back to drawing and ending the turn.
-- Corrupt save → fresh game with a warning (`src/core/error-recovery.ts`).
-- `window.onerror` → captured into `__MEXE__.errors` for Playwright.
+Two families, and every failure in the project is deliberately in one of them.
+
+**Expected failure** — someone or something outside this code said no, or sent
+something we do not accept. It is represented as *data*, never inferred from
+unchanged state, and the layer that owns the player's language turns it into a
+sentence.
+
+| Where | Shape | Turned into copy by |
+|---|---|---|
+| rules legality | `ConfirmResult` / `MeldAnalysis` `ReasonCode` | `src/ui`, `src/table/invalid-detail` |
+| local action | `ActionOutcome` `{ ok: false, reasons }` (`src/game-state/actions.ts`) | the scene that dispatched it |
+| wire input | `parseClientMessage` → `{ error }` → `bad_message` | never shown; dev detail only |
+| server refusal | `RoomManager` result `{ ok: false, error: ServerErrorCode }` → `ErrorMsg.code` | `errorMessage()` in `src/net/errors.ts` |
+| connection | `ConnStatus` + `ConnReason` (`src/net/client.ts`) | `OnlineScene` |
+| untrusted snapshot | `RulesError` with a `RulesInputErrorCode` | its caller's recovery path |
+| stored settings/save | no failure: `parseSave` clamps per field to defaults | — |
+
+**Unexpected failure** — an invariant this code was supposed to uphold did not
+hold. It stays an exception and must reach a diagnostic path, never a silent
+no-op:
+
+| Where | Shape | Diagnostic path |
+|---|---|---|
+| rules invariants | `RulesError` with a `RulesInvariantErrorCode` (`badPlayerCount`, `deckTooSmall`, `illegalConfirm`, `corruptState`) | client: `window.onerror` → `__MEXE__.errors` + toast + return to menu (`src/main.ts`, `src/core/error-recovery.ts`). Server: `log.error` |
+| server message handler | any throw | `message_handler_error` + `messageHandlerErrorsTotal`, client gets `internal_error` with no detail |
+| server turn tick | any throw | room dropped, `room_crashed` logged with the error *type* (`errorFields`), sockets closed |
+| anything else in the process | any throw | `uncaught_exception` → exit 1, supervisor restarts |
+
+Error codes are stable, presentation-neutral and localization-independent.
+`ServerErrorCode` lives in `src/net/protocol.ts` (one owner, shared by both
+runtimes); `ReasonCode` lives in `src/rules/types.ts`. No UI branches on an
+error *message*: `msg.message` is developer detail for logs and the trace, and
+a raw exception text is never sent to a client or shown to a player.
+
+### Deliberate fallbacks
+
+These swallow a failure on purpose, because the alternative is worse than the
+degraded behaviour:
+
+- missing assets → procedural fallback textures, reported in `__MEXE__.missingAssets` (verification fails if non-empty)
+- audio/haptics blocked → silent no-op (a browser autoplay policy is not an error)
+- AI throws mid-decision → the AI draws and ends its turn, so a bug cannot hang the match
+- storage blocked or full → reads return defaults, writes are dropped; the session works, it just does not survive a reload
+- corrupt/partial `mexe-save` → per-field defaults (`parseSave`), never a throw
+
+Everything else is either an expected failure with a code or an exception that
+reaches one of the diagnostic paths above.
+
+## Configuration ownership
+
+Every configurable fact has exactly one owner. "Configurable" is reserved for
+what genuinely varies by runtime or by match — the MexeMexe rules themselves
+are code.
+
+| Class | Owner | Validated | Notes |
+|---|---|---|---|
+| GAME_RULE | `src/rules` | — | Meld legality, turn structure, win condition. Not configurable, deliberately: nothing in `RulesConfig` reaches `analyzeMeld`. |
+| MATCH_CONFIG | `RulesConfig` (`src/rules/types.ts`) + `DEFAULT_RULES` | fixed values; `createNewGame` refuses a deck too small or a player count outside 2–4 | Deck count, jokers per deck, hand size. Varies only because tests and fixtures need it to; the product ships `DEFAULT_RULES`. |
+| MATCH_CONFIG (online) | `RoomSettings` (`src/net/protocol.ts`), server-owned | `normalizeRoomSettings` — presets are taken whole, `custom` is clamped to `CUSTOM_BOUNDS` | The client proposes and renders; it never applies a value. The lobby UI reads `CUSTOM_BOUNDS` rather than keeping its own ranges. |
+| PLAYER_PREFERENCE | `src/core/settings.ts` over `src/core/persistence.ts` | `parseSave` — unknown/mistyped values fall back per field | Persisted in `mexe-save`. |
+| CLIENT_RUNTIME_CONFIG | `src/config.ts` | — | `resolveWsUrl` only: `?ws=` → `VITE_WS_URL` → same-origin default. |
+| SERVER_RUNTIME_CONFIG | `server/config.ts` `loadConfig(env)` | once, at startup; a bad value exits with a message naming the variable | The env table is [OPERATIONS.md](OPERATIONS.md). Room capacity, reconnect grace and idle lifetime default to the room aggregate's own constants (`server/rooms.ts`), imported rather than restated. |
+| BUILD_CONFIG | `vite.config.ts`, `.env.example` | — | `__APP_VERSION__`, `VITE_WS_URL`. |
+| Shared room shape | `src/net/protocol.ts` | — | `ROOM_CODE_LENGTH`, `MAX_SEATS`, `SERVER_ERROR_CODES`, `TIMER_PRESETS`, `CUSTOM_BOUNDS` — facts both runtimes state, so they are stated once. |
+
+Deliberate differences, kept rather than merged: the wire accepts a room code
+up to 16 characters while a real one is `ROOM_CODE_LENGTH` (a probe is refused
+at the boundary, a typo is refused by the room manager); the client trims a
+display name to `MAX_NAME_LENGTH` for the seat row while the server trims to 64
+as its own trust boundary.
+
+There are no feature flags. Units are in the name (`*Ms`, `*Length`, `*Count`,
+`*Ratio`); milliseconds are the only time unit that crosses a boundary.
+
+## Persistence
+
+Persistence is never a second gameplay authority. Nothing persisted can decide
+a legality question, and no online state is restored from disk — a reconnect
+recovers from the server (see [MULTIPLAYER.md](MULTIPLAYER.md) §7).
+
+| Domain | Key | Store | Owner | Versioned | Validation | Lifetime |
+|---|---|---|---|---|---|---|
+| settings + progress + cosmetics | `mexe-save` | `localStorage` | `src/core/persistence.ts` (`settings` singleton reads/writes it) | `version: 1` envelope | `parseSave` — wrong version or corrupt JSON → defaults; unknown enum/cosmetic id → per-field default | until cleared (`settings.resetData()`) |
+| pre-v1 settings | `mexe-settings` | `localStorage` | same | unversioned | migrated into `mexe-save` on first read, then removed | gone after one load |
+| display name | `mexe.online.name` | `localStorage` | `src/net/client.ts` | no | trimmed to `MAX_NAME_LENGTH`; the server sanitizes it again | until cleared |
+| recent rooms | `mexe.online.recent` | `localStorage` | `src/net/client.ts` | no | shape-checked per entry, code re-normalized, entries older than 6h dropped | 6h TTL, max 5 |
+| reconnect token | `mexe.online.token` | **`sessionStorage`** | `src/net/client.ts` | no | paired with the endpoint that issued it; a token stored for another endpoint is never sent | tab session |
+| offline shell | cache named by build version | Cache Storage | `public/sw.js` | cache name *is* the version | old caches deleted on activate | until a new build activates |
+| play log | — | memory only | `src/core/playlog.ts` | — | — | page |
+
+A room code is a locator, not a credential; the reconnect token is the one
+credential and it is the one thing kept out of `localStorage`, in a different
+key and a different shape, so it cannot be confused with history. No hidden
+opponent information is persisted anywhere — see
+[OBSERVABILITY_PRIVACY.md](OBSERVABILITY_PRIVACY.md).
+
+### Game-state snapshots
+
+`serializeGameState` / `deserializeGameState` (`src/rules/rules.ts`) are the
+one snapshot format. **Current version 2; no older version is supported and
+there are no migrations** — nothing in the product writes a snapshot to
+storage, so no v1 payload exists in any browser to migrate. The format is used
+by determinism tests today and is the shape a future replay would build on.
+
+Deserialization treats its input as untrusted, in this order: parse → require
+the versioned envelope → version check → shape check → the gameplay invariants
+(`cardsConserved`, `validateTable`, the same functions the server asserts).
+Anything refused throws a `RulesError` with an input error code
+(`corruptSave`, `unsupportedSaveVersion`) rather than producing a half-valid
+state. A bare unversioned state is refused: a snapshot that cannot be dated
+cannot be trusted. Serialization is deterministic — the same state produces
+the same string, which is what `createNewGame` determinism tests compare.
 
 ## System context
 
@@ -458,6 +564,9 @@ here is a generic state-machine framework, and none of it should become one.
 | Player-visible text | `src/localization/i18n.ts` (both locales) | inline literals |
 | A new asset | `public/assets/` + `src/assets/manifest.ts` + ASSETS.md | hardcoded paths |
 | A setting | `src/core/settings.ts` (+ the settings panel) | scene-local state |
+| A server error code | `SERVER_ERROR_CODES` in `src/net/protocol.ts` + copy in both locales | a free-form `message` the client parses |
+| A server tuning knob | `server/config.ts` `loadConfig` + the OPERATIONS.md table | `process.env` read from an arbitrary module |
+| Something to persist | its own small store next to its owner, with validation on read | a new key written from a scene |
 
 Principles worth keeping:
 

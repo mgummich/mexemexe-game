@@ -14,6 +14,19 @@ import type {
 
 export type ConnStatus = 'connecting' | 'open' | 'closed' | 'error' | 'reconnecting';
 
+/**
+ * Why a status changed, when the status alone is not enough to answer it. A stable code, not a
+ * message: the UI branches on it (OnlineScene) and picks its own copy, so no caller ever matches
+ * on a browser's exception text.
+ *
+ * - `unreachable` — the socket never opened at all (server down/refused), as opposed to a
+ *   mid-session drop, which is an ordinary `reconnecting`/`closed`.
+ * - `socket_failed` — the browser refused to create or write to the socket. The underlying
+ *   exception is warned to the console rather than carried here; there is nothing a player can
+ *   do with its text and nothing the UI would say differently for it.
+ */
+export type ConnReason = 'unreachable' | 'socket_failed';
+
 const TOKEN_KEY = 'mexe.online.token';
 /** Separator between the endpoint a token was issued by and the token itself, inside TOKEN_KEY.
  * A NUL occurs in neither half: it is not representable in a URL, and a token is randomUUID(). */
@@ -185,8 +198,7 @@ export class NetClient {
   private ws: WebSocket | null = null;
   private reqCounter = 0;
   private status: ConnStatus = 'closed';
-  private lastStatusMessage: string | undefined;
-  private statusListeners = new Set<(s: ConnStatus, message?: string) => void>();
+  private statusListeners = new Set<(s: ConnStatus, reason?: ConnReason) => void>();
   private listeners = new Map<string, Set<ServerListener>>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   /** Set by disconnect()/leaveRoom() so onclose knows not to retry a deliberate close. */
@@ -217,7 +229,7 @@ export class NetClient {
     return this.status;
   }
 
-  onStatus(cb: (s: ConnStatus, message?: string) => void): () => void {
+  onStatus(cb: (s: ConnStatus, reason?: ConnReason) => void): () => void {
     this.statusListeners.add(cb);
     return () => this.statusListeners.delete(cb);
   }
@@ -249,7 +261,10 @@ export class NetClient {
     try {
       ws = new WebSocket(resolveWsUrl());
     } catch (err) {
-      this.setStatus('error', String(err));
+      // The text is a browser string no player can act on, so it is not carried into the UI —
+      // but it is not swallowed either: the console keeps it for whoever is debugging.
+      console.warn('[net] could not open socket', err);
+      this.setStatus('error', 'socket_failed');
       return;
     }
     // A CLOSING socket can fire after its replacement is live. Detach its callbacks so it
@@ -288,9 +303,8 @@ export class NetClient {
     };
     ws.onerror = () => {
       if (this.ws !== ws) return;
-      // No status change here — onclose fires right after and owns the retry-vs-terminal
+      // Deliberately no status change: onclose fires right after and owns the retry-vs-terminal
       // decision. Setting 'error' here first would race a still-pending reconnect.
-      this.lastStatusMessage = 'connection error';
     };
     ws.onmessage = (ev) => {
       if (this.ws !== ws) return;
@@ -537,7 +551,8 @@ export class NetClient {
       this.ws.send(JSON.stringify(msg));
       return true;
     } catch (err) {
-      this.setStatus('error', String(err));
+      console.warn('[net] could not send on socket', err);
+      this.setStatus('error', 'socket_failed');
       return false;
     }
   }
@@ -547,15 +562,11 @@ export class NetClient {
     if (this.trace.length > TRACE_CAP) this.trace.shift();
   }
 
-  private setStatus(s: ConnStatus, message?: string): void {
+  private setStatus(s: ConnStatus, reason?: ConnReason): void {
     this.status = s;
     this.statusTrace.push(s);
     if (this.statusTrace.length > STATUS_TRACE_CAP) this.statusTrace.shift();
-    this.lastStatusMessage = message;
-    for (const cb of this.statusListeners) cb(s, message);
+    for (const cb of this.statusListeners) cb(s, reason);
   }
 
-  getLastStatusMessage(): string | undefined {
-    return this.lastStatusMessage;
-  }
 }

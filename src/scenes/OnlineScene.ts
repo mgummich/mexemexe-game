@@ -11,7 +11,7 @@ import {
 import { errorMessage } from '../net/errors';
 import {
   CUSTOM_BOUNDS, DEFAULT_QUEUE_TARGET, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY,
-  QUEUE_TARGETS, REACTION_COOLDOWN_MS, REACTIONS, TIMER_PRESETS,
+  MAX_SEATS, QUEUE_TARGETS, REACTION_COOLDOWN_MS, REACTIONS, ROOM_CODE_LENGTH, TIMER_PRESETS,
   type ActivityEvent, type GameView, type PartyState, type QueueTarget, type ReactionId,
   type RoomListing, type RoomPlayerSummary, type RoomSettings, type RoomVisibility, type TimerMode,
 } from '../net/protocol';
@@ -19,9 +19,6 @@ import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, type RenderedSeatRow } from '../verification/debug-api';
-
-/** Room codes are always this long — see server/rooms.ts CODE_LENGTH. */
-const CODE_LENGTH = 5;
 
 /** Lobby preset cycle — one tap moves between the three answers a room of friends actually
  * chooses between. `custom` is deliberately not in the cycle: it lives behind the CUSTOM screen,
@@ -44,9 +41,6 @@ const CUSTOM_ROWS = [
 /** Seats never move, so seat N always gets badge colour N — the badge is a *secondary* cue on a
  * row that already spells out the name and the status word, never the only one. */
 const SEAT_COLORS = [0xc8543a, 0x3a7fc8, 0x3ea05a, 0xc8a33a];
-
-/** Highest seat index the server will ever hand out — server/rooms.ts MAX_PLAYERS. */
-const MAX_SEATS = 4;
 
 /** Room cards drawn on one browser screen. The server's answer is bounded much higher
  * (MAX_ROOM_LISTINGS); the rest becomes a "+N more" line rather than a scroll container, which
@@ -87,7 +81,7 @@ function nextTimerPreset(current: TimerMode): (typeof PRESET_CYCLE)[number] {
 
 /** Only characters the room alphabet can produce, so the buffer is always a candidate code. */
 function sanitizeCode(raw: string): string {
-  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH);
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, ROOM_CODE_LENGTH);
 }
 
 /** A display name is shown to strangers, so it stays letters/digits/spaces — no markup, no
@@ -307,7 +301,7 @@ export class OnlineScene extends Phaser.Scene {
     // instead of transcribing five characters. Still a normal join — the server validates the
     // code exactly as it does a typed one.
     const linked = new URLSearchParams(location.search).get('room');
-    this.autoJoinCode = linked ? linked.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH) || null : null;
+    this.autoJoinCode = linked ? linked.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, ROOM_CODE_LENGTH) || null : null;
     this.wireCodeEntry();
     this.wireClient();
     this.installDebugHooks();
@@ -394,7 +388,7 @@ export class OnlineScene extends Phaser.Scene {
     el.autocapitalize = isCode ? 'characters' : 'words';
     el.autocomplete = 'off';
     el.spellcheck = false;
-    el.maxLength = isCode ? CODE_LENGTH : MAX_NAME_LENGTH;
+    el.maxLength = isCode ? ROOM_CODE_LENGTH : MAX_NAME_LENGTH;
     el.value = isCode ? this.codeInput : this.nameInput;
     // 1px, off-canvas but still focusable/tappable — a display:none input never opens a
     // soft keyboard on iOS/Android.
@@ -424,7 +418,7 @@ export class OnlineScene extends Phaser.Scene {
 
   private wireClient(): void {
     this.unsubs.push(
-      this.client.onStatus((s, message) => {
+      this.client.onStatus((s, reason) => {
         this.status = s;
         // The shared link's code is only useful once there is a socket to send it on.
         if (s === 'open' && this.autoJoinCode !== null && this.phase === 'idle' && this.code === null) {
@@ -432,10 +426,10 @@ export class OnlineScene extends Phaser.Scene {
           this.autoJoinCode = null;
           this.fireOnce('join', 3000, () => this.joinCode(code));
         }
-        // 'error' with the 'unreachable' marker means the initial connection never opened at
-        // all (server down/refused) — distinct from a mid-session drop, which uses the normal
-        // 'reconnecting'/'closed' status copy instead.
-        if (s === 'error' && message === 'unreachable') {
+        // 'unreachable' means the initial connection never opened at all (server down/refused)
+        // — distinct from a mid-session drop, which uses the normal 'reconnecting'/'closed'
+        // status copy instead.
+        if (s === 'error' && reason === 'unreachable') {
           this.errorMsg = t('online.err.unreachable');
           this.phase = 'error';
         }
@@ -1315,7 +1309,7 @@ export class OnlineScene extends Phaser.Scene {
 
   private renderJoin(): void {
     label(this, cx(), vy(86), t('online.enterCodePrompt'), 9, '#f7f2e7');
-    const shown = this.codeInput.padEnd(CODE_LENGTH, '_');
+    const shown = this.codeInput.padEnd(ROOM_CODE_LENGTH, '_');
     // tappable so a touch player who blurred the soft keyboard can bring it back
     label(this, cx(), vy(118), shown, 20, this.codeInput ? '#f7d23e' : '#8a7f6e')
       .setInteractive({ useHandCursor: true })

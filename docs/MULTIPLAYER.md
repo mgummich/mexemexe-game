@@ -713,13 +713,26 @@ divergence, and hashing it would make every second look like a desync.
 
 ## 8. Error handling
 
+Error **codes** are the contract, not error text. `SERVER_ERROR_CODES` in
+`src/net/protocol.ts` is the single list both runtimes use: `sendError` takes
+that union, so the server cannot emit a code the client has no copy for, and
+`src/net/errors.ts` maps each entry to a translated sentence (its test walks
+the list, so a new code without copy fails the test rather than shipping raw
+English). `ErrorMsg.message` is developer detail for the trace and the log —
+`OnlineScene` never reads it, and an unknown code falls back to generic copy
+rather than being shown raw. The same rule applies to connection failures: the
+client publishes a `ConnStatus` plus a stable `ConnReason` (`unreachable`,
+`socket_failed`), never a browser exception string.
+
 Every inbound frame is parsed inside a try/catch; a parse failure or a failed
 shape check replies `error` and, on repeated abuse, closes the socket. No
 inbound value is ever used as an object key, array index, or loop bound before
 being range-checked. Handlers are wrapped so a thrown `RulesError` becomes a
 rejection message, never an unhandled exception. Per-room work is isolated: a
 room whose state can no longer advance legally is dropped and its sockets
-notified, rather than throwing out of the tick that serves every other room.
+notified, rather than throwing out of the tick that serves every other room —
+and the thrown value travels out with that result so the host logs
+`room_crashed` (the error *type*, never its text) instead of losing it.
 
 Truly fatal failures are deliberate, not swallowed. `uncaughtException` logs
 `uncaught_exception` (the error *type*, never its text) to stderr and exits

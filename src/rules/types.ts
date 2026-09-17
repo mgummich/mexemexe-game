@@ -105,12 +105,30 @@ export type MeldAnalysis =
   | { valid: true; kind: 'run' | 'group'; assignments: JokerAssignment[] }
   | { valid: false; reason: ReasonCode };
 
+/**
+ * Refusals of *untrusted input*. Expected: the data came from storage, a file or a hand edit, the
+ * caller is supposed to recover (start fresh) and the player is told something neutral. Never a
+ * bug in itself.
+ */
+export type RulesInputErrorCode = 'corruptSave' | 'unsupportedSaveVersion';
+
+/**
+ * Violated invariants. Unexpected: trusted code built or passed something that cannot be, so the
+ * throw is the diagnostic. Callers must not convert these into a silent no-op — the client's
+ * `window.onerror` boundary and the server's room-crash log exist to keep them visible.
+ */
+export type RulesInvariantErrorCode = 'badPlayerCount' | 'deckTooSmall' | 'illegalConfirm' | 'corruptState';
+
+export type RulesErrorCode = RulesInputErrorCode | RulesInvariantErrorCode;
+
+/** The domain's one error class. `code` says which of the two families above the failure is in. */
 export class RulesError extends Error {
   constructor(
     message: string,
-    public readonly code: string,
+    public readonly code: RulesErrorCode,
   ) {
     super(message);
     this.name = 'RulesError';
   }
 }
+
