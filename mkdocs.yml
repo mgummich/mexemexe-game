@@ -39,6 +39,8 @@ nav:
       - Development: DEVELOPMENT.md
       - Testing: TESTING.md
       - Architecture: ARCHITECTURE.md
+      - Architecture audit: ARCHITECTURE_AUDIT.md
+      - Invariants & scenarios: INVARIANTS.md
       - Contributing: CONTRIBUTING.md
   - Features:
       - Multiplayer: MULTIPLAYER.md

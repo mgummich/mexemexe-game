@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildShowcaseState } from '../src/demo/showcase';
-import type { PlayerConfig } from '../src/game-state/store';
+import type { PlayerConfig } from '../src/rules/types';
 
 const players: PlayerConfig[] = [
   { name: 'You', isAi: false },

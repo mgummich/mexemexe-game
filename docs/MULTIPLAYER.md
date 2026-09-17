@@ -69,6 +69,28 @@ legal, never decides a winner, and never advances `rev` on its own.
 Consequence: the client's `DraftEditor` stays exactly as it is — a local
 scratchpad — and the server never sees a draft until FEITO.
 
+**Where the client's half lives.** The presentation layer does not decide any of
+it:
+
+```
+presentation        GameScene (match) / OnlineScene (lobby): Phaser, input, notices
+   ↓ intents
+online application  OnlineSession (per match) · LobbyMachine (lobby screen)
+   ↓ messages
+transport/protocol  NetClient over src/net/protocol
+   ↓
+server authority    server/rooms.ts
+```
+
+`OnlineSession` (`src/net/online-session.ts`) owns the projection of a server
+frame and every policy over it: is this revision stale, does the local
+reconstruction still hash to the server's digest, did this frame drop a draft,
+was the Mexe bonus just granted, which dense index a room seat maps to, and
+whether a `turn_timeout` is the one that ends the match. `LobbyMachine`
+(`src/net/lobby.ts`) owns which screen is showing and what each server refusal
+costs. Both are Phaser-free and clock-free and are driven directly by
+`tests/online-session.test.ts` and `tests/lobby.test.ts`.
+
 ## 2. Hidden information
 
 The server never sends a full `GameState` to a client. It sends a per-player
@@ -167,7 +189,8 @@ the two schemes diverge. `RoomInternal.matchSeats` is the one place they are rel
 seat of each player index, frozen at `startGame` and cleared on recycle. Every seat-taking entry
 point in the room manager translates through it, and it rides the wire as `GameView.seats` so a
 client can do the same for the room seats that arrive on `turn_timeout`, `player_disconnected`,
-`player_reconnected` and `winningMove`.
+`player_reconnected` and `winningMove`. On the client that translation is
+`OnlineSession.playerIndexOf`, re-read from every frame — one place, not one per handler.
 
 Everything else inside a `GameView` — `seat`, `activeSeat`, `players[].seat`, `missedTurns` — is
 a player index, the state hash included, so both sides digest the same numbers.
@@ -504,6 +527,13 @@ localized reason and restores the last synced state — never a half-applied
 draft. A `state_sync` with a `rev` lower than the one already rendered is
 ignored (late/out-of-order delivery).
 
+All of those decisions are `OnlineSession.applySync`, which answers one of three
+things — `stale` (ignored), `desync` (input stays locked, a fresh snapshot is
+requested) or `applied` (with the acting seat, whether a draft was dropped, any
+Mexe bonus granted and the remaining turn time). The scene turns that answer into
+notices and a repaint, and anchors `turnMsLeft` to its own clock; it decides
+none of it.
+
 ## 7. Reconnect plan (as built)
 
 At join, the server issues a `token` (opaque random string) bound to
@@ -713,13 +743,26 @@ divergence, and hashing it would make every second look like a desync.
 
 ## 8. Error handling
 
+Error **codes** are the contract, not error text. `SERVER_ERROR_CODES` in
+`src/net/protocol.ts` is the single list both runtimes use: `sendError` takes
+that union, so the server cannot emit a code the client has no copy for, and
+`src/net/errors.ts` maps each entry to a translated sentence (its test walks
+the list, so a new code without copy fails the test rather than shipping raw
+English). `ErrorMsg.message` is developer detail for the trace and the log —
+`OnlineScene` never reads it, and an unknown code falls back to generic copy
+rather than being shown raw. The same rule applies to connection failures: the
+client publishes a `ConnStatus` plus a stable `ConnReason` (`unreachable`,
+`socket_failed`), never a browser exception string.
+
 Every inbound frame is parsed inside a try/catch; a parse failure or a failed
 shape check replies `error` and, on repeated abuse, closes the socket. No
 inbound value is ever used as an object key, array index, or loop bound before
 being range-checked. Handlers are wrapped so a thrown `RulesError` becomes a
 rejection message, never an unhandled exception. Per-room work is isolated: a
 room whose state can no longer advance legally is dropped and its sockets
-notified, rather than throwing out of the tick that serves every other room.
+notified, rather than throwing out of the tick that serves every other room —
+and the thrown value travels out with that result so the host logs
+`room_crashed` (the error *type*, never its text) instead of losing it.
 
 Truly fatal failures are deliberate, not swallowed. `uncaughtException` logs
 `uncaught_exception` (the error *type*, never its text) to stderr and exits

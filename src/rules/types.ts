@@ -13,16 +13,23 @@ export interface Card {
 }
 
 export interface Meld {
-  id: string;
-  cards: Card[];
+  readonly id: string;
+  readonly cards: readonly Card[];
 }
 
 export interface PlayerState {
-  id: string;
+  readonly id: string;
+  readonly name: string;
+  readonly isAi: boolean;
+  readonly aiType?: 'simple' | 'rearranger';
+  readonly hand: readonly Card[];
+}
+
+/** A seat to deal in: everything a `PlayerState` needs that the deal itself does not provide. */
+export interface PlayerConfig {
   name: string;
   isAi: boolean;
   aiType?: 'simple' | 'rearranger';
-  hand: Card[];
 }
 
 /**
@@ -42,21 +49,21 @@ export const DEFAULT_RULES: RulesConfig = {
 };
 
 export interface GameState {
-  seed: number;
-  players: PlayerState[];
-  activePlayerIndex: number;
-  table: Meld[]; // committed — always valid
-  drawPile: Card[];
-  turn: number;
-  winnerId: string | null;
-  phase: 'playing' | 'finished';
-  config: RulesConfig;
+  readonly seed: number;
+  readonly players: readonly PlayerState[];
+  readonly activePlayerIndex: number;
+  readonly table: readonly Meld[]; // committed — always valid
+  readonly drawPile: readonly Card[];
+  readonly turn: number;
+  readonly winnerId: string | null;
+  readonly phase: 'playing' | 'finished';
+  readonly config: RulesConfig;
 }
 
 /** Mexe Mode draft — may be temporarily invalid while editing. */
 export interface DraftState {
-  melds: Meld[];
-  handCardsPlayed: string[]; // ids moved from active player's hand
+  readonly melds: readonly Meld[];
+  readonly handCardsPlayed: readonly string[]; // ids moved from active player's hand
 }
 
 export type ReasonCode =
@@ -98,12 +105,35 @@ export type MeldAnalysis =
   | { valid: true; kind: 'run' | 'group'; assignments: JokerAssignment[] }
   | { valid: false; reason: ReasonCode };
 
+/**
+ * Refusals of *untrusted input*. Expected: the data came from storage, a file or a hand edit, the
+ * caller is supposed to recover (start fresh) and the player is told something neutral. Never a
+ * bug in itself.
+ */
+export type RulesInputErrorCode =
+  | 'corruptSave'
+  | 'unsupportedSaveVersion'
+  | 'corruptReplay'
+  | 'unsupportedReplayVersion'
+  | 'replayDiverged';
+
+/**
+ * Violated invariants. Unexpected: trusted code built or passed something that cannot be, so the
+ * throw is the diagnostic. Callers must not convert these into a silent no-op — the client's
+ * `window.onerror` boundary and the server's room-crash log exist to keep them visible.
+ */
+export type RulesInvariantErrorCode = 'badPlayerCount' | 'deckTooSmall' | 'illegalConfirm' | 'corruptState';
+
+export type RulesErrorCode = RulesInputErrorCode | RulesInvariantErrorCode;
+
+/** The domain's one error class. `code` says which of the two families above the failure is in. */
 export class RulesError extends Error {
   constructor(
     message: string,
-    public readonly code: string,
+    public readonly code: RulesErrorCode,
   ) {
     super(message);
     this.name = 'RulesError';
   }
 }
+

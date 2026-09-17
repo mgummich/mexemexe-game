@@ -20,7 +20,7 @@ installDebugApi();
 // Apply the saved locale before anything outside a scene reads copy — MenuScene also does this,
 // but it runs after this module, so DOM overlays here would otherwise render in the default locale.
 setLocale(settings.get().locale);
-playlog.attachToBus(bus);
+playlog.attachAppEvents(bus);
 startMusic();
 initPwa();
 

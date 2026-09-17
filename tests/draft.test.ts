@@ -157,13 +157,15 @@ describe('DraftEditor', () => {
   });
 
   it('splitting a run into two valid runs without a hand card blocks FEITO with noHandCard', () => {
-    const s = state();
-    s.table = [
-      {
-        id: 't1',
-        cards: [n('diamonds', 3), n('diamonds', 4), n('diamonds', 5), n('diamonds', 6), n('diamonds', 7), n('diamonds', 8)],
-      },
-    ];
+    const s = {
+      ...state(),
+      table: [
+        {
+          id: 't1',
+          cards: [n('diamonds', 3), n('diamonds', 4), n('diamonds', 5), n('diamonds', 6), n('diamonds', 7), n('diamonds', 8)],
+        },
+      ],
+    };
     const ed = new DraftEditor(s);
     const id = ed.getDraft().melds[0]!.id;
     expect(ed.splitMeld(id, 3)).toBe(true);

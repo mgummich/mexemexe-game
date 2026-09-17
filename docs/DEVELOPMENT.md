@@ -59,6 +59,7 @@ so a capture does not have to click through the settings panel.
 | `npm run build` | Type-check then production build |
 | `npm run preview` | Serve `dist/` on :4173 |
 | `npm run server` | WebSocket server for online rooms |
+| `npm run replay run <file>` / `record <seed>` | Reproduce or capture a deterministic match — see below |
 | `npm run test` / `test:watch` / `test:server` | Vitest — see [TESTING.md](TESTING.md) |
 | `npm run lint` | ESLint + `tsc --noEmit` |
 | `npm run screenshot` | Build + Playwright screenshot/perf suite |
@@ -69,6 +70,52 @@ so a capture does not have to click through the settings panel.
 
 `node scripts/gen-sfx.mjs` regenerates the synthesized sound effects; there is
 no npm alias for it.
+
+## Reproducing a bug from a replay
+
+A replay is seed + ordered actions (`src/game-state/replay.ts`). It runs in
+Node, without Phaser, the DOM or a server, so a reproduction is a file and a
+command rather than a sequence of clicks.
+
+**Capture from a session** — in the browser console, or from Playwright:
+
+```js
+copy(JSON.stringify(window.__MEXE__.replay()))   // null online, by design
+```
+
+**Capture without a browser** — play a deterministic AI match:
+
+```bash
+npm run replay record 12345 tmp/bug.json          # full match
+npm run replay record 12345 tmp/bug.json 60 bia,ze  # 60 actions, rearranging AI
+```
+
+**Run one:**
+
+```bash
+npm run replay run tmp/bug.json
+PASS replay tmp/bug.json actions=148 turn=148 phase=finished winner=p0 hash=9615062c
+```
+
+A failure names the action index and the reasons the rules refused it:
+
+```text
+FAIL replay tmp/bug.json
+
+corruptReplay
+corrupt replay: action 31 (confirmTurn) refused: reason.runGap
+```
+
+The hash is a digest of the full final state; a `finalHash` recorded with the
+replay is checked on every run, so a rules change that moves the outcome fails
+as `replayDiverged` rather than silently producing a different match. Committed
+examples live in `tests/fixtures/replays/` and are replayed by
+`tests/replay.test.ts`.
+
+Attach the replay JSON to a bug report. It carries no names or tokens — seats
+are `p0`/`p1` and cards are ids — but it does reveal the whole deal, which is
+why online matches have no client-side replay (see
+[ARCHITECTURE.md](ARCHITECTURE.md#replay-and-reproduction)).
 
 ## Typical loop
 

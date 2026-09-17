@@ -1,4 +1,5 @@
-import type { Rng } from '../core/rng';
+import { createRng } from './rng';
+import type { Rng } from './rng';
 import {
   DEFAULT_RULES,
   SUITS,
@@ -10,6 +11,8 @@ import {
   type Meld,
   type MeldAnalysis,
   type MeldReason,
+  type PlayerConfig,
+  type PlayerState,
   type Rank,
   type ReasonCode,
   type RulesConfig,
@@ -69,6 +72,38 @@ export function dealInitialHands(
     }
   }
   return { hands, drawPile: deck.slice(i) };
+}
+
+/**
+ * The one deal. Local play and the server both start a match here, so a seed produces the same
+ * game on either side (ARCH-004: the deal used to be written out twice).
+ */
+export function createNewGame(
+  seed: number,
+  playerConfigs: readonly PlayerConfig[],
+  config: RulesConfig = DEFAULT_RULES,
+): GameState {
+  const rng = createRng(seed);
+  const deck = shuffleDeck(createDeck(config), rng);
+  const { hands, drawPile } = dealInitialHands(deck, playerConfigs.length, config.handSize);
+  const players: PlayerState[] = playerConfigs.map((cfg, i) => ({
+    id: `p${i}`,
+    name: cfg.name,
+    isAi: cfg.isAi,
+    aiType: cfg.aiType,
+    hand: hands[i]!,
+  }));
+  return {
+    seed,
+    players,
+    activePlayerIndex: 0,
+    table: [],
+    drawPile,
+    turn: 1,
+    winnerId: null,
+    phase: 'playing',
+    config,
+  };
 }
 
 interface AceMode {
@@ -234,6 +269,38 @@ function countIds(cards: readonly Card[]): Map<string, number> {
  * `invalidMeldReasons`, when given, is reused instead of recomputed — pass the caller's own
  * `getInvalidMeldReasons(draft.melds)` result to avoid analyzing every meld twice.
  */
+/**
+ * Rehydrate a draft from card *ids* against the state the turn is being played on. Only the
+ * committed table and the acting player's own hand are eligible, so an opponent-hand or draw-pile
+ * id is refused here rather than downstream: `null` means "that id is not a card this player can
+ * be holding or moving".
+ *
+ * Card identity is never taken from the caller — the wire protocol and replay files both carry
+ * ids only, and this is the one place either of them turns back into cards.
+ */
+export function draftFromCardIds(
+  state: GameState,
+  playerIndex: number,
+  melds: readonly { id: string; cardIds: readonly string[] }[],
+): DraftState | null {
+  const byId = new Map<string, Card>();
+  for (const c of state.players[playerIndex]!.hand) byId.set(c.id, c);
+  for (const m of state.table) for (const c of m.cards) byId.set(c.id, c);
+  const draftMelds: Meld[] = [];
+  for (const m of melds) {
+    const cards: Card[] = [];
+    for (const cid of m.cardIds) {
+      const card = byId.get(cid);
+      if (!card) return null;
+      cards.push(card);
+    }
+    draftMelds.push({ id: m.id, cards });
+  }
+  // `handCardsPlayed` is the editor's own bookkeeping; no rule reads it, and the cards that came
+  // from hand are already implied by the melds.
+  return { melds: draftMelds, handCardsPlayed: [] };
+}
+
 export function canConfirmTurn(state: GameState, draft: DraftState, invalidMeldReasons?: MeldReason[]): ConfirmResult {
   const reasons: ReasonCode[] = [];
   const draftCards = draft.melds.flatMap((m) => m.cards);
@@ -385,6 +452,17 @@ export function timerExpireTurn(state: GameState): GameState {
   return drawAndEndTurn(state);
 }
 
+/**
+ * Card conservation: every dealt card lives in exactly one hand, meld or the draw pile — no card
+ * invented, lost or duplicated. One implementation, used by the save loader here and by the
+ * server before it publishes a turn.
+ */
+export function cardsConserved(state: GameState): boolean {
+  const all = [...state.players.flatMap((p) => p.hand), ...state.table.flatMap((m) => m.cards), ...state.drawPile];
+  const expected = state.config.deckCount * (52 + state.config.jokersPerDeck);
+  return all.length === expected && new Set(all.map((c) => c.id)).size === expected;
+}
+
 export function checkWinner(state: GameState): string | null {
   const winner = state.players.find((p) => p.hand.length === 0);
   return winner ? winner.id : null;
@@ -395,8 +473,18 @@ function fewestCardsWinner(state: GameState): string {
   return [...state.players].sort((a, b) => a.hand.length - b.hand.length)[0]!.id;
 }
 
-/** Wire/save envelope version. Bump when GameState's shape changes incompatibly. */
-const GAME_STATE_VERSION = 2;
+/**
+ * Snapshot envelope version. **Supported versions: 2 only.** There are no migrations and no
+ * supported old versions: nothing in the product writes a game snapshot to storage (settings and
+ * progress live in their own `mexe-save` envelope, `src/core/persistence.ts`; an online match is
+ * restored from the server, never from disk), so no v1 payload exists in any player's browser to
+ * migrate. A snapshot that is not v2 is refused, not repaired.
+ *
+ * If a future feature does persist a snapshot, bump this on any incompatible `GameState` change
+ * and add the migration *here*, before the validation below — a migrated payload still has to
+ * pass every check a fresh one does.
+ */
+export const GAME_STATE_VERSION = 2;
 
 interface GameStateEnvelopeV2 {
   version: 2;
@@ -408,6 +496,12 @@ export function serializeGameState(state: GameState): string {
   return JSON.stringify(envelope);
 }
 
+/**
+ * Untrusted snapshot → trusted `GameState`, or a throw. Order: parse, version, shape, then the
+ * gameplay invariants (`cardsConserved`, `validateTable`) — the same ones the server asserts, so
+ * persistence never restates a rule. Anything refused throws a `RulesError` carrying an input
+ * error code (`corruptSave` / `unsupportedSaveVersion`); the caller recovers, it is not a bug.
+ */
 export function deserializeGameState(json: string): GameState {
   let parsed: unknown;
   try {
@@ -415,17 +509,15 @@ export function deserializeGameState(json: string): GameState {
   } catch {
     throw new RulesError('corrupt save: not JSON', 'corruptSave');
   }
-  if (parsed && typeof parsed === 'object' && 'version' in parsed) {
-    if ((parsed as { version: unknown }).version !== GAME_STATE_VERSION) {
-      throw new RulesError('corrupt save: unsupported version', 'corruptSave');
-    }
+  // The envelope is required. A bare state carries no version, so accepting one would mean
+  // trusting a shape no writer of this format produces and no reader can date.
+  if (!parsed || typeof parsed !== 'object' || !('version' in parsed) || !('state' in parsed)) {
+    throw new RulesError('corrupt save: not a versioned snapshot', 'corruptSave');
   }
-  // Accept both the versioned envelope and the old bare-state shape (tests).
-  const unwrapped =
-    parsed && typeof parsed === 'object' && 'version' in parsed && 'state' in parsed
-      ? (parsed as GameStateEnvelopeV2).state
-      : parsed;
-  const s = unwrapped as GameState;
+  if ((parsed as { version: unknown }).version !== GAME_STATE_VERSION) {
+    throw new RulesError('corrupt save: unsupported version', 'unsupportedSaveVersion');
+  }
+  const s = (parsed as GameStateEnvelopeV2).state as GameState;
   if (
     !s ||
     !Array.isArray(s.players) ||
@@ -437,14 +529,7 @@ export function deserializeGameState(json: string): GameState {
   ) {
     throw new RulesError('corrupt save: bad shape', 'corruptSave');
   }
-  const all = [
-    ...s.players.flatMap((p) => p.hand),
-    ...s.table.flatMap((m) => m.cards),
-    ...s.drawPile,
-  ];
-  const ids = new Set(all.map((c) => c.id));
-  const expectedTotal = s.config.deckCount * (52 + s.config.jokersPerDeck);
-  if (all.length !== expectedTotal || ids.size !== expectedTotal) {
+  if (!cardsConserved(s)) {
     throw new RulesError('corrupt save: card conservation violated', 'corruptSave');
   }
   if (!validateTable(s.table)) {

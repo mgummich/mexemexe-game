@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { aiReasonKeySuffix, AI_SPEED_SCALE, createAi, DIFFICULTIES, RearrangerAi, SimpleAi } from '../src/ai/ai';
 import { t } from '../src/localization/i18n';
 import { applyConfirmedTurn, canConfirmTurn, cardId, drawAndEndTurn, jokerId } from '../src/rules/rules';
-import type { Card, GameState, Rank, Suit } from '../src/rules/types';
+import type { Card, GameState, Meld, Rank, Suit } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
-import { createNewGame } from '../src/game-state/store';
+import { createNewGame } from '../src/rules/rules';
 
 function c(suit: Suit, rank: number, deckId = 0): Card {
   return { id: cardId(suit, rank as Rank, deckId), deckId, suit, rank: rank as Rank, isJoker: false };
@@ -422,7 +422,7 @@ describe('AI full-game smoke', () => {
 describe('AI hardening', () => {
   it('crowded table (10+ melds, 20-card hand): RearrangerAi returns a legal decision within 500ms', () => {
     const suits: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades'];
-    const table: GameState['table'] = [];
+    const table: Meld[] = [];
     // 10 disjoint 3-card sets, one per rank 1..10 (suits cycle so each set is 3 distinct suits).
     for (let rank = 1; rank <= 10; rank++) {
       const s0 = suits[rank % 4]!;

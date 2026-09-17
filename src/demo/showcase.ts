@@ -1,6 +1,6 @@
 import { SimpleAi } from '../ai/ai';
-import { createNewGame, type PlayerConfig } from '../game-state/store';
-import { applyConfirmedTurn, drawAndEndTurn } from '../rules/rules';
+import type { PlayerConfig } from '../rules/types';
+import { applyConfirmedTurn, createNewGame, drawAndEndTurn } from '../rules/rules';
 import type { GameState } from '../rules/types';
 
 /** Total cards currently laid on the table, across every meld. */

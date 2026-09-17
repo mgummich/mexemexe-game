@@ -8,7 +8,8 @@ import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   DEFAULT_QUEUE_TARGET, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY, MAX_ROOM_LISTINGS,
-  parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type QueueStatus, type ServerMessage,
+  parseClientMessage, PROTOCOL_VERSION, type ClientMessage, type QueueStatus, type ServerErrorCode,
+  type ServerMessage,
 } from '../src/net/protocol';
 import { MatchQueue, type QueueEntry } from './matchmaking';
 import { RoomManager } from './rooms';
@@ -87,7 +88,9 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   }
 }
 
-function sendError(ws: WebSocket, code: string, message: string, reqId?: string): void {
+/** `code` is the protocol's stable union — the client has copy for every member (src/net/errors.ts).
+ * `message` is developer-facing detail for the trace/log and is never shown to a player. */
+function sendError(ws: WebSocket, code: ServerErrorCode, message: string, reqId?: string): void {
   send(ws, { v: PROTOCOL_VERSION, type: 'error', code, message, ...(reqId === undefined ? {} : { reqId }) });
 }
 
@@ -823,9 +826,11 @@ const heartbeatTimer = setInterval(() => {
 }, HEARTBEAT_INTERVAL_MS).unref();
 
 const turnTickTimer = setInterval(() => {
-  for (const { code, gameOver, crashed, closed, timedOut } of rooms.advanceStalledTurns()) {
+  for (const { code, gameOver, crashed, error, closed, timedOut } of rooms.advanceStalledTurns()) {
     if (crashed) {
-      // Crash policy: the manager already dropped the corrupt room — tell its sockets.
+      // Crash policy: the manager already dropped the corrupt room — log why (an invariant this
+      // process broke, not client input) and tell its sockets.
+      log.error('room_crashed', errorFields(error, config.mode));
       closeRoom(code, 'internal error, match ended');
       continue;
     }

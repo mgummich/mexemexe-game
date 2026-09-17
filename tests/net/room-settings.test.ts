@@ -10,7 +10,7 @@ import {
   TIMER_PRESETS,
 } from '../../src/net/protocol';
 import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
-import { createRng } from '../../src/core/rng';
+import { createRng } from '../../src/rules/rng';
 import { DEFAULT_RULES, type GameState } from '../../src/rules/types';
 
 function twoSeatState(): GameState {

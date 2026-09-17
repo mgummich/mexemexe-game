@@ -1,7 +1,26 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { EventBus, type GameEvents } from '../src/core/events';
+import type { MatchEvent } from '../src/game-state/match';
 import { playlog } from '../src/core/playlog';
 import { setProfileForTest } from '../src/ui/viewport';
+
+/**
+ * Stands in for a `LocalMatch`: the same `on` contract, driven by hand. The play log subscribes to
+ * one match instance rather than to a global bus (ARCH-007), so this is also the shape of the
+ * lifecycle the detach tests exercise.
+ */
+function fakeMatch() {
+  const fns = new Set<(e: MatchEvent) => void>();
+  return {
+    on(fn: (e: MatchEvent) => void) {
+      fns.add(fn);
+      return () => fns.delete(fn);
+    },
+    emit(event: MatchEvent) {
+      for (const fn of [...fns]) fn(event);
+    },
+  };
+}
 
 beforeEach(() => {
   playlog.setEnabled(true);
@@ -53,13 +72,13 @@ describe('playlog', () => {
     expect(summary.proposalRejectsByReason).toEqual({ notYourTurn: 1 });
   });
 
-  it('attachToBus records turn:start/confirmed/drawn/won from real bus events', () => {
-    const bus = new EventBus<GameEvents>();
-    playlog.attachToBus(bus);
-    bus.emit('turn:start', { playerId: 'p1', turn: 1 });
-    bus.emit('turn:confirmed', { playerId: 'p1', cardsPlayed: 2 });
-    bus.emit('turn:drawn', { playerId: 'p2' });
-    bus.emit('game:won', { winnerId: 'p1' });
+  it('attachMatch records turn:start/confirmed/drawn/won from real match events', () => {
+    const match = fakeMatch();
+    playlog.attachMatch(match);
+    match.emit({ type: 'turn:start', playerId: 'p1', turn: 1 });
+    match.emit({ type: 'turn:confirmed', playerId: 'p1', cardsPlayed: 2 });
+    match.emit({ type: 'turn:drawn', playerId: 'p2' });
+    match.emit({ type: 'game:won', winnerId: 'p1' });
     // 'mexe:first' rides along with the session's first confirmed turn (TELEMETRY-11).
     expect(playlog.entries().map((e) => e.type)).toEqual(['turn:start', 'turn:confirmed', 'mexe:first', 'turn:drawn', 'game:won']);
   });
@@ -85,11 +104,11 @@ describe('playlog', () => {
   });
 
   it('summary().perPlayer groups cardsPlayed/draws/confirms by playerId from real bus events', () => {
-    const bus = new EventBus<GameEvents>();
-    playlog.attachToBus(bus);
-    bus.emit('turn:confirmed', { playerId: 'p0', cardsPlayed: 2 });
-    bus.emit('turn:drawn', { playerId: 'p1' });
-    bus.emit('turn:confirmed', { playerId: 'p0', cardsPlayed: 1 });
+    const match = fakeMatch();
+    playlog.attachMatch(match);
+    match.emit({ type: 'turn:confirmed', playerId: 'p0', cardsPlayed: 2 });
+    match.emit({ type: 'turn:drawn', playerId: 'p1' });
+    match.emit({ type: 'turn:confirmed', playerId: 'p0', cardsPlayed: 1 });
     const { perPlayer } = playlog.summary();
     expect(perPlayer.p0).toEqual({ cardsPlayed: 3, draws: 0, confirms: 2 });
     expect(perPlayer.p1).toEqual({ cardsPlayed: 0, draws: 1, confirms: 0 });
@@ -111,21 +130,20 @@ describe('playlog', () => {
   });
 
   it('closes an open invalid span at the turn boundary, so an abandoned table still counts', () => {
-    const bus = new EventBus<GameEvents>();
-    playlog.attachToBus(bus);
+    const match = fakeMatch();
+    playlog.attachMatch(match);
     playlog.noteTableValidity(false, ['reason.groupSize']);
-    bus.emit('turn:drawn', { playerId: 'p0' });
+    match.emit({ type: 'turn:drawn', playerId: 'p0' });
     expect(playlog.entries().map((e) => e.type)).toEqual(['table:invalid', 'turn:drawn']);
     expect(playlog.summary().tableInvalidByReason['reason.groupSize']).toBeGreaterThanOrEqual(0);
   });
 
   it('records drops by outcome and pointer kind, and counts undo-after-drop', () => {
-    setProfileForTest({ w: 270, h: 480, portrait: true, touch: true });
-    playlog.recordDrop('played', 'hand');
+    // The pointer kind is the caller's to know: the log no longer reads the viewport itself.
+    playlog.recordDrop('played', 'hand', 'coarse');
     playlog.record('undo'); // regretted that one
-    playlog.recordDrop('rejected', 'table');
-    setProfileForTest({ w: 480, h: 270, portrait: false, touch: false });
-    playlog.recordDrop('played', 'hand');
+    playlog.recordDrop('rejected', 'table', 'coarse');
+    playlog.recordDrop('played', 'hand', 'fine');
     const summary = playlog.summary();
     expect(summary.dropsByOutcome).toEqual({ played: 2, rejected: 1 });
     expect(summary.dropsByPointer).toEqual({ coarse: 2, fine: 1 });
@@ -133,7 +151,7 @@ describe('playlog', () => {
   });
 
   it('counts a late undo as its own action, not as a mis-drop', () => {
-    playlog.recordDrop('played', 'hand');
+    playlog.recordDrop('played', 'hand', 'fine');
     const dropped = playlog.entries()[0]!;
     // Backdate the drop past the mis-drop window instead of waiting three real seconds.
     dropped.t -= 5000;
@@ -171,11 +189,11 @@ describe('playlog', () => {
   });
 
   it('marks the first confirmed turn and times the tutorial-to-first-Mexe gap', () => {
-    const bus = new EventBus<GameEvents>();
-    playlog.attachToBus(bus);
+    const match = fakeMatch();
+    playlog.attachMatch(match);
     playlog.record('tutorial:step', { step: 0 });
-    bus.emit('turn:confirmed', { playerId: 'p0', cardsPlayed: 3 });
-    bus.emit('turn:confirmed', { playerId: 'p0', cardsPlayed: 1 });
+    match.emit({ type: 'turn:confirmed', playerId: 'p0', cardsPlayed: 3 });
+    match.emit({ type: 'turn:confirmed', playerId: 'p0', cardsPlayed: 1 });
     expect(playlog.entries().filter((e) => e.type === 'mexe:first').length).toBe(1);
     const entries = playlog.entries();
     const tutorial = entries.find((e) => e.type === 'tutorial:step')!;
@@ -218,7 +236,7 @@ describe('playlog', () => {
 
   it('counts zoom steps and orientation flips', () => {
     const bus = new EventBus<GameEvents>();
-    playlog.attachToBus(bus);
+    playlog.attachAppEvents(bus);
     playlog.record('zoom', { level: 1 });
     playlog.record('zoom', { level: 2 });
     bus.emit('viewport:changed', { portrait: true });
@@ -229,7 +247,7 @@ describe('playlog', () => {
 
   it('exports the new fields without leaking a player name', () => {
     playlog.setHumanPlayer('p0');
-    playlog.recordDrop('played', 'hand');
+    playlog.recordDrop('played', 'hand', 'fine');
     playlog.recordBoard({ deckRemaining: 5, handSize: 2, tableMelds: 1, tableCards: 3 });
     playlog.record('turn:confirmed', { playerId: 'p0', name: 'Secret Player' });
     const exported = playlog.exportJson();

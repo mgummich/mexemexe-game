@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
 import { DEFAULT_ROOM_SETTINGS, digestOfState, digestOfView, parseClientMessage, PROTOCOL_VERSION, stateHash, TIMER_PRESETS } from '../../src/net/protocol';
-import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
-import { createRng } from '../../src/core/rng';
-import type { Card } from '../../src/rules/types';
+import { createDeck, createNewGame, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
+import { createRng } from '../../src/rules/rng';
+import { RulesError, type Card } from '../../src/rules/types';
 import { expectCardConservation } from '../helpers/invariants';
 
 function testManager(
@@ -114,6 +114,26 @@ function startRoom(seed: number) {
   const result = mgr.startGame(code, 0);
   return { mgr, code, token0, started: result.ok && result.started };
 }
+
+describe('shared deal', () => {
+  it('a room deals exactly what the offline client deals for the same seed (ARCH-004)', () => {
+    // One `createNewGame`, two callers. If the server ever grows its own deal again, a seed stops
+    // meaning one game and a replay/desync bug becomes possible.
+    const mgr = testManager(4242);
+    const created = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(created.code, 'Bob');
+    mgr.setReady(created.code, 0, true);
+    mgr.setReady(created.code, 1, true);
+    mgr.startGame(created.code, 0);
+
+    expect(mgr.getRoom(created.code)!.state).toEqual(
+      createNewGame(4242, [
+        { name: 'Alice', isAi: false },
+        { name: 'Bob', isAi: false },
+      ]),
+    );
+  });
+});
 
 describe('room lifecycle', () => {
   it('creates a room with seat 0', () => {
@@ -858,14 +878,19 @@ describe('per-room isolation and crash policy', () => {
     startedRoom(mgr, 'CODE1');
     startedRoom(mgr, 'CODE2');
     // Break card conservation in CODE1 so its stalled-turn advance throws.
-    mgr.getRoom('CODE1')!.state!.drawPile.pop();
+    const broken = mgr.getRoom('CODE1')!.state!;
+    mgr.setStateForTest('CODE1', { ...broken, drawPile: broken.drawPile.slice(0, -1) });
     mgr.disconnect('CODE1', 0);
     mgr.disconnect('CODE2', 0);
     clock.t += 1000;
-    expect(mgr.advanceStalledTurns()).toEqual([
-      { code: 'CODE1', gameOver: false, crashed: true },
+    const advanced = mgr.advanceStalledTurns();
+    expect(advanced).toEqual([
+      { code: 'CODE1', gameOver: false, crashed: true, error: expect.any(RulesError) },
       { code: 'CODE2', gameOver: false, timedOut: 0 },
     ]);
+    // The invariant violation travels with the result instead of being swallowed — server/index.ts
+    // logs it (`room_crashed`) before closing the room's sockets.
+    expect((advanced[0]!.error as RulesError).code).toBe('corruptState');
     expect(mgr.getRoom('CODE1')).toBeNull();
     expect(mgr.getRoom('CODE2')!.state!.activePlayerIndex).toBe(1);
   });

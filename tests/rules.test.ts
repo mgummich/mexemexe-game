@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRng } from '../src/core/rng';
+import { createRng } from '../src/rules/rng';
 import {
   analyzeMeld,
   applyConfirmedTurn,
@@ -9,6 +9,7 @@ import {
   dealInitialHands,
   deserializeGameState,
   drawAndEndTurn,
+  GAME_STATE_VERSION,
   getInvalidMeldReasons,
   isValidGroup,
   isValidMeld,
@@ -20,8 +21,8 @@ import {
 } from '../src/rules/rules';
 import type { DraftState, GameState, RulesConfig } from '../src/rules/types';
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
-import { createNewGame } from '../src/game-state/store';
-import { n, j } from './helpers/cards';
+import { createNewGame } from '../src/rules/rules';
+import { n, j, withHand } from './helpers/cards';
 import { allCards, expectCardConservation } from './helpers/invariants';
 
 describe('createDeck', () => {
@@ -397,8 +398,7 @@ describe('applyConfirmedTurn', () => {
   });
 
   it('detects win when hand empties', () => {
-    const state = fixtureState();
-    state.players[0]!.hand = [n('hearts', 9), n('spades', 9), n('clubs', 9)];
+    const state = withHand(fixtureState(), 0, [n('hearts', 9), n('spades', 9), n('clubs', 9)]);
     const draft: DraftState = {
       melds: [state.table[0]!, { id: 'd1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] }],
       handCardsPlayed: [],
@@ -572,8 +572,7 @@ describe('checkWinner', () => {
   it('null while all hands non-empty; id when empty', () => {
     const state = fixtureState();
     expect(checkWinner(state)).toBeNull();
-    state.players[1]!.hand = [];
-    expect(checkWinner(state)).toBe('p1');
+    expect(checkWinner(withHand(state, 1, []))).toBe('p1');
   });
 });
 
@@ -649,7 +648,7 @@ describe('turn order cycling', () => {
     for (let expected = 1; expected <= 3; expected++) {
       const hand = state.players[state.activePlayerIndex]!.hand;
       const draft: DraftState = {
-        melds: [...state.table, { id: `d${expected}`, cards: hand }],
+        melds: [...state.table, { id: `d${expected}`, cards: [...hand] }],
         handCardsPlayed: [],
       };
       expect(canConfirmTurn(state, draft)).toEqual({ ok: true });
@@ -710,6 +709,10 @@ describe('isValidMeld / validateTable / reasons', () => {
 });
 
 describe('serialize/deserialize', () => {
+  /** Wraps a (possibly corrupt) state in the current envelope, so a test about gameplay
+   * invariants is not answered by the version check in front of them. */
+  const envelope = (state: unknown): string => JSON.stringify({ version: GAME_STATE_VERSION, state });
+
   it('round-trips a real game (default 108-card config)', () => {
     const state = createNewGame(123, [
       { name: 'A', isAi: false },
@@ -750,23 +753,37 @@ describe('serialize/deserialize', () => {
     expect(back.config).toEqual(config);
   });
 
-  it('rejects a version-1 envelope with RulesError', () => {
+  it('rejects an unsupported version with its own code, not the generic corrupt one', () => {
     const state = createNewGame(1, [{ name: 'A', isAi: false }, { name: 'B', isAi: false }]);
-    const v1 = JSON.stringify({ version: 1, state });
-    expect(() => deserializeGameState(v1)).toThrow(RulesError);
+    expect(() => deserializeGameState(JSON.stringify({ version: 1, state }))).toThrow(
+      expect.objectContaining({ name: 'RulesError', code: 'unsupportedSaveVersion' }),
+    );
+    expect(() => deserializeGameState(JSON.stringify({ version: GAME_STATE_VERSION + 1, state }))).toThrow(
+      expect.objectContaining({ code: 'unsupportedSaveVersion' }),
+    );
+  });
+
+  it('rejects an unversioned bare state — a snapshot with no version cannot be dated or trusted', () => {
+    const state = createNewGame(1, [{ name: 'A', isAi: false }, { name: 'B', isAi: false }]);
+    expect(() => deserializeGameState(JSON.stringify(state))).toThrow(
+      expect.objectContaining({ code: 'corruptSave' }),
+    );
   });
 
   it('rejects garbage, missing cards, duplicate ids', () => {
     expect(() => deserializeGameState('not json')).toThrow(RulesError);
     expect(() => deserializeGameState('{"players":[]}')).toThrow(RulesError);
+    expect(() => deserializeGameState(envelope({ players: [] }))).toThrow(RulesError);
     const state = createNewGame(123, [
       { name: 'A', isAi: false },
       { name: 'B', isAi: true },
     ]);
     const missing = { ...state, drawPile: state.drawPile.slice(1) };
-    expect(() => deserializeGameState(JSON.stringify(missing))).toThrow(RulesError);
+    expect(() => deserializeGameState(envelope(missing))).toThrow(
+      expect.objectContaining({ code: 'corruptSave' }),
+    );
     const duped = { ...state, drawPile: [state.drawPile[0]!, ...state.drawPile] };
-    expect(() => deserializeGameState(JSON.stringify(duped))).toThrow(RulesError);
+    expect(() => deserializeGameState(envelope(duped))).toThrow(RulesError);
   });
 
   it('rejects a save whose table holds an invalid meld (card count conserved but table is illegal)', () => {
@@ -782,7 +799,7 @@ describe('serialize/deserialize', () => {
       table: [{ id: 'bad', cards: [moved0!, moved1!] }],
       players: state.players.map((p, i) => (i === 0 ? { ...p, hand: restHand } : p)),
     };
-    expect(() => deserializeGameState(JSON.stringify(corrupt))).toThrow(RulesError);
+    expect(() => deserializeGameState(envelope(corrupt))).toThrow(RulesError);
   });
 
   it('expected total derives from config: a valid single-deck 52-card state deserializes fine', () => {

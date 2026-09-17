@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
-import { createRng } from '../../src/core/rng';
+import { createRng } from '../../src/rules/rng';
 
 /**
  * Seeded lobby soak: a deterministic random walk of lobby operations (join, leave,

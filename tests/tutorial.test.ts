@@ -4,6 +4,7 @@ import { TUTORIAL_STEPS } from '../src/tutorial/script';
 import { buildTutorialState } from '../src/tutorial/fixture';
 import { DraftEditor } from '../src/mexe-mode/draft';
 import { analyzeMeld, applyConfirmedTurn, drawAndEndTurn, getInvalidMeldReasons } from '../src/rules/rules';
+import { applyGameAction } from '../src/game-state/actions';
 import type { GameState } from '../src/rules/types';
 import { getLocale, setLocale, t } from '../src/localization/i18n';
 
@@ -214,5 +215,37 @@ describe('tutorial localization coverage', () => {
     } finally {
       setLocale(original);
     }
+  });
+});
+
+/**
+ * ARCH-021: the tutorial is a *second* gate, and this is what keeps it a legitimate one. It
+ * answers "is this the move this lesson is asking for", never "is this move legal" — so it can
+ * refuse a legal action, and it can never let an illegal one through.
+ */
+describe('tutorial authority boundary', () => {
+  it('a tutorial-permitted action is still refused by the rules when it is illegal', () => {
+    const director = new TutorialDirector();
+    // Walk to the first step that asks for a specific card to be played.
+    const target = TUTORIAL_STEPS.findIndex((st) => st.allowed.some((a) => a.type === 'playHandCard' && a.cardId));
+    expect(target).toBeGreaterThanOrEqual(0);
+    while (director.stepIndex < target) director.next();
+    const allowed = director.step.allowed.find((a) => a.type === 'playHandCard' && a.cardId !== undefined)!;
+    // The script's own card, so the pedagogical gate says yes.
+    expect(director.isAllowed({ type: 'playHandCard', cardId: allowed.cardId! })).toBe(true);
+
+    // ...and an illegal commit of exactly that card is still refused, by `src/rules`, through the
+    // same action path every other local move takes.
+    const state = buildTutorialState();
+    const editor = new DraftEditor(state);
+    editor.playHandCard(allowed.cardId!, null, 0); // a one-card meld: never legal
+    const outcome = applyGameAction(state, { type: 'confirmTurn', actorIndex: 0, draft: editor.getDraft() });
+    expect(outcome.ok).toBe(false);
+  });
+
+  it('refuses an off-script action that the rules themselves would allow', () => {
+    const director = new TutorialDirector();
+    // Subtractive, and only subtractive: dragging a played card back to hand is never scripted.
+    expect(director.isAllowed({ type: 'returnToHand' })).toBe(false);
   });
 });
