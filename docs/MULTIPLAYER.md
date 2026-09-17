@@ -516,6 +516,31 @@ message type; it rides `game_over` like any other win.
 The point of this ordering is that cheap, adversary-controlled checks happen
 before any game logic, and the shared rules function is the last word.
 
+### 5a. The server-to-client direction
+
+The server is trusted, but the wire is still a boundary, so the view a client
+receives is checked before it becomes local state. `viewProjectionProblem`
+(`src/net/viewToState.ts`) answers one question — can `activeSeat` be resolved
+to a player in this view? — and `viewToState` refuses to project a view that
+fails it rather than producing a `GameState` whose active player is
+`undefined`. Every reader of `players[activePlayerIndex]` asserts that player
+exists, so such a state is one no part of the game can represent.
+
+This check exists because it is the one inconsistency the state digest cannot
+see: `digestOfView` hashes `view.activeSeat` and `digestOfState` hashes the
+`activePlayerIndex` copied straight out of it, so a seat pointing at no player
+agrees with itself and passes §4a's desync comparison. Everything else a
+malformed frame can get wrong — hand counts, the draw count, the table — is
+re-derived on one side and taken from the view on the other, so the digest
+already catches it. The check is deliberately not a schema validator for the
+whole frame; a second one would be duplicated validation with no second
+failure it can find.
+
+It is not an anti-cheat measure and is not framed as one (§9): a hostile server
+already decides the entire match. It protects against server regressions,
+protocol changes landing on one side only, malformed fixtures and replay/debug
+tooling.
+
 ## 6. Client reconciliation
 
 The client keeps its rendered state derived from the last `state_sync` only.
@@ -527,12 +552,20 @@ localized reason and restores the last synced state — never a half-applied
 draft. A `state_sync` with a `rev` lower than the one already rendered is
 ignored (late/out-of-order delivery).
 
-All of those decisions are `OnlineSession.applySync`, which answers one of three
-things — `stale` (ignored), `desync` (input stays locked, a fresh snapshot is
-requested) or `applied` (with the acting seat, whether a draft was dropped, any
+All of those decisions are `OnlineSession.applySync`, which answers one of four
+things — `stale` (ignored), `invalid` (the frame failed §5a's projection check;
+**nothing was applied**, so the last good state and `lastRev` both stand),
+`desync` (applied, but the local reconstruction does not hash to the server's
+digest) or `applied` (with the acting seat, whether a draft was dropped, any
 Mexe bonus granted and the remaining turn time). The scene turns that answer into
 notices and a repaint, and anchors `turnMsLeft` to its own clock; it decides
 none of it.
+
+`invalid` and `desync` get the same remedy — lock input, show the resyncing
+notice, send `resync` — for different causes: a frame that cannot be
+represented at all, versus two honest peers that have diverged. The difference
+matters on the `invalid` path, where the scene must not read a clock or a seat
+off the frame it just rejected.
 
 ## 7. Reconnect plan (as built)
 

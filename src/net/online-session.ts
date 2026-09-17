@@ -1,7 +1,7 @@
 import { GameStore } from '../game-state/store';
 import type { GameState, ReasonCode } from '../rules/types';
 import { digestOfState, stateHash, type GameView, type RoomSettings } from './protocol';
-import { viewToState } from './viewToState';
+import { viewProjectionProblem, viewToState } from './viewToState';
 
 /**
  * What one `state_sync` did to this session. The caller renders it and performs the effects it
@@ -17,6 +17,12 @@ export type SyncResult =
    * for a fresh snapshot. A second consecutive mismatch is accepted rather than looped on.
    */
   | { kind: 'desync'; rev: number; localHash: string; serverHash: string }
+  /**
+   * The frame could not be projected at all (`viewProjectionProblem`), so nothing was applied and
+   * the previous state still stands. Same remedy as a desync — lock input and pull a fresh
+   * snapshot — but a different cause: a malformed frame rather than two honest peers disagreeing.
+   */
+  | { kind: 'invalid'; rev: number; problem: string }
   | {
       kind: 'applied';
       /** Dense player index of the seat whose turn produced this frame. */
@@ -117,6 +123,10 @@ export class OnlineSession {
    */
   applySync(view: GameView, hadDraft: boolean): SyncResult {
     if (view.rev < this.lastRev) return { kind: 'stale' };
+    // Checked before anything is written, so a frame this client cannot represent leaves the last
+    // good state — and `lastRev` — untouched instead of half-applied.
+    const problem = viewProjectionProblem(view);
+    if (problem !== null) return { kind: 'invalid', rev: view.rev, problem };
     const actingSeat = this.store.get().activePlayerIndex;
     this.lastRev = view.rev;
     this.store = new GameStore(viewToState(view));

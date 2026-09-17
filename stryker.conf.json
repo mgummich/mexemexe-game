@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "Mutation testing scope: the deterministic gameplay core only. These are the modules where a subtly wrong comparison silently changes a match \u2014 legality, transitions, the save/replay validators. Scenes, rendering, network glue and the AI are deliberately out: see docs/TESTING.md#mutation-testing. Run with `npm run test:mutation`; it is a diagnostic, not a gate, and no score threshold is enforced.",
+  "_comment": "Mutation testing scope: the deterministic gameplay core and the wire contract. These are the modules where a subtly wrong comparison silently changes a match \u2014 legality, transitions, the save/replay validators. Scenes, rendering, socket glue, server orchestration and the AI are deliberately out: see docs/TESTING.md#mutation-testing. Run with `npm run test:mutation`; it is a diagnostic, not a gate, and no score threshold is enforced.",
   "packageManager": "npm",
   "testRunner": "command",
   "reporters": [
@@ -15,7 +15,9 @@
     "src/rules/hash.ts",
     "src/game-state/actions.ts",
     "src/game-state/replay.ts",
-    "src/mexe-mode/draft.ts"
+    "src/mexe-mode/draft.ts",
+    "src/net/protocol.ts",
+    "src/net/viewToState.ts"
   ],
   "tempDirName": "tmp/stryker",
   "htmlReporter": {

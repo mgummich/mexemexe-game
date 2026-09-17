@@ -13,6 +13,25 @@ concurrency:
   group: nightly
 
 jobs:
+  specialized-tests:
+    name: Extended fuzz & golden replays
+    runs-on: ubuntu-latest
+    # `npm run test` already runs these properties at the fast budget on every PR; this is the
+    # same properties at the extended iteration count (MEXE_FUZZ=extended), which is the part that
+    # only ever ran when somebody remembered to. Measured ~9s locally, so the timeout is slack for
+    # a cold shared runner rather than a real bound.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # No browser install: both suites are pure node.
+      - run: npm run test:property
+      - run: npm run test:replay
+
   flake-detection:
     name: WebKit touch flake detection
     runs-on: ubuntu-latest

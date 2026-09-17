@@ -249,15 +249,15 @@ as orders of magnitude, not deadlines — nothing in the repo asserts them.
 | Command | Covers | Typical |
 |---|---|---|
 | `npx vitest run tests/<file>` | one suite, the iteration loop | < 1s |
-| `npm run test` | every unit/application/simulation/server test with coverage, the fast property budget and the golden replays | ~7s, ~990 tests |
+| `npm run test` | every unit/application/simulation/server test with coverage, the fast property budget and the golden replays | ~12s, ~1010 tests |
 | `npm run test:replay` | the five golden replays alone | < 1s |
 | `npm run lint` | ESLint over six trees + `tsc --noEmit` | ~4s |
-| `npm run test:property` | the same properties at the extended budget | ~3.5s |
+| `npm run test:property` | the same properties at the extended budget | ~9s, nightly |
 | `npm run screenshot` | build + the browser journey/perf suite | minutes |
 | `npm run verify:multiplayer:chromium` | build + two-plus real clients | minutes |
 | `npm run verify:multiplayer` | the same on three engines | ~18 min — nightly, not per PR |
 | `npm run verify:cross` | build + 8 device/engine layout profiles | minutes |
-| `npm run test:mutation` | 1098 mutants over six core modules, six concurrent vitest sandboxes | ~75 min — on demand only |
+| `npm run test:mutation` | 1521 mutants over the six core modules and the two wire-contract modules, six concurrent vitest sandboxes | ~2 h — weekly, or on demand |
 
 The developer loop is the first two rows. Everything below them is a gate, not
 a loop: do not re-run a browser suite after every edit, and do not make a commit
@@ -402,10 +402,14 @@ Two rules keep them honest:
   and `wrongActivePlayer` each break exactly one documented invariant, so a
   rejection can be attributed. Random garbage only proves garbage is refused.
 
-Action sequences come from `SimpleAi`, deliberately: `RearrangerAi` searches
-against a `performance.now()` deadline, so a loaded machine decides differently
-— fine for a player, fatal for a generator whose value is that a seed
-reproduces the failure.
+Action sequences come from `RearrangerAi`, the widest production decision path,
+so the generated matches exercise table rearrangement rather than only
+lay-down-and-extend. They used to come from `SimpleAi` because the rearrange
+search stopped on a `performance.now()` deadline, and a generator whose whole
+value is that a seed reproduces the failure cannot call something a loaded
+machine decides differently. The search spends a deterministic trial budget now
+(INV-A5), so the workaround went with the reason for it — at the cost of the
+extended budget's runtime, which is the price of fuzzing the real engine.
 
 ### Seeds, reproduction and minimization
 
@@ -438,7 +442,7 @@ Each property declares both counts inline as `runs(fast, extended)`:
 | Mode | Command | Iterations | Runs in |
 |---|---|---|---|
 | Fast | `npm run test` (included) | 10–80 per property | every PR, the developer loop |
-| Extended | `npm run test:property` | 60–3000 per property | on demand, before a rules change lands, nightly if it ever earns it |
+| Extended | `npm run test:property` | 60–3000 per property | nightly (`.github/workflows/nightly.yml`), on demand, and before a rules change lands |
 
 Extended is the same tests with `MEXE_FUZZ=extended` and a 60-second per-test
 timeout (a few hundred generated matches outlast vitest's 5-second default on a
@@ -531,17 +535,49 @@ src/rules/hash.ts         the digest replays and the server compare on
 src/game-state/actions.ts the one validated local transition
 src/game-state/replay.ts  the replay parser and runner
 src/mexe-mode/draft.ts    the draft editor
+src/net/protocol.ts       the wire contract: view projection, digest, message validation
+src/net/viewToState.ts    the client-side projection and its seat validation
 ```
 
-Scenes, rendering, audio, the network glue, the AI and generated assets are out.
+The two `src/net` modules were added once the gameplay core had been measured.
+They are the right second target for the same reason the core was the first:
+deterministic, contract-sensitive, small next to the server orchestration, and
+the place where a dropped validation is a privacy or correctness bug rather than
+a cosmetic one.
+
+Scenes, rendering, audio, the socket glue, the AI and generated assets are out.
 A mutant in a scene is either killed by a browser suite that costs minutes or
 survives for reasons that say nothing about product risk. Expand the scope only
 when a survivor elsewhere is shown to matter.
 
 The mutants run against `vitest.mutation.config.ts` — the rules, draft, action,
-match, replay, probe, AI and property suites — not the whole tree. Suites that
-scan the source or drive a socket cannot kill a mutant in `src/rules` and would
-be paid for once per mutant.
+match, replay, probe, AI and property suites, plus the view-projection, online
+session and `tests/net` suites that observe the wire contract — not the whole
+tree. Every suite in that list is pure: suites that scan the source or drive a
+socket cannot kill a mutant in `src/rules` and would be paid for once per
+mutant. Adding the four net suites left the runner's own cost unchanged (5.8s).
+
+#### `server/rooms.ts`: not a whole-file mutation target yet
+
+Deliberately out of scope, and not for lack of risk — it owns revision checks,
+seat authorization, reconnect eligibility and the hidden-view projection. The
+reasons are structural:
+
+- It is a 970-line `RoomManager` class. The logic worth mutating lives in
+  methods reached through room lifecycle, not in pure module-level functions
+  (there are three, all trivial: `sameSettings`, `displayName`, `newSeat`).
+  Extracting seams purely to satisfy the tool would be a refactor of the
+  server's core for a diagnostic's convenience.
+- Most of what protects it — `index.integration.test.ts`, the party/queue
+  integration suites, `e2e-multiplayer` — drives a real socket, so it cannot
+  join the mutation runner. Mutating the file against a runner that excludes its
+  main evidence would report a flood of survivors that are artifacts of the
+  harness rather than real gaps.
+
+Protected primarily by the server integration tests, the multiplayer E2E
+scenarios and `tests/server/rooms.test.ts`. Revisit during multiplayer
+hardening, when a seam that already exists for its own reasons can be mutated —
+not before.
 
 ### Interpreting survivors
 
@@ -562,7 +598,55 @@ can be diffed instead of re-litigated.
 
 ### The run of record
 
-Full scope, 2026-09-17, on the six modules above:
+#### Wire contract, 2026-09-17
+
+`src/net/protocol.ts` + `src/net/viewToState.ts`, 423 mutants, 39 minutes. This is the run that
+*found* the gaps — it predates the tests written to close them, so read the survivor column as the
+question that was asked, not as the state of the suite today:
+
+| Module | Mutants | Killed | Timed out | Survived | Score |
+|---|---|---|---|---|---|
+| `src/net/protocol.ts` | 377 | 225 | 24 | 128 | 66.05% |
+| `src/net/viewToState.ts` | 46 | 41 | 0 | 5 | 89.13% |
+
+Read the survivors, not the score. Two groups mattered and both were closed:
+
+- **`parseClientMessage`, 94 survivors.** Removing the visibility, queue, meld-shape, meld-id,
+  card-id and reaction guards outright changed no test's answer, and so did turning every `>`
+  limit into `>=`. The direction that looks harmless is the dangerous one: an off-by-one refuses a
+  *legal* maximum-size turn, which the `MAX_TOTAL_CARDS` comment already warns surfaces as a
+  generic `bad_message` and makes FEITO look dead. `tests/net/parse-client-message.test.ts` now
+  pins each type's well-formed frame, each type's refusal, and every limit from both sides; the 13
+  representative mutants above were re-applied by hand, one at a time, and all 13 die. Applying a
+  known mutant directly is the cheap confirmation; a second 39-minute full pass would buy a number,
+  not a fact.
+- **The `viewToState` placeholder contract, 2 survivors.** A placeholder could claim `isJoker`,
+  and a projected seat could claim `isAi`, with nothing noticing — both are fabricated gameplay
+  meaning of exactly the kind the C4 trick promises never to produce. Pinned in
+  `tests/viewToState.test.ts`.
+
+No product defect was found: every test added above passed against the shipped code on the first
+run. What the run exposed was missing *evidence*, not a broken parser.
+
+#### A score is only comparable to one measured the same way
+
+The first attempt at this run scored `protocol.ts` at **72.9%** — while `verify:multiplayer` was
+running beside it. Alone, the same scope scored **61.8%**. The high number was the false one:
+Stryker reads any non-zero exit as a killed mutant, so a wall-clock assertion that fails for lack
+of CPU reports a mutant as caught that no test detected. `EMPTY_PARTY` — which no suite in the
+mutation runner asserts at all — was reported killed under load and survives when applied by hand
+on an idle machine.
+
+`tests/helpers/timing.ts` fixes the cause: `expectWithinMs` stands down when the runner sets
+`MEXE_MUTATION=1`, so a timing budget can no longer manufacture a kill. Termination is still
+covered while mutating — Stryker's own `timeoutMS` is what actually catches a mutant that stops a
+loop terminating, which is what those budgets were guarding. The cost is wall clock: mutants that
+a 500ms assertion used to fail fast now run to the 60s timeout, which roughly doubled this scope's
+runtime (16 → 39 minutes). Budget for that when reading `mutation.yml`'s timeout.
+
+#### Gameplay core, 2026-09-17
+
+Full scope, on the six core modules:
 
 | Module | Mutants | Killed | Timed out | Survived |
 |---|---|---|---|---|
@@ -599,14 +683,22 @@ card set.
 There is **no mutation-score threshold** (`thresholds.break` is `null`) and
 there never should be: a score target is gamed by adding assertions to whatever
 is cheapest to kill, which is the opposite of the portfolio rule at the top of
-this document. Mutation testing is a diagnostic run on demand — before a rules
-change, when a suite is being restructured, or when a defect escaped a level
-that should have caught it — never on every commit. It takes about 75 minutes;
-the developer loop is seven seconds.
+this document. Mutation testing is a diagnostic — run before a rules change, when a suite is
+being restructured, or when a defect escaped a level that should have caught it
+— never on every commit. It takes about two hours; the developer loop is
+seven seconds.
 
-Do not run it next to `npm run test`: six concurrent vitest sandboxes starve the
-one wall-clock budget in the codebase (`RearrangerAi`'s search deadline) and the
-AI soak in `tests/ai.test.ts` can fail for lack of CPU rather than for a defect.
+It no longer depends on being run by hand: `.github/workflows/mutation.yml`
+runs the full scope weekly (03:00 UTC Sundays) and on manual dispatch, and
+uploads `tmp/mutation/` as an artifact whatever the score. The run reports and
+never blocks, so the artifact is the result — a green check on that workflow
+means it finished, not that nothing survived.
+
+This used to carry a warning not to run it next to `npm run test`, because six
+concurrent vitest sandboxes could starve `RearrangerAi`'s wall-clock search
+deadline and fail the AI soak for lack of CPU rather than for a defect. That
+deadline is gone (the search spends a deterministic trial budget, INV-A5), and
+with it the whole class of CPU-contention flake.
 
 ## Server tests — `npm run test:server`
 
@@ -680,12 +772,21 @@ high-signal — engine parity is deliberately *not* on this path. `npm run test`
 carries the fast property budget and the golden replays; they cost about a
 second between them and need no job of their own.
 
-**On demand, gating nothing:** `npm run test:property` (the extended fuzz
-budget) before a rules or deal change lands, and `npm run test:mutation` when a
-core module is being restructured or a defect escaped the level that should have
-caught it. Neither is scheduled: nightly is for races and engine parity, and
-adding a 70-minute mutation job to it would buy a number nobody reads. Promote
-them to a job the first time one of them catches something CI did not.
+**Scheduled, gating nothing:** both specialized suites now run on a clock as
+well as on demand, because "run it when you remember" is not a control.
+
+- `npm run test:property` (extended fuzz) and `npm run test:replay` run in
+  nightly's `specialized-tests` job. Under ten seconds of pure node, so the
+  earlier objection — that scheduling them buys a number nobody reads — does not
+  apply at this price. Still run it by hand before a rules or deal change lands.
+- `npm run test:mutation` runs weekly in `.github/workflows/mutation.yml`,
+  not nightly: it takes over an hour, and its output is a report to read rather
+  than a pass/fail. Still run it by hand when a core module is being
+  restructured or a defect escaped the level that should have caught it.
+
+Neither blocks a merge, and neither should. What the schedule buys is that a
+regression in them surfaces within a day or a week instead of whenever someone
+next thinks of it.
 
 **Nightly** (`.github/workflows/nightly.yml`, 04:00 UTC): the expensive and the
 race-hunting work — WebKit touch flake detection (`--repeat-each=5`,
@@ -773,7 +874,16 @@ and rendering, not cross-engine layout, which the cross job (all three engines)
 covers. Failures upload `test-results/` and the relevant log as artifacts.
 
 `.github/workflows/nightly.yml` re-runs the flakier and more expensive surfaces
-— see "Which gate runs when" above for the job list.
+— see "Which gate runs when" above for the job list. Its `specialized-tests`
+job is the one that is not about browsers: it runs the extended fuzz budget
+(`test:property`) and the golden replays (`test:replay`), both pure node and
+under ten seconds combined. Those are the checks that previously ran only when
+somebody remembered, which is the same as not running.
+
+`.github/workflows/mutation.yml` runs the full mutation scope weekly and on
+dispatch — separate from nightly because it takes over an hour, where every
+nightly job is minutes. See [Not a gate](#not-a-gate).
+
 `codeql.yml` scans the source; `pages.yml` deploys game + docs on `main`;
 `release.yml` publishes a GitHub Release when a `vX.Y.Z` tag is pushed.
 

@@ -699,6 +699,16 @@ export class GameScene extends Phaser.Scene {
     // read as a dropped draft.
     const result = this.online.applySync(view, (this.editor?.historyLength() ?? 0) > 1);
     if (result.kind === 'stale') return;
+    if (result.kind === 'invalid') {
+      console.warn(`unprojectable state_sync at rev ${view.rev}: ${result.problem}`);
+      playlog.record('desync', { rev: view.rev });
+      // Nothing was applied, so the previous state is still the one on screen. Lock input and ask
+      // for a fresh snapshot rather than reading a clock or a seat off a frame we rejected.
+      this.setOnlinePending(true);
+      this.setOnlineNotice(t('online.resyncing'));
+      this.net?.requestResync();
+      return;
+    }
     this.setOnlinePending(false);
     this.setOnlineNotice('');
     this.ui.lastAiReason = null; // every online seat is a person

@@ -50,8 +50,15 @@ const DOMAIN_ALLOWED_IMPORTS = [
  */
 const APPLICATION = ['src/game-state/match.ts', 'src/net/online-session.ts', 'src/net/lobby.ts'];
 
-/** DOMAIN plus the pure layout maths: no browser, no clock, no unseeded randomness. */
-const EFFECT_FREE = [...DOMAIN, 'src/table'];
+/**
+ * DOMAIN plus the pure layout maths and the AI engine: no browser, no clock, no unseeded
+ * randomness. The AI joined this list once its rearrange search stopped bounding itself with a
+ * `performance.now()` deadline — that clock was inside move selection, so the same state could
+ * produce a different move on a slower machine. The budget is a trial count now
+ * (`SEARCH_BUDGET_TRIALS`), and this is the guard that keeps a clock from coming back: the
+ * reproducibility tests in `ai.test.ts` can only observe that one machine agrees with itself.
+ */
+const EFFECT_FREE = [...DOMAIN, 'src/table', 'src/ai'];
 
 describe('architecture boundaries', () => {
   it('the domain core imports only rules, the seeded rng and the bus', () => {

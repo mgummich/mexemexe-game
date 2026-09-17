@@ -6,6 +6,7 @@ import type { Card, GameState, Meld, Suit } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
 import { createNewGame } from '../src/rules/rules';
 import { j, n, withHand } from './helpers/cards';
+import { expectWithinMs } from './helpers/timing';
 
 function base(hand: Card[], table: GameState['table'] = []): GameState {
   return {
@@ -214,7 +215,7 @@ describe('RearrangerAi', () => {
     const t0 = performance.now();
     const d = new RearrangerAi().decide(state);
     const ms = performance.now() - t0;
-    expect(ms).toBeLessThan(500);
+    expectWithinMs(ms, 500);
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
     }
@@ -399,8 +400,8 @@ describe('AI full-game smoke', () => {
     const t1 = performance.now();
     new RearrangerAi().decide(state);
     const rearrangeMs = performance.now() - t1;
-    expect(simpleMs).toBeLessThan(100);
-    expect(rearrangeMs).toBeLessThan(500);
+    expectWithinMs(simpleMs, 100);
+    expectWithinMs(rearrangeMs, 500);
   });
 
   it('soak: many full AI-vs-AI games on the 108-card deck end cleanly (win or pile exhaustion), no throw, no illegal confirm', () => {
@@ -425,6 +426,76 @@ describe('AI full-game smoke', () => {
       }).not.toThrow();
       expect(state.phase).toBe('finished');
       expect(state.winnerId).not.toBeNull();
+    }
+  });
+});
+
+/**
+ * INV-A5 — a decision is a function of the state and the tier, nothing else.
+ *
+ * The rearrange search used to stop on a `performance.now()` deadline, so the same state could
+ * yield a different move on a loaded machine: fewer candidates got weighed, and `pickBest` chose
+ * from a smaller set. That made an AI move unreproducible, which is why the property generators
+ * had to route around the real engine. The budget is a trial count now, and these tests are what
+ * keeps it one — they fail if a clock re-enters move selection.
+ */
+describe('decision reproducibility', () => {
+  // The densest table the game can deal: a two-deck shoe as 13-card runs, which is the shape that
+  // maximises split points and edge steals, i.e. the search that ran longest against the old
+  // deadline and was therefore the first to be cut short by a slow machine.
+  function maximalRunTable(): GameState {
+    const suits: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades'];
+    const table: Meld[] = [];
+    for (let deck = 0; deck < 2; deck++) {
+      for (const s of suits) {
+        table.push({ id: `r${deck}-${s}`, cards: Array.from({ length: 13 }, (_, i) => n(s, i + 1, deck)) });
+      }
+    }
+    const hand: Card[] = [];
+    for (const s of suits) for (const rank of [1, 2, 3, 4, 5]) hand.push(n(s, rank, 1));
+    return base(hand, table);
+  }
+
+  it('returns the identical move across repeated runs of the heaviest search', () => {
+    const state = maximalRunTable();
+    const first = new RearrangerAi().decide(state);
+    for (let i = 0; i < 12; i++) {
+      expect(new RearrangerAi().decide(state)).toEqual(first);
+    }
+  });
+
+  it('reuses one engine instance without carrying state between decisions', () => {
+    const state = maximalRunTable();
+    const ai = new RearrangerAi();
+    const first = ai.decide(state);
+    for (let i = 0; i < 12; i++) expect(ai.decide(state)).toEqual(first);
+  });
+
+  it('holds for every shipped personality, on the same table', () => {
+    const state = maximalRunTable();
+    for (const p of ['cida', 'juninho', 'bia', 'ze'] as const) {
+      const first = createAi(p).decide(state);
+      for (let i = 0; i < 5; i++) expect(createAi(p).decide(state)).toEqual(first);
+    }
+  });
+
+  // The sliced path is what actually runs in a match (`playAiTurn` prefers it): it must be the
+  // same search, not merely a usually-agreeing one. It yields to the event loop between phases,
+  // so if anything in the search read a clock, this is where the two would part.
+  it('decideSliced agrees with decide on the heaviest search', async () => {
+    const state = maximalRunTable();
+    expect(await new RearrangerAi().decideSliced(state)).toEqual(new RearrangerAi().decide(state));
+    expect(await new RearrangerAi(false, true).decideSliced(state)).toEqual(new RearrangerAi(false, true).decide(state));
+  });
+
+  // The budget replaced the deadline, so it — not a clock — is what guarantees termination.
+  it('terminates on the heaviest search, both tiers', () => {
+    const state = maximalRunTable();
+    for (const ai of [new RearrangerAi(), new RearrangerAi(false, true)]) {
+      const t0 = performance.now();
+      const d = ai.decide(state);
+      expectWithinMs(performance.now() - t0, 2000);
+      if (d.kind === 'confirm') expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
     }
   });
 });
@@ -455,7 +526,7 @@ describe('AI hardening', () => {
     const t0 = performance.now();
     const d = new RearrangerAi().decide(state);
     const ms = performance.now() - t0;
-    expect(ms).toBeLessThan(500);
+    expectWithinMs(ms, 500);
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
     }
@@ -466,7 +537,7 @@ describe('AI hardening', () => {
     const t0 = performance.now();
     const d = new RearrangerAi().decide(state);
     const ms = performance.now() - t0;
-    expect(ms).toBeLessThan(500);
+    expectWithinMs(ms, 500);
     expect(d.kind).toBe('draw');
   });
 

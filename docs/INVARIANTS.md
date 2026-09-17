@@ -72,6 +72,7 @@ only — the regression risk during Phase 3/4 extraction).
 | INV-A2 | The AI reads only the active player's hand and public state — never an opponent's cards. | test — `tests/ai.test.ts` hidden-information case: two states differing only in the opponent's hand yield the same decision | SCN-17 |
 | INV-A3 | An AI failure or timeout cannot corrupt committed state: the fallback is `drawAndEndTurn`, which is a legal move. | test — `tests/ai.test.ts` fallback + budget cases | SCN-15, SCN-16 |
 | INV-A4 | `decide`/`decideSliced` always return a decision within the search budget; a crowded table cannot hang a turn. | test — `tests/ai.test.ts` hardening (10+ melds, 20-card hand, <500 ms) | SCN-13, SCN-15 |
+| INV-A5 | An AI decision is a pure function of the state and the tier. The search spends a deterministic trial budget and reads no clock, so the same state always yields the same move — `decideSliced` included. | test — `tests/ai.test.ts` decision reproducibility (repeated runs of the densest legal table); `tests/boundaries.test.ts` keeps `src/ai` clock-free | SCN-13, SCN-15 |
 
 ### Multiplayer — owner: `server/rooms.ts` (`RoomManager`) + `src/net/protocol.ts`
 
@@ -84,7 +85,8 @@ only — the regression risk during Phase 3/4 extraction).
 | INV-N5 | Reconnect returns the token's own seat or fails (`invalid_token`). It can never take another player's seat. | test — `tests/server/reconnect.test.ts`, `tests/net/reconnect.test.ts`, LB reload/second-tab | SCN-24 |
 | INV-N6 | A rematch starts from clean per-match state: state, `rev`, `matchId`, `matchSeats`, timer fields, ready bits and the Mexe-bonus guard are all reset in `recycleForRematch`. | test — `tests/server/rooms.test.ts`, OS-01..OS-16/OS-35 | SCN-25 |
 | INV-N7 | The turn timer is server-owned. Clients render `turnMsLeft` and never decide expiry; the running clock is excluded from the state digest. | test — `tests/server/timer.test.ts` (fake clock), `tests/net/room-settings.test.ts` | SCN-26 |
-| INV-N8 | Client and server share one protocol module and one `PROTOCOL_VERSION`; every inbound frame is validated at the wire boundary before it reaches room logic. | type + test — `server/` imports `src/net/protocol`; `tests/server/hardening.test.ts`, `index.integration.test.ts` malformed/oversized frames | SCN-28 |
+| INV-N8 | Client and server share one protocol module and one `PROTOCOL_VERSION`; every inbound frame is validated at the wire boundary before it reaches room logic. | type + test — `server/` imports `src/net/protocol`; `tests/net/parse-client-message.test.ts` (each type's refusal and every wire limit from both sides), `tests/server/hardening.test.ts`, `index.integration.test.ts` malformed/oversized frames | SCN-28 |
+| INV-N9 | The boundary is checked in both directions: a `GameView` whose `activeSeat` resolves to no player is refused, never projected. `applySync` applies nothing and the client resyncs; the last good state stands. The state digest cannot catch this class — both sides hash the same field (MULTIPLAYER.md §5a). | test — `tests/viewToState.test.ts`, `tests/online-session.test.ts` out-of-range seat cases | SCN-21, SCN-23 |
 
 ### Lifecycle — owner: each scene, `NetClient`, `server/index.ts`
 

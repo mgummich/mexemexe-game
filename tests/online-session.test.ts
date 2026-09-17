@@ -68,6 +68,32 @@ describe('OnlineSession', () => {
     expect(s.resyncing).toBe(true);
   });
 
+  // The state digest cannot see this class of fault: both sides hash the same `activeSeat` field,
+  // so a seat pointing at no player agrees with itself and sails through the desync check. Without
+  // the projection check the session would hold a state whose active player is `undefined`.
+  it.each([
+    ['negative', -1],
+    ['one past the last seat', 2],
+    ['far out of range', 99],
+    ['not an integer', 0.5],
+  ])('refuses a frame whose activeSeat is %s, leaving the last good state applied', (_label, activeSeat) => {
+    const s = session();
+    const result = s.applySync({ ...view(state({ turn: 4 }), { rev: 2 }), activeSeat }, false);
+
+    expect(result).toEqual({ kind: 'invalid', rev: 2, problem: `activeSeat ${activeSeat} outside 0..1` });
+    expect(s.state().activePlayerIndex).toBe(0);
+    expect(s.state().turn).toBe(1); // the rejected frame's turn never landed
+    expect(s.lastRev).toBe(1); // nothing applied, so the next honest frame at rev 2 is not stale
+  });
+
+  it('accepts every in-range activeSeat', () => {
+    for (const activeSeat of [0, 1]) {
+      const s = session();
+      expect(s.applySync(view(state({ activePlayerIndex: activeSeat }), { rev: 2 }), false).kind).toBe('applied');
+      expect(s.state().activePlayerIndex).toBe(activeSeat);
+    }
+  });
+
   it('takes the second mismatching snapshot rather than looping on resync requests', () => {
     const s = session();
     s.applySync({ ...view(state(), { rev: 2 }), hash: 'deadbeef' }, false);

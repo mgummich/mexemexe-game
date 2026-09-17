@@ -11,7 +11,7 @@
  * All randomness is the game's own seeded RNG (INV-R1): a generator is a pure function of
  * `(rng, size)`, which is what makes a failing property reproducible from its seed alone.
  */
-import { SimpleAi } from '../../src/ai/ai';
+import { RearrangerAi } from '../../src/ai/ai';
 import { applyGameAction, type GameAction } from '../../src/game-state/actions';
 import { createDeck, createNewGame } from '../../src/rules/rules';
 import type { Rng } from '../../src/rules/rng';
@@ -44,12 +44,15 @@ export function randomDeal(rng: Rng): GameState {
 }
 
 /**
- * `SimpleAi` only, deliberately: `RearrangerAi` searches against a `performance.now()` deadline,
- * so a loaded machine can make it decide differently. That is fine for a player and fatal for a
- * generator whose whole value is that a seed reproduces the failure. Rearrangement is covered by
- * the golden replays, which record the resolved actions instead of recomputing them.
+ * The shipped rearranging engine, which is also the widest production decision path — so the
+ * generated matches exercise table rearrangement, not just lay-down-and-extend.
+ *
+ * This used to be `SimpleAi` because `RearrangerAi` searched against a `performance.now()`
+ * deadline, and a generator whose whole value is that a seed reproduces the failure cannot call
+ * something a loaded machine decides differently. The search now spends a deterministic trial
+ * budget (`SEARCH_BUDGET_TRIALS`), so the workaround is gone with the reason for it.
  */
-const AI = new SimpleAi();
+const AI = new RearrangerAi();
 
 /**
  * The action the seated AI would take, expressed as the application-level `GameAction` every
