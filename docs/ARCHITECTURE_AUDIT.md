@@ -43,8 +43,8 @@ module can run in: `pure` (node or browser, no platform API), `browser`,
 
 | Path | Responsibility | Owns state | Public API | Depends on | Depended on by | Side effects | env | Category |
 |---|---|---|---|---|---|---|---|---|
-| `src/rules` | deck, deal, meld analysis, table validation, turn legality, win, serialize | no (pure functions over `GameState`) | `analyzeMeld`, `canConfirmTurn`, `applyConfirmedTurn`, `drawAndEndTurn`, `timerExpireTurn`, `checkWinner`, `serializeGameState` | `core/rng` (type only) | everything | none | pure | domain |
-| `src/game-state` | committed local game creation + turn application | `GameStore.state` | `createNewGame`, `GameStore` | `rules`, `core/rng`, `core/events` | scenes, demo, tests | emits on the global bus | pure-ish | application |
+| `src/rules` | deck, deal, meld analysis, table validation, turn legality, win, serialize | no (pure functions over `GameState`) | `analyzeMeld`, `canConfirmTurn`, `applyConfirmedTurn`, `drawAndEndTurn`, `timerExpireTurn`, `checkWinner`, `createNewGame`, `cardsConserved`, `serializeGameState` | `rules/rng` (in-module since Wave 2A) | everything | none | pure | domain |
+| `src/game-state` | committed local state ownership + announcement (the deal and the transitions moved to `rules` in Wave 2A) | `GameStore.state` | `GameStore` | `rules`, `core/events` | scenes, demo, tests | emits on the global bus | pure-ish | application |
 | `src/mexe-mode` | draft table under edit, undo/redo/reset | `DraftEditor` melds + history | `DraftEditor` | `rules` | scenes, ai, table | none | pure | domain |
 | `src/ai` | move generation, search, personality, difficulty, presentation constants | per-call only (search scratch) | `createAi`, `SimpleAi`, `RearrangerAi`, `PERSONALITY_STYLE`, `DIFFICULTIES` | `rules`, `mexe-mode`, `core/persistence` (type only) | `scenes`, `demo` | `performance.now()` budgeting | pure-ish | domain + presentation (mixed, ARCH-015) |
 | `src/net/protocol.ts` | wire types, redaction (`buildView`), boundary validation, state digest | no | `parseClientMessage`, `buildView`, `digestOfState`, `PROTOCOL_VERSION` | `rules` | `net/client`, scenes, `server/` | none | pure | domain (shared contract) |
@@ -58,7 +58,7 @@ module can run in: `pure` (node or browser, no platform API), `browser`,
 | `src/localization` | pt-BR/en-US dictionaries, `t()` | current locale | `t`, `setLocale` | — | everywhere | none | pure | cross-cutting utility |
 | `src/tutorial` | scripted steps, fixture table, step director | director step index | `TutorialDirector`, `buildTutorialState` | `rules`, `localization` | `GameScene` | none | pure | application |
 | `src/assets` `src/audio` `src/cosmetics` `src/demo` | manifest + fallbacks, sfx/music, themes, showcase states | audio playback state | per-module | Phaser, `core`, `rules` | scenes, ui | Phaser audio, network fetch | browser | platform / presentation support |
-| `server/rooms.ts` | authoritative room + match aggregate | `RoomInternal` per code | `RoomManager` | `rules`, `net/protocol`, `core/rng` | `server/index.ts` | injected clock only | node | domain/application (server) |
+| `server/rooms.ts` | authoritative room + match aggregate | `RoomInternal` per code | `RoomManager` | `rules`, `net/protocol` | `server/index.ts` | injected clock only | node | domain/application (server) |
 | `server/index.ts` | process, HTTP, WebSocket, dispatch, broadcast, rate limits, timers, shutdown | module-level singletons (`rooms`, `queue`, `sockets`, `connections`) | none (entrypoint) | all server modules, `net/protocol` | — | sockets, HTTP, timers, `Date.now`, process signals | node | infrastructure + orchestration (ARCH-013) |
 | `server/connections.ts` | socket registry + rate-limit windows as pure functions over maps | no (caller owns maps) | `attachSocket`, `hitFlood`, `clientIp`, … | — | `server/index.ts` | none | node | infrastructure (well isolated) |
 | `server/matchmaking.ts` | FIFO casual queue | `MatchQueue` entries | `MatchQueue` | — | `server/index.ts` | none | node | application (server) |
@@ -70,8 +70,8 @@ Edges below are the actual module-level import edges, derived from every
 `from '…'` in `src/` and `server/`.
 
 ```text
-rules ──────────────► core/rng (type only)            QUESTIONABLE (ARCH-010)
-game-state ─────────► rules, core/rng, core/events    EXPECTED + bus coupling (ARCH-004)
+rules ──────────────► rules/rng (seeded, in-module)    OK (ARCH-010 resolved)
+game-state ─────────► rules, core/events              EXPECTED + bus coupling (ARCH-004)
 mexe-mode ──────────► rules                           EXPECTED
 ai ─────────────────► rules, mexe-mode, core(type)    EXPECTED
 net ────────────────► rules, core, localization, config   EXPECTED
@@ -81,7 +81,7 @@ scenes ─────────────► (everything)                  
 core ───────────────► rules, ui, cosmetics, ai, localization, verification   INVERTED (ARCH-009)
 verification ───────► core, net, rules, ui            EXPECTED for a debug surface
 audio ──────────────► core, verification              PRESENTATION-LEAK (ARCH-011)
-server ─────────────► src/rules, src/net/protocol, src/core/rng   EXPECTED (shared authority)
+server ─────────────► src/rules, src/net/protocol                 EXPECTED (shared authority)
 ```
 
 Edge classification, with the reason it matters:
@@ -89,13 +89,13 @@ Edge classification, with the reason it matters:
 | Edge | Class | Why it matters |
 |---|---|---|
 | `server/*` → `src/rules`, `src/net/protocol` | EXPECTED | This is the invariant "client and server share rule logic", enforced by there being exactly one `analyzeMeld`. |
-| `src/rules` → `src/core/rng` | QUESTIONABLE | Type-only (`import type { Rng }`), erased at build. The *contract* for randomness is owned above the layer that consumes it; conceptually backwards, operationally harmless. |
+| ~~`src/rules` → `src/core/rng`~~ | RESOLVED (Wave 2A) | The rng moved into `src/rules/rng.ts`, interface and `mulberry32` together, so the contract for gameplay randomness now sits in the layer that consumes it. |
 | `src/core/settings` → `src/ui/helpers` | INVERTED | Persisted settings reach up into the presentation layer to compute `HelperFlags`. Makes `core` unusable without `ui`. |
 | `src/core/persistence` → `src/cosmetics`, `src/ai` | INVERTED | Save validation depends on presentation catalogues and on the AI's `Difficulty` union. |
 | `src/core/playlog` → `src/ui/viewport` | PLATFORM-LEAK | An observability module reads the browser viewport profile directly. |
 | `src/core/pwa` → `src/verification/debug-api` | PLATFORM-LEAK | Feature code writes into the debug singleton. |
 | `src/audio/music`, `src/ui/*`, `src/scenes/*` → `verification/debug-api` | PRESENTATION-LEAK | Same: the test surface is a write target inside product code rather than an observer of it. |
-| `server/rooms.ts` re-implements `createNewGame` inline (`server/rooms.ts:598-608`) | DUPLICATED-LOGIC | Deal construction exists twice: `src/game-state/store.ts:createNewGame` and the room's `startGame`. Deliberate (see ARCH-004) and currently identical, but nothing enforces that. |
+| ~~`server/rooms.ts` re-implements `createNewGame` inline~~ — **resolved in Wave 2A**, both callers use `rules/createNewGame` | DUPLICATED-LOGIC | Deal construction exists twice: `src/game-state/store.ts:createNewGame` and the room's `startGame`. Deliberate (see ARCH-004) and currently identical, but nothing enforces that. |
 | `src/core/persistence` ↔ `src/ai/ai` | CYCLE | Type-only in both directions; no runtime cycle. |
 | `src/core/pwa` → `verification/debug-api` → `src/net/client` → `src/core/pwa` | CYCLE | One edge (`debug-api` → `client`) is type-only, so no runtime cycle exists. |
 
@@ -123,7 +123,7 @@ every resolved relative import). Both are erased at runtime.
 
 Searched explicitly for external mutation of store-owned objects
 (`store.get().<field> =`, `.push`, `.splice` on committed state): **none found**
-outside `src/rules` itself. The risk in ARCH-005 is the absence of a barrier,
+outside `src/rules` itself. ARCH-005's missing barrier is now the type system,
 not a present bug.
 
 ## 5. Authority matrix
@@ -134,7 +134,7 @@ not a present bug.
 | Turn legality | `canConfirmTurn` | itself | `DraftEditor.analyze`, `GameScene.feitoAccepted`, `RoomManager.submitTurn` | none; the client pre-check is an optimistic UX gate over the same function the server re-runs |
 | Winner | `checkWinner` / `fewestCardsWinner` | rules | GameStore, RoomManager | none |
 | Draw result | `drawAndEndTurn` | rules | GameStore, RoomManager | none |
-| Deal / shuffle seed | offline `GameStore.createNewGame`; online `RoomManager.genSeed` | — | — | deal *construction* exists twice (see ARCH-004) |
+| Deal / shuffle seed | offline `GameStore.createNewGame`; online `RoomManager.genSeed` | — | — | one `createNewGame` since Wave 2A; the server still owns online seed choice (see ARCH-004) |
 | AI choice | `src/ai` (`createAi(...).decide`) | — | GameScene | none |
 | Local draft | `DraftEditor` | `canConfirmTurn` | GameScene | none |
 | Online match state | server `RoomManager` | `canConfirmTurn` + `assertConservation` | all clients via `buildView` | none; client `verifyOnlineHash` only *detects* divergence |
@@ -470,10 +470,15 @@ nothing enforcing that they stay identical. Both currently use the same
 "announce that a turn happened" (client-side). A shared `createGame(seed,
 players, config)` both sides call.
 
-**Do now:** documented, plus the duplication is named in ARCHITECTURE.md.
+**Status (Wave 2A): half resolved.** `createNewGame` moved into `src/rules` and
+both `GameStore` and `RoomManager.startGame` now call it, so the deal exists
+once and a seed produces the same game on both sides
+(`tests/server/rooms.test.ts` → "shared deal"). What remains is the emission
+half: `GameStore` still publishes `turn:start`/`game:won` on the global bus,
+which is the same coupling as ARCH-006 and moves with it.
 
 **Earliest phase:** Phase 3 (split emission from application), Phase 4 (share
-the constructor with the server). **Do NOT do yet:** injecting a bus into
+the constructor with the server — done). **Do NOT do yet:** injecting a bus into
 `GameStore` as a constructor parameter — that keeps the coupling and adds a seam
 no one needs.
 
@@ -498,7 +503,15 @@ invariant with no mechanical barrier behind it.
 **Desired direction:** `readonly`-typed accessor (types, not a defensive copy —
 this is a hot render path).
 
-**Earliest phase:** Phase 3. **Do NOT do yet:** deep-cloning on every `get()`.
+**Status (Wave 2A): resolved.** `GameState`, `PlayerState`, `Meld` and
+`DraftState` are `readonly` throughout `src/rules/types.ts`, so `get()` can keep
+handing out the live object and no reader can write to it. `DraftEditor` keeps
+its own mutable `DraftMeld` — a draft is what the player rearranges, and it is
+cloned off the committed table on the way in. Production code needed no change
+(the audit's "zero violations today" held); the fixtures that staged state by
+mutating it now build the state they want, and the server exposes a documented
+`setStateForTest` seam for that. `tests/boundaries.test.ts` fails if the
+`readonly` markers are dropped.
 
 ---
 
@@ -629,6 +642,11 @@ has no imports at all).
 **Desired direction:** the `Rng` interface belongs beside the domain that
 consumes it (e.g. `src/rules/types.ts`), with the `mulberry32` implementation
 staying wherever it is convenient.
+
+**Status (Wave 2A): resolved.** `src/core/rng.ts` moved wholesale to
+`src/rules/rng.ts` — interface and `mulberry32` together, no new contracts
+module — so the domain no longer reaches up into `core`, and the server's
+allowed-import list lost its `core/rng` exception.
 
 **Earliest phase:** Phase 4, or opportunistically whenever `rules/types.ts` is
 already being edited. **Do NOT do yet:** a new "contracts" module for one
@@ -858,6 +876,16 @@ register and should land before any Phase 3 extraction. **Do NOT do yet:** a
 full dependency-cruiser ruleset encoding a layering that ARCH-009 has not
 settled.
 
+**Update (Phase 2, partial):** `tests/boundaries.test.ts` now enforces the
+domain-purity half mechanically — an allow-list of imports for `src/rules`,
+`src/mexe-mode`, `src/game-state` and the wire contract, a ban on
+platform/clock/`Math.random` usage in those plus `src/table`, Phaser confined to
+the presentation layer, and the server's `src/` imports limited to
+rules/protocol/rng. One source-scanning test rather than an eslint zone *and* a
+test: it covers more (type-only imports included) for less configuration. Still
+unenforced: rules-as-sole-authority, single-writer ownership, and the `core`
+layering that ARCH-009 has not settled.
+
 ---
 
 ### ARCH-020 — Canonical architecture doc drifted from the code
@@ -905,9 +933,9 @@ so a future reader does not mistake it for duplicated legality.
    and `table/invalid-detail` only restate reasons rules produced.
 3. **Who owns committed local `GameState`?** `GameStore`. Online, the server
    owns it and `GameStore` degrades to a read-only container (ARCH-002).
-4. **Can a caller mutate authoritative local state outside the API?** Yes
-   structurally (`get()` returns the live object), no in practice — zero
-   violations found (ARCH-005).
+4. **Can a caller mutate authoritative local state outside the API?** No since
+   Wave 2A: `get()` still returns the live object, but `GameState` is readonly by
+   type, so a write does not compile (ARCH-005).
 5. **Why can the server not reuse `GameStore`?** Because `GameStore` emits on a
    process-global bus and a server process holds many rooms; the emissions would
    cross-talk. This is a real boundary: turn application (shareable) is fused
@@ -940,8 +968,9 @@ so a future reader does not mistake it for duplicated legality.
 14. **Dependency cycles?** Two, both type-only, both erased at runtime.
     ARCH-012.
 15. **Enforced vs convention?** See §10. Enforced: seeded randomness, server
-    authority, hand privacy, protocol sharing, no telemetry. Convention only:
-    rules purity, rules-as-sole-authority, one state owner, module layering.
+    authority, hand privacy, protocol sharing, no telemetry, and — since Wave 2A —
+    domain/layering boundaries and committed-state immutability
+    (`tests/boundaries.test.ts`). Convention only: rules-as-sole-authority.
 16. **First three risks to address after Phase 2?** ARCH-006 (make turn control
     flow explicit), ARCH-004 (separate turn application from event emission),
     ARCH-002 (give online adaptation an owner). ARCH-001 and ARCH-003 become
@@ -953,6 +982,25 @@ so a future reader does not mistake it for duplicated legality.
     `net/viewToState`, `table` and the AI engine are already platform-free; the
     blockers are exactly ARCH-004 and ARCH-009. No engine-migration-specific
     work is recommended.
+
+## 13. Boundary migration register
+
+The boundary rules themselves are in
+[ARCHITECTURE.md](ARCHITECTURE.md#module-categories-and-dependency-rules). This
+is the list of edges that currently disagree with them, each already carrying a
+finding above — no competing ID space.
+
+| Current edge | Desired edge | Risk if left | Depends on | Phase |
+|---|---|---|---|---|
+| `core/settings` → `ui/helpers`; `core/persistence` → `cosmetics`, `ai`; `core/playlog` → `ui/viewport`; `core/pwa` → `verification` (ARCH-009, ARCH-011, ARCH-016) | platform modules depend downward only; presentation catalogues are passed in, not imported | `core` cannot be reused by any non-Phaser client, and "put it in core" stays the default | splitting `core` by role | 4 |
+| `game-state` → global `bus` (ARCH-004) | turn application separated from announcement, so the server can share it | ~~deal duplication~~ closed in Wave 2A (one `createNewGame` in `src/rules`); the remaining risk is the bus emission, which moves with ARCH-006 | ARCH-006 first | 3 |
+| bus carries control flow (`turn:start`, `game:won`) (ARCH-006) | explicit turn-cycle call graph; the bus keeps notification only | a process-global singleton drives the match loop; every async continuation needs a liveness guard | — (do first) | 3 |
+| `GameScene` owns online adaptation, AI scheduling, turn clock (ARCH-001, ARCH-002) | a match-orchestration owner outside the scene | application logic remains untestable without Phaser; `resetForNewMatch` keeps growing | ARCH-006, ARCH-004 | 3 |
+| `OnlineScene` holds an implicit 10-phase machine (ARCH-003) | explicit, testable lobby machine; scene renders and dispatches | every new lobby feature is reasoned about across ~25 handlers | ARCH-002 | 3 |
+| ~~`GameStore.get()` returns the live object (ARCH-005)~~ | `readonly`-typed state | **resolved in Wave 2A** — `GameState`/`DraftState` are readonly by type, guarded in `tests/boundaries.test.ts` | — | done |
+| `src/ai/ai.ts` mixes engine, policy and presentation (ARCH-015) | the three behind the existing `AiPlayer` seam | AI expansion edits a file that also owns emote colours | AI work being scheduled | 3–4 |
+| `playlog` subscribes for process lifetime (ARCH-007) | per-lifecycle subscription | bakes "one live match per page" into observability | ARCH-006 | 3 |
+| `server/index.ts` is composition root + dispatcher + broadcaster + limiter (ARCH-013) | dispatch/broadcast separated from process wiring | protocol growth lands in a 365-line `handleMessage` | none | 4 |
 
 ## Evidence gaps
 

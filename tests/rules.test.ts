@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRng } from '../src/core/rng';
+import { createRng } from '../src/rules/rng';
 import {
   analyzeMeld,
   applyConfirmedTurn,
@@ -20,8 +20,8 @@ import {
 } from '../src/rules/rules';
 import type { DraftState, GameState, RulesConfig } from '../src/rules/types';
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
-import { createNewGame } from '../src/game-state/store';
-import { n, j } from './helpers/cards';
+import { createNewGame } from '../src/rules/rules';
+import { n, j, withHand } from './helpers/cards';
 import { allCards, expectCardConservation } from './helpers/invariants';
 
 describe('createDeck', () => {
@@ -397,8 +397,7 @@ describe('applyConfirmedTurn', () => {
   });
 
   it('detects win when hand empties', () => {
-    const state = fixtureState();
-    state.players[0]!.hand = [n('hearts', 9), n('spades', 9), n('clubs', 9)];
+    const state = withHand(fixtureState(), 0, [n('hearts', 9), n('spades', 9), n('clubs', 9)]);
     const draft: DraftState = {
       melds: [state.table[0]!, { id: 'd1', cards: [n('hearts', 9), n('spades', 9), n('clubs', 9)] }],
       handCardsPlayed: [],
@@ -572,8 +571,7 @@ describe('checkWinner', () => {
   it('null while all hands non-empty; id when empty', () => {
     const state = fixtureState();
     expect(checkWinner(state)).toBeNull();
-    state.players[1]!.hand = [];
-    expect(checkWinner(state)).toBe('p1');
+    expect(checkWinner(withHand(state, 1, []))).toBe('p1');
   });
 });
 
@@ -649,7 +647,7 @@ describe('turn order cycling', () => {
     for (let expected = 1; expected <= 3; expected++) {
       const hand = state.players[state.activePlayerIndex]!.hand;
       const draft: DraftState = {
-        melds: [...state.table, { id: `d${expected}`, cards: hand }],
+        melds: [...state.table, { id: `d${expected}`, cards: [...hand] }],
         handCardsPlayed: [],
       };
       expect(canConfirmTurn(state, draft)).toEqual({ ok: true });

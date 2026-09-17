@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { RearrangerAi, SimpleAi } from '../src/ai/ai';
 import { applyConfirmedTurn, drawAndEndTurn, validateTable } from '../src/rules/rules';
-import type { GameState } from '../src/rules/types';
+import type { GameState, Meld } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
-import { createNewGame } from '../src/game-state/store';
+import { createNewGame } from '../src/rules/rules';
 import { DraftEditor } from '../src/mexe-mode/draft';
 import { n } from './helpers/cards';
 import { expectCardConservation, TOTAL_CARDS } from './helpers/invariants';
@@ -109,7 +109,7 @@ describe('edge probes', () => {
 
   it('crowded table (10 melds): still validates, AI decides without throwing', () => {
     const suits = ['hearts', 'diamonds', 'clubs', 'spades'] as const;
-    const table: GameState['table'] = [];
+    const table: Meld[] = [];
     for (let rank = 1; rank <= 10; rank++) {
       table.push({
         id: `t${rank}`,

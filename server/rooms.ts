@@ -8,18 +8,16 @@
  * event bus, which would cross-talk between rooms.
  */
 import { randomInt, randomUUID } from 'node:crypto';
-import { createRng } from '../src/core/rng';
 import {
   applyConfirmedTurn,
   canConfirmTurn,
-  createDeck,
-  dealInitialHands,
+  cardsConserved,
+  createNewGame,
   drawAndEndTurn,
-  shuffleDeck,
+  timerExpireTurn,
 } from '../src/rules/rules';
-import type { Card, DraftState, GameState, Meld, PlayerState, ReasonCode } from '../src/rules/types';
+import type { Card, DraftState, GameState, Meld, ReasonCode } from '../src/rules/types';
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
-import { timerExpireTurn } from '../src/rules/rules';
 import {
   buildView, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, MAX_ACTIVITY, MAX_MATCH_HISTORY,
   MAX_ROOM_LISTINGS, normalizeRoomSettings, REACTION_COOLDOWN_MS, TIMER_PRESETS,
@@ -189,10 +187,6 @@ function sameSettings(a: RoomSettings, b: RoomSettings): boolean {
     a.reconnectGraceMs === b.reconnectGraceMs &&
     a.missedTurnLimit === b.missedTurnLimit
   );
-}
-
-function idOf(seat: number): string {
-  return `p${seat}`;
 }
 
 function displayName(name: string, seat: number): string {
@@ -597,16 +591,12 @@ export class RoomManager {
     room.matchSeats = occupied.map((s) => s.seat);
 
     const seed = this.genSeed();
-    const rng = createRng(seed);
-    const deck = shuffleDeck(createDeck(DEFAULT_RULES), rng);
-    const { hands, drawPile } = dealInitialHands(deck, occupied.length, DEFAULT_RULES.handSize);
-    const players: PlayerState[] = occupied.map((seatData, i) => ({
-      id: idOf(i), name: seatData.name, isAi: false, hand: hands[i]!,
-    }));
-    room.state = {
-      seed, players, activePlayerIndex: 0, table: [], drawPile, turn: 1,
-      winnerId: null, phase: 'playing', config: DEFAULT_RULES,
-    };
+    // Same deal function the offline client uses, so one seed means one game on both sides.
+    room.state = createNewGame(
+      seed,
+      occupied.map((seatData) => ({ name: seatData.name, isAi: false })),
+      DEFAULT_RULES,
+    );
     room.rev = 1;
     room.lastActivityAt = this.now();
     // A fresh match identity, so every client can tell this deal from the one it replaced, and a
@@ -929,6 +919,16 @@ export class RoomManager {
     return room ? { rev: room.rev, state: room.state } : null;
   }
 
+  /**
+   * Test seam only. `GameState` is readonly (ARCH-005), so a fixture that needs a particular deal
+   * builds the whole state and hands it over here; production code moves a room's state only
+   * through `submitTurn`, `drawEndTurn` and the stalled-turn clock, which validate and conserve.
+   */
+  setStateForTest(code: string, state: GameState): void {
+    const room = this.rooms.get(code);
+    if (room) room.state = state;
+  }
+
   /** Remove rooms with no seats, every seat disconnected past grace, or — only when nobody is
    * currently connected — idle past the absolute timeout backstop. A live lobby with connected
    * seats must never be reaped just because nobody has acted in a while (S3). Call on an
@@ -959,10 +959,7 @@ export class RoomManager {
 }
 
 function assertConservation(state: GameState): void {
-  const all = [...state.players.flatMap((p) => p.hand), ...state.table.flatMap((m) => m.cards), ...state.drawPile];
-  const ids = new Set(all.map((c) => c.id));
-  const expected = state.config.deckCount * (52 + state.config.jokersPerDeck);
-  if (all.length !== expected || ids.size !== expected) {
+  if (!cardsConserved(state)) {
     throw new RulesError('server invariant violated: card conservation', 'corruptState');
   }
 }

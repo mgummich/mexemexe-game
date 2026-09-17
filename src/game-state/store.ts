@@ -1,50 +1,16 @@
-import { createRng } from '../core/rng';
 import { bus } from '../core/events';
-import {
-  applyConfirmedTurn,
-  createDeck,
-  dealInitialHands,
-  drawAndEndTurn,
-  shuffleDeck,
-} from '../rules/rules';
-import { DEFAULT_RULES } from '../rules/types';
-import type { DraftState, GameState, PlayerState, RulesConfig } from '../rules/types';
+import { applyConfirmedTurn, drawAndEndTurn } from '../rules/rules';
+import type { DraftState, GameState, PlayerState } from '../rules/types';
 
-export interface PlayerConfig {
-  name: string;
-  isAi: boolean;
-  aiType?: 'simple' | 'rearranger';
-}
-
-export function createNewGame(
-  seed: number,
-  playerConfigs: PlayerConfig[],
-  config: RulesConfig = DEFAULT_RULES,
-): GameState {
-  const rng = createRng(seed);
-  const deck = shuffleDeck(createDeck(config), rng);
-  const { hands, drawPile } = dealInitialHands(deck, playerConfigs.length, config.handSize);
-  const players: PlayerState[] = playerConfigs.map((cfg, i) => ({
-    id: `p${i}`,
-    name: cfg.name,
-    isAi: cfg.isAi,
-    aiType: cfg.aiType,
-    hand: hands[i]!,
-  }));
-  return {
-    seed,
-    players,
-    activePlayerIndex: 0,
-    table: [],
-    drawPile,
-    turn: 1,
-    winnerId: null,
-    phase: 'playing',
-    config,
-  };
-}
-
-/** Authoritative store. Committed state only; drafts live in mexe-mode. */
+/**
+ * Authoritative local store. Committed state only; drafts live in mexe-mode.
+ *
+ * It owns one mutable field — the current `GameState` — and replaces it only with what a pure
+ * `src/rules` transition returned. `GameState` itself is readonly (ARCH-005), so `get()` can hand
+ * out the live object on the render path without a copy and still not be mutable by its readers.
+ * Deals and transitions live in `src/rules` so the server shares them; the bus emission below is
+ * the part that stays client-side (ARCH-004).
+ */
 export class GameStore {
   private state: GameState;
 
@@ -52,6 +18,7 @@ export class GameStore {
     this.state = initial;
   }
 
+  /** The live authoritative object, readonly by type — never clone it on this path. */
   get(): GameState {
     return this.state;
   }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { RearrangerAi, SimpleAi } from '../src/ai/ai';
 import { applyConfirmedTurn, drawAndEndTurn } from '../src/rules/rules';
 import type { GameState } from '../src/rules/types';
-import { createNewGame } from '../src/game-state/store';
+import { createNewGame } from '../src/rules/rules';
 
 /**
  * Perf/regression soak: 20 full AI-vs-AI games (SimpleAi vs RearrangerAi,

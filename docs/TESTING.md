@@ -125,6 +125,11 @@ helper logic live as pure modules under `src/table` and `src/ui`.
   `helpers.test.ts`, `showcase.test.ts`, `motion.test.ts`, `feel.test.ts`,
   `intensity.test.ts`, `invalid-detail.test.ts`, `no-telemetry.test.ts`,
   `config.test.ts`, `viewToState.test.ts`, `net/errors.test.ts`.
+- `tests/boundaries.test.ts` — the architecture guard: the domain core's import
+  allow-list, no platform/clock/unseeded randomness in `rules`, `mexe-mode`,
+  `game-state` or `table`, Phaser confined to the presentation layer, and the
+  server importing only the shared rules/protocol/rng. See
+  [ARCHITECTURE.md](ARCHITECTURE.md#enforcement-status).
 - `tests/soak.test.ts` — long-running game loop, used as a perf/stability soak.
 
 `npm run test:watch` for the watch loop.

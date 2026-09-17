@@ -10,6 +10,7 @@ in code comments. Link to them instead.**
 | Gameplay rules | `docs/GAME_RULES.md` |
 | Module map, layering, ownership | `docs/ARCHITECTURE.md` |
 | Architecture risk register, audit evidence | `docs/ARCHITECTURE_AUDIT.md` |
+| System invariants, canonical scenarios | `docs/INVARIANTS.md` |
 | Setup, scripts, troubleshooting | `docs/DEVELOPMENT.md` |
 | Tests and verification gates | `docs/TESTING.md` |
 | Online protocol and authority | `docs/MULTIPLAYER.md` |

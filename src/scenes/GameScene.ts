@@ -9,7 +9,7 @@ import { bus } from '../core/events';
 import { onAppHidden, onAppVisible } from '../core/lifecycle';
 import { haptic } from '../core/haptics';
 import { playlog } from '../core/playlog';
-import { createNewGame, GameStore } from '../game-state/store';
+import { GameStore } from '../game-state/store';
 import { buildShowcaseState } from '../demo/showcase';
 import { isComeback, matchIntensity, threatOf } from '../core/intensity';
 import { doneChecklist, formatChecklist, objectiveKey, objectivePhase } from '../core/objective';
@@ -21,7 +21,7 @@ import { readRecentRooms, type ConnStatus, type NetClient } from '../net/client'
 import { DEFAULT_QUEUE_TARGET, DEFAULT_ROOM_VISIBILITY, digestOfState, EMPTY_PARTY, stateHash } from '../net/protocol';
 import type { ErrorMsg, GameOverMsg, GameView, RoomSettings, SubmitTurnMeld } from '../net/protocol';
 import { viewToState } from '../net/viewToState';
-import { analyzeMeld, sortMeldCards } from '../rules/rules';
+import { analyzeMeld, createNewGame, sortMeldCards } from '../rules/rules';
 import type { Card, GameState, JokerAssignment, Meld, MeldReason, ReasonCode, RulesConfig } from '../rules/types';
 import {
   clampScroll,

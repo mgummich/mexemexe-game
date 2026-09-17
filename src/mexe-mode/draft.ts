@@ -1,12 +1,22 @@
 import { canConfirmTurn, getInvalidMeldReasons } from '../rules/rules';
 import type { Card, ConfirmResult, DraftState, GameState, Meld, MeldReason } from '../rules/types';
 
+/**
+ * The editor's own melds are mutable: a draft is what the player is rearranging. Committed
+ * `Meld`s are readonly (ARCH-005) and are cloned on the way in, so no edit here can reach the
+ * authoritative table.
+ */
+interface DraftMeld {
+  id: string;
+  cards: Card[];
+}
+
 interface Snapshot {
-  melds: Meld[];
+  melds: DraftMeld[];
   handCardsPlayed: string[];
 }
 
-function cloneMelds(melds: readonly Meld[]): Meld[] {
+function cloneMelds(melds: readonly Meld[]): DraftMeld[] {
   return melds.map((m) => ({ id: m.id, cards: m.cards.map((c) => ({ ...c })) }));
 }
 
@@ -17,7 +27,7 @@ const HISTORY_CAP = 100;
  * Undo/redo/reset over draft snapshots. Committed state untouched until FEITO.
  */
 export class DraftEditor {
-  private melds: Meld[];
+  private melds: DraftMeld[];
   private handCardsPlayed: string[] = [];
   private history: Snapshot[] = [];
   private historyIndex = 0;

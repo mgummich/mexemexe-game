@@ -5,13 +5,15 @@ MEXEMEXE! is a Vite + TypeScript + Phaser client with an optional Node +
 built; the ruleset it implements lives in [GAME_RULES.md](GAME_RULES.md).
 The measured baseline behind the maps below — module-by-module evidence, the
 dependency-edge classification and the architecture risk register — is
-[ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md).
+[ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md). The properties this structure
+must preserve, and the scenarios that prove them, are
+[INVARIANTS.md](INVARIANTS.md).
 
 ## Layering
 
 ```
-rules/          pure functions, no Phaser/DOM/Date/random   ← the only rules authority
-core/           event bus, seeded rng, settings, persistence, play log, PWA, lifecycle
+rules/          pure functions + seeded rng, no Phaser/DOM/Date  ← the only rules authority
+core/           event bus, settings, persistence, play log, PWA, lifecycle
 game-state/     GameStore: turn lifecycle over rules/
 mexe-mode/      table draft editor (break/split/merge/move, undo/redo/reset)
 ai/             SimpleAi, RearrangerAi, personalities        ← rules + mexe-mode only
@@ -37,9 +39,9 @@ legality.
 
 | Path | Responsibility |
 |---|---|
-| `src/rules` | deck, shuffle, deal, meld analysis, table validation, turn legality, win check, serialize |
-| `src/core` | `EventBus` (`events.ts`), seeded `mulberry32` rng, settings + `localStorage` persistence, session play log, objective hints, results summary, error recovery, app sleep/resume, PWA registration |
-| `src/game-state` | `GameStore`: game creation, turn application, AI scheduling |
+| `src/rules` | deck, seeded rng (`rng.ts`), shuffle, deal (`createNewGame`), meld analysis, table validation, turn legality, card conservation, win check, serialize |
+| `src/core` | `EventBus` (`events.ts`), settings + `localStorage` persistence, session play log, objective hints, results summary, error recovery, app sleep/resume, PWA registration |
+| `src/game-state` | `GameStore`: holds the committed local `GameState`, applies `src/rules` transitions to it and announces them on the bus |
 | `src/mexe-mode` | draft state: melds under edit, cards played from hand, undo/redo history |
 | `src/ai` | `SimpleAi`, `RearrangerAi`, the four personalities and their presentation constants |
 | `src/net` | `protocol.ts` (shared wire types, redaction, boundary validation), `client.ts` (browser socket), `viewToState.ts` (server view → local-shaped state), `errors.ts` |
@@ -67,12 +69,14 @@ interface Card {
   rank: Rank | null;  // null iff isJoker
   isJoker: boolean;
 }
-interface Meld { id: string; cards: Card[] }
-interface GameState {
-  seed: number; players: PlayerState[]; activePlayerIndex: number;
-  table: Meld[];        // committed, always valid
-  drawPile: Card[]; turn: number; winnerId: string | null;
-  phase: 'playing' | 'finished'; config: RulesConfig;
+interface Meld { readonly id: string; readonly cards: readonly Card[] }
+interface GameState {          // every field readonly — see State ownership below
+  readonly seed: number; readonly players: readonly PlayerState[];
+  readonly activePlayerIndex: number;
+  readonly table: readonly Meld[];        // committed, always valid
+  readonly drawPile: readonly Card[]; readonly turn: number;
+  readonly winnerId: string | null;
+  readonly phase: 'playing' | 'finished'; readonly config: RulesConfig;
 }
 ```
 
@@ -102,10 +106,12 @@ reason is an i18n key, so the FEITO button can render the exact translated
 cause.
 
 Other entry points: `createDeck`, `shuffleDeck`, `dealInitialHands`,
-`applyConfirmedTurn`, `drawAndEndTurn`, `timerExpireTurn` (the server's online
-turn-timer expiry path — see MULTIPLAYER.md §7b; local play never starts a
-timer), `checkWinner`, `fewestCardsWinner`,
-`serializeGameState` / `deserializeGameState` (`GAME_STATE_VERSION = 2`).
+`createNewGame` (the one deal — offline play and the server both start a match
+through it, so a seed means one game on both sides), `applyConfirmedTurn`,
+`drawAndEndTurn`, `timerExpireTurn` (the server's online turn-timer expiry path
+— see MULTIPLAYER.md §7b; local play never starts a timer), `checkWinner`,
+`cardsConserved`, `serializeGameState` / `deserializeGameState`
+(`GAME_STATE_VERSION = 2`). `createRng` lives next door in `src/rules/rng.ts`.
 
 **Joker assignments** are derived on demand from the run/group search, never
 stored in place of the card: jokers keep their own identity on the table, in
@@ -115,9 +121,9 @@ saves and on the wire.
 empty pile returns `phase: 'finished'` with `fewestCardsWinner`, ties broken by
 earliest seat.
 
-**Card conservation** is derived from `config.deckCount * (52 + config.jokersPerDeck)`
-both in `deserializeGameState` and in the server's `assertConservation`, never
-hardcoded.
+**Card conservation** has one implementation, `cardsConserved(state)`, derived
+from `config.deckCount * (52 + config.jokersPerDeck)` and never hardcoded. The
+save loader and the server's `assertConservation` both call it.
 
 ## Local game flow
 
@@ -169,7 +175,8 @@ Full protocol, room lifecycle, reconnect and alpha limits: [MULTIPLAYER.md](MULT
 
 ## RNG
 
-`mulberry32(seed)` in `src/core/rng.ts`. The seed comes from `?seed=` or the
+`mulberry32(seed)` in `src/rules/rng.ts` — the deterministic contract lives beside the
+domain that consumes it (ARCH-010 resolved). The seed comes from `?seed=` or the
 clock at boot and is recorded in state and logs; all shuffles and AI tie-breaks
 draw from the state's stream, so the same seed replays the same deal and the
 same AI decisions. Online, the **server** picks the seed.
@@ -237,12 +244,72 @@ suites (through `window.__MEXE__`, never through internals).
 Two ownership facts worth knowing before changing anything:
 
 - **The server does not use `GameStore`.** `GameStore` emits on the global bus,
-  and one process holds many rooms, so `server/rooms.ts` calls the same `src/rules`
-  functions directly and builds its own deal. Turn application is shared; event
-  announcement is client-only. (ARCH-004.)
+  and one process holds many rooms, so `server/rooms.ts` calls the same
+  `src/rules` functions directly — including `createNewGame`, so the deal is no
+  longer written out twice. What stays client-side is the announcement, not the
+  gameplay. (ARCH-004.)
 - **`GameScene` currently owns more than presentation** — online state
   adaptation, AI scheduling and the online turn clock live there. That is a
   known concentration, not the intended end state. (ARCH-001/ARCH-002.)
+
+## Module categories and dependency rules
+
+Five categories are enough for this repository. They describe what a module is
+allowed to *know*, not where its file sits.
+
+| Category | Modules | May depend on |
+|---|---|---|
+| **Domain** | `src/rules`, `src/mexe-mode` | domain only (plus the `Rng` type contract) |
+| **Shared contract** | `src/net/protocol.ts`, `src/net/viewToState.ts` | domain types |
+| **Application** | `src/game-state`, `server/rooms.ts`, `server/matchmaking.ts`, the AI engine in `src/ai` | domain, shared contract, the seeded rng |
+| **Presentation** | `src/scenes`, `src/ui`, `src/table`, `src/assets`, `src/audio`, `src/cosmetics`, `src/tutorial`, `src/demo` | everything below it; `src/table` additionally stays effect-free |
+| **Platform / infrastructure** | `src/core/*`, `src/net/client.ts`, `server/index.ts`, `server/connections.ts`, `src/verification` | domain + shared contract + application contracts |
+
+Cross-cutting and unowned by a layer: `src/localization` (data), `src/config.ts`
+(query params).
+
+Allowed directions, in one line: **domain ← application ← presentation**, with
+platform adapters called *from* application/presentation, never the reverse.
+`server/` is application + infrastructure over the *same* domain and shared
+contract as the client — that shared edge is the point, not an accident.
+
+### Forbidden directions
+
+| Forbidden edge | Why | Status |
+|---|---|---|
+| `rules`/`mexe-mode`/`game-state` → Phaser, DOM, `localStorage`, WebSocket, service worker | destroys determinism and node-only testability | enforced (`tests/boundaries.test.ts`) |
+| `rules`/`mexe-mode`/`game-state`/`table` → `Math.random`, `Date.now`, `performance.now` | a seed must replay exactly | enforced (`tests/boundaries.test.ts`) |
+| anything outside `scenes`/`ui`/`assets`/`audio`/`main.ts` → `phaser` | keeps the domain portable | enforced (`tests/boundaries.test.ts`) |
+| `server/` → any `src/` module other than `rules`, `net/protocol` | the server must never import client presentation | enforced (`tests/boundaries.test.ts`) |
+| presentation → a second legality implementation | one `analyzeMeld`, one `canConfirmTurn` | convention (ARCH-019) |
+| `src/ai` → opponent hand identities | AI must not see what a player cannot | convention (INV-A2) |
+| `src/core/*` → `ui`, `cosmetics`, `ai`, `verification` | makes the platform layer unusable without presentation | **violated today** — ARCH-009/ARCH-011, Phase 3/4 |
+| `src/game-state` → the global bus | announcement, not turn application — the shareable half now lives in `src/rules` | **narrowed** — ARCH-004; the bus-as-control-flow half is ARCH-006 |
+
+New violations belong in the [ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md)
+register as an `ARCH-xxx` finding with a phase, not in a second list.
+
+## State ownership and mutation rules
+
+The authority table above says who decides. This says who may write.
+
+| State | Canonical owner | Mutation entrypoints | Readers | Lifetime |
+|---|---|---|---|---|
+| committed local `GameState` | `GameStore` | `confirmTurn`, `drawEndTurn` only | scenes, demo, tests via `get()` — the live object, readonly **by type** (ARCH-005 resolved) | match |
+| Mexe draft | `DraftEditor` | its own editing methods | `GameScene` render + `canConfirmTurn` | one turn |
+| authoritative room/match state | `RoomManager` | `RoomManager` methods only | `server/index.ts` broadcast path | room |
+| seat ownership / reconnect token | `RoomManager` | `join`, `reconnect`, `disconnect`, `sweep` | `server/index.ts` | room |
+| turn timer | `RoomManager` | `startTurnClock`, `advanceStalledTurns` | clients render `turnMsLeft` | turn |
+| lobby view | `OnlineScene` | its own handlers, from server messages | its render methods | scene (mirror, never authority — ARCH-003) |
+| settings / progress / cosmetics | `src/core/settings` | `settings.update*` | everywhere | app |
+| connection state, name, tokens | `NetClient` | `NetClient` | `OnlineScene`, `GameScene` | socket |
+| scene UI state | the owning scene | scene methods | that scene | scene instance; reset in lifecycle code |
+
+Rules that follow from the table: a mirror of server state is never written
+locally except from a server message; derived values (helper flags, joker
+assignments, `turnMsLeft`, invalid-meld reasons) are recomputed, never cached as
+a second authority; and nothing outside the owner mutates an owned object in
+place.
 
 ## Side-effect boundaries
 
@@ -258,8 +325,42 @@ Two ownership facts worth knowing before changing anything:
 | clipboard, share, URL params | `OnlineScene`, `src/config.ts`, `src/verification/debug-api.ts`, `src/demo` |
 | **none of the above** | `src/rules`, `src/mexe-mode`, `src/game-state`, `src/table`, `src/net/protocol.ts`, `src/net/viewToState.ts` |
 
-The last row is the one that matters most and the one nothing currently
-enforces mechanically — see ARCH-019.
+The last row is the one that matters most. `tests/boundaries.test.ts` enforces
+it for `src/rules`, `src/mexe-mode`, `src/game-state`, `src/table` and the wire
+contract; the rest of the table is still convention (ARCH-019).
+
+Effects are worth separating by *kind* when deciding where one belongs:
+
+| Kind | Examples | Where it may live |
+|---|---|---|
+| gameplay | the deal, shuffles, AI tie-breaks | the state's seeded rng only |
+| application | turn clock, reconnect schedule, rate-limit windows, persistence writes | `game-state`/`server/*` application modules and their platform adapters |
+| platform | storage, sockets, service worker, wall clock, haptics | `src/core/*`, `src/net/client.ts`, `server/index.ts` |
+| presentation | Phaser, DOM, audio, animation timers, sfx detune | `src/scenes`, `src/ui`, `src/audio`, `src/main.ts` |
+
+## Enforcement status
+
+Which mechanism actually holds each architectural rule today. Cheapest
+sufficient mechanism wins; a rule with no mechanism is a rule that regresses
+during restructuring (ARCH-019).
+
+| Rule | Mechanism |
+|---|---|
+| domain purity (no Phaser/DOM/storage/socket in rules, draft, store, layout, wire contract) | **test** — `tests/boundaries.test.ts` |
+| no unseeded randomness or wall clock in gameplay | **test** — `tests/boundaries.test.ts`, plus determinism tests |
+| Phaser confined to the presentation layer | **test** — `tests/boundaries.test.ts` |
+| server imports only shared rules/protocol/rng from `src/` | **test** — `tests/boundaries.test.ts` |
+| client and server share one protocol and version | **type system** — `server/` imports `src/net/protocol` |
+| server authority and hidden-hand privacy | **test** — `tests/server/*`, `verify:multiplayer`, OH-26 |
+| card conservation, table legality, determinism | **test** — `rules`, `draft`, `probes`, `server/rooms` |
+| no telemetry in the client | **test** — `tests/no-telemetry.test.ts` |
+| `src/rules` is the only legality authority | **convention** — structurally reinforced by there being one `analyzeMeld` |
+| one owner per mutable state domain | **type system** for `GameState`/`DraftState` (`readonly` fields, checked in `tests/boundaries.test.ts`); **convention** elsewhere |
+| `core` does not depend upward | **none** — currently violated, ARCH-009 |
+| scene state reset on relaunch | **convention** — ARCH-018 |
+
+The invariants these mechanisms protect, and the scenarios that exercise them,
+are in [INVARIANTS.md](INVARIANTS.md).
 
 ## Lifecycles and cleanup
 

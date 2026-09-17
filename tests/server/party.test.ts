@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
 import { MAX_ACTIVITY, MAX_MATCH_HISTORY, parseClientMessage, PROTOCOL_VERSION, REACTION_COOLDOWN_MS } from '../../src/net/protocol';
 import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
-import { createRng } from '../../src/core/rng';
+import { createRng } from '../../src/rules/rng';
 import type { Card } from '../../src/rules/types';
+import { withHand } from '../helpers/cards';
 
 /** Clock the manager reads, so the reaction cooldown can be advanced deterministically. */
 function managerAt(clock: { t: number }, seed = 1): RoomManager {
@@ -48,8 +49,10 @@ function winWithTriple(mgr: RoomManager, code: string, triple: Card[]): void {
   const room = mgr.getRoom(code)!;
   const keep = new Set(triple.map((c) => c.id));
   const hand = room.state!.players[0]!.hand;
-  room.state!.drawPile.push(...hand.filter((c) => !keep.has(c.id)));
-  room.state!.players[0]!.hand = hand.filter((c) => keep.has(c.id));
+  mgr.setStateForTest(code, {
+    ...withHand(room.state!, 0, hand.filter((c) => keep.has(c.id))),
+    drawPile: [...room.state!.drawPile, ...hand.filter((c) => !keep.has(c.id))],
+  });
   const result = mgr.submitTurn(code, 0, room.rev, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
   expect(result).toEqual({ ok: true, gameOver: true });
 }
@@ -110,8 +113,10 @@ describe('winning-move summary (ONLINE-25)', () => {
     // so the manager's card-conservation invariant still holds.
     const keep = new Set(triple.map((c) => c.id));
     const hand = room.state!.players[0]!.hand;
-    room.state!.drawPile.push(...hand.filter((c) => !keep.has(c.id)));
-    room.state!.players[0]!.hand = hand.filter((c) => keep.has(c.id));
+    mgr.setStateForTest(code, {
+      ...withHand(room.state!, 0, hand.filter((c) => keep.has(c.id))),
+      drawPile: [...room.state!.drawPile, ...hand.filter((c) => !keep.has(c.id))],
+    });
 
     const result = mgr.submitTurn(code, 0, room.rev, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     expect(result).toEqual({ ok: true, gameOver: true });
@@ -350,8 +355,10 @@ describe('party session (OS-01..OS-19)', () => {
     const keep = new Set(triple.map((c) => c.id));
     const hand = room.state!.players[0]!.hand;
     const spare = hand.find((c) => !keep.has(c.id))!;
-    room.state!.drawPile.push(...hand.filter((c) => !keep.has(c.id) && c.id !== spare.id));
-    room.state!.players[0]!.hand = [...triple, spare];
+    mgr.setStateForTest(code, {
+      ...withHand(room.state!, 0, [...triple, spare]),
+      drawPile: [...room.state!.drawPile, ...hand.filter((c) => !keep.has(c.id) && c.id !== spare.id)],
+    });
 
     expect(mgr.submitTurn(code, 0, room.rev, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]))
       .toEqual({ ok: true, gameOver: false });

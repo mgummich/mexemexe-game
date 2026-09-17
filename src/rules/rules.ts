@@ -1,4 +1,5 @@
-import type { Rng } from '../core/rng';
+import { createRng } from './rng';
+import type { Rng } from './rng';
 import {
   DEFAULT_RULES,
   SUITS,
@@ -10,6 +11,8 @@ import {
   type Meld,
   type MeldAnalysis,
   type MeldReason,
+  type PlayerConfig,
+  type PlayerState,
   type Rank,
   type ReasonCode,
   type RulesConfig,
@@ -69,6 +72,38 @@ export function dealInitialHands(
     }
   }
   return { hands, drawPile: deck.slice(i) };
+}
+
+/**
+ * The one deal. Local play and the server both start a match here, so a seed produces the same
+ * game on either side (ARCH-004: the deal used to be written out twice).
+ */
+export function createNewGame(
+  seed: number,
+  playerConfigs: readonly PlayerConfig[],
+  config: RulesConfig = DEFAULT_RULES,
+): GameState {
+  const rng = createRng(seed);
+  const deck = shuffleDeck(createDeck(config), rng);
+  const { hands, drawPile } = dealInitialHands(deck, playerConfigs.length, config.handSize);
+  const players: PlayerState[] = playerConfigs.map((cfg, i) => ({
+    id: `p${i}`,
+    name: cfg.name,
+    isAi: cfg.isAi,
+    aiType: cfg.aiType,
+    hand: hands[i]!,
+  }));
+  return {
+    seed,
+    players,
+    activePlayerIndex: 0,
+    table: [],
+    drawPile,
+    turn: 1,
+    winnerId: null,
+    phase: 'playing',
+    config,
+  };
 }
 
 interface AceMode {
@@ -385,6 +420,17 @@ export function timerExpireTurn(state: GameState): GameState {
   return drawAndEndTurn(state);
 }
 
+/**
+ * Card conservation: every dealt card lives in exactly one hand, meld or the draw pile — no card
+ * invented, lost or duplicated. One implementation, used by the save loader here and by the
+ * server before it publishes a turn.
+ */
+export function cardsConserved(state: GameState): boolean {
+  const all = [...state.players.flatMap((p) => p.hand), ...state.table.flatMap((m) => m.cards), ...state.drawPile];
+  const expected = state.config.deckCount * (52 + state.config.jokersPerDeck);
+  return all.length === expected && new Set(all.map((c) => c.id)).size === expected;
+}
+
 export function checkWinner(state: GameState): string | null {
   const winner = state.players.find((p) => p.hand.length === 0);
   return winner ? winner.id : null;
@@ -437,14 +483,7 @@ export function deserializeGameState(json: string): GameState {
   ) {
     throw new RulesError('corrupt save: bad shape', 'corruptSave');
   }
-  const all = [
-    ...s.players.flatMap((p) => p.hand),
-    ...s.table.flatMap((m) => m.cards),
-    ...s.drawPile,
-  ];
-  const ids = new Set(all.map((c) => c.id));
-  const expectedTotal = s.config.deckCount * (52 + s.config.jokersPerDeck);
-  if (all.length !== expectedTotal || ids.size !== expectedTotal) {
+  if (!cardsConserved(s)) {
     throw new RulesError('corrupt save: card conservation violated', 'corruptSave');
   }
   if (!validateTable(s.table)) {
