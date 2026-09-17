@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { aiReasonKeySuffix, AI_SPEED_SCALE, createAi, PERSONALITY_STYLE, type EmoteKey, type Personality } from '../ai/ai';
+import { aiReasonKeySuffix, AI_SPEED_SCALE, PERSONALITY_STYLE, type EmoteKey, type Personality } from '../ai/ai';
 import { playSfx } from '../audio/sfx';
 import { setMusicContext } from '../audio/music';
 import { CARD_H, CARD_W } from '../assets/manifest';
@@ -10,7 +10,7 @@ import { onAppHidden, onAppVisible } from '../core/lifecycle';
 import { haptic } from '../core/haptics';
 import { playlog } from '../core/playlog';
 import type { ActionOutcome, GameAction } from '../game-state/actions';
-import { GameStore } from '../game-state/store';
+import { LocalMatch } from '../game-state/match';
 import { buildShowcaseState } from '../demo/showcase';
 import { isComeback, matchIntensity, threatOf } from '../core/intensity';
 import { doneChecklist, formatChecklist, objectiveKey, objectivePhase } from '../core/objective';
@@ -18,10 +18,9 @@ import { playerStats, summarizeMoveKey } from '../core/results-summary';
 import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES } from '../cosmetics';
 import { t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
-import { readRecentRooms, type ConnStatus, type NetClient } from '../net/client';
-import { DEFAULT_QUEUE_TARGET, DEFAULT_ROOM_VISIBILITY, digestOfState, EMPTY_PARTY, stateHash } from '../net/protocol';
-import type { ErrorMsg, GameOverMsg, GameView, RoomSettings, SubmitTurnMeld } from '../net/protocol';
-import { viewToState } from '../net/viewToState';
+import type { ConnStatus, NetClient } from '../net/client';
+import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
+import { OnlineSession } from '../net/online-session';
 import { analyzeMeld, createNewGame, sortMeldCards } from '../rules/rules';
 import type { Card, GameState, JokerAssignment, Meld, MeldReason, ReasonCode, RulesConfig } from '../rules/types';
 import {
@@ -49,6 +48,7 @@ import { view } from '../ui/viewport';
 import { coverBackground } from '../ui/menu-layout';
 import { CHROME_GOLD, CHROME_GOLD_TEXT, fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
+import { matchDebugSurface } from '../verification/online-debug';
 
 /** Pointer kind for the play log: the viewport profile is presentation's to read, not the log's
  * (the log module is platform-free). */
@@ -158,8 +158,125 @@ interface FocusTarget {
   rect: Phaser.Geom.Rectangle;
 }
 
+/**
+ * Everything the screen remembers *within one match*: the selection and focus ring, the portrait
+ * editor's open/scroll state, the zoom/pan view, the one-shot announce latches, and the flags that
+ * gate input while something is being presented.
+ *
+ * It exists so that a new match is `new MatchViewState()` rather than a list of ~30 fields somebody
+ * has to remember to extend (ARCH-018). A field added here is fresh for the next match by
+ * construction; a field added to `GameScene` itself is, by that same construction, a deliberate
+ * statement that it survives a match — today only the hand-sort preference and the Phaser objects
+ * and timers the scene tears down explicitly in `shutdown`.
+ *
+ * Shipped bugs from getting the old checklist wrong include a dead board on every second match
+ * (`sceneGone`) and silent last-card/threat moments (the announce latches, never cleared at all).
+ */
+class MatchViewState {
+  /** Set on shutdown so an in-flight sliced AI decision never acts on a dead scene. */
+  sceneGone = false;
+  /** Which zone the ghost preview currently reflects: undefined = none, '' = empty table area, else a meldId. Lets hover redraw only on actual change, never per pointer-move. */
+  hoverKey: string | undefined = undefined;
+  // FEITO accidental-confirm guard
+  validSince: number | null = null;
+  lastValidOk = false;
+  /** MEXE-14/RECOVERY-09: the `time.now` a Reset tap armed a confirm until, or 0 when unarmed. */
+  resetArmedUntil = 0;
+  pauseOpen = false;
+  /** D12: close() handle for the currently open pause overlay, so relayout() can rebuild it
+   * centred on the new world instead of leaving it stranded over a relaid-out board. */
+  pauseMenuClose: (() => void) | null = null;
+  tutorialCompletedRecorded = false;
+  /** Set in onOnlineTurnTimeout when a timeout is about to push a seat to missedTurnLimit, so the
+   * room_closed that follows can show the specific "match ended" copy instead of the generic one. */
+  pendingMissedLimitClose = false;
+  /** Last whole second already ticked, so the warning cue fires once per second, not per frame. */
+  lastTickSecond = -1;
+  /** Last status seen by onOnlineStatusChange — only used to detect the reconnecting -> open
+   * edge, so a self-reconnect gets the same "you're back" notice the opponent's already gets. */
+  lastOnlineStatus: ConnStatus | null = null;
+  /** Wall-clock instant the current drop started, so the reconnect notice can count down the
+   * room's reconnect grace — the window the server holds this seat for. 0 when connected. */
+  reconnectStartedAt = 0;
+  /** Which table cards the last opponent action touched. A rearranging opponent changes the
+   * puzzle's structure, so the new position needs to be readable rather than guessed. */
+  lastMoveIds = new Set<string>();
+  /**
+   * What each opponent seat last reacted with, and when. A character who reacts to every single
+   * thing stops reading as a character, and the same line twice in a row reads as a bug — so a
+   * seat stays quiet for a beat after speaking, and never repeats its previous line back to back.
+   */
+  lastEmoteBySeat = new Map<number, { line: string | null; at: number }>();
+  /** Which seat the last render showed as active, so a handover can be staged rather than swapped. */
+  lastRenderedActiveSeat = -1;
+  /** Readback of the most recently *confirmed* (meld) turn — read by onWin() to build the
+   * results-screen "winning move" line. Cleared on a draw, since a stalemate win has no meld play
+   * to describe. Set before the confirmTurn action, since dispatch() runs onWin() synchronously. */
+  lastConfirmedMoveText: string | null = null;
+  /** Reason tag of the move the AI just made (`ai.why.*` suffix), or null when the last move was
+   * a person's. Drives the `aiExplain` setting — a human opponent's move is never suppressed. */
+  lastAiReason: string | null = null;
+  /** Seats whose last card has already been announced, so the moment fires once, not every render. */
+  lastCardAnnounced = new Set<number>();
+  /** END-15: seats already given the subtle 2-cards tension cue, so it plays once per entry into
+   * `threat`, not every render — mirrors `lastCardAnnounced` one rung down the escalation. */
+  threatAnnounced = new Set<number>();
+  /** While an opponent's move is still being shown (or the initial deal is still flying in), the
+   * board is read-only — see presentAiMove and dealIn/create. An absolute `time.now` deadline,
+   * which is exactly why it belongs to a per-match holder rather than to the scene. */
+  presentingUntil = 0;
+  // select-then-place — the drag-free way to play (keyboard and touch both route through it)
+  selectedCardId: string | null = null;
+  focusIndex = 0;
+  /** Focus ring is drawn only once the keyboard has been used, so mouse players never see it. */
+  focusVisible = false;
+  /** Open/closed toggle. Never discards draft state — the draft lives in DraftEditor regardless. */
+  mexeEditorOpen = false;
+  /** Which meld-list row is the workspace's subject: an existing meld id, null for the "new meld"
+   * row, or undefined when nothing has been focused yet this turn. */
+  mexeEditorMeldId: string | null | undefined = undefined;
+  /** The meld list's vertical scroll offset in the portrait editor (Phase 14 Wave C). */
+  mexeEditorScroll = 0;
+  /** Hand-strip horizontal scroll offset — separate axis/field from the meld list's. */
+  mexeHandScroll = 0;
+  /** Horizontal scroll offset of the main hand, for hands too long to fit — see enableHandScroll. */
+  handScroll = 0;
+  /** R1 verification: the status each meld was actually PAINTED with on the last render, filled by
+   * whichever table renderer ran (layoutMelds or renderMexeEditor) and exposed via debugApi. */
+  renderedMeldStatus = new Map<string, SnapStatus>();
+  /** R3/R4: which meld cycleProblem() last pointed at — a static (reduced-motion-safe), non-modal
+   * ring layoutMelds draws, distinct in both colour and shape from `focusedMeldId`'s full-screen
+   * modal and from the gold dashed "incomplete" meld outline. Cleared once that meld stops being
+   * invalid, so a fixed meld never keeps wearing a stale "look here" ring. */
+  problemHighlightMeldId: string | null = null;
+}
+
 export class GameScene extends Phaser.Scene {
-  private store!: GameStore;
+  /** Per-match screen state — replaced wholesale on every match start (see MatchViewState). */
+  private ui = new MatchViewState();
+  /**
+   * Who owns the match this scene is rendering. Exactly one of the two is set: `match` for a
+   * local/tutorial game (it owns committed state, the turn cycle and AI routing), `online` for a
+   * server-driven one (it owns the projection of the server's view and every policy over it).
+   * Neither holds any Phaser, so both are unit-testable; this scene renders and forwards intents
+   * (ARCH-001, ARCH-002).
+   */
+  private match: LocalMatch | null = null;
+  private online: OnlineSession | null = null;
+  /** The socket for an online match. Transport, owned by the lobby and handed over — the session
+   * deliberately does not hold it, so its policy can be tested with no network. */
+  private net: NetClient | null = null;
+
+  /** Committed state for whichever owner is live. The one read path for every renderer below. */
+  private state(): GameState {
+    return (this.online ?? this.match!).state();
+  }
+
+  /** This client's dense player index: 0 for every local/AI/tutorial game, the server's seat
+   * mapping online. Derived from the owner, never a field this scene has to remember to reset. */
+  private get localSeat(): number {
+    return this.online?.localSeat ?? this.match?.config.localSeat ?? 0;
+  }
   private editor: DraftEditor | null = null;
   private config!: GameSceneConfig;
   private personalities: (Personality | null)[] = [];
@@ -169,9 +286,6 @@ export class GameScene extends Phaser.Scene {
 
   private cardSprites: Phaser.GameObjects.Image[] = [];
   private meldZones: MeldZone[] = [];
-  /** R1 verification: the status each meld was actually PAINTED with on the last render, filled by
-   * whichever table renderer ran (layoutMelds or renderMexeEditor) and exposed via debugApi. */
-  private renderedMeldStatus = new Map<string, SnapStatus>();
   private meldGlowRects: { meldId: string; rect: Phaser.GameObjects.Rectangle }[] = [];
   private hud: Phaser.GameObjects.GameObject[] = [];
   private meldTooltip: Phaser.GameObjects.GameObject[] = [];
@@ -183,8 +297,6 @@ export class GameScene extends Phaser.Scene {
   private bannerBg!: Phaser.GameObjects.Rectangle;
   private unsubs: (() => void)[] = [];
   private aiTimer: Phaser.Time.TimerEvent | null = null;
-  /** Set on shutdown so an in-flight sliced AI decision never acts on a dead scene. */
-  private sceneGone = false;
 
   // drag feel
   private dragShadow: Phaser.GameObjects.Ellipse | null = null;
@@ -202,67 +314,25 @@ export class GameScene extends Phaser.Scene {
   private selectionTargets: SnapTarget[] = [];
   /** Non-mutating ghost preview panel shown while hovering a drop zone. */
   private ghostPreview: Phaser.GameObjects.GameObject[] = [];
-  /** Which zone the ghost preview currently reflects: undefined = none, '' = empty table area, else a meldId. Lets hover redraw only on actual change, never per pointer-move. */
-  private hoverKey: string | undefined = undefined;
 
-  // FEITO accidental-confirm guard
-  private validSince: number | null = null;
-  private lastValidOk = false;
 
-  /** MEXE-14/RECOVERY-09: this.time.now a Reset tap armed a confirm until, or 0 when unarmed. */
-  private resetArmedUntil = 0;
 
   // tutorial mode
   private tutorialDirector: TutorialDirector | null = null;
 
   private sortMode: SortMode = 'suit';
   private ambienceSound: (Phaser.Sound.BaseSound & { volume: number }) | null = null;
-  private pauseOpen = false;
-  /** D12: close() handle for the currently open pause overlay, so relayout() can rebuild it
-   * centred on the new world instead of leaving it stranded over a relaid-out board. */
-  private pauseMenuClose: (() => void) | null = null;
   /** D12: {locale, largeText, tableTheme} the static UI/board were last built with, so the one
    * settings.onChange subscriber can tell a layout-affecting change from a volume tweak and only
    * pay for a relayout() when the board/HUD would actually look wrong otherwise. */
   private layoutSettingsKey = '';
-  private tutorialCompletedRecorded = false;
 
-  // online mode — 0 for every local/AI/tutorial game, the server-assigned seat when online
-  private localSeat = 0;
-  private online: {
-    client: NetClient;
-    /** This client's ROOM seat — the stable chair, used for the handoff back into the lobby.
-     * Not a player index: see `seats` and `localSeat`. */
-    seat: number;
-    /** Room seat per player index, from the view. Translates the room seats that arrive on
-     * `turn_timeout`/`player_disconnected`/`player_reconnected`/`winningMove` into the dense
-     * indices everything in this scene (and in `GameState`) counts by. */
-    seats: number[];
-    code: string;
-    lastRev: number;
-    /** Last state_sync's mexeBonusClaimed — the false->true edge is what triggers the notice. */
-    mexeBonusClaimed: boolean;
-    /** Last state_sync's missedTurns per seat — read by onOnlineTurnTimeout to size the warning
-     * and to know whether a timeout is about to hit the room's missedTurnLimit. */
-    missedTurns: number[];
-    /** The match this scene is rendering. A rematch mints a new one; this scene never sees the
-     * change (a new match arrives as a fresh scene start), so it is a constant here. */
-    matchId: string;
-  } | null = null;
-  /** Set in onOnlineTurnTimeout when a timeout is about to push a seat to missedTurnLimit, so the
-   * room_closed that follows can show the specific "match ended" copy instead of the generic one. */
-  private pendingMissedLimitClose = false;
   /** True from FEITO/COMPRAR submit until state_sync or proposal_rejected — locks all input.
    * Set/cleared only via setOnlinePending() so the timeout timer never drifts from the flag. */
   private onlinePending = false;
   /** Fires ONLINE_PENDING_TIMEOUT_MS after onlinePending goes true; released whenever it goes
    * false first (the normal case). */
   private onlinePendingTimer: Phaser.Time.TimerEvent | null = null;
-  /** Count of detected state-hash mismatches this match — surfaced to verify:multiplayer. */
-  private onlineDesyncs = 0;
-  /** Set while a requested resync is outstanding: input stays locked and the overlay shows. */
-  private onlineResyncing = false;
-  private lastRejections: string[] = [];
   private onlineStatusDot: Phaser.GameObjects.Arc | null = null;
   private onlineNoticeText: Phaser.GameObjects.Text | null = null;
   private onlineTimerText: Phaser.GameObjects.Text | null = null;
@@ -270,43 +340,18 @@ export class GameScene extends Phaser.Scene {
    * state_sync. Display only — the client counting to zero does nothing; the server decides. */
   private turnDeadlineAt: number | null = null;
   private turnWarnMs = 0;
-  /** The room's frozen settings, as the last state_sync reported them. */
-  private onlineSettings: RoomSettings | null = null;
-  /** Last whole second already ticked, so the warning cue fires once per second, not per frame. */
-  private lastTickSecond = -1;
-  /** Last status seen by onOnlineStatusChange — only used to detect the reconnecting -> open
-   * edge, so a self-reconnect gets the same "you're back" notice the opponent's already gets. */
-  private lastOnlineStatus: ConnStatus | null = null;
-  /** Wall-clock instant the current drop started, so the reconnect notice can count down the
-   * room's reconnect grace — the window the server holds this seat for. 0 when connected. */
-  private reconnectStartedAt = 0;
   /** Repaints the reconnect notice once a second while the socket is down. One ticker for the
    * whole scene: a per-component timer is exactly the leak this phase is meant to avoid. */
   private reconnectTicker: Phaser.Time.TimerEvent | null = null;
 
-  // last opponent action: which table cards it touched, plus a one-line summary. A rearranging
-  // opponent changes the puzzle's structure, so the new position needs to be readable, not guessed.
-  private lastMoveIds = new Set<string>();
-  /**
-   * What each opponent seat last reacted with, and when. A character who reacts to every single
-   * thing stops reading as a character, and the same line twice in a row reads as a bug — so a
-   * seat stays quiet for a beat after speaking, and never repeats its previous line back to back.
-   */
-  private lastEmoteBySeat = new Map<number, { line: string | null; at: number }>();
   /** True only while `create()` is dealing, so the first turn's SUA VEZ waits for the cards. */
   private dealPending = false;
-  /** Which seat the last render showed as active, so a handover can be staged rather than swapped. */
-  private lastRenderedActiveSeat = -1;
   private hesitationTimer: Phaser.Time.TimerEvent | null = null;
   /** Pending re-render for when the accidental-confirm guard expires — see renderAll. */
   private guardTimer: Phaser.Time.TimerEvent | null = null;
   /** Kept so a refused FEITO can briefly point at Undo — see checkMyWork. */
   private undoBtn?: PixelButton;
   private resetBtn?: PixelButton;
-  /** While an opponent's move is still being shown (or the initial deal is still flying in), the
-   * board is read-only — see presentAiMove and dealIn/create. An absolute time.now deadline, so it
-   * must be reset in create() same as every other field a restart must not inherit. */
-  private presentingUntil = 0;
   /** D6: the online turn-clock ticker's handle, so relayout() (buildStaticUi on every
    * viewport:changed) removes the previous one instead of leaking a second 250ms looper. */
   private onlineTimerEvent: Phaser.Time.TimerEvent | null = null;
@@ -314,39 +359,11 @@ export class GameScene extends Phaser.Scene {
    * (or an `aiSpeed: instant` / reduced-motion match) never stacks a second bubble on the same
    * seat before the first's 900ms timer clears it. */
   private activeEmotes = new Map<number, { objs: Phaser.GameObjects.GameObject[]; timer: Phaser.Time.TimerEvent }>();
-  /** Seats whose last card has already been announced, so the moment fires once, not every render. */
-  private lastCardAnnounced = new Set<number>();
-  /** END-15: seats already given the subtle 2-cards tension cue, so it plays once per entry into
-   * `threat`, not every render — mirrors `lastCardAnnounced` one rung down the escalation. */
-  private threatAnnounced = new Set<number>();
-  /** Horizontal scroll offset of the main hand, for hands too long to fit — see enableHandScroll. */
-  private handScroll = 0;
   private hesitationHint: Phaser.GameObjects.Text | null = null;
   private lastMoveText: Phaser.GameObjects.Text | null = null;
-  /** Readback of the most recently *confirmed* (meld) turn — read by onWin() to build the
-   * results-screen "winning move" line. Cleared on a draw, since a stalemate win has no meld play
-   * to describe. Set before the confirmTurn action, since dispatch() runs onWin() synchronously. */
-  private lastConfirmedMoveText: string | null = null;
-  /** Reason tag of the move the AI just made (`ai.why.*` suffix), or null when the last move was
-   * a person's. Drives the `aiExplain` setting — a human opponent's move is never suppressed. */
-  private lastAiReason: string | null = null;
 
-  // select-then-place — the drag-free way to play (keyboard and touch both route through it)
-  private selectedCardId: string | null = null;
-  private focusIndex = 0;
   private focusTargets: FocusTarget[] = [];
-  /** Focus ring is drawn only once the keyboard has been used, so mouse players never see it. */
-  private focusVisible = false;
 
-  // focused Mexe editor (Phase 14 Wave C — portrait only)
-  /** Open/closed toggle. Never discards draft state — the draft lives in DraftEditor regardless. */
-  private mexeEditorOpen = false;
-  /** Which meld-list row is the workspace's subject: an existing meld id, null for the "new meld"
-   * row, or undefined when nothing has been focused yet this turn. */
-  private mexeEditorMeldId: string | null | undefined = undefined;
-  private mexeEditorScroll = 0;
-  /** Hand-strip horizontal scroll offset — separate axis/field from the meld list's. */
-  private mexeHandScroll = 0;
   /** Absent in tutorial mode — the step panel owns that column (see buildStaticUi). */
   private mexeToggleBtn?: PixelButton;
 
@@ -366,11 +383,6 @@ export class GameScene extends Phaser.Scene {
    * cycleProblem's "show next problem" ping never opens this modal on top of the FEITO button it
    * was tapped from. */
   private focusedMeldId: string | null = null;
-  /** R3/R4: which meld cycleProblem() last pointed at — a static (reduced-motion-safe), non-modal
-   * ring layoutMelds draws, distinct in both colour and shape from `focusedMeldId`'s full-screen
-   * modal and from the gold dashed "incomplete" meld outline. Cleared once that meld stops being
-   * invalid, so a fixed meld never keeps wearing a stale "look here" ring. */
-  private problemHighlightMeldId: string | null = null;
   /** Geometry mask clipping zoomed/panned table content to the table area — recreated each
    * layoutMelds() pass (only while zoomed; at the default zoom nothing is masked, so today's
    * landscape rendering is untouched), destroyed at the top of the next renderAll(). */
@@ -402,70 +414,28 @@ export class GameScene extends Phaser.Scene {
    * Everything a reused scene instance must not inherit from the match before it.
    *
    * Phaser keeps ONE GameScene instance for the whole page load and calls create() again on every
-   * `scene.start`, so a field initializer runs once per page — not once per match. Any field whose
-   * initial value matters is reset here, and this is the only place that does it, so the list can
-   * be read against the declarations above. Shipped bugs from getting this wrong include a dead
-   * board on every second match (`sceneGone`) and silent last-card/threat moments (the announce
-   * latches below, which had never been cleared at all).
+   * `scene.start`, so a field initializer runs once per page — not once per match. That used to
+   * make this a ~45-line checklist somebody had to remember to extend. It is now three owners
+   * being replaced (`MatchViewState` here, `LocalMatch`/`OnlineSession` in create()) plus the
+   * Phaser resources below, which have to be *stopped*, not re-initialised (ARCH-018).
    *
    * Deliberately NOT reset: `sortMode`, the player's hand-sort choice, which is a preference and
    * survives for the session.
    */
   private resetForNewMatch(): void {
-    this.sceneGone = false;
-    this.hoverKey = undefined;
-    this.validSince = null;
-    this.lastValidOk = false;
-    this.resetArmedUntil = 0;
-    this.pauseOpen = false;
-    this.pauseMenuClose = null;
-    this.tutorialCompletedRecorded = false;
-
-    // online
-    // A player index into `GameState.players`, never a room seat — the two differ whenever the
-    // room has a seat gap (see GameView.seats).
-    this.localSeat = this.config.online ? this.config.online.view.seat : 0;
-    this.pendingMissedLimitClose = false;
+    // The screen state *is* the reset: a new holder, so nothing from the last match can survive.
+    this.ui = new MatchViewState();
+    // What is left is the handful of live Phaser resources the scene owns directly. They are not
+    // values to re-initialise, they are things to stop.
     this.setOnlinePending(false);
-    this.onlineDesyncs = 0;
-    this.onlineResyncing = false;
-    this.lastRejections = [];
-    this.lastTickSecond = -1;
-    this.lastOnlineStatus = null;
     this.onlineTimerEvent = null;
-    this.reconnectStartedAt = 0;
     this.reconnectTicker = null;
-
-    // opponent presentation
-    this.lastMoveIds = new Set();
-    this.lastEmoteBySeat.clear();
-    this.lastRenderedActiveSeat = -1;
-    this.lastConfirmedMoveText = null;
-    this.lastAiReason = null;
     for (const e of this.activeEmotes.values()) e.timer.remove();
     this.activeEmotes.clear();
-    this.lastCardAnnounced.clear();
-    this.threatAnnounced.clear();
-    // An absolute this.time.now deadline: always long expired by the next match in practice, but
-    // "in practice" is not an invariant.
-    this.presentingUntil = 0;
     this.guardTimer = null;
-
-    // selection, focus and the portrait Mexe editor
-    this.selectedCardId = null;
-    this.focusIndex = 0;
-    this.focusVisible = false;
-    this.mexeEditorOpen = false;
-    this.mexeEditorMeldId = undefined;
-    this.mexeEditorScroll = 0;
-    this.mexeHandScroll = 0;
-    this.handScroll = 0;
-
-    // table view
-    this.renderedMeldStatus.clear();
-    this.problemHighlightMeldId = null;
     this.resetZoomPan();
   }
+
 
   constructor() {
     super('game');
@@ -478,18 +448,12 @@ export class GameScene extends Phaser.Scene {
 
   create(config: GameSceneConfig): void {
     this.config = config;
+    // One owner per match, created fresh here: nothing about the previous match can survive into
+    // this one, because the object that held it is gone (ARCH-018).
     this.online = config.online
-      ? {
-          client: config.online.client,
-          seat: config.online.seat,
-          seats: config.online.view.seats,
-          code: config.online.code,
-          lastRev: config.online.view.rev,
-          matchId: config.online.view.matchId,
-          mexeBonusClaimed: config.online.view.mexeBonusClaimed,
-          missedTurns: config.online.view.missedTurns,
-        }
+      ? new OnlineSession({ view: config.online.view, seat: config.online.seat, code: config.online.code })
       : null;
+    this.net = config.online?.client ?? null;
     this.resetForNewMatch();
     debugApi.scene = config.tutorial ? 'tutorial' : 'game';
     debugApi.seed = config.seed;
@@ -512,10 +476,8 @@ export class GameScene extends Phaser.Scene {
       // Online: never construct AI seats. State comes from the server's redacted view only —
       // see src/net/viewToState.ts for why opponent hand/draw-pile are placeholders here.
       this.personalities = [];
-      this.store = new GameStore(viewToState(config.online.view));
       // Anchor the clock off the view the match started with — waiting for the next state_sync
       // would leave the first turn showing nothing.
-      this.onlineSettings = config.online.view.settings;
       this.turnWarnMs = config.online.view.settings.warnMs;
       this.turnDeadlineAt = config.online.view.turnMsLeft === null ? null : Date.now() + config.online.view.turnMsLeft;
     } else {
@@ -530,12 +492,15 @@ export class GameScene extends Phaser.Scene {
         : debugApi.showcase === 'mexe'
           ? buildShowcaseState(config.seed, playerCfgs, debugApi.crowd ?? undefined)
           : createNewGame(config.seed, playerCfgs);
-      this.store = new GameStore(state);
+      this.match = new LocalMatch(state, { localSeat: 0, personalities: this.personalities });
+      // The play log listens for this match only, and stops when it ends — see the shutdown
+      // handler below. A finished match can never record into the next one (ARCH-007).
+      this.unsubs.push(playlog.attachMatch(this.match));
     }
-    debugApi.state = () => this.store.get();
-    // Offline only: online, the store holds the server's redacted view, not a match this client
+    debugApi.state = () => this.state();
+    // Offline only: online, the session holds the server's redacted view, not a match this client
     // played (see MexeDebugApi.replay).
-    debugApi.replay = config.online ? () => null : () => this.store.replay();
+    debugApi.replay = this.match ? () => this.match!.replay() : () => null;
     this.tutorialDirector = config.tutorial ? new TutorialDirector() : null;
     debugApi.tutorialStep = this.tutorialDirector?.stepIndex ?? null;
 
@@ -581,13 +546,13 @@ export class GameScene extends Phaser.Scene {
         // if the socket claims to still be open, or kick the existing connect()/reconnect flow
         // (which drives onOnlineStatusChange's own notice text) if it isn't.
         if (this.online) {
-          const status = this.online.client.getStatus();
-          if (status === 'open') this.online.client.requestResync();
+          const status = this.net!.getStatus();
+          if (status === 'open') this.net!.requestResync();
           // Already mid-loop: pull the next attempt forward rather than opening a second socket
           // beside the one the loop owns. retryNow() still spends an attempt, so repeated
           // background/resume cycles cannot make the bounded loop unbounded.
-          else if (status === 'reconnecting') this.online.client.retryNow();
-          else this.online.client.connect();
+          else if (status === 'reconnecting') this.net!.retryNow();
+          else this.net!.connect();
         }
       }),
     );
@@ -599,7 +564,10 @@ export class GameScene extends Phaser.Scene {
     const cancelDragOnPointerCancel = () => this.cancelActiveDrag();
     this.game.canvas.addEventListener('pointercancel', cancelDragOnPointerCancel);
     this.events.once('shutdown', () => {
-      this.sceneGone = true;
+      this.ui.sceneGone = true;
+      // The match stops accepting actions and drops its listeners here, so a yielding AI search
+      // or a late timer cannot act on a scene that is gone (ARCH-007, ARCH-018).
+      this.match?.dispose();
       this.unsubs.forEach((u) => u());
       this.unsubs = [];
       this.aiTimer?.remove();
@@ -618,7 +586,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.input.keyboard?.on('keydown-ESC', () => {
-      if (this.selectedCardId !== null) {
+      if (this.ui.selectedCardId !== null) {
         this.clearSelection();
         return;
       }
@@ -628,7 +596,7 @@ export class GameScene extends Phaser.Scene {
 
     // The playtest log splits human from AI turns, which it cannot do until it knows which seat
     // is the player. It stores the seat's game-scoped id only — never a name.
-    playlog.setHumanPlayer(this.store.get().players[this.localSeat]?.id ?? null);
+    playlog.setHumanPlayer(this.state().players[this.localSeat]?.id ?? null);
     setMusicContext('game');
     playSfx(this, 'sfx-deal');
     this.dealPending = true;
@@ -640,7 +608,7 @@ export class GameScene extends Phaser.Scene {
     // 22ms stagger ~= 900ms, see dealIn/MAX_ANIMATED_CARDS/DEAL_STAGGER_MS) gates that first render
     // correctly; it is corrected to the real duration a few lines down, all inside the same
     // synchronous tick, so no input can land in between.
-    this.presentingUntil = this.time.now + 1000;
+    this.ui.presentingUntil = this.time.now + 1000;
     this.onTurnStart();
     const dealMs = this.dealIn();
     this.dealPending = false;
@@ -648,8 +616,8 @@ export class GameScene extends Phaser.Scene {
     // turn announcement waits for the cards to arrive. Reduced motion collapses this to nothing,
     // because dealIn() then has no flight time to wait for (dealMs === 0 here expires the gate
     // immediately, same as the announcement).
-    this.presentingUntil = this.time.now + dealMs;
-    const dealUntil = this.presentingUntil;
+    this.ui.presentingUntil = this.time.now + dealMs;
+    const dealUntil = this.ui.presentingUntil;
     debugApi.dealing = dealMs > 0;
     if (dealMs > 0) {
       this.time.delayedCall(dealMs, () => {
@@ -658,17 +626,10 @@ export class GameScene extends Phaser.Scene {
         // Cards were built non-interactive for the flight above — re-render once it actually lands
         // so a still-human turn picks up dragging/COMPRAR now that presentingUntil has passed.
         this.endPresentation(dealUntil);
-        if (!this.sceneGone && this.store.get().phase === 'playing') this.renderAll();
+        if (!this.ui.sceneGone && this.state().phase === 'playing') this.renderAll();
       });
     }
     debugApi.ready = true;
-  }
-
-  /** Room seat -> dense player index. Falls back to the identity mapping, which is what a room
-   * with no seat gap has anyway. */
-  private playerIndexOf(roomSeat: number): number {
-    const i = this.online?.seats.indexOf(roomSeat) ?? -1;
-    return i === -1 ? roomSeat : i;
   }
 
   /** Socket wiring + debug-api surface for an online match. Never runs offline. */
@@ -678,62 +639,19 @@ export class GameScene extends Phaser.Scene {
       client.on('proposal_rejected', (msg) => this.onOnlineRejected(msg.reasons)),
       client.on('game_over', (msg) => this.onOnlineGameOver(msg)),
       // Room seats on the wire, player indices in this scene — translated once, here.
-      client.on('turn_timeout', (msg) => this.onOnlineTurnTimeout(this.playerIndexOf(msg.seat))),
-      client.on('player_disconnected', (msg) => this.onOnlineOpponentEvent(this.playerIndexOf(msg.seat), true)),
-      client.on('player_reconnected', (msg) => this.onOnlineOpponentEvent(this.playerIndexOf(msg.seat), false)),
+      client.on('turn_timeout', (msg) => this.onOnlineTurnTimeout(msg.seat)),
+      client.on('player_disconnected', (msg) => this.onOnlineOpponentEvent(this.online!.playerIndexOf(msg.seat), true)),
+      client.on('player_reconnected', (msg) => this.onOnlineOpponentEvent(this.online!.playerIndexOf(msg.seat), false)),
       client.on('error', (msg) => this.onOnlineTerminalError(msg)),
       client.onStatus((s) => this.onOnlineStatusChange(s)),
     );
-    debugApi.online = {
-      status: () => client.getStatus(),
-      code: () => this.online?.code ?? null,
-      seat: () => this.online?.seat ?? null,
-      localSeat: () => this.localSeat,
-      rev: () => this.online?.lastRev ?? null,
-      players: () => [],
+    // The e2e surface is built from the session and the socket, not assembled out of this scene's
+    // private fields — only the three genuinely rendered facts come from here (ARCH-011).
+    debugApi.online = matchDebugSurface(this.online!, client, {
       notice: () => this.onlineNoticeText?.text ?? '',
-      // No lobby error screen exists mid-match — a refusal here surfaces as the notice above.
-      errorText: () => '',
-      lastRejections: () => this.lastRejections,
-      trace: () => client.trace,
-      statusTrace: () => client.statusTrace,
-      createRoom: () => { /* not applicable mid-match */ },
-      joinRoom: () => { /* not applicable mid-match */ },
-      setReady: () => { /* not applicable mid-match */ },
-      startGame: () => { /* not applicable mid-match */ },
-      setRoomSettings: () => { /* fairness settings are frozen once the match starts */ },
-      roomSettings: () => this.onlineSettings,
-      // The party state rides on room_state, which a match does not receive — the client's latched
-      // copy from the lobby is the right answer here, not a stale empty one.
-      party: () => client.lastRoomState?.party ?? EMPTY_PARTY,
-      matchId: () => this.online?.matchId ?? null,
-      openParty: () => { /* the lobby owns the history screen; there is none mid-match */ },
-      openCustomSettings: () => { /* the lobby owns the settings screen; there is none mid-match */ },
       turnMsLeft: () => (this.turnDeadlineAt === null ? null : Math.max(0, this.turnDeadlineAt - Date.now())),
-      phase: () => 'match',
-      focus: () => ({ index: -1, count: 0, label: '' }),
-      // Discovery belongs to the lobby: a running match is neither listed nor browsable, and its
-      // visibility is frozen with the rest of the room's terms.
-      visibility: () => client.lastRoomState?.visibility ?? DEFAULT_ROOM_VISIBILITY,
-      setVisibility: () => { /* visibility is frozen once the match starts */ },
-      openBrowse: () => { /* the lobby owns the room browser; there is none mid-match */ },
-      // Matchmaking ends at the handoff: a seated player is refused by the server anyway (OM-04),
-      // so the mid-match surface does not offer a way to ask.
-      joinQueue: () => { /* not applicable mid-match */ },
-      cancelQueue: () => { /* not applicable mid-match */ },
-      queue: () => ({ status: 'idle', target: DEFAULT_QUEUE_TARGET }),
-      listings: () => [],
-      browseNotice: () => null,
-      recentRooms: () => readRecentRooms().map((r) => ({ code: r.code, host: r.host })),
       comprar: () => this.onComprar(),
-      /** Verification-only: submit a raw (possibly illegal) proposal straight to the server,
-       * bypassing the editor's client-side gate — the UI itself never constructs an illegal
-       * draft, so this is the only way for `verify:multiplayer` to exercise server-side rejection. */
-      submitRaw: (rev, melds) => client.submitTurn(rev, melds),
-      forceDrop: () => client.forceDrop(),
-      desyncs: () => this.onlineDesyncs,
-      requestResync: () => client.requestResync(),
-    };
+    });
     this.onOnlineStatusChange(client.getStatus());
   }
 
@@ -753,84 +671,63 @@ export class GameScene extends Phaser.Scene {
   private onOnlinePendingTimeout(): void {
     this.setOnlinePending(false);
     this.setOnlineNotice(t('online.resyncing'));
-    this.online?.client.requestResync();
+    this.net?.requestResync();
     // The lock is read at render time, and the message that would normally trigger the next
     // render is the one that never came — so re-render here or the board stays visibly dead.
     this.renderAll();
   }
 
+  /**
+   * One authoritative frame from the server. Every decision it needs — is this stale, does the
+   * local reconstruction still hash to the server's, did the player just lose a draft, was the
+   * Mexe bonus granted — is the session's (`src/net/online-session.ts`); what is left here is
+   * telling the player and repainting (ARCH-002).
+   */
   private onOnlineStateSync(view: GameView): void {
     if (!this.online) return;
-    if (view.rev < this.online.lastRev) return; // stale/out-of-order delivery — ignore
-    this.online.lastRev = view.rev;
-    this.setOnlinePending(false);
-    this.setOnlineNotice('');
-    const before = this.store.get();
-    const actingSeat = before.activePlayerIndex;
-    this.store = new GameStore(viewToState(view));
-    this.lastAiReason = null; // every online seat is a person
-    this.turnDeadlineAt = view.turnMsLeft === null ? null : Date.now() + view.turnMsLeft;
-    this.onlineSettings = view.settings;
-    this.turnWarnMs = view.settings.warnMs;
-    this.lastTickSecond = -1;
-    if (actingSeat === this.localSeat) this.clearLastMove();
-    else this.noteOpponentMove(before, this.store.get(), actingSeat);
-    debugApi.state = () => this.store.get();
+    const before = this.state();
     // historyLength() starts at 1 (the DraftEditor constructor snapshots the turn's starting
     // position before any edit) — see onReset's `historyLength() - 1` for the same convention.
     // Bug found alongside ONLINE-09: comparing against 0 here meant a state_sync mid-own-turn
     // with zero edits (which is exactly what a Mexe bonus claim's broadcast now causes) always
     // read as a dropped draft.
-    const hadDraft = (this.editor?.historyLength() ?? 0) > 1;
+    const result = this.online.applySync(view, (this.editor?.historyLength() ?? 0) > 1);
+    if (result.kind === 'stale') return;
+    this.setOnlinePending(false);
+    this.setOnlineNotice('');
+    this.ui.lastAiReason = null; // every online seat is a person
+    this.turnDeadlineAt = view.turnMsLeft === null ? null : Date.now() + view.turnMsLeft;
+    this.turnWarnMs = view.settings.warnMs;
+    this.ui.lastTickSecond = -1;
     this.editor = null;
-    // ONLINE-09: the server flips mexeBonusClaimed false->true the instant a Mexe grants the
-    // once-per-turn time extension. A dropped draft takes priority — it is the rarer, more
-    // disruptive event for the player who just lost work.
-    const bonusJustClaimed = view.mexeBonusClaimed && !this.online.mexeBonusClaimed;
-    this.online.mexeBonusClaimed = view.mexeBonusClaimed;
-    this.online.missedTurns = view.missedTurns;
-    this.online.seats = view.seats;
-    if (hadDraft) this.setOnlineNotice(t('online.draftDropped'));
-    else if (bonusJustClaimed) {
-      this.setOnlineNotice(t('online.mexeBonusGranted', { s: Math.round(view.settings.mexeBonusMs / 1000) }));
+    if (result.kind === 'desync') {
+      console.warn(`state desync at rev ${view.rev}: local ${result.localHash} != server ${result.serverHash}`);
+      playlog.record('desync', { rev: view.rev });
+      // This client can no longer be trusted to render or propose: lock input and take the
+      // server's word for the whole board instead of continuing from a bad state.
+      this.setOnlinePending(true);
+      this.setOnlineNotice(t('online.resyncing'));
+      this.net?.requestResync();
+      return;
+    }
+    if (result.actingSeat === this.localSeat) this.clearLastMove();
+    else this.noteOpponentMove(before, this.state(), result.actingSeat);
+    if (result.draftDropped) this.setOnlineNotice(t('online.draftDropped'));
+    else if (result.mexeBonusMs !== null) {
+      this.setOnlineNotice(t('online.mexeBonusGranted', { s: Math.round(result.mexeBonusMs / 1000) }));
       this.time.delayedCall(4000, () => this.setOnlineNotice(''));
     }
-    if (!this.verifyOnlineHash(view)) return;
-    this.onlineResyncing = false;
-    if (this.store.get().phase === 'playing') this.onTurnStart();
-  }
-
-  /** Compare the server's digest against one recomputed from the local reconstruction. A mismatch
-   * means this client can no longer be trusted to render or propose, so it locks input and asks
-   * for a fresh authoritative snapshot instead of continuing from a bad state. Returns false when
-   * a resync was requested. */
-  private verifyOnlineHash(view: GameView): boolean {
-    if (!this.online) return false;
-    const local = stateHash(digestOfState(this.store.get(), view.rev));
-    if (local === view.hash) return true;
-    this.onlineDesyncs++;
-    console.warn(`state desync at rev ${view.rev}: local ${local} != server ${view.hash}`);
-    playlog.record('desync', { rev: view.rev });
-    if (this.onlineResyncing) return true; // already asked once for this snapshot — take it and move on
-    this.onlineResyncing = true;
-    this.setOnlinePending(true);
-    this.setOnlineNotice(t('online.resyncing'));
-    this.online.client.requestResync();
-    return false;
+    if (result.playing) this.onTurnStart();
   }
 
   private onOnlineRejected(reasons: ReasonCode[]): void {
     if (!this.online) return;
     this.setOnlinePending(false);
-    this.lastRejections = reasons;
     playSfx(this, 'sfx-invalid');
-    // A stale revision means this client acted on a state the server has already moved past —
-    // the local view is behind, so pull the authoritative one rather than letting the player
-    // retry against stale cards.
-    if (reasons.includes('reason.staleRevision')) this.online.client.requestResync();
+    if (this.online.rejection(reasons).requestResync) this.net?.requestResync();
     // Discard the draft entirely and rebuild from the last synced (committed) state — never a
     // half-applied draft survives a rejection.
-    const state = this.store.get();
+    const state = this.state();
     this.editor = state.activePlayerIndex === this.localSeat ? new DraftEditor(state) : null;
     this.renderAll();
     this.reasonText.setText(reasons[0] ? t(reasons[0]) : '');
@@ -838,8 +735,7 @@ export class GameScene extends Phaser.Scene {
 
   private onOnlineGameOver(msg: GameOverMsg): void {
     if (!this.online) return;
-    this.store = new GameStore(viewToState(msg.view));
-    const state = this.store.get();
+    const state = this.online.applyGameOver(msg.view);
     const winner = state.players.find((p) => p.id === msg.winnerId) ?? null;
     playSfx(this, 'sfx-win');
     // Online turns are server-driven and never write to the local playlog, so reading
@@ -857,12 +753,12 @@ export class GameScene extends Phaser.Scene {
       cardsPlayed: 0,
       draws: 0,
     }));
-    const client = this.online.client;
+    const client = this.net!;
     const { code, seat } = this.online;
     // The room survives a finished match now, so the results screen needs the way back into it.
     // The winning move is named in public terms the server already publishes — how many cards the
     // winner put down — never the cards themselves.
-    const mover = msg.winningMove ? state.players[this.playerIndexOf(msg.winningMove.seat)] : undefined;
+    const mover = msg.winningMove ? state.players[this.online!.playerIndexOf(msg.winningMove.seat)] : undefined;
     const winningMoveText = mover && msg.winningMove
       ? t('game.lastMove.played', { name: mover.name, n: msg.winningMove.cardsPlayed })
       : '';
@@ -884,8 +780,8 @@ export class GameScene extends Phaser.Scene {
    * Either way: a clear localized notice, then back to the menu — never a silent scene switch. */
   private onOnlineTerminalError(msg: ErrorMsg): void {
     if (!this.online || (msg.code !== 'room_closed' && msg.code !== 'invalid_token')) return;
-    const missedLimitClose = msg.code === 'room_closed' && this.pendingMissedLimitClose;
-    this.pendingMissedLimitClose = false;
+    const missedLimitClose = msg.code === 'room_closed' && this.ui.pendingMissedLimitClose;
+    this.ui.pendingMissedLimitClose = false;
     this.setOnlineNotice(
       missedLimitClose
         ? t('online.timeout.missedLimit')
@@ -901,7 +797,7 @@ export class GameScene extends Phaser.Scene {
     // At three and four players "an opponent" is not enough to act on — say who, so the remaining
     // players know whose clock they are waiting on. Falls back to the anonymous copy if the seat
     // has no name yet (a very early drop).
-    const name = this.store.get().players[seat]?.name;
+    const name = this.state().players[seat]?.name;
     this.setOnlineNotice(
       name
         ? t(disconnected ? 'online.playerDisconnected' : 'online.playerReconnected', { name })
@@ -922,17 +818,17 @@ export class GameScene extends Phaser.Scene {
     // it was the instant before the socket died, until some unrelated event happened to redraw.
     // Read and write lastOnlineStatus up front so every branch below sees the NEW status and the
     // re-render (once connectedness actually flips) reads it too, not the stale value.
-    const wasConnected = this.lastOnlineStatus === null || this.lastOnlineStatus === 'open';
+    const wasConnected = this.ui.lastOnlineStatus === null || this.ui.lastOnlineStatus === 'open';
     const nowConnected = status === 'open';
-    const prevStatus = this.lastOnlineStatus;
-    this.lastOnlineStatus = status;
-    if (wasConnected !== nowConnected && this.store.get().phase === 'playing') this.renderAll();
+    const prevStatus = this.ui.lastOnlineStatus;
+    this.ui.lastOnlineStatus = status;
+    if (wasConnected !== nowConnected && this.state().phase === 'playing') this.renderAll();
     if (status === 'reconnecting') {
       // Only the first 'reconnecting' of a drop starts the clock — the bounded retry loop passes
       // through this status once per attempt, and restarting the countdown on each would make the
       // held-seat window look infinite.
       if (prevStatus !== 'reconnecting') {
-        this.reconnectStartedAt = Date.now();
+        this.ui.reconnectStartedAt = Date.now();
         playSfx(this, 'sfx-invalid', 0.3);
       }
       this.startReconnectTicker();
@@ -977,12 +873,12 @@ export class GameScene extends Phaser.Scene {
   private stopReconnectTicker(): void {
     this.reconnectTicker?.remove();
     this.reconnectTicker = null;
-    this.reconnectStartedAt = 0;
+    this.ui.reconnectStartedAt = 0;
   }
 
   private paintReconnectNotice(): void {
-    const graceMs = this.onlineSettings?.reconnectGraceMs ?? 0;
-    const leftMs = graceMs - (Date.now() - this.reconnectStartedAt);
+    const graceMs = this.online?.settings.reconnectGraceMs ?? 0;
+    const leftMs = graceMs - (Date.now() - this.ui.reconnectStartedAt);
     this.setOnlineNotice(
       leftMs > 0
         ? t('online.reconnectingHeld', { secs: Math.ceil(leftMs / 1000) })
@@ -995,7 +891,7 @@ export class GameScene extends Phaser.Scene {
   private leaveOnlineToMenu(delayMs: number): void {
     this.time.delayedCall(delayMs, () => {
       if (!this.online) return;
-      this.online.client.disconnect();
+      this.net!.disconnect();
       debugApi.online = null;
       gotoScene(this, 'menu');
     });
@@ -1018,13 +914,13 @@ export class GameScene extends Phaser.Scene {
    * the `window.__MEXE__` hooks all commit through here and nowhere else — nothing in this scene
    * calls a `src/rules` transition directly.
    *
-   * Post-transition orchestration is owned right here, from the returned outcome: the bus no
-   * longer advances the turn cycle (ARCH-006). Online is deliberately absent — an online client
-   * never commits authoritative state, it sends an intent and waits for `state_sync` (see
-   * `onFeitoOnline`/`onComprarOnline`).
+   * The transition, its preconditions and the announcement belong to `LocalMatch`; what is left
+   * here is the presentation that follows from the returned outcome. Online is deliberately
+   * absent — an online client never commits authoritative state, it sends an intent and waits for
+   * `state_sync` (see `onFeitoOnline`/`onComprarOnline`).
    */
   private dispatch(action: GameAction): ActionOutcome {
-    const outcome = this.store.dispatch(action);
+    const outcome = this.match!.dispatch(action);
     if (!outcome.ok) {
       // Nothing local should reach this: the human path is gated by feitoAccepted() and the AI
       // only proposes drafts it checked. Make the refusal visible instead of silently no-opping.
@@ -1032,23 +928,30 @@ export class GameScene extends Phaser.Scene {
       playSfx(this, 'sfx-invalid');
       return outcome;
     }
-    if (outcome.finished) this.onWin();
-    else this.onTurnStart();
+    this.afterLocalAction(outcome);
     return outcome;
   }
 
+  /** What the screen does once an action landed. Split out so the AI path, whose presentation runs
+   * between the decision and the repaint, advances the cycle through exactly the same two calls. */
+  private afterLocalAction(outcome: ActionOutcome): void {
+    if (!outcome.ok) return;
+    if (outcome.finished) this.onWin();
+    else this.onTurnStart();
+  }
+
   private onTurnStart(): void {
-    const state = this.store.get();
+    const state = this.state();
     if (state.phase !== 'playing') return;
     const player = state.players[state.activePlayerIndex]!;
     const isMyTurn = !player.isAi && state.activePlayerIndex === this.localSeat;
     // Fresh per-turn UI state: a new turn gets a fresh DraftEditor, so the editor's own view
     // (which row is focused, scroll position, open/closed) starts fresh alongside it.
-    this.mexeEditorOpen = false;
-    this.mexeEditorMeldId = undefined;
-    this.mexeEditorScroll = 0;
-    this.mexeHandScroll = 0;
-    this.resetArmedUntil = 0;
+    this.ui.mexeEditorOpen = false;
+    this.ui.mexeEditorMeldId = undefined;
+    this.ui.mexeEditorScroll = 0;
+    this.ui.mexeHandScroll = 0;
+    this.ui.resetArmedUntil = 0;
     this.resetBtn?.setSelected(false);
     this.resetZoomPan();
     // One board sample per turn (not per render): hand size, deck left and table complexity, which
@@ -1086,8 +989,8 @@ export class GameScene extends Phaser.Scene {
     if (this.tutorialDirector) {
       // tutorial opponent: no thinking, always draws so the human's next scripted turn arrives fast
       this.aiTimer = this.time.delayedCall(500, () => {
-        this.dispatch({ type: 'drawAndEndTurn', actorIndex: this.store.get().activePlayerIndex });
-        if (this.store.get().phase === 'playing') this.renderAll();
+        this.dispatch({ type: 'drawAndEndTurn', actorIndex: this.state().activePlayerIndex });
+        if (this.state().phase === 'playing') this.renderAll();
       });
     } else {
       const personality = this.personalities[state.activePlayerIndex]!;
@@ -1136,10 +1039,10 @@ export class GameScene extends Phaser.Scene {
   private onReset(): void {
     if (!this.editor) return;
     const edits = this.editor.historyLength() - 1;
-    const armed = this.resetArmedUntil > this.time.now;
+    const armed = this.ui.resetArmedUntil > this.time.now;
     if (edits >= RESET_CONFIRM_EDITS && !armed) {
       const until = this.time.now + RESET_ARM_MS;
-      this.resetArmedUntil = until;
+      this.ui.resetArmedUntil = until;
       this.reasonText.setText(t('mobile.resetConfirm'));
       this.fitReasonBackdrop();
       debugApi.reasonLine = this.reasonText.text;
@@ -1152,14 +1055,14 @@ export class GameScene extends Phaser.Scene {
       // this, the line kept claiming the button was armed long after it had silently disarmed.
       this.resetBtn?.setSelected(true);
       this.time.delayedCall(RESET_ARM_MS, () => {
-        if (this.resetArmedUntil !== until || this.sceneGone) return; // re-armed or reset already fired
-        this.resetArmedUntil = 0;
+        if (this.ui.resetArmedUntil !== until || this.ui.sceneGone) return; // re-armed or reset already fired
+        this.ui.resetArmedUntil = 0;
         this.resetBtn?.setSelected(false);
         if (this.editor) this.renderAll();
       });
       return;
     }
-    this.resetArmedUntil = 0;
+    this.ui.resetArmedUntil = 0;
     this.resetBtn?.setSelected(false);
     const before = this.cardPositions();
     playSfx(this, 'sfx-drop', 0.4);
@@ -1198,15 +1101,15 @@ export class GameScene extends Phaser.Scene {
    * discards draft state: the draft lives in DraftEditor, untouched by this toggle either way. */
   private toggleMexeEditor(): void {
     if (!this.editor) return;
-    this.mexeEditorOpen = !this.mexeEditorOpen;
+    this.ui.mexeEditorOpen = !this.ui.mexeEditorOpen;
     // Claim the room's one-off Mexe extension. The server grants it at most once per turn and to
     // the active seat only, so re-opening the editor cannot be used to hold a turn open.
-    if (this.mexeEditorOpen && this.online && this.store.get().activePlayerIndex === this.localSeat) {
-      this.online.client.mexeStarted();
+    if (this.ui.mexeEditorOpen && this.online && this.state().activePlayerIndex === this.localSeat) {
+      this.net!.mexeStarted();
     }
-    this.selectedCardId = null;
+    this.ui.selectedCardId = null;
     playSfx(this, 'sfx-snap', 0.3);
-    playlog.record(this.mexeEditorOpen ? 'mexe:editorOpen' : 'mexe:editorClose');
+    playlog.record(this.ui.mexeEditorOpen ? 'mexe:editorOpen' : 'mexe:editorClose');
     this.renderAll();
   }
 
@@ -1248,7 +1151,7 @@ export class GameScene extends Phaser.Scene {
         const z = this.meldZones.find((m) => m.meldId === meldId);
         return z ? { x: z.rect.centerX, y: z.rect.centerY } : null;
       },
-      selection: () => this.selectedCardId,
+      selection: () => this.ui.selectedCardId,
       snapTargets: (cardId: string) =>
         this.computeSnapTargetsFor(cardId).map((tg) => ({ meldId: tg.meldId, status: tg.status, reason: tg.reason })),
       // Phase 14 Wave B — verification-only reads for the helper-mode UI.
@@ -1256,21 +1159,21 @@ export class GameScene extends Phaser.Scene {
       selectionTargets: () =>
         this.selectionTargets.map((tg) => ({ meldId: tg.meldId, status: tg.status, reason: tg.reason })),
       // Phase 14 Wave C — focused Mexe editor (portrait).
-      editorOpen: () => this.mexeEditorOpen,
+      editorOpen: () => this.ui.mexeEditorOpen,
       openEditor: () => {
-        if (this.editor && !this.mexeEditorOpen) this.toggleMexeEditor();
+        if (this.editor && !this.ui.mexeEditorOpen) this.toggleMexeEditor();
       },
       closeEditor: () => {
-        if (this.editor && this.mexeEditorOpen) this.toggleMexeEditor();
+        if (this.editor && this.ui.mexeEditorOpen) this.toggleMexeEditor();
       },
-      editorMeldId: () => this.mexeEditorMeldId ?? null,
-      editorScroll: () => this.mexeEditorScroll,
-      handScroll: () => this.handScroll,
+      editorMeldId: () => this.ui.mexeEditorMeldId ?? null,
+      editorScroll: () => this.ui.mexeEditorScroll,
+      handScroll: () => this.ui.handScroll,
       // Phase 14 Wave D — table zoom/pan/focus, verification-only reads.
       zoomLevel: () => this.zoomLevel,
       panOffset: () => this.tablePan,
       focusedMeldId: () => this.focusedMeldId,
-      problemHighlightMeldId: () => this.problemHighlightMeldId,
+      problemHighlightMeldId: () => this.ui.problemHighlightMeldId,
       // Phase 14 Wave E: whether a card sprite currently carries the zoomed-table geometry mask —
       // lets e2e prove a dragged sprite drops the mask mid-drag instead of visually clipping.
       cardMasked: (cardId: string) => {
@@ -1345,76 +1248,77 @@ export class GameScene extends Phaser.Scene {
     const prev = GameScene.meldOf(before);
     const changed = new Set<string>();
     for (const [id, meldId] of GameScene.meldOf(after)) if (prev.get(id) !== meldId) changed.add(id);
-    this.lastMoveIds = changed;
+    this.ui.lastMoveIds = changed;
     const name = after.players[seat]?.name ?? '';
     const played = (before.players[seat]?.hand.length ?? 0) - (after.players[seat]?.hand.length ?? 0);
     const moved = Math.max(0, changed.size - Math.max(0, played));
     const explain = settings.get().aiExplain;
     // 'off' hides only AI narration — a hot-seat or online opponent's move still gets its line,
     // because there the text is the only record of what the other person did.
-    if (this.lastAiReason !== null && explain === 'off') {
+    if (this.ui.lastAiReason !== null && explain === 'off') {
       this.lastMoveText?.setText('');
       return;
     }
     const key = played <= 0 ? 'game.lastMove.drew' : moved > 0 ? 'game.lastMove.mexeu' : 'game.lastMove.played';
     let text = t(key, { name, n: Math.max(0, played), m: moved });
-    if (this.lastAiReason !== null && explain === 'detailed') text += ` ${t(`ai.why.${this.lastAiReason}`)}`;
+    if (this.ui.lastAiReason !== null && explain === 'detailed') text += ` ${t(`ai.why.${this.ui.lastAiReason}`)}`;
     this.lastMoveText?.setText(text);
   }
 
   private clearLastMove(): void {
-    if (this.lastMoveIds.size === 0 && !this.lastMoveText?.text) return;
-    this.lastMoveIds = new Set();
+    if (this.ui.lastMoveIds.size === 0 && !this.lastMoveText?.text) return;
+    this.ui.lastMoveIds = new Set();
     this.lastMoveText?.setText('');
   }
 
+  /**
+   * One AI turn: the decision and its routing to an action belong to `LocalMatch`, which is why
+   * this method contains nothing but the pacing, the character's line and the animation. A search
+   * that yielded past the end of the match comes back `stale` and paints nothing.
+   */
   private async runAiTurn(personality: Personality): Promise<void> {
-    const state = this.store.get();
-    const player = state.players[state.activePlayerIndex]!;
-    const actingSeat = state.activePlayerIndex;
+    const before = this.state();
+    const player = before.players[before.activePlayerIndex]!;
+    const actingSeat = before.activePlayerIndex;
     // Where the cards sit before the AI touches anything, so its move can be replayed as movement
     // rather than simply appearing as a different board.
     const boardBefore = this.cardPositions();
-    try {
-      const ai = createAi(personality, settings.get().aiDifficulty);
-      // Sliced (frame-friendly) search where the engine offers it. The yields let other events
-      // run mid-search, so the guard below re-checks scene and store before acting.
-      const decision = ai.decideSliced ? await ai.decideSliced(state) : ai.decide(state);
-      if (this.sceneGone || this.store.get() !== state) return; // scene quit or state moved on mid-search
+    const result = await this.match!.runAiTurn(personality, settings.get().aiDifficulty);
+    if (result.kind === 'stale' || this.ui.sceneGone) return;
+    if (result.kind === 'fallback') {
+      // The AI must never be able to break the match; it drew instead. Say so out loud.
+      debugApi.errors.push(`ai fallback: ${result.error}`);
+      this.showEmote(actingSeat, 'annoyed');
+    } else {
+      const { decision } = result;
       debugApi.lastAiThought = decision.explanation;
-      this.lastAiReason = aiReasonKeySuffix(decision.explanation);
+      this.ui.lastAiReason = aiReasonKeySuffix(decision.explanation);
       const style = PERSONALITY_STYLE[personality];
       if (decision.kind === 'confirm') {
         const played = decision.draft.handCardsPlayed.length;
         const remaining = player.hand.length - played;
         const playedMany = played >= 3;
         const lineMoment = remaining <= 2 ? 'nearWin' : playedMany ? 'bigPlay' : null;
-        this.showEmote(state.activePlayerIndex, playedMany ? style.emoteBig : style.emoteSmall, lineMoment, personality);
+        this.showEmote(actingSeat, playedMany ? style.emoteBig : style.emoteSmall, lineMoment, personality);
         playSfx(this, 'sfx-feito');
-        const { key, params } = summarizeMoveKey(state.table, decision.draft.melds, played);
-        this.lastConfirmedMoveText = t(key, { name: player.name, ...params });
-        this.dispatch({ type: 'confirmTurn', actorIndex: actingSeat, draft: decision.draft });
+        const { key, params } = summarizeMoveKey(before.table, decision.draft.melds, played);
+        this.ui.lastConfirmedMoveText = t(key, { name: player.name, ...params });
       } else {
-        this.showEmote(state.activePlayerIndex, style.emoteDraw, 'forcedDraw', personality);
+        this.showEmote(actingSeat, style.emoteDraw, 'forcedDraw', personality);
         playSfx(this, 'sfx-draw');
-        this.lastConfirmedMoveText = null; // a stalemate win has no meld play to describe
-        this.dispatch({ type: 'drawAndEndTurn', actorIndex: actingSeat });
+        this.ui.lastConfirmedMoveText = null; // a stalemate win has no meld play to describe
       }
-    } catch (e) {
-      if (this.sceneGone) return;
-      // AI must never break the game: fall back to draw.
-      debugApi.errors.push(`ai fallback: ${String(e)}`);
-      this.showEmote(state.activePlayerIndex, 'annoyed');
-      this.dispatch({ type: 'drawAndEndTurn', actorIndex: actingSeat });
     }
-    this.noteOpponentMove(state, this.store.get(), actingSeat);
+    // Set the readback above *before* this: onWin() reads lastConfirmedMoveText synchronously.
+    this.afterLocalAction(result.outcome);
+    this.noteOpponentMove(before, this.state(), actingSeat);
     // presentAiMove does the re-render itself, so that the new board can be animated in from the
     // old positions rather than replacing it.
-    this.presentAiMove(state, this.store.get(), actingSeat, boardBefore);
+    this.presentAiMove(before, this.state(), actingSeat, boardBefore);
   }
 
   private onWin(): void {
-    const state = this.store.get();
+    const state = this.state();
     const winner = state.players.find((p) => p.id === state.winnerId)!;
     // JUICE-06: a short held beat before the BATER sting, so it reads as an earned impact instead
     // of firing in the same frame the winning card touched the table. Scales to 0 under reduced
@@ -1454,7 +1358,7 @@ export class GameScene extends Phaser.Scene {
         stalemate,
         config: this.config,
         results,
-        winningMoveText: stalemate ? '' : (this.lastConfirmedMoveText ?? ''),
+        winningMoveText: stalemate ? '' : (this.ui.lastConfirmedMoveText ?? ''),
         // The board as it finished, so the results screen can show what the match actually ended on.
         finalTable: state.table,
       });
@@ -1467,7 +1371,7 @@ export class GameScene extends Phaser.Scene {
     this.staticUi = [];
     this.mexeToggleBtn = undefined; // stale handle after a relayout destroys the previous build
 
-    const playerCount = this.store.get().players.length;
+    const playerCount = this.state().players.length;
     // Local cosmetic choice — purely visual, never affects rules/protocol. Missing art (theme
     // not shipped yet) degrades to the default table rather than a broken/blank image. Read here
     // (not cached) so a mid-match table-theme change (D12) picks it up on the next relayout.
@@ -1636,30 +1540,27 @@ export class GameScene extends Phaser.Scene {
    * that explains it — a different one when the local player still had a draft on screen, because
    * from their side the table visibly snapped back.
    */
-  private onOnlineTurnTimeout(seat: number): void {
+  private onOnlineTurnTimeout(roomSeat: number): void {
     if (!this.online) return;
+    // ONLINE-14: whether this timeout is the one that ends the match, and how much allowance is
+    // left if it is not, is the session's policy over the last synced frame — not a rule this
+    // screen re-derives.
+    const result = this.online.timeout(roomSeat);
+    const seat = result.seat;
     if (seat === this.localSeat) {
-      const hadDraft = (this.editor?.getDraft().handCardsPlayed.length ?? 0) > 0 || this.mexeEditorOpen;
+      const hadDraft = (this.editor?.getDraft().handCardsPlayed.length ?? 0) > 0 || this.ui.mexeEditorOpen;
       this.setOnlineNotice(t(hadDraft ? 'online.timeout.selfReset' : 'online.timeout.self'));
     } else {
-      const name = this.store.get().players[seat]?.name ?? '';
+      const name = this.state().players[seat]?.name ?? '';
       this.setOnlineNotice(t('online.timeout.other', { name }));
     }
-    // ONLINE-14: a room that closes on missedTurnLimit never gets the state_sync that would move
-    // play off `seat` — the tick loop skips broadcastStateSync when the room closed (see
-    // server/index.ts) — so if `seat` is still the active player here, this timeout is the one
-    // that pushed it over the limit. Remember that so onOnlineTerminalError can show the specific
-    // "match ended" copy instead of the generic one. Short of the limit, the preceding state_sync
-    // already landed (its handler updated this.online.missedTurns), so chain a warning naming the
-    // remaining allowance — repeated misses should never end a match by surprise.
-    const limit = this.onlineSettings?.missedTurnLimit ?? 0;
-    this.pendingMissedLimitClose = limit > 0 && this.store.get().activePlayerIndex === seat;
-    if (limit > 0 && !this.pendingMissedLimitClose) {
-      const missed = this.online.missedTurns[seat] ?? 0;
-      const name = this.store.get().players[seat]?.name ?? '';
-      this.time.delayedCall(2500, () =>
-        this.setOnlineNotice(t('online.missedWarning', { name, n: missed, left: Math.max(0, limit - missed) })),
-      );
+    // Remembered so the `room_closed` that follows can show the specific "match ended" copy
+    // instead of the generic one.
+    this.ui.pendingMissedLimitClose = result.endsMatch;
+    if (result.warning) {
+      const name = this.state().players[seat]?.name ?? '';
+      const { missed, left } = result.warning;
+      this.time.delayedCall(2500, () => this.setOnlineNotice(t('online.missedWarning', { name, n: missed, left })));
       this.time.delayedCall(5000, () => this.setOnlineNotice(''));
     } else {
       this.time.delayedCall(4000, () => this.setOnlineNotice(''));
@@ -1686,10 +1587,10 @@ export class GameScene extends Phaser.Scene {
       .setText(t('online.turnTimeLeft', { secs }))
       .setColor(critical ? '#ff3b2e' : warning ? '#ffb35c' : '#c0b8a8')
       .setScale(critical ? 1.25 : 1);
-    if (warning && secs !== this.lastTickSecond && secs > 0) {
-      this.lastTickSecond = secs;
+    if (warning && secs !== this.ui.lastTickSecond && secs > 0) {
+      this.ui.lastTickSecond = secs;
       // Own turn only: a cue for someone else's clock is noise, and the setting is off by choice.
-      if (settings.get().timerTickSound && this.store.get().activePlayerIndex === this.localSeat) {
+      if (settings.get().timerTickSound && this.state().activePlayerIndex === this.localSeat) {
         playSfx(this, 'sfx-snap', critical ? 0.35 : 0.2);
       }
     }
@@ -1707,7 +1608,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Re-lays-out the live scene on an orientation/pointer flip (bus 'viewport:changed') without
-   * restarting it — this.store/this.editor/the online client all hold live match state. */
+   * restarting it — the match owner/this.editor/the online client all hold live match state. */
   private relayout(): void {
     if (!this.scene.isActive()) return;
     this.r = this.regionsForMode();
@@ -1721,9 +1622,9 @@ export class GameScene extends Phaser.Scene {
     // An orientation flip invalidates the portrait editor's scroll/focus state same as zoom/pan —
     // leaving it stale let a reopen after the flip restore a scroll offset or focused meld from
     // before it (finding 3, Phase 14 review).
-    this.mexeEditorMeldId = undefined;
-    this.mexeEditorScroll = 0;
-    this.mexeHandScroll = 0;
+    this.ui.mexeEditorMeldId = undefined;
+    this.ui.mexeEditorScroll = 0;
+    this.ui.mexeHandScroll = 0;
     const savedNotice = this.onlineNoticeText?.text ?? '';
     for (const o of this.staticUi) o.destroy();
     this.buildStaticUi();
@@ -1734,8 +1635,8 @@ export class GameScene extends Phaser.Scene {
     // off-centre (and its dim backdrop mis-sized) over the board relayout() just rebuilt. Rebuilding
     // it fresh is simplest: it drops back to the main pause page, which is a fair trade against
     // shipping a stranded panel.
-    if (this.pauseOpen && this.pauseMenuClose) {
-      this.pauseMenuClose();
+    if (this.ui.pauseOpen && this.ui.pauseMenuClose) {
+      this.ui.pauseMenuClose();
       this.togglePause();
     }
   }
@@ -1787,8 +1688,8 @@ export class GameScene extends Phaser.Scene {
   private togglePause(): void {
     const resume = this.holdForOverlay();
     if (!resume) return;
-    this.pauseMenuClose = openPauseMenu(this, { onQuit: () => this.quitToMenu(), online: this.online !== null }, () => {
-      this.pauseMenuClose = null;
+    this.ui.pauseMenuClose = openPauseMenu(this, { onQuit: () => this.quitToMenu(), online: this.online !== null }, () => {
+      this.ui.pauseMenuClose = null;
       resume();
     });
   }
@@ -1799,12 +1700,12 @@ export class GameScene extends Phaser.Scene {
    * Returns the resume fn to call on close, or null if an overlay is already open.
    */
   private holdForOverlay(): (() => void) | null {
-    if (this.pauseOpen) return null;
-    this.pauseOpen = true;
+    if (this.ui.pauseOpen) return null;
+    this.ui.pauseOpen = true;
     const wasPaused = this.aiTimer?.paused ?? false;
     if (this.aiTimer) this.aiTimer.paused = true;
     return () => {
-      this.pauseOpen = false;
+      this.ui.pauseOpen = false;
       if (this.aiTimer) this.aiTimer.paused = wasPaused;
     };
   }
@@ -1816,7 +1717,7 @@ export class GameScene extends Phaser.Scene {
    */
   private quitToMenu(): void {
     if (this.online) {
-      this.online.client.leaveRoom();
+      this.net!.leaveRoom();
       this.online = null;
       debugApi.online = null;
     }
@@ -1829,8 +1730,8 @@ export class GameScene extends Phaser.Scene {
    * C/F already gate on tutorial-allowed actions inside onComprar/onFeito.
    */
   private handleShortcut(e: KeyboardEvent): void {
-    if (this.pauseOpen) return;
-    const state = this.store.get();
+    if (this.ui.pauseOpen) return;
+    const state = this.state();
     if (state.phase !== 'playing') return;
     const active = state.players[state.activePlayerIndex];
     if (!active || active.isAi || !this.editor) return;
@@ -1870,7 +1771,7 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'enter':
       case ' ':
-        this.focusVisible = true;
+        this.ui.focusVisible = true;
         this.activateFocus();
         e.preventDefault();
         break;
@@ -1883,14 +1784,14 @@ export class GameScene extends Phaser.Scene {
 
   private moveFocus(delta: number): void {
     if (this.focusTargets.length === 0) return;
-    this.focusVisible = true;
-    this.focusIndex = (this.focusIndex + delta + this.focusTargets.length) % this.focusTargets.length;
+    this.ui.focusVisible = true;
+    this.ui.focusIndex = (this.ui.focusIndex + delta + this.focusTargets.length) % this.focusTargets.length;
     this.renderAll();
   }
 
   /** Enter on the focused ring entry: pick a card up, or drop the held card here. */
   private activateFocus(): void {
-    const target = this.focusTargets[this.focusIndex];
+    const target = this.focusTargets[this.ui.focusIndex];
     if (!target || !this.editor) return;
     if (target.kind === 'card') {
       this.selectCard(target.id!);
@@ -1900,16 +1801,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private selectCard(cardId: string): void {
-    this.selectedCardId = this.selectedCardId === cardId ? null : cardId;
-    this.focusIndex = 0;
-    playSfx(this, this.selectedCardId ? 'sfx-pickup' : 'sfx-snap', 0.4);
+    this.ui.selectedCardId = this.ui.selectedCardId === cardId ? null : cardId;
+    this.ui.focusIndex = 0;
+    playSfx(this, this.ui.selectedCardId ? 'sfx-pickup' : 'sfx-snap', 0.4);
     this.renderAll();
   }
 
   private clearSelection(): void {
-    if (this.selectedCardId === null) return;
-    this.selectedCardId = null;
-    this.focusIndex = 0;
+    if (this.ui.selectedCardId === null) return;
+    this.ui.selectedCardId = null;
+    this.ui.focusIndex = 0;
     this.renderAll();
   }
 
@@ -1918,7 +1819,7 @@ export class GameScene extends Phaser.Scene {
    * tutorial gate, same hand-vs-table branch — so tapping and dragging can never disagree.
    */
   private placeSelected(kind: FocusTarget['kind'], meldId: string | null): void {
-    const cardId = this.selectedCardId;
+    const cardId = this.ui.selectedCardId;
     if (!cardId || !this.editor) return;
     const fromHand = this.editor.getRemainingHand().some((c) => c.id === cardId);
     const action: TutorialAction = fromHand
@@ -1942,19 +1843,19 @@ export class GameScene extends Phaser.Scene {
     // MEXE-17: a returned card gets the "picked back up" cue, same as the drag path.
     playSfx(this, acted ? (returning ? 'sfx-pickup' : 'sfx-drop') : 'sfx-invalid', 0.5);
     if (acted) this.clearLastMove();
-    this.selectedCardId = null;
-    this.focusIndex = 0;
+    this.ui.selectedCardId = null;
+    this.ui.focusIndex = 0;
     this.renderAll();
   }
 
   /** Tap on a card while holding another: the tapped card names the destination (its meld, or the hand). */
   private onCardTapped(cardId: string): void {
     if (!this.editor) return;
-    if (this.selectedCardId === null || this.selectedCardId === cardId) {
+    if (this.ui.selectedCardId === null || this.ui.selectedCardId === cardId) {
       this.selectCard(cardId);
       return;
     }
-    const dest = resolveCardTapDestination(this.editor, this.selectedCardId, cardId);
+    const dest = resolveCardTapDestination(this.editor, this.ui.selectedCardId, cardId);
     if (dest.kind === 'switch') this.selectCard(cardId);
     else if (dest.kind === 'meld') this.placeSelected('meld', dest.meldId);
     else this.placeSelected('hand', null);
@@ -1978,7 +1879,7 @@ export class GameScene extends Phaser.Scene {
    */
   private feitoAccepted(editor: DraftEditor): boolean {
     const check = editor.canConfirm();
-    const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
+    const heldLongEnough = this.ui.validSince !== null && this.time.now - this.ui.validSince >= CONFIRM_GUARD_MS;
     if (check.ok && heldLongEnough) return true;
     playSfx(this, 'sfx-invalid');
     if (!check.ok) playlog.record('feito:blocked', { reasons: check.reasons.join(',') });
@@ -2004,16 +1905,16 @@ export class GameScene extends Phaser.Scene {
     const sparkleTargets = this.cardSprites
       .filter((s) => handCardIds.has(s.getData('cardId') as string))
       .map((s) => ({ x: s.x, y: s.y }));
-    const beforeState = this.store.get();
+    const beforeState = this.state();
     const activePlayer = beforeState.players[beforeState.activePlayerIndex]!;
     const { key, params } = summarizeMoveKey(beforeState.table, draft.melds, draft.handCardsPlayed.length);
-    this.lastAiReason = null; // a local player's own confirmed turn, not an AI move
-    this.lastConfirmedMoveText = t(key, { name: activePlayer.name, ...params });
+    this.ui.lastAiReason = null; // a local player's own confirmed turn, not an AI move
+    this.ui.lastConfirmedMoveText = t(key, { name: activePlayer.name, ...params });
     this.editor = null;
     this.dispatch({ type: 'confirmTurn', actorIndex: beforeState.activePlayerIndex, draft });
     // Weighed from the committed before/after only, so a player who drags a card back and forth
     // twenty times gets exactly the same recognition as one who did it in two moves.
-    const afterState = this.store.get();
+    const afterState = this.state();
     const prev = GameScene.meldOf(beforeState);
     let moved = 0;
     for (const [id, meldId] of GameScene.meldOf(afterState)) if (prev.has(id) && prev.get(id) !== meldId) moved++;
@@ -2025,7 +1926,7 @@ export class GameScene extends Phaser.Scene {
       if (afterState.phase === 'playing') this.reactToPlayerMexe(afterState); // an opponent reacting to being just defeated would read oddly
     }
     this.playFeitoConfirmFx(sparkleTargets, () => {
-      if (this.store.get().phase === 'playing') this.renderAll();
+      if (this.state().phase === 'playing') this.renderAll();
     });
   }
 
@@ -2060,11 +1961,11 @@ export class GameScene extends Phaser.Scene {
     }
     playSfx(this, 'sfx-draw');
     this.clearLastMove();
-    this.lastConfirmedMoveText = null; // a stalemate win has no meld play to describe
+    this.ui.lastConfirmedMoveText = null; // a stalemate win has no meld play to describe
     this.editor = null;
     const before = this.cardPositions();
-    this.dispatch({ type: 'drawAndEndTurn', actorIndex: this.store.get().activePlayerIndex });
-    if (this.store.get().phase !== 'playing') return;
+    this.dispatch({ type: 'drawAndEndTurn', actorIndex: this.state().activePlayerIndex });
+    if (this.state().phase !== 'playing') return;
     this.renderAll();
     // The new card is the only one without a previous position, so it is the only one that moves:
     // it comes off the deck and the hand re-fans around it.
@@ -2079,7 +1980,7 @@ export class GameScene extends Phaser.Scene {
     const draft = this.editor.getDraft();
     const melds: SubmitTurnMeld[] = draft.melds.map((m) => ({ id: m.id, cardIds: m.cards.map((c) => c.id) }));
     this.setOnlinePending(true);
-    if (this.online.client.submitTurn(this.online.lastRev, melds) === null) this.onOnlineSendFailed();
+    if (this.net!.submitTurn(this.online.lastRev, melds) === null) this.onOnlineSendFailed();
     this.renderAll();
   }
 
@@ -2097,7 +1998,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.editor || !this.online || this.onlinePending) return;
     playSfx(this, 'sfx-draw');
     this.setOnlinePending(true);
-    if (this.online.client.drawEndTurn(this.online.lastRev) === null) this.onOnlineSendFailed();
+    if (this.net!.drawEndTurn(this.online.lastRev) === null) this.onOnlineSendFailed();
     this.renderAll();
   }
 
@@ -2179,7 +2080,7 @@ export class GameScene extends Phaser.Scene {
     // WinScene simply cut in. The board still needs to resolve visibly first (END-12), so this
     // now renders and animates the winning move exactly like any other; only the "hold, then
     // re-render for the next turn" tail below is moot once the match is over (its own guard —
-    // `this.store.get().phase === 'playing'` — already makes that a safe no-op).
+    // `this.state().phase === 'playing'` — already makes that a safe no-op).
     const changed = GameScene.meldOf(after);
     const prev = GameScene.meldOf(before);
     let moved = 0;
@@ -2196,11 +2097,11 @@ export class GameScene extends Phaser.Scene {
     // the same frame the cards arrive, and a big rearrangement is gone before it can be read.
     const hold = feelMs(WEIGHT_BAND[weight]);
     if (hold <= 0) return;
-    this.presentingUntil = this.time.now + hold * 2;
-    const until = this.presentingUntil;
+    this.ui.presentingUntil = this.time.now + hold * 2;
+    const until = this.ui.presentingUntil;
     this.time.delayedCall(hold * 2, () => {
       this.endPresentation(until);
-      if (!this.sceneGone && this.store.get().phase === 'playing') this.renderAll();
+      if (!this.ui.sceneGone && this.state().phase === 'playing') this.renderAll();
     });
   }
 
@@ -2217,7 +2118,7 @@ export class GameScene extends Phaser.Scene {
    * a newer, longer hold set in the meantime is never cut short.
    */
   private endPresentation(until: number): void {
-    if (this.presentingUntil === until) this.presentingUntil = 0;
+    if (this.ui.presentingUntil === until) this.ui.presentingUntil = 0;
   }
 
   /**
@@ -2252,11 +2153,11 @@ export class GameScene extends Phaser.Scene {
   private announceLastCards(state: GameState): void {
     state.players.forEach((p, i) => {
       if (threatOf(p.hand.length) !== 'last' || p.hand.length === 0) {
-        if (p.hand.length > 1) this.lastCardAnnounced.delete(i); // drew back up — it can happen again
+        if (p.hand.length > 1) this.ui.lastCardAnnounced.delete(i); // drew back up — it can happen again
         return;
       }
-      if (this.lastCardAnnounced.has(i)) return;
-      this.lastCardAnnounced.add(i);
+      if (this.ui.lastCardAnnounced.has(i)) return;
+      this.ui.lastCardAnnounced.add(i);
       const at = this.seatPosition(i);
       this.flashMoment(t('game.moment.lastCard'), at.x, at.y + 22);
       playSfx(this, 'sfx-invalid', 0.3); // the sharpest cue the game ships; not an error here
@@ -2271,11 +2172,11 @@ export class GameScene extends Phaser.Scene {
   private announceThreat(state: GameState): void {
     state.players.forEach((p, i) => {
       if (threatOf(p.hand.length) !== 'threat') {
-        if (p.hand.length !== 2) this.threatAnnounced.delete(i); // moved off 2 either way — can fire again
+        if (p.hand.length !== 2) this.ui.threatAnnounced.delete(i); // moved off 2 either way — can fire again
         return;
       }
-      if (this.threatAnnounced.has(i)) return;
-      this.threatAnnounced.add(i);
+      if (this.ui.threatAnnounced.has(i)) return;
+      this.ui.threatAnnounced.add(i);
       playSfx(this, 'sfx-drop', 0.2);
     });
   }
@@ -2307,7 +2208,7 @@ export class GameScene extends Phaser.Scene {
     const flightMs = feelMs('expressive');
     if (flightMs <= 0) return 0;
     const cardBackKey = cosmeticTextureKey(CARD_BACKS, settings.cosmetics().cardBack, DEFAULT_CARD_BACK, debugApi.missingAssets);
-    this.store.get().players.forEach((_, i) => {
+    this.state().players.forEach((_, i) => {
       if (i === this.localSeat) return;
       const seat = this.seatPosition(i);
       const back = this.add.image(deck.x, deck.y, cardBackKey).setDisplaySize(14, 19).setDepth(300);
@@ -2385,7 +2286,7 @@ export class GameScene extends Phaser.Scene {
   private playTableResolved(): void {
     // PACE-06: the same cue, a touch louder once the table's own state (not the clock) says the
     // match is hot — a busy/close-to-the-wire table lands with a bit more weight.
-    const hot = matchIntensity(this.store.get()).level === 'hot';
+    const hot = matchIntensity(this.state()).level === 'hot';
     playSfx(this, 'sfx-snap', hot ? 0.8 : 0.65);
     const dur = feelMs('fast');
     if (dur <= 0) return; // reduced motion: the cue and the woken-up button still say it resolved
@@ -2410,8 +2311,8 @@ export class GameScene extends Phaser.Scene {
     // warning. Disarm here, in the one place every such render passes through: the guard's own
     // expiry (onReset's delayedCall) and a committed reset both already zero resetArmedUntil
     // before calling renderAll, so this never fires for those.
-    if (this.resetArmedUntil > this.time.now) {
-      this.resetArmedUntil = 0;
+    if (this.ui.resetArmedUntil > this.time.now) {
+      this.ui.resetArmedUntil = 0;
       this.resetBtn?.setSelected(false);
     }
     // The tooltip's objects live outside `hud`, and a latched (tapped) one has no pointerout to
@@ -2424,16 +2325,16 @@ export class GameScene extends Phaser.Scene {
     this.meldZones = [];
     this.hideMeldReasonTooltip();
 
-    const state = this.store.get();
+    const state = this.state();
     const active = state.activePlayerIndex;
     const human = this.editor !== null; // editor only exists on the local seat's own turn
     // D14: online input stays live-editable while the socket is reconnecting/closed — nothing
     // desyncs (client.ts returns null and onOnlineSendFailed recovers), but the player only
     // learns the table wasn't actually theirs to edit after FEITO fails, instead of the control
     // being visibly disabled the moment the connection isn't open. Same shape as presentingUntil.
-    const connected = this.online === null || this.lastOnlineStatus === 'open';
+    const connected = this.online === null || this.ui.lastOnlineStatus === 'open';
     const interactive =
-      human && connected && !this.onlinePending && !this.onlineResyncing && this.time.now >= this.presentingUntil;
+      human && connected && !this.onlinePending && !(this.online?.resyncing ?? false) && this.time.now >= this.ui.presentingUntil;
 
     // top bar: opponents — the active seat gets a bigger avatar + double gold ring, a static (not
     // animated) highlight so it stays reduced-motion-safe with zero extra tweens per render.
@@ -2476,12 +2377,12 @@ export class GameScene extends Phaser.Scene {
         this.hud.push(glow, ring);
         // Handing over is a sequence, not a swap: the hand has just receded, so the seat taking
         // over lights up a beat later rather than at the same instant.
-        if (active !== this.lastRenderedActiveSeat) this.activateSeat([ring, glow]);
+        if (active !== this.ui.lastRenderedActiveSeat) this.activateSeat([ring, glow]);
       }
       this.hud.push(av, name, count);
       x += this.r.opponentStep;
     });
-    this.lastRenderedActiveSeat = active;
+    this.ui.lastRenderedActiveSeat = active;
     this.announceThreat(state);
     this.announceLastCards(state);
 
@@ -2522,7 +2423,7 @@ export class GameScene extends Phaser.Scene {
     // A meld can carry more than one reason (e.g. the analysis reason plus reason.duplicateCard) —
     // collect all of them, not just the last one a Map key would keep.
     const invalidReasons = new Map<string, string[]>();
-    this.renderedMeldStatus.clear();
+    this.ui.renderedMeldStatus.clear();
     for (const r of analysis?.invalidMelds ?? []) {
       const list = invalidReasons.get(r.meldId) ?? [];
       list.push(t(r.reason));
@@ -2530,8 +2431,8 @@ export class GameScene extends Phaser.Scene {
     }
     // R4: the "show problem" ring never lingers on a meld the player has already fixed — clear it
     // the moment that meld stops being invalid, same render pass, no separate edit hook needed.
-    if (this.problemHighlightMeldId && !invalidReasons.has(this.problemHighlightMeldId)) {
-      this.problemHighlightMeldId = null;
+    if (this.ui.problemHighlightMeldId && !invalidReasons.has(this.ui.problemHighlightMeldId)) {
+      this.ui.problemHighlightMeldId = null;
     }
     // local seat's hand
     const hand = this.editor ? this.editor.getRemainingHand() : state.players[this.localSeat]!.hand;
@@ -2539,7 +2440,7 @@ export class GameScene extends Phaser.Scene {
     // Focused Mexe editor (Phase 14 Wave C, both orientations): only while a live draft exists —
     // losing the editor (turn change) drops back to the normal board. An orientation flip
     // re-lays-out (relayout()) but must not close the editor or touch the draft itself.
-    const editorMode = this.mexeEditorOpen && this.editor !== null;
+    const editorMode = this.ui.mexeEditorOpen && this.editor !== null;
     if (editorMode) {
       this.renderMexeEditor(melds, hand, invalidReasons, interactive, state.config, analysis?.invalidMelds ?? []);
     } else {
@@ -2554,23 +2455,23 @@ export class GameScene extends Phaser.Scene {
     // FEITO/COMPRAR buttons the lock is actually about — those two are still gated below.
     if (this.editor && analysis) {
       const check = analysis.check;
-      const becameValid = check.ok && !this.lastValidOk;
-      if (becameValid) this.validSince = this.time.now;
-      if (!check.ok) this.validSince = null;
-      this.lastValidOk = check.ok;
+      const becameValid = check.ok && !this.ui.lastValidOk;
+      if (becameValid) this.ui.validSince = this.time.now;
+      if (!check.ok) this.ui.validSince = null;
+      this.ui.lastValidOk = check.ok;
       playlog.noteTableValidity(check.ok, check.ok ? [] : check.reasons);
       // FEITO must not look pressable before it *is* pressable. onFeito refuses a confirm inside
       // CONFIRM_GUARD_MS of the table becoming valid (so a drop that happens to land on the button
       // can't end the turn), and for that quarter second the button used to look live and do
       // nothing. It now stays disabled until the guard is up, and re-renders once when it is.
-      const heldLongEnough = this.validSince !== null && this.time.now - this.validSince >= CONFIRM_GUARD_MS;
+      const heldLongEnough = this.ui.validSince !== null && this.time.now - this.ui.validSince >= CONFIRM_GUARD_MS;
       if (check.ok && !heldLongEnough && !this.guardTimer) {
         this.guardTimer = this.time.delayedCall(CONFIRM_GUARD_MS, () => {
           this.guardTimer = null;
           // Same clock drift endPresentation() documents: this can fire a frame short of
           // `validSince + CONFIRM_GUARD_MS`, which would re-render FEITO still disabled with
           // nothing left to wake it. Backdate the mark so the guard is unambiguously up.
-          if (this.validSince !== null) this.validSince = Math.min(this.validSince, this.time.now - CONFIRM_GUARD_MS);
+          if (this.ui.validSince !== null) this.ui.validSince = Math.min(this.ui.validSince, this.time.now - CONFIRM_GUARD_MS);
           if (this.editor) this.renderAll();
         });
       }
@@ -2592,8 +2493,8 @@ export class GameScene extends Phaser.Scene {
       this.fitReasonBackdrop();
       debugApi.reasonLine = this.reasonText.text;
       debugApi.validation = null;
-      this.validSince = null;
-      this.lastValidOk = false;
+      this.ui.validSince = null;
+      this.ui.lastValidOk = false;
     }
     // Task 4 (Wave C carry-over): the portrait editor toggle looked live to an inactive online
     // player and silently no-op'd on tap. Drive it from the same gate comprarBtn already uses.
@@ -2615,7 +2516,7 @@ export class GameScene extends Phaser.Scene {
     debugApi.invalidMeldReasons = () => [...invalidReasons].map(([meldId, reasons]) => ({ meldId, reasons }));
     // R1: expose what was actually painted, not what the draft says — the resting-board counterpart
     // of mexe.snapTargets()'s drag-time status, so the two can be asserted to agree.
-    debugApi.renderedMeldStatus = () => [...this.renderedMeldStatus].map(([meldId, status]) => ({ meldId, status }));
+    debugApi.renderedMeldStatus = () => [...this.ui.renderedMeldStatus].map(([meldId, status]) => ({ meldId, status }));
 
     // Beginner: auto-open the first invalid meld's tooltip so the reason is visible without a
     // tap/hover. Only one at a time (first meld in table order) so a crowded table doesn't get covered.
@@ -2662,7 +2563,7 @@ export class GameScene extends Phaser.Scene {
     // While an online socket is down the board is locked, so "play cards or draw one" is an
     // instruction the player cannot follow and that contradicts the reconnect notice sitting
     // above it. The notice is the only thing to say until the table is authoritative again.
-    if (this.online && this.lastOnlineStatus !== null && this.lastOnlineStatus !== 'open') return '';
+    if (this.online && this.ui.lastOnlineStatus !== null && this.ui.lastOnlineStatus !== 'open') return '';
     const analysis = known ?? this.analyzeDraft();
     const check = analysis.check;
     // "what does the game want right now": ready-to-confirm / fix-the-invalid-meld / play-or-draw
@@ -2672,7 +2573,7 @@ export class GameScene extends Phaser.Scene {
       check.ok,
       analysis.invalidMelds.length > 0,
       this.editor.getDraft().handCardsPlayed.length > 0,
-      this.selectedCardId !== null,
+      this.ui.selectedCardId !== null,
       this.editor.getRemainingHand().length === 0,
     );
     // D11: the real contradiction outranks a merely-incomplete meld for which reason names the
@@ -2773,18 +2674,18 @@ export class GameScene extends Phaser.Scene {
       order.push(r.meldId);
     }
     if (order.length === 0) return;
-    const current = this.mexeEditorOpen ? this.mexeEditorMeldId : this.problemHighlightMeldId;
+    const current = this.ui.mexeEditorOpen ? this.ui.mexeEditorMeldId : this.ui.problemHighlightMeldId;
     const idx = current ? order.indexOf(current) : -1;
     const next = order[(idx + 1) % order.length]!;
-    if (this.mexeEditorOpen) {
-      this.mexeEditorMeldId = next;
+    if (this.ui.mexeEditorOpen) {
+      this.ui.mexeEditorMeldId = next;
     } else {
       // B3: portrait outside the editor has no popup detail view (renderMeldFocus is landscape-only,
       // see its call site), but layoutMelds still draws a static ring around whichever meld is
       // `problemHighlightMeldId` — that ring is the portrait "show problem" feedback, and unlike
       // checkMyWork()'s pulse it needs no motion to read, so it is the reduced-motion fallback too.
       // Landscape gets the same ring, non-modal, so a repeated tap keeps landing on FEITO.
-      this.problemHighlightMeldId = next;
+      this.ui.problemHighlightMeldId = next;
     }
     this.renderAll();
   }
@@ -2849,11 +2750,11 @@ export class GameScene extends Phaser.Scene {
   private checkTutorialProgress(): void {
     const dir = this.tutorialDirector;
     if (!dir) return;
-    dir.checkComplete(this.store.get(), this.editor?.getDraft() ?? null);
+    dir.checkComplete(this.state(), this.editor?.getDraft() ?? null);
     if (debugApi.tutorialStep !== dir.stepIndex) playlog.record('tutorial:step', { step: dir.stepIndex });
     debugApi.tutorialStep = dir.stepIndex;
-    if (dir.finished && !this.tutorialCompletedRecorded) {
-      this.tutorialCompletedRecorded = true;
+    if (dir.finished && !this.ui.tutorialCompletedRecorded) {
+      this.ui.tutorialCompletedRecorded = true;
       settings.setTutorialCompleted();
     }
   }
@@ -2906,8 +2807,8 @@ export class GameScene extends Phaser.Scene {
 
     // While the opponent is playing, every board control is disabled — say so, or a step that
     // asks for DRAW/DONE reads as a broken button for as long as that turn lasts.
-    if (!dir.finished && !this.editor && this.store.get().phase === 'playing') {
-      const active = this.store.get().players[this.store.get().activePlayerIndex]!;
+    if (!dir.finished && !this.editor && this.state().phase === 'playing') {
+      const active = this.state().players[this.state().activePlayerIndex]!;
       const waitY = Math.min(txt.y + txt.height + 6, nextY - 12);
       this.hud.push(label(this, cx, waitY, t('game.turnOf', { name: active.name }), 6, '#f7d23e').setDepth(301));
     }
@@ -3172,7 +3073,7 @@ export class GameScene extends Phaser.Scene {
       // this — drag-time (snap.ts targetFor) and the resting board both call it now, so they can
       // never disagree about a reason's severity again.
       const status: SnapStatus = !isInvalid ? 'legal' : meldStatus(rawReason);
-      this.renderedMeldStatus.set(meld.id, status);
+      this.ui.renderedMeldStatus.set(meld.id, status);
       const color = STATUS_COLOR[status].fill;
       // Joker hint: never derive this ourselves — analyzeMeld is the single source of truth for
       // what a joker stands for. Skipped only on a genuine contradiction (task requirement: never
@@ -3202,7 +3103,7 @@ export class GameScene extends Phaser.Scene {
       // doc comment). A dashed light-blue ring: solid gold is already the 'incomplete' outline
       // colour, so a solid gold ring here would read as a second, contradictory status instead of
       // "look here" (R4) — dashed + a colour no status uses keeps the two unmistakably separate.
-      if (this.problemHighlightMeldId === meld.id) {
+      if (this.ui.problemHighlightMeldId === meld.id) {
         const focusRing = applyMask(this.add.graphics().setDepth(6));
         this.drawDashedRect(focusRing, zoneRect.x - 3, zoneRect.y - 3, zoneRect.width + 6, zoneRect.height + 6, 0x6fc3ff, 0.95, 2, 8, 4);
         this.hud.push(focusRing);
@@ -3352,7 +3253,7 @@ export class GameScene extends Phaser.Scene {
             });
           }
         }
-        if (this.lastMoveIds.has(card.id)) {
+        if (this.ui.lastMoveIds.has(card.id)) {
           // Coherence-2: this used to be a 1px ring nested half a pixel inside the conflict ring's
           // 2px one (cw+3 vs cw+4) — a third near-identical ring in the exact hue band between
           // incomplete-gold and illegal-red, even though it means recency/ownership, not status.
@@ -3561,9 +3462,9 @@ export class GameScene extends Phaser.Scene {
     const gap = Math.min(CARD_W + 2, Math.max(fitted, MIN_HAND_GAP));
     const total = (sorted.length - 1) * gap;
     const overflow = Math.max(0, total - maxSpan);
-    if (overflow === 0) this.handScroll = 0;
-    this.handScroll = Phaser.Math.Clamp(this.handScroll, 0, overflow);
-    const startX = this.r.handCenterX - Math.min(total, maxSpan) / 2 - this.handScroll;
+    if (overflow === 0) this.ui.handScroll = 0;
+    this.ui.handScroll = Phaser.Math.Clamp(this.ui.handScroll, 0, overflow);
+    const startX = this.r.handCenterX - Math.min(total, maxSpan) / 2 - this.ui.handScroll;
     if (overflow > 0 && interactive) this.enableHandScroll(overflow);
     // MOBILE-16: enableHandScroll's gesture needs a reachable strip pixel above/below the card
     // row. Every card in an overflowing hand overlaps its neighbours horizontally by design (the
@@ -3627,14 +3528,14 @@ export class GameScene extends Phaser.Scene {
     let scrollStart = 0;
     strip.on('pointerdown', (p: Phaser.Input.Pointer) => {
       startX = p.worldX;
-      scrollStart = this.handScroll;
+      scrollStart = this.ui.handScroll;
     });
     strip.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!p.isDown) return;
       const next = Phaser.Math.Clamp(scrollStart - (p.worldX - startX), 0, overflow);
-      if (next === this.handScroll) return;
-      const delta = next - this.handScroll;
-      this.handScroll = next;
+      if (next === this.ui.handScroll) return;
+      const delta = next - this.ui.handScroll;
+      this.ui.handScroll = next;
       // Reposition only — a re-render mid-gesture would destroy the sprites under the finger.
       for (const sprite of this.cardSprites) {
         if (sprite.getData('origin') !== 'hand') continue;
@@ -3668,12 +3569,12 @@ export class GameScene extends Phaser.Scene {
     // make the workspace's meld vanish out from under it. Without this, the workspace kept
     // pointing at the dead id and DraftEditor.insert (unknown meldId) silently created a brand new
     // meld the moment the player tried to place a card into what looked like the old one.
-    if (this.mexeEditorMeldId !== undefined && this.mexeEditorMeldId !== null && !meldIds.includes(this.mexeEditorMeldId)) {
-      this.mexeEditorMeldId = undefined;
+    if (this.ui.mexeEditorMeldId !== undefined && this.ui.mexeEditorMeldId !== null && !meldIds.includes(this.ui.mexeEditorMeldId)) {
+      this.ui.mexeEditorMeldId = undefined;
     }
     const rows = meldListRows(meldIds);
     const contentH = meldListContentHeight(rows.length);
-    this.mexeEditorScroll = clampScroll(this.mexeEditorScroll, contentH, zones.meldList.h);
+    this.ui.mexeEditorScroll = clampScroll(this.ui.mexeEditorScroll, contentH, zones.meldList.h);
 
     // ---- meld list ----
     const listBg = this.add
@@ -3688,15 +3589,15 @@ export class GameScene extends Phaser.Scene {
       // other GameScene coordinate (meldZones, sprite.x/y, GameRegions) already lives in.
       listBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
         dragStartY = p.worldY;
-        scrollStart = this.mexeEditorScroll;
+        scrollStart = this.ui.mexeEditorScroll;
       });
       listBg.on('pointermove', (p: Phaser.Input.Pointer) => {
         if (!p.isDown) return;
         const next = clampScroll(scrollStart - (p.worldY - dragStartY), contentH, zones.meldList.h);
-        if (next !== this.mexeEditorScroll) {
+        if (next !== this.ui.mexeEditorScroll) {
           // Reposition only — see the table-pan handler above for why (finding 1, Phase 14 review).
-          const delta = next - this.mexeEditorScroll;
-          this.mexeEditorScroll = next;
+          const delta = next - this.ui.mexeEditorScroll;
+          this.ui.mexeEditorScroll = next;
           for (const o of this.mexeListPanTargets) o.y -= delta;
         }
       });
@@ -3706,7 +3607,7 @@ export class GameScene extends Phaser.Scene {
           this.renderAll();
           return;
         }
-        const row = hitTestMeldListRow(rows, zones.meldList, this.mexeEditorScroll, p.worldX, p.worldY);
+        const row = hitTestMeldListRow(rows, zones.meldList, this.ui.mexeEditorScroll, p.worldX, p.worldY);
         if (row) this.onMeldListRowTapped(row);
       });
       listBg.on('pointerupoutside', () => this.renderAll());
@@ -3716,9 +3617,9 @@ export class GameScene extends Phaser.Scene {
     const cw = CARD_W * 0.45;
     const ch = CARD_H * 0.45;
     for (const row of rows) {
-      const y = meldListRowY(row, zones.meldList, this.mexeEditorScroll);
+      const y = meldListRowY(row, zones.meldList, this.ui.mexeEditorScroll);
       if (y + MELD_LIST_ROW_H < zones.meldList.y || y > zones.meldList.y + zones.meldList.h) continue; // scrolled out of view
-      const focused = row.meldId === this.mexeEditorMeldId;
+      const focused = row.meldId === this.ui.mexeEditorMeldId;
       const rowRect = this.add
         .rectangle(zones.meldList.x + zones.meldList.w / 2, y + MELD_LIST_ROW_H / 2, zones.meldList.w - 2, MELD_LIST_ROW_H - 2, focused ? 0xf7d23e : 0xffffff, focused ? 0.14 : 0.04)
         .setDepth(1);
@@ -3745,7 +3646,7 @@ export class GameScene extends Phaser.Scene {
       // classifier every other renderer uses, so it can never contradict the workspace it opens.
       const rowRawReason = rawInvalid.find((r) => r.meldId === meld.id)?.reason ?? null;
       const rowStatus: SnapStatus = isInvalid ? meldStatus(rowRawReason) : 'legal';
-      this.renderedMeldStatus.set(meld.id, rowStatus);
+      this.ui.renderedMeldStatus.set(meld.id, rowStatus);
       const verdictLabel = label(this, zones.meldList.x + zones.meldList.w - 12, y + MELD_LIST_ROW_H / 2, isInvalid ? '✗' : '✓', 8, STATUS_COLOR[rowStatus].text)
         .setOrigin(0.5)
         .setDepth(2);
@@ -3760,13 +3661,13 @@ export class GameScene extends Phaser.Scene {
       .setDepth(0)
       .setStrokeStyle(1, CHROME_GOLD, 0.5);
     this.hud.push(wsBg);
-    this.meldZones = this.mexeEditorMeldId !== undefined ? [{ meldId: this.mexeEditorMeldId ?? '', rect: wsRect }] : [];
+    this.meldZones = this.ui.mexeEditorMeldId !== undefined ? [{ meldId: this.ui.mexeEditorMeldId ?? '', rect: wsRect }] : [];
 
-    if (this.mexeEditorMeldId === undefined) {
+    if (this.ui.mexeEditorMeldId === undefined) {
       this.hud.push(label(this, wsRect.centerX, wsRect.centerY - 6, t('mobile.mexeModeHint'), 7, '#b8b0a0'));
       this.hud.push(label(this, wsRect.centerX, wsRect.centerY + 6, t('mobile.editorSelectMeld'), 8, '#b8b0a0'));
     } else {
-      const wsMeld = melds.find((m) => m.id === this.mexeEditorMeldId);
+      const wsMeld = melds.find((m) => m.id === this.ui.mexeEditorMeldId);
       const wsCards = wsMeld ? sortMeldCards(wsMeld.cards) : [];
       // B1: this workspace card row is the touch editor's only view of a meld — the conflict ring,
       // reserved gap column and missing-slot placeholder previously lived only in layoutMelds()
@@ -3855,14 +3756,14 @@ export class GameScene extends Phaser.Scene {
         );
       }
 
-      if (interactive && this.selectedCardId !== null) {
+      if (interactive && this.ui.selectedCardId !== null) {
         wsBg.setInteractive({ useHandCursor: true });
-        wsBg.on('pointerup', () => this.placeSelected('meld', this.mexeEditorMeldId ?? null));
+        wsBg.on('pointerup', () => this.placeSelected('meld', this.ui.mexeEditorMeldId ?? null));
         const flags = settings.helperFlags();
         if (flags.legalDestinationsOnSelect || flags.ghostPreview !== 'off') {
-          const targets = this.computeSnapTargetsFor(this.selectedCardId);
+          const targets = this.computeSnapTargetsFor(this.ui.selectedCardId);
           this.selectionTargets = targets;
-          const snap = snapTargetFor(targets, this.mexeEditorMeldId ?? null);
+          const snap = snapTargetFor(targets, this.ui.mexeEditorMeldId ?? null);
           if (snap) {
             if (flags.legalDestinationsOnSelect) {
               wsBg.setStrokeStyle(2, STATUS_COLOR[snap.status].fill, 0.9);
@@ -3878,8 +3779,8 @@ export class GameScene extends Phaser.Scene {
     const sortedHand = this.sortedHand(hand);
     const step = Math.min(CARD_W + 4, 40);
     const contentW = sortedHand.length > 0 ? (sortedHand.length - 1) * step + CARD_W : 0;
-    const hsScroll = clampScroll(this.mexeHandScroll, contentW, hsZone.w);
-    this.mexeHandScroll = hsScroll;
+    const hsScroll = clampScroll(this.ui.mexeHandScroll, contentW, hsZone.w);
+    this.ui.mexeHandScroll = hsScroll;
     const hsBg = this.add
       .rectangle(hsZone.x + hsZone.w / 2, hsZone.y + hsZone.h / 2, hsZone.w, hsZone.h, 0x000000, 0.18)
       .setDepth(0);
@@ -3889,15 +3790,15 @@ export class GameScene extends Phaser.Scene {
       let scrollStartX = 0;
       hsBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
         dragStartX = p.worldX;
-        scrollStartX = this.mexeHandScroll;
+        scrollStartX = this.ui.mexeHandScroll;
       });
       hsBg.on('pointermove', (p: Phaser.Input.Pointer) => {
         if (!p.isDown) return;
         const next = clampScroll(scrollStartX - (p.worldX - dragStartX), contentW, hsZone.w);
-        if (next !== this.mexeHandScroll) {
+        if (next !== this.ui.mexeHandScroll) {
           // Reposition only — see the table-pan handler above for why (finding 1, Phase 14 review).
-          const delta = next - this.mexeHandScroll;
-          this.mexeHandScroll = next;
+          const delta = next - this.ui.mexeHandScroll;
+          this.ui.mexeHandScroll = next;
           for (const o of this.mexeHandPanTargets) o.x -= delta;
         }
       });
@@ -3917,8 +3818,8 @@ export class GameScene extends Phaser.Scene {
 
     // Selected-card ring — the normal board draws this in renderSelectionLayer, which the editor
     // skips in favour of driving its own tap targets above.
-    if (this.selectedCardId !== null) {
-      const heldSprite = this.cardSprites.find((s) => s.getData('cardId') === this.selectedCardId);
+    if (this.ui.selectedCardId !== null) {
+      const heldSprite = this.cardSprites.find((s) => s.getData('cardId') === this.ui.selectedCardId);
       if (heldSprite) {
         this.hud.push(this.selectionRing(heldSprite));
       }
@@ -3935,11 +3836,11 @@ export class GameScene extends Phaser.Scene {
   /** Meld-list row tap: with a card held, commit it there (same path a normal-board meld-zone tap
    * uses); otherwise the row just becomes the workspace's subject. */
   private onMeldListRowTapped(row: MeldListRow): void {
-    if (this.selectedCardId !== null) {
+    if (this.ui.selectedCardId !== null) {
       this.placeSelected('meld', row.meldId);
       return;
     }
-    this.mexeEditorMeldId = row.meldId;
+    this.ui.mexeEditorMeldId = row.meldId;
     this.renderAll();
   }
 
@@ -4132,7 +4033,7 @@ export class GameScene extends Phaser.Scene {
    */
   private showDropZoneHighlights(): void {
     this.clearDropZoneHighlights();
-    this.hoverKey = undefined;
+    this.ui.hoverKey = undefined;
     this.redrawZoneHighlights();
     const outline = this.add.graphics().setDepth(140);
     this.drawDashedRect(outline, this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop, CHROME_GOLD, 0.3, 1, 2, 2);
@@ -4148,7 +4049,7 @@ export class GameScene extends Phaser.Scene {
     for (const z of this.meldZones) {
       const target = snapTargetFor(this.snapTargets, z.meldId);
       const status: SnapStatus = target?.status ?? 'incomplete';
-      const hovered = this.hoverKey === z.meldId;
+      const hovered = this.ui.hoverKey === z.meldId;
       let solid: Phaser.GameObjects.Rectangle | null = null;
       let dashed: Phaser.GameObjects.Graphics | null = null;
       if (status !== 'legal') {
@@ -4177,8 +4078,8 @@ export class GameScene extends Phaser.Scene {
     const zone = this.meldZones.find((z) => z.rect.contains(x, y));
     const inTable = !zone && this.inTableArea(x, y);
     const key = zone ? zone.meldId : inTable ? '' : undefined;
-    if (key === this.hoverKey) return;
-    this.hoverKey = key;
+    if (key === this.ui.hoverKey) return;
+    this.ui.hoverKey = key;
     this.redrawZoneHighlights();
     if (key === undefined) {
       this.clearGhostPreview();
@@ -4201,7 +4102,7 @@ export class GameScene extends Phaser.Scene {
     this.dragZoneHighlights = [];
     this.dragTableOutline?.destroy();
     this.dragTableOutline = null;
-    this.hoverKey = undefined;
+    this.ui.hoverKey = undefined;
     this.clearGhostPreview();
   }
 
@@ -4401,17 +4302,17 @@ export class GameScene extends Phaser.Scene {
   private renderSelectionLayer(interactive: boolean, hasInvalidMeld: boolean): void {
     this.focusTargets = [];
     if (!interactive || !this.editor) {
-      this.selectedCardId = null;
+      this.ui.selectedCardId = null;
       this.selectionTargets = [];
       this.snapTargets = [];
       this.clearDropZoneHighlights();
       return;
     }
-    const heldSprite = this.cardSprites.find((s) => s.getData('cardId') === this.selectedCardId);
-    if (this.selectedCardId !== null && !heldSprite) this.selectedCardId = null; // undo/reset ate it
+    const heldSprite = this.cardSprites.find((s) => s.getData('cardId') === this.ui.selectedCardId);
+    if (this.ui.selectedCardId !== null && !heldSprite) this.ui.selectedCardId = null; // undo/reset ate it
 
     const flags = settings.helperFlags();
-    if (this.selectedCardId === null) {
+    if (this.ui.selectedCardId === null) {
       this.selectionTargets = [];
       this.snapTargets = [];
       this.clearDropZoneHighlights();
@@ -4435,7 +4336,7 @@ export class GameScene extends Phaser.Scene {
       // drag path uses — computed once here, not per frame. meldZones was just rebuilt by
       // layoutMelds() above, so this must run after that (never before, or the rects are stale).
       if (flags.legalDestinationsOnSelect) {
-        this.selectionTargets = this.computeSnapTargetsFor(this.selectedCardId);
+        this.selectionTargets = this.computeSnapTargetsFor(this.ui.selectedCardId);
         this.snapTargets = this.selectionTargets;
         this.showDropZoneHighlights();
       } else {
@@ -4467,20 +4368,20 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    if (this.focusIndex >= this.focusTargets.length) this.focusIndex = 0;
-    const focused = this.focusTargets[this.focusIndex];
-    const focusRingVisible = this.focusVisible && !!focused;
+    if (this.ui.focusIndex >= this.focusTargets.length) this.ui.focusIndex = 0;
+    const focused = this.focusTargets[this.ui.focusIndex];
+    const focusRingVisible = this.ui.focusVisible && !!focused;
     if (focusRingVisible) {
       const gfx = this.add.graphics().setDepth(280);
       this.drawDashedRect(gfx, focused.rect.x - 2, focused.rect.y - 2, focused.rect.width + 4, focused.rect.height + 4, 0xffffff, 0.95);
       this.hud.push(gfx, label(this, this.r.selectHint.x, this.r.selectHint.y, t('game.selectHint'), 7, '#b8b0a0'));
       // Keyboard-focused destination gets the same ghost preview a pointer hover would.
-      if (flags.ghostPreview === 'selectAndHover' && this.selectedCardId !== null && (focused.kind === 'meld' || focused.kind === 'new')) {
+      if (flags.ghostPreview === 'selectAndHover' && this.ui.selectedCardId !== null && (focused.kind === 'meld' || focused.kind === 'new')) {
         const meldId = focused.kind === 'meld' ? (focused.id ?? null) : null;
         const snap = snapTargetFor(this.selectionTargets, meldId);
         if (snap) this.showGhostPreview(snap, focused.rect);
       }
-    } else if (this.r.portrait && this.selectedCardId === null) {
+    } else if (this.r.portrait && this.ui.selectedCardId === null) {
       // touch-only one-line caption: guides an untouched board, or points at the ✗ badge once a
       // meld is invalid — replaced above by the keyboard-driven select hint once the focus ring shows.
       const capText = hasInvalidMeld ? t('mobile.warnHint') : t('mobile.tapHint');
@@ -4519,16 +4420,16 @@ export class GameScene extends Phaser.Scene {
   ): void {
     if (playerIndex === 0) return;
     const now = Date.now();
-    const previous = this.lastEmoteBySeat.get(playerIndex);
+    const previous = this.ui.lastEmoteBySeat.get(playerIndex);
     // PACE-06: the table's calm/active/hot tier (state-derived, never the clock) tightens or
     // loosens how often a seat is allowed to react — a hot table talks more.
-    const level = matchIntensity(this.store.get()).level;
+    const level = matchIntensity(this.state()).level;
     const cooldown = level === 'hot' ? EMOTE_COOLDOWN_MS * 0.6 : level === 'calm' ? EMOTE_COOLDOWN_MS * 1.3 : EMOTE_COOLDOWN_MS;
     if (!skipCooldown && previous && now - previous.at < cooldown) return; // they just spoke — let it breathe
     // Show the face but drop the words when the line would repeat the one before it.
     const lineText = lineMoment && personality ? t(`ai.line.${personality}.${lineMoment}`) : null;
     const sayLine = lineText !== null && lineText !== previous?.line;
-    if (!skipCooldown) this.lastEmoteBySeat.set(playerIndex, { line: sayLine ? lineText : (previous?.line ?? null), at: now });
+    if (!skipCooldown) this.ui.lastEmoteBySeat.set(playerIndex, { line: sayLine ? lineText : (previous?.line ?? null), at: now });
 
     // D16: the pre-move "thinking" tell (skipCooldown=true) and the post-move emote share this
     // same call with independent 900ms self-destroy timers and no handle kept — at `aiSpeed:

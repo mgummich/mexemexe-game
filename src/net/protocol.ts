@@ -630,7 +630,7 @@ export interface RoomPlayerSummary {
   wins: number;
 }
 
-interface RoomJoinedMsg {
+export interface RoomJoinedMsg {
   v: number;
   type: 'room_joined';
   code: string;

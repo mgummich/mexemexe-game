@@ -22,7 +22,10 @@ layer/boundary restructuring). It is not the product roadmap in
 ## 1. Measured shape
 
 19,280 lines of TypeScript across `src/` and `server/`, in 17 top-level
-modules. Five files hold 47% of it:
+modules. Five files hold 47% of it (measured at Phase 1; after Wave 2E the tree
+is 20,309 lines, `GameScene.ts` is 4,469 and `OnlineScene.ts` is 1,530 — the
+orchestration moved out and the tests and new owners moved in, so the totals are
+close by coincidence, not because nothing changed):
 
 | File | Lines | Verdict |
 |---|---|---|
@@ -383,6 +386,15 @@ scene; the scene renders state and forwards intents.
 **Earliest phase:** Phase 3. **Do NOT do yet:** mechanical file-splitting of
 GameScene by line count, or an extraction that precedes ARCH-004/ARCH-006.
 
+**Status (Wave 2E): resolved.** Match orchestration moved to `LocalMatch`
+(`src/game-state/match.ts`): it owns the committed state, the turn cycle, the
+announcement of what happened and AI turn routing (decide → re-check → dispatch,
+or fall back to a draw), with no Phaser, no timers and no DOM. `GameScene` owns
+the thinking pause, the character's line, the animation and the repaint. Core
+match behaviour is now tested without constructing a scene
+(`tests/match.test.ts`), and `tests/boundaries.test.ts` fails if `match.ts`
+acquires a scene, Phaser or DOM import. The scene was not decomposed by line
+count, deliberately — the rendering is scene-shaped and stayed.
 ---
 
 ### ARCH-002 — Online state adaptation lives in the presentation layer
@@ -413,6 +425,15 @@ subscriptions, projection and reconciliation, emitting a view the scene renders.
 **Earliest phase:** Phase 3. **Do NOT do yet:** a second protocol layer or a
 client-side state mirror that could diverge from the server view.
 
+**Status (Wave 2E): resolved.** `OnlineSession` (`src/net/online-session.ts`)
+owns the projection and every policy over a server frame: revision staleness, the
+digest check and the resync decision, the dropped-draft and Mexe-bonus edges,
+room-seat → player-index translation, and whether a `turn_timeout` is the one
+that ends the match. `GameScene.onOnlineStateSync` now reads a `SyncResult` and
+does nothing but paint and notify; the client's turn clock is anchored in the
+scene because that is where the wall clock belongs. Driven against recorded
+server frames in `tests/online-session.test.ts`. No second networking layer was
+added: the session sits on the existing `src/net` protocol and `NetClient`.
 ---
 
 ### ARCH-003 — OnlineScene contains an implicit lobby state machine
@@ -443,6 +464,15 @@ the scene renders a state and dispatches events.
 **Earliest phase:** Phase 3. **Do NOT do yet:** rewriting the lobby UI or
 introducing a state-machine library.
 
+**Status (Wave 2E): resolved.** `LobbyMachine` (`src/net/lobby.ts`) holds the
+phase, the room mirror, the queue, discovery, the in-flight request guards and
+the refusal routing. Every input is a named method that returns the
+`LobbyEffect`s the caller must perform (connect, join, remember/forget a room,
+retire a notice, cancel a search), so the socket, the clock and local storage
+stay in the scene. `OnlineScene` reads the machine through accessors and writes
+to it only by calling a transition; its ~1,750 lines are now rendering and input.
+`tests/lobby.test.ts` drives all of it with no Phaser. No state-machine library
+was introduced.
 ---
 
 ### ARCH-004 — GameStore is coupled to the global bus, so the server cannot reuse it
@@ -482,6 +512,17 @@ the constructor with the server — done). **Do NOT do yet:** injecting a bus in
 `GameStore` as a constructor parameter — that keeps the coupling and adds a seam
 no one needs.
 
+**Status (Wave 2E): resolved.** `GameStore` no longer imports `core/events` and
+emits nothing: it is committed state, `applyGameAction`, and the accepted actions
+kept for a replay. Announcement moved up to `LocalMatch`, which publishes
+`MatchEvent`s to listeners attached to *that instance* — so state mutation never
+requires a process-global bus to exist, and N concurrent matches could not
+cross-talk. `tests/actions.test.ts` fails if the bus import comes back.
+
+The server still calls `src/rules` directly rather than holding a `GameStore`,
+and that stays deliberate: a room also owns `rev`, seat ownership and a
+`processing` precondition that a local store has no concept of. The coupling is
+closed; the server architecture was not made worse to close it.
 ---
 
 **Update (Wave 2B):** narrowed, not closed. `GameStore` still imports the bus,
@@ -566,6 +607,14 @@ exists.
 **Earliest phase:** Phase 3 (alongside ARCH-006). **Do NOT do yet:** per-match
 log instances with no consumer for them.
 
+**Status (Wave 2E): resolved.** The one `attachToBus` became two attachments
+with two owners and two lifetimes: `playlog.attachAppEvents(bus)` in `main.ts`
+(orientation flips — genuinely app-lifetime, and the bus now carries nothing
+else), and `playlog.attachMatch(match)` in `GameScene.create()`, detached on
+scene shutdown with the rest of its subscriptions. Both return their detach.
+A finished match cannot record into the next one, and a relaunched scene cannot
+accumulate a second subscription. Covered in `tests/playlog.test.ts` and
+`tests/match.test.ts`.
 ---
 
 ### ARCH-008 — ~~Dead and duplicated bus events~~ RESOLVED (Wave 2B)
@@ -675,6 +724,23 @@ maintainability risk.
 **Earliest phase:** Phase 4. **Do NOT do yet:** removing debug hooks that the
 Playwright suites depend on.
 
+**Status (Wave 2E): resolved for the online surface, narrowed elsewhere.** The
+~30 closures each scene used to write into `debugApi.online` are now built in
+`src/verification/online-debug.ts` *from* the product's owners
+(`OnlineSession`, `LobbyMachine`, `NetClient`). Product code hands the owner over
+in one call and supplies only rendered facts with no other reader (the on-screen
+notice, the focus ring, the painted seat rows) and product actions (COMPRAR,
+join, queue). `window.__MEXE__` is unchanged, so every Playwright suite still
+works, and the online redaction guarantee is untouched — `state()` is still the
+projection with placeholder opponent cards. `tests/boundaries.test.ts` fails if a
+product module imports the adapters.
+
+**Residual:** scenes still *write* observation values onto `debugApi`
+(`scene`, `seed`, `dealing`, `lastAiThought`, `renderedMeldStatus`, the `mexe`
+readbacks). Those are observations of facts the scene alone knows, and one of
+them (`renderedMeldStatus`) has a real product consumer. They do not shape
+product behaviour, which was the risk; leaving them is cheaper than inventing a
+second observation channel.
 ---
 
 ### ARCH-012 — Two type-only import cycles
@@ -793,6 +859,14 @@ settings/persistence/orchestration as currently wired.
 **Desired direction:** fixing ARCH-004 and ARCH-009 removes every blocking edge
 listed above. No engine-migration-specific design is needed or recommended.
 
+**Status (Wave 2E): narrowed.** The `game-state` → global bus edge is gone, and
+the application layer extracted from the scenes (`LocalMatch`, `OnlineSession`,
+`LobbyMachine`) is Phaser-free, DOM-free and clock-free by test. What remains is
+ARCH-009's `core` layering (`settings`→`ui/helpers`,
+`persistence`→`cosmetics`/`ai`) and the AI's presentation constants (ARCH-015).
+Neither blocks testing application logic outside the browser, which was the only
+part of ARCH-016 in scope here.
+
 **Earliest phase:** falls out of Phase 3 + Phase 4. **Do NOT do yet:** any
 abstraction layer designed for a hypothetical second renderer.
 
@@ -846,6 +920,15 @@ separate fix.
 **Earliest phase:** Phase 3. **Do NOT do yet:** reflection-based or
 decorator-based auto-reset.
 
+**Status (Wave 2E): resolved.** Reset is now ownership, not a list.
+`GameScene.resetForNewMatch()` replaces one `MatchViewState` holding all ~30
+per-match screen values (selection, focus, editor scroll, zoom/pan, the announce
+latches, the presentation gates); `create()` builds a fresh `LocalMatch` or
+`OnlineSession`; `OnlineScene.create()` builds a fresh `LobbyMachine`. What
+remains in those methods is the handful of live Phaser resources that must be
+*stopped* rather than re-initialised. A new per-match value added to a holder is
+fresh by construction; a field added to a scene directly is now a deliberate
+statement that it survives a match. No reflection, no decorators.
 ---
 
 ### ARCH-019 — No mechanical enforcement of module boundaries
@@ -873,6 +956,15 @@ forbidding `phaser`/DOM imports under `src/rules`, `src/mexe-mode`,
 register and should land before any Phase 3 extraction. **Do NOT do yet:** a
 full dependency-cruiser ruleset encoding a layering that ARCH-009 has not
 settled.
+
+**Update (Wave 2E):** four more rules became mechanical, each in the existing
+`tests/boundaries.test.ts` rather than in a new tool: the extracted application
+modules (`game-state/match.ts`, `net/online-session.ts`, `net/lobby.ts`) may not
+reach a scene, Phaser or the DOM; a legality function may be declared only under
+`src/rules`; no product module may import the verification adapters; and the play
+log's import allow-list now names its one type-only exception. Still unenforced:
+single-writer ownership beyond the `readonly` state types, and the `core`
+layering that ARCH-009 has not settled. No dependency-analysis package was added.
 
 **Update (Phase 2, partial):** `tests/boundaries.test.ts` now enforces the
 domain-purity half mechanically — an allow-list of imports for `src/rules`,
@@ -917,6 +1009,23 @@ so a future reader does not mistake it for duplicated legality.
 
 **Earliest phase:** none. Documented in the authority matrix (§5).
 
+**Status (Wave 2E): accepted design, now guarded.** Re-traced: `tutorialAllows`
+consults `TutorialDirector.isAllowed`, which answers only "is this the action the
+current lesson is asking for". It never constructs a draft, never calls a rules
+function and never bypasses one — a tutorial move commits through the same
+`GameScene.dispatch` → `LocalMatch.dispatch` → `applyGameAction` →
+`canConfirmTurn` path as every other local action.
+
+```text
+rules authority:       Is this move legal?            src/rules
+tutorial progression:  Is this the move this lesson   src/tutorial/director.ts
+                       currently requests?
+```
+
+`tests/tutorial.test.ts` now pins both halves: the gate permits the scripted card
+*and* an illegal commit of that same card is still refused by the rules, and an
+off-script action the rules would allow is still refused by the gate. No change
+to pedagogical restrictions.
 ---
 
 ## 12. Answers to the Phase 1 questions
@@ -991,13 +1100,13 @@ finding above — no competing ID space.
 | Current edge | Desired edge | Risk if left | Depends on | Phase |
 |---|---|---|---|---|
 | `core/settings` → `ui/helpers`; `core/persistence` → `cosmetics`, `ai`; `core/pwa` → `verification` (ARCH-009, ARCH-011, ARCH-016; the `core/playlog` → `ui/viewport` edge closed in Wave 2D) | platform modules depend downward only; presentation catalogues are passed in, not imported | `core` cannot be reused by any non-Phaser client, and "put it in core" stays the default | splitting `core` by role | 4 |
-| `game-state` → global `bus` (ARCH-004) | turn application separated from announcement, so the server *could* share it | ~~deal duplication~~ closed in Wave 2A; ~~bus as control flow~~ closed in Wave 2B — what remains is a notification-only import, and the shareable transition is the pure `applyGameAction` | — | **narrowed** |
+| ~~`game-state` → global `bus` (ARCH-004)~~ | turn application separated from announcement | **resolved in Wave 2E** — `GameStore` imports no bus and emits nothing; `LocalMatch` announces per instance | — | done |
 | ~~bus carries control flow (`turn:start`, `game:won`) (ARCH-006)~~ | explicit turn-cycle call graph; the bus keeps notification only | **resolved in Wave 2B** — `GameStore.dispatch` returns an outcome, `GameScene.dispatch` advances the cycle from it; the two `bus.on` control-flow subscriptions are gone | — | done |
-| `GameScene` owns online adaptation, AI scheduling, turn clock (ARCH-001, ARCH-002) | a match-orchestration owner outside the scene | application logic remains untestable without Phaser; `resetForNewMatch` keeps growing | ARCH-006, ARCH-004 | 3 |
-| `OnlineScene` holds an implicit 10-phase machine (ARCH-003) | explicit, testable lobby machine; scene renders and dispatches | every new lobby feature is reasoned about across ~25 handlers | ARCH-002 | 3 |
+| ~~`GameScene` owns online adaptation, AI scheduling, turn clock (ARCH-001, ARCH-002)~~ | a match-orchestration owner outside the scene | **resolved in Wave 2E** — `LocalMatch` and `OnlineSession`, both unit-tested without Phaser; the scene keeps the clock anchoring and the animation | — | done |
+| ~~`OnlineScene` holds an implicit 10-phase machine (ARCH-003)~~ | explicit, testable lobby machine; scene renders and dispatches | **resolved in Wave 2E** — `LobbyMachine` with one named transition per input and explicit effects | — | done |
 | ~~`GameStore.get()` returns the live object (ARCH-005)~~ | `readonly`-typed state | **resolved in Wave 2A** — `GameState`/`DraftState` are readonly by type, guarded in `tests/boundaries.test.ts` | — | done |
 | `src/ai/ai.ts` mixes engine, policy and presentation (ARCH-015) | the three behind the existing `AiPlayer` seam | AI expansion edits a file that also owns emote colours | AI work being scheduled | 3–4 |
-| `playlog` subscribes for process lifetime (ARCH-007) | per-lifecycle subscription | bakes "one live match per page" into observability | ARCH-006 | 3 |
+| ~~`playlog` subscribes for process lifetime (ARCH-007)~~ | per-lifecycle subscription | **resolved in Wave 2E** — `attachAppEvents` (main.ts, app lifetime) and `attachMatch` (GameScene, match lifetime), both returning their detach | — | done |
 | `server/index.ts` is composition root + dispatcher + broadcaster + limiter (ARCH-013) | dispatch/broadcast separated from process wiring | protocol growth lands in a 365-line `handleMessage` | none | 4 |
 
 ## 14. Wave 2C — failure, configuration and persistence
@@ -1132,6 +1241,72 @@ second reader.
 17. **Which signals are duplicated?** Only the two that were merged here (the
     FNV-1a loop, and the server's inline draft rehydration). Play log, metrics,
     server logs, the debug API and replay each answer a different question.
+
+## 16. Wave 2E — architecture risk closure
+
+The wave that turns the architecture into something Wave 3 can write long-lived
+tests against: stable application contracts instead of scene internals, implicit
+lobby flags, global bus side effects, test-only product hooks and manual reset
+checklists.
+
+### What changed
+
+| Area | Was | Now |
+|---|---|---|
+| Local match orchestration | `GameScene` owned the turn cycle and AI scheduling; none of it testable without Phaser | `LocalMatch` (`src/game-state/match.ts`): store, turn cycle, per-instance notifications, AI turn routing with a stale/fallback result. `tests/match.test.ts` |
+| Online state adaptation | `onOnlineStateSync` rebuilt the store and decided staleness, desync, draft-drop, bonus and seat mapping in one 45-line scene method | `OnlineSession` (`src/net/online-session.ts`) answers `stale` \| `desync` \| `applied`; the scene paints it. `tests/online-session.test.ts` |
+| Lobby | one `phase` string written from ~25 Phaser handlers | `LobbyMachine` (`src/net/lobby.ts`): named transitions returning `LobbyEffect`s. `tests/lobby.test.ts` |
+| State mutation ↔ events | `GameStore.dispatch` emitted four events on a process-global bus | `GameStore` emits nothing and imports no bus; `LocalMatch` announces `MatchEvent`s per instance. The bus now carries one app-lifetime event (`viewport:changed`) |
+| Play log lifecycle | one module-load subscription for the page's life | `attachAppEvents` (main.ts) + `attachMatch` (GameScene, detached on shutdown) |
+| Debug/verification | scenes assembled ~30 closures into `debugApi.online` out of private fields | `src/verification/online-debug.ts` builds the surface from `OnlineSession`/`LobbyMachine`/`NetClient`; `window.__MEXE__` unchanged |
+| Reset/re-entry | `resetForNewMatch()` set ~45 fields by hand | one `MatchViewState` replaced, plus fresh `LocalMatch`/`OnlineSession`/`LobbyMachine`; what is left is Phaser resources to *stop* |
+| Enforcement | domain purity only | + application modules stay Phaser/DOM-free, legality declared only in `src/rules`, product code does not import the verification adapters |
+
+### Deliberately not done
+
+- **No state-machine, event, DI or platform framework.** `LobbyMachine` is a
+  class with methods; `MatchEvent` delivery is a `Set` of callbacks.
+- **No universal controller abstraction.** Three domain-specific owners, no
+  shared base class or interface between them — they have nothing in common
+  worth naming.
+- **`GameScene` was not split by line count.** It is still large and still the
+  biggest file in the repo; what it no longer contains is gameplay or sync
+  policy. Size was never the finding.
+- **`src/core` was not reorganised** (ARCH-009) and no type-only cycle was
+  chased (ARCH-012). Neither blocks a Wave 3 test.
+- **No server change.** `server/index.ts` (ARCH-013), `RoomManager` growth
+  (ARCH-014), the AI's internal layering (ARCH-015) and cosmetic emote
+  randomness (ARCH-017) are untouched.
+
+### Answers to the Wave 2E questions
+
+1. **Can core match behaviour be tested without Phaser?** Yes —
+   `tests/match.test.ts` drives confirm, draw, refusal, finish, AI routing and
+   disposal against `LocalMatch` in Node.
+2. **Does presentation decide any online policy?** No. Staleness, the digest
+   check, the resync decision, seat translation and the missed-turn limit are
+   `OnlineSession`'s; the scene anchors the turn clock to `Date.now` and paints.
+3. **Is there a second networking layer?** No. `OnlineSession` sits on the
+   existing `src/net/protocol` types and is handed frames by the existing
+   `NetClient`.
+4. **Does any lobby transition still live in a handler?** No — the handlers call
+   one transition each and perform the returned effects.
+5. **Does state mutation require the global bus?** No. `GameStore` imports no
+   bus; a test asserts it.
+6. **Can a stale subscriber reach the next match?** No: notifications are
+   per-`LocalMatch`, and the play log's match subscription is detached on scene
+   shutdown.
+7. **Does any product behaviour depend on a debug hook being registered?** No.
+   The surface is built from product owners; the remaining writes are
+   observations, one of which (`renderedMeldStatus`) has a real product reader.
+8. **Is the tutorial a legality authority?** No — pedagogical only, and now
+   guarded by a test (ARCH-021).
+9. **What still has no mechanical guard?** Single-writer ownership beyond the
+   `readonly` state types, and `core`'s layering (ARCH-009).
+10. **What would a Wave 3 test target?** `LocalMatch`, `OnlineSession`,
+    `LobbyMachine`, `applyGameAction`, `DraftEditor`, `RoomManager` and the pure
+    layout modules — all Node-testable — with Playwright reserved for rendering,
+    input and the browser lifecycle.
 
 ## Evidence gaps
 

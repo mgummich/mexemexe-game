@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { bus } from '../src/core/events';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
 import { applyGameAction } from '../src/game-state/actions';
 import { GameStore } from '../src/game-state/store';
 import { DraftEditor } from '../src/mexe-mode/draft';
@@ -96,51 +96,29 @@ describe('applyGameAction', () => {
 });
 
 describe('GameStore.dispatch', () => {
-  let seen: string[];
-
-  beforeEach(() => {
-    bus.clear();
-    seen = [];
-    for (const e of ['turn:confirmed', 'turn:drawn', 'turn:start', 'game:won'] as const) {
-      bus.on(e, () => seen.push(e));
-    }
-  });
-
-  it('commits an accepted action and announces it as a fact', () => {
+  it('commits an accepted action and records it for the replay', () => {
     const store = new GameStore(state());
     const out = store.dispatch({ type: 'confirmTurn', actorIndex: 0, draft: legalDraft(store.get()) });
     expect(out.ok).toBe(true);
     expect(store.get().activePlayerIndex).toBe(1);
-    expect(seen).toEqual(['turn:confirmed', 'turn:start']);
+    expect(store.replay().actions).toHaveLength(1);
   });
 
-  it('announces the finish instead of the next turn', () => {
-    const store = new GameStore({ ...state(), drawPile: [] });
-    store.dispatch({ type: 'drawAndEndTurn', actorIndex: 0 });
-    expect(seen).toEqual(['turn:drawn', 'game:won']);
-  });
-
-  it('leaves the state untouched and emits nothing when the action is refused', () => {
+  it('leaves the state untouched and records nothing when the action is refused', () => {
     const store = new GameStore(state());
     const before = store.get();
     const out = store.dispatch({ type: 'drawAndEndTurn', actorIndex: 1 });
     expect(out).toEqual({ ok: false, reasons: ['reason.notYourTurn'] });
     expect(store.get()).toBe(before);
-    expect(seen).toEqual([]);
+    expect(store.replay().actions).toEqual([]);
   });
 
-  it('a stale subscriber from a finished match cannot touch the next one', () => {
-    // The bus is process-global: a scene that forgot to unsubscribe would still be called. What
-    // must hold is that subscribers only observe — they are never part of committing a turn.
-    const dead = new GameStore(state());
-    let stale = 0;
-    const unsub = bus.on('turn:start', () => stale++);
-    dead.dispatch({ type: 'drawAndEndTurn', actorIndex: 0 });
-    expect(stale).toBe(1);
-    unsub();
-    const fresh = new GameStore(state());
-    fresh.dispatch({ type: 'drawAndEndTurn', actorIndex: 0 });
-    expect(stale).toBe(1);
-    expect(fresh.get().turn).toBe(2); // the turn advanced regardless of who was listening
+  it('announces nothing: no global bus reaches state mutation (ARCH-004)', () => {
+    // The store is the shareable half — committed state plus the pure transition. It must be
+    // constructible in a context that has no bus at all, which is what lets an online client use
+    // it as a read-only projection and what would let a server hold many at once.
+    const source = readFileSync(new URL('../src/game-state/store.ts', import.meta.url), 'utf8');
+    expect(source).not.toContain('core/events');
+    expect(source).not.toContain('bus.emit');
   });
 });

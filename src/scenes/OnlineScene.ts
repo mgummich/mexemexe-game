@@ -8,10 +8,9 @@ import {
   forgetRoom, MAX_NAME_LENGTH, MIN_NAME_LENGTH, NetClient, readDisplayName, readRecentRooms,
   rememberRoom, writeDisplayName, type ConnStatus, type RecentRoom,
 } from '../net/client';
-import { errorMessage } from '../net/errors';
+import { LobbyMachine, type LobbyEffect, type LobbyPhase } from '../net/lobby';
 import {
-  CUSTOM_BOUNDS, DEFAULT_QUEUE_TARGET, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY,
-  MAX_SEATS, QUEUE_TARGETS, REACTION_COOLDOWN_MS, REACTIONS, ROOM_CODE_LENGTH, TIMER_PRESETS,
+  CUSTOM_BOUNDS, MAX_SEATS, QUEUE_TARGETS, REACTION_COOLDOWN_MS, REACTIONS, ROOM_CODE_LENGTH, TIMER_PRESETS,
   type ActivityEvent, type GameView, type PartyState, type QueueTarget, type ReactionId,
   type RoomListing, type RoomPlayerSummary, type RoomSettings, type RoomVisibility, type TimerMode,
 } from '../net/protocol';
@@ -19,6 +18,7 @@ import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, type RenderedSeatRow } from '../verification/debug-api';
+import { lobbyDebugSurface } from '../verification/online-debug';
 
 /** Lobby preset cycle — one tap moves between the three answers a room of friends actually
  * chooses between. `custom` is deliberately not in the cycle: it lives behind the CUSTOM screen,
@@ -49,15 +49,6 @@ const SEAT_COLORS = [0xc8543a, 0x3a7fc8, 0x3ea05a, 0xc8a33a];
 function browseRows(portrait: boolean): number {
   return portrait ? 3 : 4;
 }
-
-/** Refusals that mean "this card described a room that has since moved on", as opposed to
- * something wrong with the player or the connection. All four are ordinary traffic for a list
- * built from a snapshot, so they are answered on the browser instead of on the error screen. */
-const STALE_LISTING_CODES: readonly string[] = ['room_not_found', 'room_closed', 'room_full', 'game_started'];
-/** Refusals the lobby answers in place. Each one says something about the room's current state
- * that the player can act on from the lobby they are already looking at — unlike `room_closed` or
- * `invalid_token`, which mean the seat itself is gone and the error screen is the honest answer. */
-const LOBBY_NOTICE_CODES: readonly string[] = ['not_ready', 'not_host', 'game_started', 'rate_limited', 'room_full'];
 
 /**
  * How long MATCH FOUND stays on screen before the table does. Long enough to read three words and
@@ -97,8 +88,39 @@ function sanitizeName(raw: string): string {
  */
 export class OnlineScene extends Phaser.Scene {
   private client!: NetClient;
-  private phase:
-    | 'idle' | 'join' | 'name' | 'lobby' | 'custom' | 'party' | 'browse' | 'queue' | 'matched' | 'error' = 'idle';
+  /**
+   * Where the lobby actually lives (`src/net/lobby.ts`): the phase, the room mirror, the queue,
+   * discovery and every transition between them, with no Phaser in reach of any of it (ARCH-003).
+   *
+   * Rebuilt on every `create()`, so a second visit cannot inherit the first one's room, error or
+   * search — the class of bug a per-field reset list keeps producing (ARCH-018). This scene reads
+   * it through the accessors below and writes to it only by calling a named transition.
+   */
+  private lobby = new LobbyMachine();
+  private get phase(): LobbyPhase { return this.lobby.phase; }
+  private get code(): string | null { return this.lobby.code; }
+  private get seat(): number | null { return this.lobby.seat; }
+  private get players(): RoomPlayerSummary[] { return this.lobby.players; }
+  private get roomSettings(): RoomSettings { return this.lobby.roomSettings; }
+  private get hostSeat(): number { return this.lobby.hostSeat; }
+  private get party(): PartyState { return this.lobby.party; }
+  private get visibility(): RoomVisibility { return this.lobby.visibility; }
+  private get settingsLocked(): boolean { return this.lobby.settingsLocked; }
+  private get errorMsg(): string | null { return this.lobby.errorMsg; }
+  private get offlineError(): boolean { return this.lobby.offlineError; }
+  private get rematch(): boolean { return this.lobby.rematch; }
+  private get settingsChangedNotice(): boolean { return this.lobby.settingsChangedNotice; }
+  private get lobbyNotice(): string | null { return this.lobby.lobbyNotice; }
+  private get lastReaction(): { seat: number; reaction: ReactionId } | null { return this.lobby.lastReaction; }
+  private get listings(): RoomListing[] { return this.lobby.listings; }
+  private get browseState(): 'loading' | 'ready' | 'failed' { return this.lobby.browseState; }
+  private get browseNotice(): string | null { return this.lobby.browseNotice; }
+  private get queueTarget(): QueueTarget { return this.lobby.queueTarget; }
+  private get queueNotice(): string | null { return this.lobby.queueNotice; }
+  private get matchPlayers(): number { return this.lobby.matchPlayers; }
+  private get nameError(): boolean { return this.lobby.nameError; }
+  private get inFlight(): Set<string> { return this.lobby.inFlight; }
+  private get ready(): boolean { return this.lobby.ready; }
   /** The custom screen's working copy. Edited freely while that screen is open and sent as one
    * proposal on APLICAR — a field-by-field send would clear everyone's ready bit five times for
    * one decision. Null whenever the screen is closed. */
@@ -106,38 +128,8 @@ export class OnlineScene extends Phaser.Scene {
   /** In-canvas join-code buffer. Replaces the Phase 5 `window.prompt`, which could not be
    * styled, localized, or driven by the verification suite. */
   private codeInput = '';
-  private code: string | null = null;
-  private seat: number | null = null;
-  private players: RoomPlayerSummary[] = [];
-  /** The room's settings as the server last reported them. Never edited locally: tapping the
-   * summary sends a proposal and the next `room_state` is what actually changes this. */
-  private roomSettings: RoomSettings = DEFAULT_ROOM_SETTINGS;
-  private hostSeat = 0;
-  /** The room's memory across matches, exactly as the server last reported it. Never written
-   * locally — a session win the client could invent would be a score the server never awarded. */
-  private party: PartyState = EMPTY_PARTY;
-  private settingsLocked = false;
-  /** Server truth, never a local mirror: our own seat's ready bit exactly as the last
-   * `room_joined`/`room_state` reported it. A tap sends `set_ready` and the server's answer is
-   * what re-renders the button, so a reconnect, a reload or a settings reset can never leave the
-   * button disagreeing with the row it sits under. */
-  private get ready(): boolean {
-    return this.players.find((p) => p.seat === this.seat)?.ready ?? false;
-  }
-  private errorMsg: string | null = null;
   private status: ConnStatus = 'closed';
   private unsubs: (() => void)[] = [];
-  /** Lobby actions currently "in flight" — a button whose key is here stays disabled so a
-   * double-click can't send a second create_room/join_room/start_game before the server (or a
-   * cooldown) resolves the first. Released by fireOnce's cooldown timer or by the 'error'
-   * handler's clear() — never by a success answer (e.g. room_joined): the answer can land between
-   * a double-click's two clicks, and clearing the guard right then would let the second click
-   * through to fire a duplicate request. */
-  private inFlight = new Set<string>();
-  /** True while the current 'error' phase was entered because the device is offline (not a real
-   * server rejection) — lets a regained connection drop back to 'idle' instead of staying stuck
-   * on a stale error. */
-  private offlineError = false;
   /** Offscreen DOM input that opens the soft keyboard on touch devices — see ensureJoinInput().
    * The keyboard-only handler below (wireCodeEntry) stays as the desktop path. */
   private joinInputEl: HTMLInputElement | null = null;
@@ -149,40 +141,7 @@ export class OnlineScene extends Phaser.Scene {
   private lastKeyEvent: KeyboardEvent | null = null;
   /** Name-entry buffer, mirrored the same way `codeInput` is. */
   private nameInput = '';
-  /** Set when this scene was entered from a finished match (ONLINE-23): same room, same code,
-   * everyone back to not-ready. Cleared as soon as the player readies up. */
-  private rematch = false;
-  /** Room code taken from a share link (`?room=`), joined automatically once the socket opens. */
-  private autoJoinCode: string | null = null;
-  /** ON-05: set when the last name submission had too few visible characters to be a name. */
-  private nameError = false;
-  /** Screen the name editor was opened from, so committing (or backing out of) a name typed on
-   * the way into a room returns to the code the player was already entering. */
-  private nameReturn: 'idle' | 'join' = 'idle';
-  /** ON-09: shown until the player readies again after the host changed the room's fairness
-   * settings and the server cleared everyone's ready bit. */
-  private settingsChangedNotice = false;
-  /** A server refusal that is *about the room's current state* rather than about the player's
-   * place in it — not everyone is ready, the caller is not the host, the match already started.
-   * Shown on the lobby itself and cleared on the next action: the player is still seated, every
-   * other control still works, and replacing the lobby with a full-screen error would both cost
-   * them the screen they were acting on and leave this client believing it holds no seat while
-   * the server still holds one. Same reasoning as the room browser's own notice (§3d). */
-  private lobbyNotice: string | null = null;
-  /** Last reaction the room sent, shown briefly in the lobby. */
-  private lastReaction: { seat: number; reaction: ReactionId } | null = null;
   private resume: { client: NetClient; code: string; seat: number } | null = null;
-  /** The room's visibility as the server last reported it. Never written locally — the tap sends
-   * a proposal and the next `room_state` is what changes this, same contract as the settings. */
-  private visibility: RoomVisibility = DEFAULT_ROOM_VISIBILITY;
-  /** Last `room_list` answer. A snapshot of a moment, never treated as still true: tapping JOIN
-   * asks the server, which is free to answer "full" or "gone". */
-  private listings: RoomListing[] = [];
-  private browseState: 'loading' | 'ready' | 'failed' = 'loading';
-  /** Why the last card tap did not get the player into a room, shown on the browser itself. A
-   * listing is a snapshot of a moment, so "it filled up / it started / it is gone" is ordinary
-   * traffic, not an error screen: the answer belongs next to the list it invalidated. */
-  private browseNotice: string | null = null;
   /** Rooms this device recently got into, read from local display history (never the token). */
   private recent: RecentRoom[] = [];
   /** What the seat rows actually PAINTED on the last rebuild, in row order — recorded by
@@ -190,21 +149,9 @@ export class OnlineScene extends Phaser.Scene {
    * `players` list is exactly the thing a rendering bug can disagree with, so a lobby test that
    * only asserts `players()` cannot see a seat that vanished off the screen. */
   private renderedSeats: RenderedSeatRow[] = [];
-  /** Code of the join currently in flight, so a refusal can retire a dead recent-room entry
-   * instead of offering it again next time. Cleared by the answer, whichever way it goes. */
-  private pendingJoinCode: string | null = null;
-  /** How many players this device asks Quick Match for. A request, never a decision: the server's
-   * answer is what `queueTarget` is set from, so a refused or clamped preference can never be
-   * rendered as if it had been honoured. */
-  private queueTarget: QueueTarget = DEFAULT_QUEUE_TARGET;
   /** When the current search started, for the cosmetic elapsed counter. The server owns the
    * actual queue lifetime; this number is only ever shown, never acted on. */
   private queueStartedAt = 0;
-  /** The line explaining how the last search ended (cancelled, expired), shown on the online home
-   * where the player lands. Null when there is nothing to explain. */
-  private queueNotice: string | null = null;
-  /** Table size of the match that was just found, for the MATCH FOUND line. */
-  private matchPlayers = 0;
   /** True once the handoff into GameScene is scheduled, so a second view arriving during the
    * MATCH FOUND beat cannot start the match twice. */
   private matchHandoff = false;
@@ -223,7 +170,7 @@ export class OnlineScene extends Phaser.Scene {
   private focusIndex = -1;
   /** The phase the ring's index was last meaningful in. A new screen starts the ring at its top
    * button; a redraw of the same screen (a room_state push, a flash label) keeps it where it is. */
-  private focusPhase: OnlineScene['phase'] | null = null;
+  private focusPhase: LobbyPhase | null = null;
   /** The label the ring was on when the screen was last drawn. A redraw can change how many
    * buttons a screen has — a room card appearing or leaving the browser, a reason line showing —
    * and an index kept across that change points at a *different* action than the one the player
@@ -256,52 +203,22 @@ export class OnlineScene extends Phaser.Scene {
     setMusicContext('menu');
     debugApi.scene = 'online';
     this.client = this.resume?.client ?? new NetClient();
-    this.phase = 'idle';
-    this.code = null;
-    this.seat = null;
-    this.players = [];
-    this.errorMsg = null;
+    // A fresh machine *is* the reset: every lobby/room/queue/discovery field this scene used to
+    // clear one at a time is a field of it, so a new visit starts clean by construction (ARCH-018).
+    this.lobby = new LobbyMachine();
     this.codeInput = '';
     this.nameInput = '';
     // Holding a DOM event across a scene restart would keep it alive for nothing.
     this.lastKeyEvent = null;
-    this.lastReaction = null;
-    this.party = EMPTY_PARTY;
-    this.rematch = false;
-    this.settingsChangedNotice = false;
-    this.lobbyNotice = null;
-    this.nameError = false;
-    this.inFlight.clear();
-    this.visibility = DEFAULT_ROOM_VISIBILITY;
-    this.listings = [];
-    this.browseState = 'loading';
-    this.pendingJoinCode = null;
-    this.browseNotice = null;
-    // Room-scoped server truth. Field initializers are not a reset (see D1 below): a scene
-    // restart into room B must never render room A's host, terms or lock state for a frame.
-    this.hostSeat = 0;
-    this.roomSettings = DEFAULT_ROOM_SETTINGS;
-    this.settingsLocked = false;
     this.focusables = [];
     this.focusIndex = -1;
     this.focusPhase = null;
     this.focusLabel = null;
     this.recent = readRecentRooms();
-    this.queueTarget = DEFAULT_QUEUE_TARGET;
     this.queueStartedAt = 0;
-    this.queueNotice = null;
-    this.matchPlayers = 0;
     this.matchHandoff = false;
     this.pendingMatchView = null;
     this.searchLabel = null;
-    // Field initializer, not reset here, is exactly the class of bug this run's worst defect
-    // (D1) came from — a restart must never inherit a scene's previous life's state.
-    this.offlineError = false;
-    // ONLINE-03: a shared link carries the room code, so the invited player lands in the lobby
-    // instead of transcribing five characters. Still a normal join — the server validates the
-    // code exactly as it does a typed one.
-    const linked = new URLSearchParams(location.search).get('room');
-    this.autoJoinCode = linked ? linked.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, ROOM_CODE_LENGTH) || null : null;
     this.wireCodeEntry();
     this.wireClient();
     this.installDebugHooks();
@@ -324,33 +241,22 @@ export class OnlineScene extends Phaser.Scene {
         else if (s !== 'connecting') this.client.connect();
       }),
       onConnectivityChange((offline) => {
-        if (!offline && this.offlineError) {
-          this.offlineError = false;
-          this.phase = 'idle';
-          // We entered this scene offline and skipped connect() entirely (see below), so
-          // this.client's socket was never opened — establish it now, first time, not a
-          // reconnect behind the player's back. They still have to press CRIAR SALA / ENTRAR.
-          this.client.connect();
-        }
+        if (!offline) this.runEffects(this.lobby.connectivityRestored());
         this.rebuild();
       }),
     );
-    if (this.resume) {
-      // The room is already ours; the server's answer to `resync` is what repopulates the seats.
-      this.code = this.resume.code;
-      this.seat = this.resume.seat;
-      this.phase = 'lobby';
-      this.rematch = true;
-      if (this.client.getStatus() === 'open') this.client.requestResync();
-      else this.client.connect();
-    } else if (isOffline()) {
-      // Skip the connect attempt entirely — a clear "you're offline" beats a connection timeout.
-      this.offlineError = true;
-      this.phase = 'error';
-      this.errorMsg = t('offline.online');
-    } else {
-      this.client.connect();
-    }
+    // ONLINE-03: a shared link carries the room code, so the invited player lands in the lobby
+    // instead of transcribing five characters. Still a normal join — the server validates the
+    // code exactly as it does a typed one.
+    const linked = new URLSearchParams(location.search).get('room');
+    this.runEffects(
+      this.lobby.start({
+        resume: this.resume ? { code: this.resume.code, seat: this.resume.seat } : null,
+        offline: isOffline(),
+        socketOpen: this.client.getStatus() === 'open',
+        linkedCode: linked ? linked.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, ROOM_CODE_LENGTH) || null : null,
+      }),
+    );
     // One scene-wide timer for the searching counter, rather than a rebuild a second: the screen
     // is unchanged apart from this number, and a full rebuild would also reset the focus ring.
     this.time.addEvent({
@@ -416,106 +322,89 @@ export class OnlineScene extends Phaser.Scene {
     this.joinInputEl = null;
   }
 
+  /**
+   * Perform what a lobby transition decided. The machine owns the decision, this owns the socket,
+   * the clock and local display history — the split that lets every transition above be driven
+   * from a test with no Phaser and no network (ARCH-003).
+   */
+  private runEffects(effects: LobbyEffect[]): void {
+    for (const effect of effects) {
+      switch (effect.type) {
+        case 'connect':
+          this.client.connect();
+          break;
+        case 'requestResync':
+          this.client.requestResync();
+          break;
+        case 'join':
+          this.fireOnce('join', 3000, () => this.joinCode(effect.code));
+          break;
+        case 'rememberRoom':
+          // Local display history only: the code and the host's name, both already on screen. The
+          // credential that could reclaim this seat lives in sessionStorage and never comes here.
+          rememberRoom(effect.code, effect.host);
+          this.recent = readRecentRooms();
+          break;
+        case 'forgetRoom':
+          forgetRoom(effect.code);
+          this.recent = readRecentRooms();
+          break;
+        case 'expireLobbyNotice':
+          // Retires only the line it was started for — a second refusal in the same four seconds
+          // owns its own timer, and this one must not cut the newer line short.
+          this.time.delayedCall(4000, () => {
+            if (this.lobby.expireLobbyNotice(effect.text)) this.rebuild();
+          });
+          break;
+        case 'expireReaction':
+          // Same lifetime as the server cooldown, so the line never outlives the next one.
+          this.time.delayedCall(REACTION_COOLDOWN_MS, () => {
+            if (this.lobby.expireReaction(effect.seat)) this.rebuild();
+          });
+          break;
+        case 'queueEntered':
+          this.queueStartedAt = Date.now();
+          break;
+        case 'cancelQueue':
+          this.cancelQueue();
+          break;
+      }
+    }
+  }
+
+  /** Every server push and status change, routed through one lobby transition each. No handler
+   * here decides anything: it hands the message to the machine and performs what comes back. */
   private wireClient(): void {
     this.unsubs.push(
       this.client.onStatus((s, reason) => {
         this.status = s;
-        // The shared link's code is only useful once there is a socket to send it on.
-        if (s === 'open' && this.autoJoinCode !== null && this.phase === 'idle' && this.code === null) {
-          const code = this.autoJoinCode;
-          this.autoJoinCode = null;
-          this.fireOnce('join', 3000, () => this.joinCode(code));
-        }
-        // 'unreachable' means the initial connection never opened at all (server down/refused)
-        // — distinct from a mid-session drop, which uses the normal 'reconnecting'/'closed'
-        // status copy instead.
-        if (s === 'error' && reason === 'unreachable') {
-          this.errorMsg = t('online.err.unreachable');
-          this.phase = 'error';
-        }
+        this.runEffects(this.lobby.status(s, reason));
         this.rebuild();
       }),
       this.client.on('room_joined', (msg) => {
-        // Do NOT clear 'create'/'join' here: this handler can fire between a double-click's two
-        // clicks (fast on localhost, or whenever frames are slow — e.g. under Playwright
-        // tracing), and clearing the guard right then reopens the window for the second click to
-        // fire a duplicate create_room/join_room. Neither button exists once phase is 'lobby', so
-        // the early clear bought nothing anyway — the 3s cooldown in fireOnce (or the 'error'
-        // handler's clear() below, for a rejection) is what releases the guard.
-        this.code = msg.code;
-        this.seat = msg.seat;
-        this.players = msg.players;
-        this.roomSettings = msg.settings;
-        this.hostSeat = msg.hostSeat;
-        this.party = msg.party;
-        this.visibility = msg.visibility;
-        // A matchmade room arrives as room_joined like any other, but the player is not in a
-        // lobby — they are mid-handoff, watching MATCH FOUND. Clobbering the phase here would
-        // flash the lobby for a frame and cancel the one readable beat of Quick Match.
-        if (this.phase !== 'matched') this.phase = 'lobby';
-        this.pendingJoinCode = null;
-        // Local display history only: the code and the host's name, both already on screen. The
-        // credential that could reclaim this seat lives in sessionStorage and never comes here.
-        rememberRoom(msg.code, msg.players.find((p) => p.seat === msg.hostSeat)?.name ?? '');
-        this.recent = readRecentRooms();
+        // The in-flight guard for 'create'/'join' is deliberately NOT released here: this handler
+        // can fire between a double-click's two clicks (fast on localhost, or whenever frames are
+        // slow — e.g. under Playwright tracing), and clearing it right then reopens the window for
+        // the second click to fire a duplicate create_room/join_room. Neither button exists once
+        // the phase is 'lobby', so an early clear buys nothing; fireOnce's cooldown (or a
+        // rejection) is what releases it.
+        this.runEffects(this.lobby.roomJoined(msg));
         this.rebuild();
       }),
       this.client.on('room_state', (msg) => {
-        this.inFlight.delete('ready');
-        // ON-09: the host changed the room's terms, so the server cleared every ready bit. Say
-        // why, or the bit drops off the row with no explanation. Read off the server's own
-        // transition (ready -> not ready) rather than a local flag; the match->lobby recycle
-        // clears the same bit and is not a settings change, so it is excluded.
-        const recycled = this.settingsLocked && !msg.locked;
-        const wasReady = this.ready;
-        const nowReady = msg.players.find((p) => p.seat === this.seat)?.ready ?? false;
-        if (wasReady && !nowReady && !recycled) this.settingsChangedNotice = true;
-        this.players = msg.players;
-        this.roomSettings = msg.settings;
-        this.hostSeat = msg.hostSeat;
-        this.party = msg.party;
-        this.visibility = msg.visibility;
-        this.settingsLocked = msg.locked;
+        this.runEffects(this.lobby.roomState(msg));
         this.rebuild();
       }),
       this.client.on('player_reaction', (msg) => {
-        this.lastReaction = { seat: msg.seat, reaction: msg.reaction };
+        this.runEffects(this.lobby.reaction(msg));
         this.rebuild();
-        // Same lifetime as the server cooldown, so the line never outlives the next one.
-        this.time.delayedCall(REACTION_COOLDOWN_MS, () => {
-          if (this.lastReaction?.seat === msg.seat) {
-            this.lastReaction = null;
-            this.rebuild();
-          }
-        });
       }),
-      /**
-       * The only writer of this client's queue state. Every transition is the server's word:
-       * a cancel that lost to a match arrives here as `matched`, a resumed phone arrives as
-       * `queued`, and nothing on this screen infers a state it was not told.
-       */
       this.client.on('queue_state', (msg) => {
-        this.inFlight.delete('queue');
-        this.queueTarget = msg.target;
-        if (msg.status === 'queued') {
-          if (this.phase !== 'queue') this.queueStartedAt = Date.now();
-          this.phase = 'queue';
-          this.queueNotice = null;
-        } else if (msg.status === 'matched') {
-          this.matchPlayers = msg.players ?? 0;
-          this.phase = 'matched';
-        } else if (msg.status === 'expired') {
-          this.phase = 'idle';
-          this.queueNotice = t('online.queueExpired');
-        } else if (this.phase === 'queue') {
-          this.phase = 'idle';
-          this.queueNotice = t('online.queueCancelled');
-        }
+        this.runEffects(this.lobby.queueState(msg));
         this.rebuild();
       }),
       this.client.on('room_list', (msg) => {
-        this.listings = msg.rooms;
-        this.browseState = 'ready';
+        this.runEffects(this.lobby.roomList(msg));
         if (this.phase === 'browse') this.rebuild();
       }),
       this.client.on('game_started', (msg) => this.enterMatch(msg.view)),
@@ -524,66 +413,7 @@ export class OnlineScene extends Phaser.Scene {
       // this the client re-established its seat but sat in the lobby forever.
       this.client.on('state_sync', (msg) => this.enterMatch(msg.view)),
       this.client.on('error', (msg) => {
-        // Any in-flight lobby action just got its answer (rejection) — unblock its button.
-        this.inFlight.clear();
-        // A recent-room shortcut that the server says is gone stops being a shortcut. The entry
-        // is dropped here rather than on a timer: the server's refusal is the only reliable
-        // evidence a room is dead, and re-offering it would send the player down the same hole.
-        const failedCode = this.pendingJoinCode;
-        this.pendingJoinCode = null;
-        if (failedCode && (msg.code === 'room_not_found' || msg.code === 'room_closed')) {
-          forgetRoom(failedCode);
-          this.recent = readRecentRooms();
-          // A shortcut that has expired is not an error the player made. Retiring the card and
-          // saying so on the entry screen keeps every other way in one tap away; the full-screen
-          // error phase would charge a dead CONTINUAR the price of the whole screen.
-          if (this.phase === 'idle') {
-            this.queueNotice = errorMessage(msg.code);
-            this.rebuild();
-            return;
-          }
-        }
-        // Discovery is additive: a refused room list must not throw the player off a screen from
-        // which create/join-by-code still work. It degrades in place instead.
-        if (this.phase === 'browse' && failedCode === null) {
-          this.browseState = 'failed';
-          this.rebuild();
-          return;
-        }
-        // A card the server refused. Every one of these is a room that changed between the answer
-        // that drew the card and the tap on it — it filled, it started, or it expired — so the
-        // card is retired and the reason is said on the browser. Throwing the player onto the
-        // full-screen error phase would cost them the list for something that is not an error.
-        if (this.phase === 'browse' && failedCode !== null && STALE_LISTING_CODES.includes(msg.code)) {
-          this.listings = this.listings.filter((r) => r.code !== failedCode);
-          // "Check the code and try again" is the right sentence for a typed code and the wrong
-          // one for a tapped card — nobody typed anything. A vanished room gets its own line.
-          this.browseNotice =
-            msg.code === 'room_full' || msg.code === 'game_started'
-              ? errorMessage(msg.code)
-              : t('online.browseGone');
-          this.rebuild();
-          return;
-        }
-        // A refusal about the room's state, answered on the lobby instead of costing it. The room
-        // is still there and this client is still in it — only the action was refused.
-        if (this.phase === 'lobby' && LOBBY_NOTICE_CODES.includes(msg.code)) {
-          const shown = errorMessage(msg.code);
-          this.lobbyNotice = shown;
-          this.rebuild();
-          // Retires only the line it was started for — a second refusal in the same four seconds
-          // owns its own timer, and this one must not cut the newer line short.
-          this.time.delayedCall(4000, () => {
-            if (this.lobbyNotice !== shown) return;
-            this.lobbyNotice = null;
-            this.rebuild();
-          });
-          return;
-        }
-        // Player sees a translated, actionable sentence — never the raw dev-facing `msg.message`
-        // or `msg.code`. The raw code stays available via `client.trace`/debug API for logs.
-        this.errorMsg = errorMessage(msg.code);
-        this.phase = 'error';
+        this.runEffects(this.lobby.serverError(msg));
         this.rebuild();
       }),
     );
@@ -622,69 +452,30 @@ export class OnlineScene extends Phaser.Scene {
     });
   }
 
+  /** The e2e surface is built from the lobby machine and the socket; this scene supplies only the
+   * actions it owns and the two facts that exist purely on screen (ARCH-011). */
   private installDebugHooks(): void {
-    debugApi.online = {
-      status: () => this.status,
-      code: () => this.code,
-      seat: () => this.seat,
-      rev: () => null,
-      players: () => this.players,
-      notice: () => '',
-      errorText: () => this.errorMsg ?? '',
-      lastRejections: () => [],
-      trace: () => this.client.trace,
-      statusTrace: () => this.client.statusTrace,
-      createRoom: (name) => this.client.createRoom(name ?? this.playerName()),
-      // Through the scene's own join path, not straight at the socket: a verification join has
-      // to be the same join a card tap is, refusal handling included.
-      joinRoom: (code, name) => this.joinCode(code, name),
+    debugApi.online = lobbyDebugSurface(this.lobby, this.client, {
       displayName: () => this.playerName(),
-      react: (reaction) => this.client.sendReaction(reaction),
-      setReady: (ready) => this.client.setReady(ready),
-      startGame: () => this.client.startGame(),
-      setRoomSettings: (s) => this.client.setRoomSettings(s),
-      roomSettings: () => this.roomSettings,
-      party: () => this.party,
-      matchId: () => null,
-      openParty: () => {
-        if (this.phase !== 'lobby' || this.code === null) return;
-        this.phase = 'party';
-        this.rebuild();
-      },
+      join: (code, name) => this.joinCode(code, name),
+      startQueue: () => this.startQueue(),
+      cancelQueue: () => this.cancelQueue(),
       openCustomSettings: () => this.openCustomSettings(),
-      turnMsLeft: () => null,
-      phase: () => this.phase,
+      openParty: () => {
+        if (this.lobby.openParty()) this.rebuild();
+      },
+      openBrowse: () => {
+        if (!this.lobby.openBrowse()) return;
+        this.rebuild();
+        this.refreshListings();
+      },
       focus: () => ({
         index: this.focusIndex,
         count: this.focusables.length,
         label: this.focusIndex < 0 ? '' : this.focusables[this.focusIndex]?.labelText() ?? '',
       }),
-      visibility: () => this.visibility,
-      setVisibility: (v) => this.client.setVisibility(v),
-      joinQueue: (target) => {
-        this.queueTarget = target;
-        this.startQueue();
-      },
-      cancelQueue: () => this.cancelQueue(),
-      queue: () => ({ status: this.phase === 'queue' ? 'queued' : this.phase === 'matched' ? 'matched' : 'idle', target: this.queueTarget }),
-      openBrowse: () => {
-        if (this.phase !== 'idle') return;
-        this.phase = 'browse';
-        this.rebuild();
-        this.refreshListings();
-      },
-      listings: () => this.listings,
-      browseNotice: () => this.browseNotice,
-      leaveRoom: () => this.client.leaveRoom(),
-      recentRooms: () => this.recent.map((r) => ({ code: r.code, host: r.host })),
       lobbySeats: () => this.renderedSeats,
-      lobbyNotice: () => this.lobbyNotice,
-      comprar: () => { /* no in-match action while still in the lobby */ },
-      submitRaw: () => { /* not applicable in the lobby */ },
-      forceDrop: () => this.client.forceDrop(),
-      desyncs: () => 0,
-      requestResync: () => this.client.requestResync(),
-    };
+    });
   }
 
   /** mm:ss since the search started. Cosmetic: the server decides when a search is over, and a
@@ -699,7 +490,7 @@ export class OnlineScene extends Phaser.Scene {
   }
 
   private startQueue(): void {
-    this.queueNotice = null;
+    this.lobby.queueRequested(this.queueTarget);
     this.queueStartedAt = Date.now();
     this.client.joinQueue(this.queueTarget, this.playerName());
   }
@@ -746,7 +537,7 @@ export class OnlineScene extends Phaser.Scene {
         return;
       }
       if (ev.key === 'Escape') {
-        this.phase = 'idle';
+        this.lobby.escapeToIdle();
         this.codeInput = '';
         this.rebuild();
         return;
@@ -870,7 +661,7 @@ export class OnlineScene extends Phaser.Scene {
    * and a live session token has already reclaimed its seat before any of this runs.
    */
   private joinCode(code: string, name?: string): void {
-    this.pendingJoinCode = code;
+    this.lobby.joinStarted(code);
     this.client.joinRoom(code, name ?? this.playerName());
   }
 
@@ -882,14 +673,11 @@ export class OnlineScene extends Phaser.Scene {
    */
   private commitName(): void {
     const name = sanitizeName(this.nameInput).trim();
-    if (name.length < MIN_NAME_LENGTH) {
-      this.nameError = true;
+    if (!this.lobby.commitName(name, MIN_NAME_LENGTH)) {
       this.rebuild();
       return;
     }
     writeDisplayName(name);
-    this.nameError = false;
-    this.phase = this.nameReturn;
     this.rebuild();
   }
 
@@ -975,10 +763,7 @@ export class OnlineScene extends Phaser.Scene {
       // scene would use; offline stays a flash, same reason as CRIAR SALA/ENTRAR above.
       new PixelButton(this, cx(), vy(155), t('online.retry'), () => {
         if (isOffline()) { this.flashOfflineReason(); return; }
-        this.errorMsg = null;
-        this.offlineError = false;
-        this.phase = 'idle';
-        this.client.connect();
+        this.runEffects(this.lobby.retry());
         this.rebuild();
       }, { textureBase: 'btn-comprar', w: 140, h: 20, size: 8 });
     } else if (this.phase === 'join') {
@@ -1019,13 +804,10 @@ export class OnlineScene extends Phaser.Scene {
     new PixelButton(this, cx(), view().portrait ? vy(260) : vy(245), t(backLabel), () => {
       if (!leavingRoom) {
         this.customDraft = null;
-        // Backing out of a search *is* cancelling it: leaving the entry behind would keep the
-        // player matchable from a screen that no longer says they are searching.
-        if (this.phase === 'queue') this.cancelQueue();
-        // Backing out of the name editor discards the edit and returns to the screen that opened
-        // it — which, coming from JOIN, still holds a half-typed code.
-        this.phase = this.phase === 'name' ? this.nameReturn
-          : this.phase === 'browse' || this.phase === 'queue' ? 'idle' : 'lobby';
+        // Backing out of a search *is* cancelling it, and out of the name editor returns to the
+        // screen that opened it — which, coming from JOIN, still holds a half-typed code. Both
+        // are the machine's `back()`.
+        this.runEffects(this.lobby.back().effects);
         this.rebuild();
         return;
       }
@@ -1071,7 +853,7 @@ export class OnlineScene extends Phaser.Scene {
       )
       .on('pointerup', () => {
         const i = QUEUE_TARGET_CYCLE.indexOf(this.queueTarget);
-        this.queueTarget = QUEUE_TARGET_CYCLE[(i + 1) % QUEUE_TARGET_CYCLE.length]!;
+        this.lobby.queueRequested(QUEUE_TARGET_CYCLE[(i + 1) % QUEUE_TARGET_CYCLE.length]!);
         this.rebuild();
       });
 
@@ -1115,15 +897,14 @@ export class OnlineScene extends Phaser.Scene {
     y += 20;
 
     new PixelButton(this, cx(), vy(y), t('online.join'), () => {
-      this.phase = 'join';
+      this.lobby.openJoin();
       this.codeInput = '';
       this.rebuild();
     }, { textureBase: 'btn-comprar', w: 140, h: 20, size: 8 });
     y += 18;
 
     const browse = new PixelButton(this, cx(), vy(y), t('online.browse'), () => {
-      this.phase = 'browse';
-      this.browseState = 'loading';
+      if (!this.lobby.openBrowse()) return;
       this.rebuild();
       this.refreshListings();
     }, { textureBase: 'btn-comprar', w: 140, h: 18, size: 7, onBlocked: () => this.flashOfflineReason() });
@@ -1191,12 +972,11 @@ export class OnlineScene extends Phaser.Scene {
    * browser is opened and when ATUALIZAR is tapped, never on a timer. */
   private refreshListings(): void {
     if (isOffline()) {
-      this.browseState = 'failed';
+      this.lobby.browseFailed();
       this.rebuild();
       return;
     }
-    this.browseState = 'loading';
-    this.browseNotice = null;
+    this.lobby.browseLoading();
     this.client.listRooms();
     this.rebuild();
   }
@@ -1298,9 +1078,7 @@ export class OnlineScene extends Phaser.Scene {
         Phaser.Geom.Rectangle.Contains,
       )
       .on('pointerup', () => {
-        this.nameReturn = this.phase === 'join' ? 'join' : 'idle';
-        this.phase = 'name';
-        this.nameError = false;
+        this.lobby.openName(this.phase === 'join' ? 'join' : 'idle');
         this.nameInput = readDisplayName() ?? '';
         this.rebuild();
       });
@@ -1381,10 +1159,8 @@ export class OnlineScene extends Phaser.Scene {
   /** Opens the custom screen on a copy of whatever the room is playing under now, so the host
    * edits the real current terms instead of starting from an unrelated default. */
   private openCustomSettings(): void {
-    if (this.phase !== 'lobby' || this.code === null) return;
-    if (this.seat !== this.hostSeat || this.settingsLocked) return;
+    if (!this.lobby.openCustom()) return;
     this.customDraft = { ...this.roomSettings, timerMode: 'custom' };
-    this.phase = 'custom';
     this.rebuild();
   }
 
@@ -1443,7 +1219,7 @@ export class OnlineScene extends Phaser.Scene {
       this.fireOnce('settings', 300, () => {
         this.client.setRoomSettings({ ...draft, timerMode: 'custom' });
         this.customDraft = null;
-        this.phase = 'lobby';
+        this.lobby.closeCustom();
         this.rebuild();
       });
     }, { textureBase: 'btn-feito', w: 130, h: portrait ? 24 : 20, size: 8, primary: true });
@@ -1652,7 +1428,7 @@ export class OnlineScene extends Phaser.Scene {
     const actions: { key: string; run: () => void }[] = [
       { key: 'online.copy', run: () => this.copyCode() },
       ...(canShare ? [{ key: 'online.share', run: () => this.shareCode() }] : []),
-      { key: 'online.partyOpen', run: () => { this.phase = 'party'; this.rebuild(); } },
+      { key: 'online.partyOpen', run: () => { if (this.lobby.openParty()) this.rebuild(); } },
     ];
     const bw = actions.length > 2 ? 76 : 100;
     const gap = 6;
@@ -1713,9 +1489,7 @@ export class OnlineScene extends Phaser.Scene {
     const stacked = view().portrait;
     const readyBtn = new PixelButton(this, cx(), stacked ? vy(208) : vy(216), this.ready ? t('online.readyOn') : t('online.ready'), () => {
       this.fireOnce('ready', 300, () => {
-        this.rematch = false;
-        this.settingsChangedNotice = false;
-        this.lobbyNotice = null;
+        this.lobby.readySent();
         this.client.setReady(!this.ready);
       });
     }, { textureBase: 'btn-feito', w: 100, h: 20, size: 8, primary: true });

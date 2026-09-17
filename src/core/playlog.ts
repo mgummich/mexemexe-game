@@ -1,4 +1,7 @@
 import type { EventBus, GameEvents } from './events';
+// Type-only, erased at build: the match owns the shape of its own notifications, and a second
+// copy of that union here would be a second owner of it (see tests/boundaries.test.ts).
+import type { MatchEvent } from '../game-state/match';
 
 const CAP = 2000;
 /** A gap this long between two actions inside your own turn is a hesitation worth reading (TELEMETRY-02). */
@@ -297,34 +300,47 @@ export const playlog = {
     return enabled;
   },
 
-  /** Subscribes to the shared bus once (from `main.ts`) to record turn lifecycle events plus
-   * per-turn duration, computed here from consecutive `turn:start` timestamps — the store stays
-   * timing-free. */
-  attachToBus(bus: EventBus<GameEvents>): void {
-    bus.on('turn:start', ({ playerId, turn }) => {
-      const now = typeof performance !== 'undefined' ? performance.now() : 0;
-      const durationMs = lastTurnStartT !== null ? Math.round(now - lastTurnStartT) : undefined;
-      lastTurnStartT = now;
+  /**
+   * App-lifetime subscriptions: facts about the *session*, not about any one match. Owned by
+   * `main.ts` from boot to page unload, which is exactly this bus's own lifetime. Returns the
+   * detach so that ownership is stated rather than assumed (ARCH-007).
+   */
+  attachAppEvents(bus: EventBus<GameEvents>): () => void {
+    // Orientation flips (TELEMETRY-10). Fires only on a real profile change, never per frame.
+    return bus.on('viewport:changed', ({ portrait }) => playlog.record('orientation', { portrait }));
+  },
+
+  /**
+   * Match-lifetime subscription: records the turn lifecycle plus per-turn duration, computed here
+   * from consecutive `turn:start` timestamps so the store stays timing-free.
+   *
+   * Attached to one `LocalMatch` instance and detached with the returned function when that match
+   * ends, so a finished match can never record into the next one and a rematch can never be
+   * recorded twice (ARCH-007).
+   */
+  attachMatch(match: { on(fn: (event: MatchEvent) => void): () => void }): () => void {
+    return match.on((event) => {
       playlog.closeInvalidSpan();
-      playlog.record('turn:start', durationMs !== undefined ? { playerId, turn, durationMs } : { playerId, turn });
-    });
-    bus.on('turn:confirmed', ({ playerId, cardsPlayed }) => {
-      playlog.closeInvalidSpan();
-      playlog.record('turn:confirmed', { playerId, cardsPlayed });
-      // A confirmed turn is a legal table plus a card from hand — the first one is the moment the
-      // player first made the game work (TELEMETRY-11).
-      if (!firstMexeRecorded) {
-        firstMexeRecorded = true;
-        playlog.record('mexe:first', { playerId });
+      if (event.type === 'turn:start') {
+        const now = typeof performance !== 'undefined' ? performance.now() : 0;
+        const durationMs = lastTurnStartT !== null ? Math.round(now - lastTurnStartT) : undefined;
+        lastTurnStartT = now;
+        const { playerId, turn } = event;
+        playlog.record('turn:start', durationMs !== undefined ? { playerId, turn, durationMs } : { playerId, turn });
+      } else if (event.type === 'turn:confirmed') {
+        playlog.record('turn:confirmed', { playerId: event.playerId, cardsPlayed: event.cardsPlayed });
+        // A confirmed turn is a legal table plus a card from hand — the first one is the moment the
+        // player first made the game work (TELEMETRY-11).
+        if (!firstMexeRecorded) {
+          firstMexeRecorded = true;
+          playlog.record('mexe:first', { playerId: event.playerId });
+        }
+      } else if (event.type === 'turn:drawn') {
+        playlog.record('turn:drawn', { playerId: event.playerId });
+      } else {
+        playlog.record('game:won');
       }
     });
-    bus.on('turn:drawn', ({ playerId }) => {
-      playlog.closeInvalidSpan();
-      playlog.record('turn:drawn', { playerId });
-    });
-    bus.on('game:won', () => playlog.record('game:won'));
-    // Orientation flips (TELEMETRY-10). Fires only on a real profile change, never per frame.
-    bus.on('viewport:changed', ({ portrait }) => playlog.record('orientation', { portrait }));
   },
 
   summary(): PlaylogSummary {

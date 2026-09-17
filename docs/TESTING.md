@@ -102,12 +102,30 @@ helper logic live as pure modules under `src/table` and `src/ui`.
   (GQA-02). It checks the **id set**, not a total: one lost card paired with one
   duplicated card keeps a count intact. Reuse it rather than re-counting.
 - `tests/draft.test.ts` — Mexe Mode editing, undo/redo/reset, card conservation.
+- `tests/actions.test.ts` — the pure `applyGameAction` and the `GameStore` slot:
+  what each action does, what a refusal leaves untouched, and that the store
+  reaches no global bus (ARCH-004).
+- `tests/match.test.ts` — **local match orchestration without Phaser**
+  (`LocalMatch`): confirm, draw, refusal, finish, AI turn routing, disposal
+  (a search that yields past the end of the match is dropped), and that a
+  listener on a finished match never hears the next one.
+- `tests/online-session.test.ts` — **online application state without a socket**
+  (`OnlineSession`) driven by recorded server frames: a fresh frame, a stale
+  revision, a digest mismatch and its resync policy, a dropped draft, the Mexe
+  bonus edge, seat-gap translation, and the missed-turn limit.
+- `tests/lobby.test.ts` — **every lobby transition without Phaser**
+  (`LobbyMachine`): entry/offline/resume, the share link, joining, ready and the
+  terms-changed explanation, host-only screens, the matchmaking queue, and where
+  each class of server refusal is answered.
 - `tests/probes.test.ts` — 40 seeded AI-vs-AI full matches asserting card
   conservation, table legality, turn rotation and termination after *every*
   turn, plus the draw-pile and undo/reset-abuse edge probes.
 - `tests/ai.test.ts` — legality, determinism, budgets, personalities and the
   four difficulty tiers.
-- `tests/tutorial.test.ts` — all 12 steps, the per-step allow-list, completion.
+- `tests/tutorial.test.ts` — all 12 steps, the per-step allow-list, completion,
+  and the **authority boundary**: the tutorial gate is pedagogical only, so it
+  can refuse a legal action and can never let an illegal one past `src/rules`
+  (ARCH-021).
 - `tests/i18n.test.ts` — pt-BR/en-US key parity, every declared key resolving to
   non-empty copy that is not the raw key, and every `t('...')` string literal in
   `src/` being a declared key.
@@ -135,8 +153,11 @@ helper logic live as pure modules under `src/table` and `src/ui`.
 - `tests/boundaries.test.ts` — the architecture guard: the domain core's import
   allow-list, no platform/clock/unseeded randomness in `rules`, `mexe-mode`,
   `game-state` or `table`, Phaser confined to the presentation layer, and the
-  server importing only the shared rules/protocol/rng, plus the play log
-  importing nothing outside `core` and reading no browser API. See
+  server importing only the shared rules/protocol/rng, the extracted application
+  modules (`match.ts`, `online-session.ts`, `lobby.ts`) reaching no scene, Phaser
+  or DOM, legality functions being declared only in `src/rules`, product code not
+  importing the verification adapters, plus the play log importing nothing outside
+  `core` (bar the match-event type) and reading no browser API. See
   [ARCHITECTURE.md](ARCHITECTURE.md#enforcement-status).
 - `tests/soak.test.ts` — long-running game loop, used as a perf/stability soak.
 
@@ -254,6 +275,21 @@ drive the game:
 
 `state()` returns the local state only — online it holds the redacted per-seat
 view, so it cannot leak an opponent's hand.
+
+**The surface is an adapter, not a product dependency.** `window.__MEXE__.online`
+is built in `src/verification/online-debug.ts` *from* the product's own owners —
+`OnlineSession` and `LobbyMachine`, plus the `NetClient` — rather than assembled
+out of a scene's private fields. A scene passes its owner in and supplies only
+the handful of genuinely rendered facts (the on-screen notice, the focus ring,
+the painted seat rows) and product actions (COMPRAR, join, queue) that have no
+other reader. The direction that matters: verification reads product contracts;
+product code does not exist to maintain a parallel test API, and
+`tests/boundaries.test.ts` fails if a product module imports the adapters.
+
+The few genuinely test-only entry points that remain are labelled as such —
+`submitRaw` (an intentionally illegal proposal, the only way to exercise
+server-side rejection) and `forceDrop` (kill the socket) — and both go through
+the ordinary `NetClient`.
 
 `replay()` returns the deterministic reproduction of the match on screen (seed,
 start, ordered actions) and `null` online, where the local store is a projection

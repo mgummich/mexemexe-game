@@ -2,21 +2,18 @@
 type EventMap = Record<string, unknown>;
 
 /**
- * Every event here is a *notification of a fact that already happened*, never a command and never
- * a step in advancing the game. Gameplay control flow runs on `GameStore.dispatch`'s returned
- * outcome (see src/game-state/actions.ts), so no subscriber is load-bearing and delivery order
- * carries no gameplay meaning. Nothing is added here that a return value could carry instead.
+ * Application-lifetime facts only: something that is true of the *page*, for as long as the page
+ * exists, and that several unrelated scenes react to. Everything match-scoped is published by the
+ * match that owns it (`LocalMatch.on`, `src/game-state/match.ts`) rather than here, so a stale
+ * subscriber cannot hear the next match and gameplay never depends on a global singleton
+ * (ARCH-004, ARCH-007).
+ *
+ * Every event here is a notification of a fact that already happened, never a command: no
+ * subscriber is load-bearing and delivery order carries no meaning.
  */
 export interface GameEvents extends EventMap {
-  /** A turn was committed to the local store. Publisher: `GameStore`. */
-  'turn:confirmed': { playerId: string; cardsPlayed: number };
-  /** A card was drawn and the turn passed, locally. Publisher: `GameStore`. */
-  'turn:drawn': { playerId: string };
-  /** The next local turn began. Publisher: `GameStore`. */
-  'turn:start': { playerId: string; turn: number };
-  /** The local match ended. Publisher: `GameStore`. */
-  'game:won': { winnerId: string };
-  /** Orientation/pointer profile flipped (see src/ui/viewport.ts) — scenes re-lay-out. */
+  /** Orientation/pointer profile flipped (see src/ui/viewport.ts) — scenes re-lay-out.
+   * Publisher: `src/main.ts`. Subscribers: every scene, plus the play log. */
   'viewport:changed': { portrait: boolean };
 }
 

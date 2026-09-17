@@ -23,8 +23,12 @@ export interface RenderedSeatRow {
   wins: number;
 }
 
-/** Online-alpha e2e surface — present from OnlineScene entry through the online match, null otherwise. */
-interface MexeOnlineDebugApi {
+/**
+ * Online-alpha e2e surface — present from OnlineScene entry through the online match, null
+ * otherwise. Built in `src/verification/online-debug.ts` from the lobby machine or the online
+ * session; product code hands over the owner rather than registering closures into it (ARCH-011).
+ */
+export interface MexeOnlineDebugApi {
   status: () => ConnStatus;
   code: () => string | null;
   seat: () => number | null;

@@ -14,10 +14,11 @@ must preserve, and the scenarios that prove them, are
 ```
 rules/          pure functions + seeded rng, no Phaser/DOM/Date  ← the only rules authority
 core/           event bus, settings, persistence, play log, PWA, lifecycle
-game-state/     GameStore: turn lifecycle over rules/
+game-state/     GameStore (the committed state slot) + LocalMatch (match orchestration)
 mexe-mode/      table draft editor (break/split/merge/move, undo/redo/reset)
 ai/             SimpleAi, RearrangerAi, personalities        ← rules + mexe-mode only
-net/            wire protocol, WebSocket client, view→state projection
+net/            wire protocol, WebSocket client, view→state projection,
+                OnlineSession (online application state) + LobbyMachine (lobby state)
 table/ ui/ scenes/ assets/ audio/ cosmetics/                  ← Phaser + DOM layer
 localization/ tutorial/ demo/ verification/                   ← support
 server/         authoritative room server (imports src/net/protocol + src/rules)
@@ -31,6 +32,28 @@ persistence→cosmetics, pwa→verification; playlog's viewport read was removed
 core" as a smell, not a default — see
 [ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md) ARCH-009.
 
+Three layers, top to bottom, for gameplay and for online alike:
+
+```
+presentation            GameScene / OnlineScene: Phaser objects, input, animation, layout
+   ↓ intents
+application             LocalMatch · OnlineSession · LobbyMachine — no Phaser, no DOM, no clock
+   ↓ actions
+gameplay kernel         src/rules (+ src/game-state/actions.ts), pure and deterministic
+```
+
+and, online:
+
+```
+presentation → online application state (OnlineSession / LobbyMachine)
+             → transport/protocol (src/net/client.ts, src/net/protocol.ts)
+             → server authority (server/rooms.ts)
+```
+
+The application layer is the boundary a test should target: all three classes are constructible
+and drivable in Node (`tests/match.test.ts`, `tests/online-session.test.ts`, `tests/lobby.test.ts`),
+and `tests/boundaries.test.ts` fails if any of them acquires a scene, Phaser or DOM dependency.
+
 **Hard rule:** `src/rules` is pure and deterministic — no Phaser, no DOM, no
 `Date`, no `Math.random`. Everything in it is testable in Vitest without a
 browser. The Phaser layer renders state and emits intents; it never decides
@@ -42,10 +65,10 @@ legality.
 |---|---|
 | `src/rules` | deck, seeded rng (`rng.ts`), shuffle, deal (`createNewGame`), meld analysis, table validation, turn legality, card conservation, win check, serialize, `draftFromCardIds` (card ids → draft, used by the server and by replay), `hash.ts` (one FNV-1a, shared by the wire digest and the replay digest) |
 | `src/core` | `EventBus` (`events.ts`), settings + `localStorage` persistence, session play log, objective hints, results summary, error recovery, app sleep/resume, PWA registration |
-| `src/game-state` | `actions.ts`: the local gameplay-action vocabulary and the pure `applyGameAction`. `store.ts`: `GameStore`, the one mutable slot for the committed local `GameState`, which only `dispatch` replaces. `replay.ts`: the deterministic reproduction format (record, validate, run) |
+| `src/game-state` | `actions.ts`: the local gameplay-action vocabulary and the pure `applyGameAction`. `store.ts`: `GameStore`, the one mutable slot for the committed local `GameState`, which only `dispatch` replaces — it emits nothing and imports no bus, so an online client and a server could both hold one. `match.ts`: `LocalMatch`, the local match's application boundary (turn cycle, AI turn routing, per-instance notifications). `replay.ts`: the deterministic reproduction format (record, validate, run) |
 | `src/mexe-mode` | draft state: melds under edit, cards played from hand, undo/redo history |
 | `src/ai` | `SimpleAi`, `RearrangerAi`, the four personalities and their presentation constants |
-| `src/net` | `protocol.ts` (shared wire types, redaction, boundary validation), `client.ts` (browser socket), `viewToState.ts` (server view → local-shaped state), `errors.ts` |
+| `src/net` | `protocol.ts` (shared wire types, redaction, boundary validation), `client.ts` (browser socket), `viewToState.ts` (server view → local-shaped state), `online-session.ts` (`OnlineSession`: the online match's application state and every policy over a server frame — staleness, desync/resync, seat-gap translation, missed-turn limit), `lobby.ts` (`LobbyMachine`: the explicit lobby state and its transitions), `errors.ts` |
 | `src/table` | table layout, snapping, zoom, tap destinations, the portrait editor layout |
 | `src/ui` | widgets, overlays, panels (settings, rules, pause), helper modes, regions, viewport |
 | `src/scenes` | Boot, Menu, Setup, Game, Online, Tutorial, Win |
@@ -55,7 +78,7 @@ legality.
 | `src/localization` | pt-BR (default) + en-US dictionaries, `t(key)` |
 | `src/tutorial` | scripted steps, fixture table, step director |
 | `src/demo` | `?showcase=` scenarios used by the screenshot suite |
-| `src/verification` | `window.__MEXE__` debug API (see [TESTING.md](TESTING.md)) |
+| `src/verification` | `debug-api.ts` (`window.__MEXE__` shape and installation), `online-debug.ts` (the online surface, **built from** `OnlineSession`/`LobbyMachine` rather than assembled by them) — see [TESTING.md](TESTING.md) |
 | `server/` | `index.ts` process + HTTP health/metrics + socket dispatch + broadcast, `rooms.ts` room/turn authority, `connections.ts` socket registry and rate-limit windows, `matchmaking.ts` casual FIFO queue, `metrics.ts` counters + Prometheus text, `config.ts` env parsing, `log.ts` redacting logger |
 
 ## Data model
@@ -144,8 +167,9 @@ Every local gameplay intent — human FEITO/COMPRAR, AI, the tutorial opponent, 
 transition directly:
 
 ```
-intent → GameScene.dispatch(action) → GameStore.dispatch → applyGameAction (pure)
-       → outcome → onWin() | onTurnStart() → render + notifications
+intent → GameScene.dispatch(action) → LocalMatch.dispatch → GameStore.dispatch
+       → applyGameAction (pure) → outcome → onWin() | onTurnStart() → render
+                                          ↘ MatchEvent → play log
 ```
 
 | Piece | Where | What it owns |
@@ -153,8 +177,14 @@ intent → GameScene.dispatch(action) → GameStore.dispatch → applyGameAction
 | `GameAction` | `src/game-state/actions.ts` | the vocabulary: `confirmTurn`, `drawAndEndTurn`. Nothing else changes committed local state. |
 | `applyGameAction` | `src/game-state/actions.ts` | preconditions (match still playing, actor is the active seat) then the `src/rules` transition. Pure — a test or replay can drive it without Phaser. |
 | `ActionOutcome` | `src/game-state/actions.ts` | `{ ok: false, reasons }` (state untouched) or `{ ok: true, state, actorId, cardsPlayed, finished }`. |
-| `GameStore.dispatch` | `src/game-state/store.ts` | the one mutable state slot, plus announcing the fact on the bus. |
-| `GameScene.dispatch` | `src/scenes/GameScene.ts` | post-transition orchestration: win vs next turn, presentation, logging. |
+| `GameStore.dispatch` | `src/game-state/store.ts` | the one mutable state slot, and the accepted actions kept for the replay. It announces nothing and imports no bus. |
+| `LocalMatch` | `src/game-state/match.ts` | the local match's application boundary: the store, the announcement of what happened (`MatchEvent`, per instance), and AI turn routing (`runAiTurn` — decide, re-check, dispatch, or fall back to a draw). No Phaser, no timers. |
+| `GameScene.dispatch` | `src/scenes/GameScene.ts` | presentation that follows an outcome: win vs next turn, animation, sound. |
+
+The AI is on this same path: `GameScene` owns the thinking *pause* and the character's line,
+`LocalMatch.runAiTurn` owns the decision and its routing to a `GameAction`. A search that yields
+across frames and comes back after the match moved on (or was disposed) is reported `stale` and
+dropped, rather than applied to a board it was not computed for.
 
 The actor differs between a human and an AI seat; the transition authority does not. UI intents
 (open settings, zoom the table, hover a card, play a sound) are *not* actions and never become
@@ -180,23 +210,35 @@ Both action paths refuse rather than throw, with `ReasonCode`s the UI already tr
 
 ### Events
 
-Every bus event is a **notification of a fact that already happened**. None of them advance the
-game, so no subscriber is load-bearing and delivery order carries no gameplay meaning.
+There are two kinds, and the distinction is the point.
+
+**Match notifications** (`MatchEvent` in `src/game-state/match.ts`) are published by the
+`LocalMatch` instance that produced them, to listeners attached to *that instance*:
 
 | Event | Publisher | Subscribers | Payload |
 |---|---|---|---|
-| `turn:confirmed` | `GameStore.dispatch` | playlog | `{ playerId, cardsPlayed }` |
-| `turn:drawn` | `GameStore.dispatch` | playlog | `{ playerId }` |
-| `turn:start` | `GameStore.dispatch` | playlog | `{ playerId, turn }` |
-| `game:won` | `GameStore.dispatch` | playlog | `{ winnerId }` |
-| `viewport:changed` | `main.ts` resize handler | every scene, playlog | `{ portrait }` |
+| `turn:confirmed` | `LocalMatch.dispatch` | play log | `{ playerId, cardsPlayed }` |
+| `turn:drawn` | `LocalMatch.dispatch` | play log | `{ playerId }` |
+| `turn:start` | `LocalMatch.dispatch` | play log | `{ playerId, turn }` |
+| `game:won` | `LocalMatch.dispatch` | play log | `{ winnerId }` |
 
-A refused action emits nothing. `GameStore` is the publisher of the turn facts because it *is*
-the local application-action executor; the server does not use it (ARCH-004) and does not inherit
-the bus. Every subscription returns an unsubscribe and every scene calls it from
-`this.events.once('shutdown', …)`, so a dead scene cannot be reached. `GameScene` still guards its
-async AI continuation with `sceneGone` and a store-identity check, because the search yields
-across frames — not because an event might arrive late.
+**App-lifetime facts** go on the process-global bus (`src/core/events.ts`), which now carries
+exactly one:
+
+| Event | Publisher | Subscribers | Payload |
+|---|---|---|---|
+| `viewport:changed` | `main.ts` resize handler | every scene, play log | `{ portrait }` |
+
+Every event of either kind is a **notification of a fact that already happened**. None of them
+advance the game: the turn cycle runs on `dispatch`'s returned outcome, so no subscriber is
+load-bearing and delivery order carries no gameplay meaning. A refused action emits nothing.
+
+Match notifications are per-instance precisely so that a listener attached to a finished match
+cannot hear the next one, and so that state mutation never requires a global singleton to exist —
+which is what lets `GameStore` be reused by an online client's projection (ARCH-004, ARCH-007).
+Bus subscriptions return an unsubscribe and every scene calls it from
+`this.events.once('shutdown', …)`. `GameScene` also calls `LocalMatch.dispose()` there, which is
+what stops a yielding AI search from acting on a dead scene.
 
 ## Online game flow
 
@@ -415,8 +457,10 @@ the same string, which is what `createNewGame` determinism tests compare.
 ```text
 Browser tab
  ├─ main.ts                  composition root: Phaser game, locale, PWA, resize, error recovery
- ├─ scenes/ (Phaser)         render + input + (today) match orchestration
- ├─ game-state + mexe-mode   committed local state and the turn's draft
+ ├─ scenes/ (Phaser)         render + input + effects only
+ ├─ game-state + mexe-mode   LocalMatch orchestration, committed state, the turn's draft
+ ├─ net/online-session +     online application state and the lobby state machine
+ │  net/lobby
  ├─ rules/                   the legality authority — shared with the server verbatim
  ├─ ai/                      local opponents (no network, no Phaser)
  ├─ core/ + localization/    settings, save, playlog, PWA, bus, copy
@@ -443,7 +487,9 @@ suites (through `window.__MEXE__`, never through internals).
 | Concern | Authority | Everyone else |
 |---|---|---|
 | meld legality, turn legality, winner, draw | `src/rules` | may only ask, never decide |
-| committed local game state | `GameStore` (`src/game-state`) | reads through `get()`; treat as read-only |
+| committed local game state | `LocalMatch` over `GameStore` (`src/game-state`) | reads through `state()`; `readonly` by type |
+| online application state (revision, seat mapping, resync policy, missed-turn limit) | `OnlineSession` (`src/net/online-session.ts`) | the scene renders its answers; presentation decides none of them |
+| lobby screen state and its transitions | `LobbyMachine` (`src/net/lobby.ts`) | `OnlineScene` renders it and dispatches into it |
 | Mexe draft | `DraftEditor` (`src/mexe-mode`) | never serialized, never sent until FEITO |
 | AI choice | `src/ai` behind `AiPlayer.decide` | scene only schedules and presents it |
 | online match state, `rev`, deal seed, turn timer, room membership, host, ready, reconnect seat | the server's `RoomManager` | clients render the per-seat view they are given |
@@ -451,21 +497,23 @@ suites (through `window.__MEXE__`, never through internals).
 | settings, progress, cosmetics | `src/core/settings` over `persistence` | no scene-local copies |
 | layout, sizing, orientation | `src/ui/viewport` + `src/ui/regions` + `src/table` | scenes consume, never re-derive |
 
-Two ownership facts worth knowing before changing anything:
+Ownership facts worth knowing before changing anything:
 
-- **The server does not use `GameStore`.** `GameStore` emits on the global bus,
-  and one process holds many rooms, so `server/rooms.ts` calls the same
-  `src/rules` functions directly — including `createNewGame`, so the deal is no
-  longer written out twice. What stays client-side is the announcement, not the
-  gameplay. (ARCH-004.)
-- **`GameScene` currently owns more than presentation** — online state
-  adaptation, AI scheduling and the online turn clock live there. That is a
-  known concentration, not the intended end state. (ARCH-001/ARCH-002.) What it
-  no longer owns is the turn transition itself: it issues actions and reacts to
-  outcomes, and the rules-facing part of that (`applyGameAction`) is testable
-  without Phaser.
-- **Post-transition orchestration is the caller's, not a subscriber's.** The bus
-  announces facts; `GameScene.dispatch` decides what happens next. (ARCH-006.)
+- **The server does not use `GameStore`, but nothing about `GameStore` prevents
+  it.** It holds committed state and applies actions; it emits nothing and
+  imports no bus. `server/rooms.ts` still calls `src/rules` directly because a
+  room also owns `rev`, seat ownership and a `processing` precondition that a
+  local store has no concept of — a legitimate difference in aggregate, not a
+  coupling. The deal itself exists once (`createNewGame`). (ARCH-004.)
+- **`GameScene` owns presentation, input and effects.** Match orchestration is
+  `LocalMatch`; online state adaptation and resync policy are `OnlineSession`.
+  The scene starts timers and paints; it decides no gameplay and no sync policy.
+  (ARCH-001/ARCH-002.)
+- **`OnlineScene` owns rendering and input.** Which screen is showing, what a
+  server refusal costs, and when a search or a room mirror changes are
+  `LobbyMachine`'s. (ARCH-003.)
+- **Post-transition orchestration is the caller's, not a subscriber's.** Events
+  announce facts; `GameScene.dispatch` decides what happens next. (ARCH-006.)
 
 ## Module categories and dependency rules
 
@@ -476,7 +524,7 @@ allowed to *know*, not where its file sits.
 |---|---|---|
 | **Domain** | `src/rules`, `src/mexe-mode` | domain only (plus the `Rng` type contract) |
 | **Shared contract** | `src/net/protocol.ts`, `src/net/viewToState.ts` | domain types |
-| **Application** | `src/game-state`, `server/rooms.ts`, `server/matchmaking.ts`, the AI engine in `src/ai` | domain, shared contract, the seeded rng |
+| **Application** | `src/game-state` (incl. `LocalMatch`), `src/net/online-session.ts`, `src/net/lobby.ts`, `server/rooms.ts`, `server/matchmaking.ts`, the AI engine in `src/ai` | domain, shared contract, the seeded rng |
 | **Presentation** | `src/scenes`, `src/ui`, `src/table`, `src/assets`, `src/audio`, `src/cosmetics`, `src/tutorial`, `src/demo` | everything below it; `src/table` additionally stays effect-free |
 | **Platform / infrastructure** | `src/core/*`, `src/net/client.ts`, `server/index.ts`, `server/connections.ts`, `src/verification` | domain + shared contract + application contracts |
 
@@ -510,7 +558,9 @@ The authority table above says who decides. This says who may write.
 
 | State | Canonical owner | Mutation entrypoints | Readers | Lifetime |
 |---|---|---|---|---|
-| committed local `GameState` | `GameStore` | `confirmTurn`, `drawEndTurn` only | scenes, demo, tests via `get()` — the live object, readonly **by type** (ARCH-005 resolved) | match |
+| committed local `GameState` | `GameStore`, held by `LocalMatch` (local) or `OnlineSession` (the online projection) | `confirmTurn`, `drawEndTurn` only | scenes, demo, tests via `state()` — the live object, readonly **by type** (ARCH-005 resolved) | match |
+| per-match screen state (selection, focus, editor scroll, zoom/pan, announce latches) | `MatchViewState` in `GameScene` | scene methods | `GameScene` render | match — replaced wholesale on each start |
+| lobby screen state | `LobbyMachine` | its named transitions only | `OnlineScene` render, debug adapter | one visit to the online scene |
 | Mexe draft | `DraftEditor` | its own editing methods | `GameScene` render + `canConfirmTurn` | one turn |
 | authoritative room/match state | `RoomManager` | `RoomManager` methods only | `server/index.ts` broadcast path | room |
 | seat ownership / reconnect token | `RoomManager` | `join`, `reconnect`, `disconnect`, `sweep` | `server/index.ts` | room |
@@ -599,10 +649,13 @@ during restructuring (ARCH-019).
 | server authority and hidden-hand privacy | **test** — `tests/server/*`, `verify:multiplayer`, OH-26 |
 | card conservation, table legality, determinism | **test** — `rules`, `draft`, `probes`, `server/rooms` |
 | no telemetry in the client | **test** — `tests/no-telemetry.test.ts` |
-| `src/rules` is the only legality authority | **convention** — structurally reinforced by there being one `analyzeMeld` |
+| `src/rules` is the only legality authority | **test** — `tests/boundaries.test.ts` fails if any module outside `src/rules` declares one of the legality functions |
+| extracted application orchestration stays Phaser-free and DOM-free | **test** — `tests/boundaries.test.ts` over `match.ts`, `online-session.ts`, `lobby.ts` |
+| product code does not depend on the verification adapters | **test** — `tests/boundaries.test.ts` |
+| the tutorial cannot legalize an illegal move | **test** — `tests/tutorial.test.ts` (authority boundary) |
 | one owner per mutable state domain | **type system** for `GameState`/`DraftState` (`readonly` fields, checked in `tests/boundaries.test.ts`); **convention** elsewhere |
 | `core` does not depend upward | **none** — currently violated, ARCH-009 |
-| scene state reset on relaunch | **convention** — ARCH-018 |
+| scene state reset on relaunch | **construction** — the per-match owners (`MatchViewState`, `LocalMatch`, `OnlineSession`, `LobbyMachine`) are replaced, not re-initialised field by field |
 
 The invariants these mechanisms protect, and the scenarios that exercise them,
 are in [INVARIANTS.md](INVARIANTS.md).
@@ -619,10 +672,24 @@ are in [INVARIANTS.md](INVARIANTS.md).
 | rematch | `RoomManager.recycleForRematch` | the room is reused in place, not recreated |
 | server process | `server/index.ts:shutdown` | three intervals, the WebSocket server, the HTTP server, with a 5s hard-exit backstop |
 
-Every scene releases through `this.events.once('shutdown', …)`. `GameScene`
-additionally resets ~45 fields in `resetForNewMatch()` because the scene is
-relaunched rather than reconstructed — a new field needs an entry there, not a
-field initializer.
+Every scene releases through `this.events.once('shutdown', …)`.
+
+Because Phaser keeps one scene instance for the whole page load, a field
+initializer runs once per *page*, not once per match. That is handled by
+ownership rather than by a checklist: `GameScene.resetForNewMatch()` replaces
+`MatchViewState` (all per-match screen state) and `create()` builds a fresh
+`LocalMatch` or `OnlineSession`; `OnlineScene.create()` builds a fresh
+`LobbyMachine`. What remains in those methods is the handful of live Phaser
+resources that must be *stopped*, not re-initialised. A new per-match value
+belongs on one of those owners; a field added to a scene directly is a statement
+that it survives a match (today: the hand-sort preference, and Phaser objects
+torn down in `shutdown`). `GameScene` also calls `LocalMatch.dispose()` on
+shutdown, which is what an in-flight AI search checks before acting.
+
+`playlog` follows the same rule: `main.ts` owns the app-lifetime subscription
+(`attachAppEvents`, orientation only) and `GameScene` owns the match-lifetime one
+(`attachMatch`), detached with the rest of its subscriptions on shutdown
+(ARCH-007).
 
 ### Explicit state machines
 
@@ -633,7 +700,8 @@ These are the lifecycles whose states are a value you can read, not a set of boo
 | match | `GameState.phase`: `playing` \| `finished` (+ `winnerId`) | `src/rules` transitions, held by `GameStore` (local) / `RoomManager` (online) | only `applyGameAction` locally; only `submitTurn`/`drawEndTurn`/`advanceStalledTurns` on the server |
 | turn | `GameState.activePlayerIndex` / `turn` | same | one per accepted action; no partial turn is ever committed (the draft never leaves the client until FEITO) |
 | draft | `DraftEditor` history (untouched / edited / confirmable), `canConfirm()` | `DraftEditor` | its own edit methods; discarded whole on confirm, draw, rejection or `state_sync` |
-| lobby screen | `OnlineScene.phase`: `idle` \| `join` \| `name` \| `lobby` \| `custom` \| `party` \| `browse` \| `queue` \| `matched` \| `error` | `OnlineScene` | its own handlers, driven by server messages — a **screen** machine mirroring server state, never an authority (ARCH-003) |
+| lobby screen | `LobbyPhase`: `idle` \| `join` \| `name` \| `lobby` \| `custom` \| `party` \| `browse` \| `queue` \| `matched` \| `error` | `LobbyMachine` (`src/net/lobby.ts`) | one named method per input (`roomJoined`, `roomState`, `queueState`, `roomList`, `serverError`, `back`, `retry`, …), each returning the `LobbyEffect`s the scene performs. A **screen** machine mirroring server state, never an authority. Tested directly in `tests/lobby.test.ts` (ARCH-003) |
+| online match session | revision, seat map, `resyncing`, desync count | `OnlineSession` (`src/net/online-session.ts`) | `applySync` (stale / desync / applied), `rejection`, `timeout`, `applyGameOver`. Tested against recorded server frames in `tests/online-session.test.ts` (ARCH-002) |
 | connection | `NetClient` status: `closed` \| `connecting` \| `open` \| `reconnecting` | `NetClient` | `connect`/`retryNow`/socket events; the reconnect schedule is the client's, the seat grace window is the server's |
 | room | `RoomManager` room record: lobby → started (`state !== null`) → finished → recycled for rematch → swept/closed | `RoomManager` | `startGame`, turn actions, `recycleForRematch`, `sweep`. A rematch reuses the room in place and resets per-match state (`rev`, ready flags, `missedTurns`, `winningMove`), so no prior-match value survives into the new one |
 

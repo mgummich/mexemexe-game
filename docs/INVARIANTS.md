@@ -42,7 +42,7 @@ only — the regression risk during Phase 3/4 extraction).
 | INV-G8 | The dealt card count is exactly `deckCount × (52 + jokersPerDeck)` and conservation is checked against that set, not a total. | test — `TOTAL_CARDS` in `tests/helpers/invariants.ts`, `createDeck` cases | SCN-01 |
 | INV-G9 | An illegal draft can never become committed state: `applyConfirmedTurn` re-runs `canConfirmTurn` and throws `RulesError('illegalConfirm')` rather than committing. | structure + test | SCN-03, SCN-10, SCN-11, SCN-21 |
 
-### State — owners: `GameStore`, `DraftEditor`, `RoomManager`
+### State — owners: `LocalMatch`/`GameStore`, `DraftEditor`, `OnlineSession`, `RoomManager`
 
 | ID | Invariant | Enforced by | Scenarios |
 |---|---|---|---|
@@ -50,7 +50,8 @@ only — the regression risk during Phase 3/4 extraction).
 | INV-S2 | Every mutable state domain has exactly one owner, listed in [ARCHITECTURE.md](ARCHITECTURE.md#state-ownership-and-mutation-rules). No second writer. | type system for committed `GameState`/`DraftState` (readonly, guarded by `tests/boundaries.test.ts`); convention elsewhere (ARCH-005 resolved) | SCN-14, SCN-22 |
 | INV-S3 | Derived values are recomputed, never stored as a second authority — joker assignments, helper flags, `turnMsLeft`, invalid-meld reasons. | convention + test — `tests/net/room-settings.test.ts` keeps the ticking clock out of the state digest | SCN-26 |
 | INV-S4 | A finished game cannot silently continue: `phase: 'finished'` and `winnerId` are set together, and no turn is applied afterwards. | test — `rules`, `tests/actions.test.ts` (local actions refuse with `reason.notYourTurn`), `tests/server/timer.test.ts` (post-finish clock) | SCN-07, SCN-25 |
-| INV-S7 | Committed local state changes only through a validated application action. Every local actor — human, AI, tutorial opponent, `window.__MEXE__` — goes through `GameStore.dispatch`; nothing else calls a `src/rules` transition. A refused action leaves the state untouched and emits nothing. | test — `tests/actions.test.ts` | SCN-07, SCN-14 |
+| INV-S7 | Committed local state changes only through a validated application action. Every local actor — human, AI, tutorial opponent, `window.__MEXE__` — goes through `LocalMatch.dispatch` → `GameStore.dispatch`; nothing else calls a `src/rules` transition. A refused action leaves the state untouched and announces nothing. | test — `tests/actions.test.ts`, `tests/match.test.ts` | SCN-07, SCN-14 |
+| INV-S8 | Applying an action never requires a process-global event bus. `GameStore` imports none; a match announces its facts to listeners attached to that instance, so a finished match cannot reach the next one. | test — `tests/actions.test.ts` (no bus import), `tests/match.test.ts` (per-instance listeners) | SCN-07, SCN-14 |
 | INV-S5 | Turn ownership is explicit: locally `activePlayerIndex`; online the server's `activeSeat`, mapped through `matchSeats` so a lobby seat gap never shifts a player. | test — `tests/server/rooms.test.ts`, `lobby-soak` (seat/player-index mapping every step) | SCN-22, SCN-26 |
 | INV-S6 | Valid committed state round-trips through `serializeGameState`/`deserializeGameState` at `GAME_STATE_VERSION`. | test — `tests/rules.test.ts` | SCN-35 |
 

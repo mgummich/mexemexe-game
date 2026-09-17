@@ -194,6 +194,12 @@ counters — turns, draws, undos, rejection reasons. It:
 - **strips player-typed keys** (`name`, `playerName`, `token`, `sessionToken`) from anything a
   caller passes.
 - **is bounded** — the oldest entry is dropped past the cap.
+- **has an explicit lifecycle.** Two attachments, two owners: `main.ts` holds the
+  app-lifetime one (`attachAppEvents`, orientation flips only), and `GameScene`
+  holds the match-lifetime one (`attachMatch`), detached on scene shutdown with
+  the rest of its subscriptions. A finished match therefore cannot record into
+  the next one, and a reload cannot leave a second subscription behind
+  (ARCH-007).
 
 It is on by default because the results screen reads its per-player counters; `?playlog=0`
 turns it off. A player can export it themselves from Settings → Advanced (it goes to the

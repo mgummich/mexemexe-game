@@ -38,8 +38,17 @@ const DOMAIN = ['src/rules', 'src/mexe-mode', 'src/game-state', 'src/net/protoco
 const DOMAIN_ALLOWED_IMPORTS = [
   /^\.\/[\w./-]+$/, // within the module
   /^\.\.\/rules\/(rules|types|rng|hash)$/,
-  /^\.\.\/core\/events$/, // GameStore only; announcement, never turn application (ARCH-004)
+  // `LocalMatch` routes an AI decision to an action (ARCH-001). The AI engine is domain code —
+  // it decides moves through `src/rules` and touches no platform — so this is sideways, not up.
+  /^\.\.\/ai\/ai$/,
 ];
+
+/**
+ * Application orchestration extracted out of the scenes in Wave 2E. These are the contracts Wave 3
+ * tests are meant to target, so the thing that must not regress is that they can be constructed
+ * and driven without a browser: no Phaser, no scene, no DOM.
+ */
+const APPLICATION = ['src/game-state/match.ts', 'src/net/online-session.ts', 'src/net/lobby.ts'];
 
 /** DOMAIN plus the pure layout maths: no browser, no clock, no unseeded randomness. */
 const EFFECT_FREE = [...DOMAIN, 'src/table'];
@@ -66,13 +75,60 @@ describe('architecture boundaries', () => {
     }
   });
 
+  it('extracted application orchestration reaches no scene, no Phaser and no DOM', () => {
+    // ARCH-001/002/003: the whole point of these three modules is that the match, the online
+    // session and the lobby can be driven from a node test. An import of a scene (or of Phaser)
+    // would put them back behind the browser.
+    const banned = /document\.|window\.|localStorage|sessionStorage|navigator\./;
+    for (const file of APPLICATION.flatMap(tsFiles)) {
+      for (const spec of imports(file)) {
+        const reachesUi = /phaser/i.test(spec) || spec.includes('/scenes/') || spec.includes('/ui/');
+        expect(`${rel(file)} imports ${spec}: ${reachesUi}`).toBe(`${rel(file)} imports ${spec}: false`);
+      }
+      const code = fs.readFileSync(file, 'utf8').split('\n').filter((line) => !/^\s*(\/\/|\/?\*)/.test(line));
+      const hit = banned.exec(code.join('\n'));
+      expect(`${rel(file)}: ${hit?.[0] ?? 'clean'}`).toBe(`${rel(file)}: clean`);
+    }
+  });
+
+  it('gameplay legality is decided in src/rules and nowhere else', () => {
+    // ARCH-021 and the AGENTS.md invariant: the tutorial gate, the lobby machine, the online
+    // session and the scenes may all refuse an action, but none of them may *define* legality.
+    // `analyzeMeld`/`canConfirmTurn` exist once; anything else declaring one is a second authority.
+    const authority = /(?:function|const)\s+(analyzeMeld|canConfirmTurn|applyConfirmedTurn|drawAndEndTurn|checkWinner)\b/;
+    for (const file of tsFiles(path.join(ROOT, 'src'))) {
+      if (rel(file).startsWith('src/rules')) continue;
+      const hit = authority.exec(fs.readFileSync(file, 'utf8'));
+      expect(`${rel(file)} declares ${hit?.[1] ?? 'no legality function'}`)
+        .toBe(`${rel(file)} declares no legality function`);
+    }
+  });
+
+  it('product code does not depend on the verification surface for its behaviour', () => {
+    // ARCH-011: `debugApi` is a mirror, not a dependency. The modules below legitimately *write*
+    // to it (that is what observation is), but no product module may import the debug adapters —
+    // the surface is built from product contracts, never the other way round.
+    for (const file of tsFiles(path.join(ROOT, 'src'))) {
+      if (rel(file).startsWith('src/verification')) continue;
+      for (const spec of imports(file)) {
+        const isAdapter = spec.includes('verification/online-debug');
+        const allowed = isAdapter && (rel(file) === 'src/scenes/GameScene.ts' || rel(file) === 'src/scenes/OnlineScene.ts');
+        expect(`${rel(file)} imports ${spec}: ${isAdapter && !allowed}`)
+          .toBe(`${rel(file)} imports ${spec}: false`);
+      }
+    }
+  });
+
   it('the play log observes the game; it does not read the platform it runs on', () => {
     // ARCH-009/ARCH-016: an observability module that imports the viewport (or the DOM) cannot be
     // reused by a non-browser client and cannot be unit-tested without one. Its own relative
     // timeline (`performance.now`) is the one platform read it is allowed.
     const file = path.join(ROOT, 'src/core/playlog.ts');
     for (const spec of imports(file)) {
-      expect(`playlog imports ${spec}`).toBe(`playlog imports ${spec.startsWith('./') ? spec : 'nothing outside core'}`);
+      // The one exception is type-only and erased: the match owns the shape of its own
+      // notifications, and a second copy here would be a second owner of it (ARCH-007).
+      const ok = spec.startsWith('./') || spec === '../game-state/match';
+      expect(`playlog imports ${spec}: ${ok}`).toBe(`playlog imports ${spec}: true`);
     }
     const code = fs.readFileSync(file, 'utf8');
     expect(/document\.|window\.|localStorage|location\./.exec(code)?.[0] ?? 'clean').toBe('clean');
