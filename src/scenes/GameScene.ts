@@ -427,11 +427,17 @@ export class GameScene extends Phaser.Scene {
     this.ui = new MatchViewState();
     // What is left is the handful of live Phaser resources the scene owns directly. They are not
     // values to re-initialise, they are things to stop.
+    // Stopped here, not merely forgotten: today `create()` always follows a `shutdown` that
+    // removed them, so dropping the handle was enough — but that makes the reset depend on a
+    // lifecycle ordering nothing checks. Removing first is idempotent and holds either way.
     this.setOnlinePending(false);
+    this.onlineTimerEvent?.remove();
     this.onlineTimerEvent = null;
+    this.reconnectTicker?.remove();
     this.reconnectTicker = null;
     for (const e of this.activeEmotes.values()) e.timer.remove();
     this.activeEmotes.clear();
+    this.guardTimer?.remove();
     this.guardTimer = null;
     this.resetZoomPan();
   }

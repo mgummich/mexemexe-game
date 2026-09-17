@@ -112,7 +112,8 @@ every resolved relative import). Both are erased at runtime.
 | Committed local `GameState` | `GameStore` (`src/game-state/store.ts`) | `GameStore.dispatch(action)` only | GameScene, WinScene, playlog, debugApi | one local match | `serializeGameState` (v2) | canonical | **yes, latent** — `get()` returns the live object (ARCH-005) |
 | Mexe draft | `DraftEditor` (`src/mexe-mode/draft.ts`) | GameScene input handlers via editor methods | GameScene render, `canConfirmTurn` | one turn | never | canonical | no — every accessor clones |
 | AI decision state | per-call inside `src/ai` | AI search | AI only | one decision | no | derived | no |
-| Scene UI state (selection, focus, zoom/pan, editor scroll, emotes, notices, timers) | `GameScene` fields (~45) | GameScene methods | GameScene | scene instance; reset in `resetForNewMatch` | no | canonical | **yes** — reset is manual (ARCH-018) |
+| Scene UI state (selection, focus, zoom/pan, editor scroll, announce latches) | `MatchViewState` (`src/scenes/GameScene.ts`) | GameScene methods | GameScene | one match; replaced wholesale in `resetForNewMatch` | no | canonical (presentation only) | no — a new holder per match (ARCH-018) |
+| Live Phaser resources (online clock ticker, reconnect ticker, emote timers, confirm guard, zoom/pan) | `GameScene` fields (6) | GameScene methods | GameScene | scene instance; stopped in `resetForNewMatch` + `shutdown` | no | canonical (presentation only) | no gameplay authority; stopping them is still by hand (ARCH-018 residual) |
 | Lobby state (phase, code, seat, players, settings, party, queue, browse, in-flight) | `OnlineScene` fields (~40) | OnlineScene handlers | OnlineScene render | scene instance | no | mirror of server truth | no, but implicit machine (ARCH-003) |
 | Settings + progress + cosmetics | `settings` singleton (`src/core/settings.ts`) over `persistence` | `settings.update*` only | everywhere | app | `mexe-save` envelope | canonical | no |
 | Play log | `playlog` singleton (`src/core/playlog.ts`) | bus subscriptions + direct `record()` calls | debugApi, WinScene | module load → page unload | export only | derived | no; but never torn down (ARCH-007) |
@@ -735,6 +736,22 @@ works, and the online redaction guarantee is untouched — `state()` is still th
 projection with placeholder opponent cards. `tests/boundaries.test.ts` fails if a
 product module imports the adapters.
 
+**Coverage (Wave 3B):** `online-debug.ts` has no vitest coverage and is excluded
+from the coverage `include` for the same reason `src/scenes` and
+`net/client.ts` are. Every entry in both surfaces is one of: a getter on an owner
+(`session.code`, `lobby.phase`, `client.getStatus()`), a forward to a product
+action (`client.submitTurn`, `scene.join`), a constant `noop` for a surface the
+other screen owns, or one of three one-line mappings (the lobby's
+`phase -> queue.status`, the mid-match `party()` falling back to the client's
+latched `room_state`, and `recentRooms()` projecting `{code, host}`). No legality,
+authority, permission or redaction decision is made here — the redaction that
+matters happens upstream in `buildView` (test `OH-26`) and `viewToState`, and the
+reconnect token is unreachable: it lives behind a module-private `readToken()` in
+`net/client.ts` and is representable in neither `RecentRoom` nor the message
+`trace`, which records `{dir, type}` and no payload. The whole surface exists for
+`verify:multiplayer`, which is what exercises it; a unit test asserting that a
+getter delegates would restate the file, not catch a defect.
+
 **Residual:** scenes still *write* observation values onto `debugApi`
 (`scene`, `seed`, `dealing`, `lastAiThought`, `renderedMeldStatus`, the `mexe`
 readbacks). Those are observations of facts the scene alone knows, and one of
@@ -920,7 +937,7 @@ separate fix.
 **Earliest phase:** Phase 3. **Do NOT do yet:** reflection-based or
 decorator-based auto-reset.
 
-**Status (Wave 2E): resolved.** Reset is now ownership, not a list.
+**Status (Wave 3B): narrowed.** Reset is now ownership, not a list.
 `GameScene.resetForNewMatch()` replaces one `MatchViewState` holding all ~30
 per-match screen values (selection, focus, editor scroll, zoom/pan, the announce
 latches, the presentation gates); `create()` builds a fresh `LocalMatch` or
@@ -929,6 +946,29 @@ remains in those methods is the handful of live Phaser resources that must be
 *stopped* rather than re-initialised. A new per-match value added to a holder is
 fresh by construction; a field added to a scene directly is now a deliberate
 statement that it survives a match. No reflection, no decorators.
+
+**What is closed (Wave 3B re-audit):** every field a match must not inherit was
+classified. Nothing gameplay-, AI-, lifecycle- or network-authoritative is reset
+by hand any more: committed state and the turn cycle belong to `LocalMatch` /
+`OnlineSession`, both built fresh in `create()`; the input lock has one setter
+(`setOnlinePending`) that owns its own timeout; `personalities`,
+`turnDeadlineAt`/`turnWarnMs` and the `DraftEditor` are assigned on every
+`create()`/turn start, so no branch can read a previous match's value; timer
+expiry online stays the server's (`advanceStalledTurns`), so the client clock
+carries no authority to leak.
+
+**What remains:** six live Phaser resources in `resetForNewMatch()` — the online
+clock ticker, the reconnect ticker, the emote timers, the confirm guard, and
+zoom/pan — are stopped by hand. They are presentation only: a stale one repaints
+or gates a visual, none of them can commit a turn, schedule AI or move the
+match. Two of the three timer handles used to be merely dropped (`= null`),
+which was correct only because `create()` always follows a `shutdown` that had
+already removed them; they are now removed first, so the reset no longer depends
+on that ordering. Full removal of the list belongs to the remaining ARCH-001
+presentation decomposition, not to a refactor done for testability. The reuse
+path itself is covered end to end by `second-match` in `e2e/screenshot.spec.ts`
+(quit -> second `create()` on the same instance -> AI turn completes -> pause
+overlay still opens).
 ---
 
 ### ARCH-019 — No mechanical enforcement of module boundaries
