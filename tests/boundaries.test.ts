@@ -37,7 +37,7 @@ const rel = (file: string) => path.relative(ROOT, file);
 const DOMAIN = ['src/rules', 'src/mexe-mode', 'src/game-state', 'src/net/protocol.ts', 'src/net/viewToState.ts'];
 const DOMAIN_ALLOWED_IMPORTS = [
   /^\.\/[\w./-]+$/, // within the module
-  /^\.\.\/rules\/(rules|types|rng)$/,
+  /^\.\.\/rules\/(rules|types|rng|hash)$/,
   /^\.\.\/core\/events$/, // GameStore only; announcement, never turn application (ARCH-004)
 ];
 
@@ -64,6 +64,18 @@ describe('architecture boundaries', () => {
       const hit = banned.exec(code.join('\n'));
       expect(`${rel(file)}: ${hit?.[0] ?? 'clean'}`).toBe(`${rel(file)}: clean`);
     }
+  });
+
+  it('the play log observes the game; it does not read the platform it runs on', () => {
+    // ARCH-009/ARCH-016: an observability module that imports the viewport (or the DOM) cannot be
+    // reused by a non-browser client and cannot be unit-tested without one. Its own relative
+    // timeline (`performance.now`) is the one platform read it is allowed.
+    const file = path.join(ROOT, 'src/core/playlog.ts');
+    for (const spec of imports(file)) {
+      expect(`playlog imports ${spec}`).toBe(`playlog imports ${spec.startsWith('./') ? spec : 'nothing outside core'}`);
+    }
+    const code = fs.readFileSync(file, 'utf8');
+    expect(/document\.|window\.|localStorage|location\./.exec(code)?.[0] ?? 'clean').toBe('clean');
   });
 
   it('committed game state is readonly at the type level', () => {

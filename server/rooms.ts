@@ -13,10 +13,11 @@ import {
   canConfirmTurn,
   cardsConserved,
   createNewGame,
+  draftFromCardIds,
   drawAndEndTurn,
   timerExpireTurn,
 } from '../src/rules/rules';
-import type { Card, DraftState, GameState, Meld, ReasonCode } from '../src/rules/types';
+import type { GameState, ReasonCode } from '../src/rules/types';
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import {
   buildView, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, MAX_ACTIVITY, MAX_MATCH_HISTORY,
@@ -691,29 +692,13 @@ export class RoomManager {
 
     room.processing = true;
     try {
-      // Rehydrate every card from server state by id; client-supplied suit/rank
-      // never reach this point (the wire protocol carries ids only), and any
-      // id that isn't a real card in this game is rejected outright. Only the
-      // committed table plus the active player's own hand are eligible — an
-      // opponent-hand or draw-pile id is a foreign card, not a valid submission,
-      // and this way it is correctly rejected as `reason.unknownCard` here
-      // rather than relying on the downstream `foreignCard` check (S6).
-      const byId = new Map<string, Card>();
+      // Card identity comes from server state, never from the client: the wire carries ids only
+      // and `draftFromCardIds` (src/rules) refuses an id that is not on the table or in this
+      // seat's own hand, so an opponent-hand or draw-pile id is `reason.unknownCard` here rather
+      // than relying on the downstream `foreignCard` check (S6).
       const me = this.playerIndex(room, seat);
-      for (const c of state.players[me]!.hand) byId.set(c.id, c);
-      for (const m of state.table) for (const c of m.cards) byId.set(c.id, c);
-
-      const draftMelds: Meld[] = [];
-      for (const m of melds) {
-        const cards: Card[] = [];
-        for (const cid of m.cardIds) {
-          const card = byId.get(cid);
-          if (!card) return { ok: false, reasons: ['reason.unknownCard'] };
-          cards.push(card);
-        }
-        draftMelds.push({ id: m.id, cards });
-      }
-      const draft: DraftState = { melds: draftMelds, handCardsPlayed: [] };
+      const draft = draftFromCardIds(state, me, melds);
+      if (!draft) return { ok: false, reasons: ['reason.unknownCard'] };
 
       const check = canConfirmTurn(state, draft);
       if (!check.ok) return { ok: false, reasons: check.reasons };

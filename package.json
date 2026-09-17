@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:server": "vitest run tests/server",
     "server": "tsx server/index.ts",
+    "replay": "tsx scripts/replay.ts",
     "gen:cosmetics": "node scripts/gen-cosmetics.mjs",
     "gen:icons": "node scripts/gen-icons.mjs",
     "lint": "eslint src tests e2e e2e-cross e2e-multiplayer e2e-pwa server && tsc --noEmit",

@@ -3,6 +3,7 @@
  * Node APIs — safe to import from both the client bundle and the server.
  * See docs/MULTIPLAYER.md for the design this implements.
  */
+import { fnv1a } from '../rules/hash';
 import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/types';
 
 /** Bumped to 8 for the casual matchmaking queue: the client gained `join_queue`/`cancel_queue`
@@ -378,8 +379,8 @@ interface StateDigestInput {
   table: { id: string; cardIds: string[] }[];
 }
 
-/** FNV-1a over a canonical rendering of the digest input. Not cryptographic: this detects
- * divergence between two honest peers, it is not a tamper check (the server never trusts a
+/** FNV-1a (`src/rules/hash.ts`) over a canonical rendering of the digest input. Detects
+ * divergence between two honest peers; it is not a tamper check (the server never trusts a
  * client-supplied hash — it only ever sends its own). */
 export function stateHash(input: StateDigestInput): string {
   const canonical = [
@@ -391,12 +392,7 @@ export function stateHash(input: StateDigestInput): string {
     input.drawCount,
     input.table.map((m) => `${m.id}:${m.cardIds.join('.')}`).join('|'),
   ].join(';');
-  let h = 0x811c9dc5;
-  for (let i = 0; i < canonical.length; i++) {
-    h ^= canonical.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h.toString(16).padStart(8, '0');
+  return fnv1a(canonical);
 }
 
 /** Digest input for a redacted view, as a client sees it. */

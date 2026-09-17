@@ -50,6 +50,10 @@ import { coverBackground } from '../ui/menu-layout';
 import { CHROME_GOLD, CHROME_GOLD_TEXT, fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 
+/** Pointer kind for the play log: the viewport profile is presentation's to read, not the log's
+ * (the log module is platform-free). */
+const pointerKind = (): 'coarse' | 'fine' => (view().touch ? 'coarse' : 'fine');
+
 type SortMode = 'suit' | 'rank';
 
 
@@ -529,6 +533,9 @@ export class GameScene extends Phaser.Scene {
       this.store = new GameStore(state);
     }
     debugApi.state = () => this.store.get();
+    // Offline only: online, the store holds the server's redacted view, not a match this client
+    // played (see MexeDebugApi.replay).
+    debugApi.replay = config.online ? () => null : () => this.store.replay();
     this.tutorialDirector = config.tutorial ? new TutorialDirector() : null;
     debugApi.tutorialStep = this.tutorialDirector?.stepIndex ?? null;
 
@@ -3990,7 +3997,7 @@ export class GameScene extends Phaser.Scene {
   private cancelActiveDrag(): void {
     const sprite = this.cardSprites.find((s) => s.getData('dragging'));
     if (!sprite || !sprite.active) return;
-    playlog.recordDrop('cancelled', (sprite.getData('origin') as 'hand' | 'table') ?? 'hand');
+    playlog.recordDrop('cancelled', (sprite.getData('origin') as 'hand' | 'table') ?? 'hand', pointerKind());
     sprite.setData('dragging', false);
     sprite.setAngle(0);
     this.dragShadow?.destroy();
@@ -4317,7 +4324,7 @@ export class GameScene extends Phaser.Scene {
         : { type: 'moveTableCard', cardId };
     if (!this.tutorialAllows(action)) {
       playSfx(this, 'sfx-invalid', 0.15);
-      playlog.recordDrop('blocked', origin);
+      playlog.recordDrop('blocked', origin, pointerKind());
       this.tweenSpriteHome(sprite);
       return;
     }
@@ -4356,7 +4363,7 @@ export class GameScene extends Phaser.Scene {
     const settle = { displayWidth: CARD_W, displayHeight: CARD_H, ease: 'Back.out', duration: Math.max(1, this.motion(140)) };
     if (acted) {
       this.clearLastMove();
-      playlog.recordDrop(origin === 'hand' ? 'played' : inHandArea && !zone ? 'returned' : 'moved', origin);
+      playlog.recordDrop(origin === 'hand' ? 'played' : inHandArea && !zone ? 'returned' : 'moved', origin, pointerKind());
       if (returning) {
         playSfx(this, 'sfx-pickup', 0.5); // picked back up, not dropped
         haptic('tick');
@@ -4369,7 +4376,7 @@ export class GameScene extends Phaser.Scene {
       }
     } else {
       // snap back
-      playlog.recordDrop('rejected', origin);
+      playlog.recordDrop('rejected', origin, pointerKind());
       haptic('tick'); // the drop registered, it just could not be taken
       this.tweens.add({
         targets: sprite,

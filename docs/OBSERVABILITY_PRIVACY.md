@@ -12,7 +12,7 @@ for the container walkthrough see [SELF_HOSTING.md](SELF_HOSTING.md).
 | Surface | What it holds | Where it lives |
 | ------- | ------------- | -------------- |
 | Server logs | One JSON line per event: `{ts, level, event, ...bounded fields}` | Container stdout/stderr only |
-| `/metrics` | Aggregate process counters and gauges, no labels beyond a two-value `reason` | In memory, scraped |
+| `/metrics` | Aggregate process counters and gauges, no labels beyond a three-value `reason` | In memory, scraped |
 | `/health` | `ok`, uptime, room count, connection count, protocol version | In memory |
 | nginx | Errors only | Container stderr |
 | Client play log | In-session gameplay counters | The player's own tab, in memory |
@@ -104,16 +104,22 @@ series per player *is* a tracking system however it is labelled.
 | `mexemexe_heap_used_bytes` | gauge | V8 heap in use |
 | `mexemexe_resident_bytes` | gauge | Process RSS |
 | `mexemexe_connections_total` | counter | Connections accepted |
-| `mexemexe_connections_rejected_total` | counter | Refused by an admission cap — label `reason="global_cap"\|"ip_cap"` |
+| `mexemexe_connections_rejected_total` | counter | Refused by an admission cap — label `reason="global_cap"\|"ip_cap"\|"origin"` |
 | `mexemexe_disconnects_total` | counter | Connections closed |
 | `mexemexe_reconnects_total` | counter | Successful seat reconnects |
 | `mexemexe_rooms_created_total` | counter | Rooms created |
 | `mexemexe_games_started_total` | counter | Matches started |
 | `mexemexe_games_finished_total` | counter | Matches that reached game over |
+| `mexemexe_queue_current` | gauge | Players waiting in the casual queue — a count, never a roster |
+| `mexemexe_queue_joins_total` | counter | Queue entries created |
+| `mexemexe_queue_cancels_total` | counter | Queue entries cancelled by their player |
+| `mexemexe_queue_timeouts_total` | counter | Queue entries that expired without a match |
+| `mexemexe_matches_formed_total` | counter | Matchmade rooms allocated |
+| `mexemexe_match_alloc_failures_total` | counter | Allocations that failed and returned the group to the queue |
 | `mexemexe_message_handler_errors_total` | counter | Throws caught by the inbound handler |
 | `mexemexe_socket_errors_total` | counter | Socket-level errors from `ws` |
 
-**Label policy.** `reason`, drawn from a fixed two-value set, is the only label in the whole
+**Label policy.** `reason`, drawn from a fixed three-value set, is the only label in the whole
 exposition — and `tests/server/index.integration.test.ts` asserts exactly that by matching every
 label in the rendered output against that set. A label may never carry a player ID or name, a
 room code, an IP, a token, a user agent, a request or session ID, a URL, or an exception
@@ -194,6 +200,39 @@ turns it off. A player can export it themselves from Settings → Advanced (it g
 clipboard) and choose to attach it to a bug report. Nothing exports it for them.
 
 Player saves and settings are `localStorage` only; clearing site data resets them.
+
+## Replay artifacts
+
+A replay (`src/game-state/replay.ts`, captured with `window.__MEXE__.replay()`
+or `npm run replay record`) is a reproduction input, not a diagnostic sink. It
+is created only when a developer asks for one, is written only where that
+developer writes it, and has no upload path — the same rule as the play log.
+
+What a replay contains: a format version, the seed, the seat configuration
+(`isAi`, and the fixed local names "Você"/"Dona Cida"/"Juninho"/"Bia"/"Seu Zé"),
+the ordered actions as card **ids**, and a digest of the final state. What it
+does not contain: player-typed text, room codes, tokens, timestamps, IP or
+device data, or anything about an online opponent.
+
+It does reveal the full deal for the match it describes, since the seed is the
+deal. That is harmless offline — it is the reporter's own game — and is one
+reason `replay()` returns `null` online: the client holds a redacted projection
+there, and a client-side replay of a live multiplayer match would be both a
+fiction and a privacy question nobody needs to answer. Server-side
+reproduction, if it is ever built, starts from the room's own seed.
+
+### Replay, play log and save are three artifacts
+
+| Artifact | Answers | Lives |
+|---|---|---|
+| Save (`serializeGameState`) | "where was the player?" | `localStorage` |
+| Replay (`replay.ts`) | "how did it get there, exactly?" | a file a developer asks for |
+| Play log (`playlog.ts`) | "what did the session look like?" | memory, this tab, this session |
+
+They overlap in neither content nor purpose: the replay holds inputs and no
+timing, the play log holds timing and statistics and no inputs. Do not merge
+them — a single artifact would have to carry a wall-clock-shaped timeline into a
+deterministic format.
 
 ## Retention
 

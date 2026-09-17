@@ -110,7 +110,12 @@ export type MeldAnalysis =
  * caller is supposed to recover (start fresh) and the player is told something neutral. Never a
  * bug in itself.
  */
-export type RulesInputErrorCode = 'corruptSave' | 'unsupportedSaveVersion';
+export type RulesInputErrorCode =
+  | 'corruptSave'
+  | 'unsupportedSaveVersion'
+  | 'corruptReplay'
+  | 'unsupportedReplayVersion'
+  | 'replayDiverged';
 
 /**
  * Violated invariants. Unexpected: trusted code built or passed something that cannot be, so the

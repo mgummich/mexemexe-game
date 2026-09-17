@@ -589,8 +589,9 @@ and at least one subscriber, and each is documented with both.
 **P1 · BOUNDARY**
 
 **Evidence:** measured imports out of `core`: `core/settings` → `ui/helpers`;
-`core/persistence` → `cosmetics`, `ai`, `localization`; `core/playlog` →
-`ui/viewport`; `core/pwa` → `localization`, `verification`; `core/intensity`,
+`core/persistence` → `cosmetics`, `ai`, `localization`; ~~`core/playlog` →
+`ui/viewport`~~ (removed in Wave 2D — the pointer kind is passed in);
+`core/pwa` → `localization`, `verification`; `core/intensity`,
 `core/results-summary` → `rules` types. `settings.resetData()` calls
 `location.reload()`.
 
@@ -775,11 +776,12 @@ do yet:** a plugin architecture for four personalities.
 
 **P2 · PORTABILITY**
 
-**Evidence:** `rules`, `mexe-mode`, `net/protocol`, `net/viewToState`,
-`table/*` and `ai`'s engine are Phaser-free and DOM-free. Blocking edges:
-`core/settings` → `ui/helpers`, `core/persistence` → `cosmetics`,
-`core/playlog` → `ui/viewport`, `ai` → `PERSONALITY_STYLE`/i18n keys,
-`game-state` → global `bus`.
+**Evidence:** `rules`, `mexe-mode`, `game-state` (including `replay.ts`),
+`net/protocol`, `net/viewToState`, `table/*` and `ai`'s engine are Phaser-free
+and DOM-free — `scripts/replay.ts` runs a whole match through them under plain
+Node. Blocking edges: `core/settings` → `ui/helpers`, `core/persistence` →
+`cosmetics`, ~~`core/playlog` → `ui/viewport`~~ (closed in Wave 2D), `ai` →
+`PERSONALITY_STYLE`/i18n keys, `game-state` → global `bus`.
 
 **Current behavior:** the domain core is portable; the application layer around
 it is not, because `core` reaches into `ui`.
@@ -988,7 +990,7 @@ finding above — no competing ID space.
 
 | Current edge | Desired edge | Risk if left | Depends on | Phase |
 |---|---|---|---|---|
-| `core/settings` → `ui/helpers`; `core/persistence` → `cosmetics`, `ai`; `core/playlog` → `ui/viewport`; `core/pwa` → `verification` (ARCH-009, ARCH-011, ARCH-016) | platform modules depend downward only; presentation catalogues are passed in, not imported | `core` cannot be reused by any non-Phaser client, and "put it in core" stays the default | splitting `core` by role | 4 |
+| `core/settings` → `ui/helpers`; `core/persistence` → `cosmetics`, `ai`; `core/pwa` → `verification` (ARCH-009, ARCH-011, ARCH-016; the `core/playlog` → `ui/viewport` edge closed in Wave 2D) | platform modules depend downward only; presentation catalogues are passed in, not imported | `core` cannot be reused by any non-Phaser client, and "put it in core" stays the default | splitting `core` by role | 4 |
 | `game-state` → global `bus` (ARCH-004) | turn application separated from announcement, so the server *could* share it | ~~deal duplication~~ closed in Wave 2A; ~~bus as control flow~~ closed in Wave 2B — what remains is a notification-only import, and the shareable transition is the pure `applyGameAction` | — | **narrowed** |
 | ~~bus carries control flow (`turn:start`, `game:won`) (ARCH-006)~~ | explicit turn-cycle call graph; the bus keeps notification only | **resolved in Wave 2B** — `GameStore.dispatch` returns an outcome, `GameScene.dispatch` advances the cycle from it; the two `bus.on` control-flow subscriptions are gone | — | done |
 | `GameScene` owns online adaptation, AI scheduling, turn clock (ARCH-001, ARCH-002) | a match-orchestration owner outside the scene | application logic remains untestable without Phaser; `resetForNewMatch` keeps growing | ARCH-006, ARCH-004 | 3 |
@@ -1040,6 +1042,96 @@ already refuse clearly, no error/config/storage framework, no migration
 machinery for a version that never shipped, no new configurable value, and no
 counter or telemetry added for the crash path (`log.error` to stderr is the
 diagnostic, and `verify:multiplayer` asserts a clean run leaves stderr empty).
+
+## 15. Wave 2D — replay, platform boundaries, observability
+
+### What changed
+
+| Area | Was | Now |
+|---|---|---|
+| Reproduction | a bug report was a seed plus prose; nothing replayed a match | `src/game-state/replay.ts`: `{version, start, actions[], finalHash}` run through `applyGameAction`, captured by `GameStore` (which now keeps the initial state and the accepted actions) and exposed as `window.__MEXE__.replay()` / `npm run replay` |
+| Draft rehydration | the server rebuilt a draft from card ids inline in `submitTurn` | `draftFromCardIds` in `src/rules`, called by both the server and the replay runner — one place turns ids back into cards |
+| State digests | `stateHash` carried its own FNV-1a loop | `src/rules/hash.ts` holds the one `fnv1a`; `stateHash` (redacted, online) and `replayHash` (full state, offline) are two documented inputs to it, not two algorithms |
+| Play log platform leak | `core/playlog` imported `ui/viewport` for the pointer kind and read `location.search` for `?playlog=0` | the scene passes the pointer kind in; `installDebugApi` owns the URL read. The play log now imports nothing outside `core` and touches no browser API — guarded in `tests/boundaries.test.ts` |
+| Metrics documentation | the label policy said "two-value `reason`"; six queue/matchmaking metrics were undocumented | corrected against `server/metrics.ts` and the label assertion in `tests/server/index.integration.test.ts` |
+
+Replay versioning is deliberately separate from the save version
+(`REPLAY_VERSION = 1` vs `GAME_STATE_VERSION = 2`): they change for different
+reasons, and only the snapshot start — the tutorial/showcase escape hatch —
+embeds a save envelope, validated by `deserializeGameState` rather than by a
+second reader.
+
+### Deliberately not done
+
+- **No new platform ports.** The seams with current consumers already exist
+  (injected `RoomManager` clock, `onAppHidden`/`onAppVisible`, domain-specific
+  persistence, `NetClient` over the shared protocol, URL reads at their entry
+  points) and are now written down in
+  [ARCHITECTURE.md](ARCHITECTURE.md#platform-ownership). A generic
+  `StorageService`, a `Clock` interface for the client, an abstracted transport
+  or a PWA-shaped lifecycle contract would all have had exactly one caller.
+- **No AI determinism work.** The rearranging engines budget with
+  `performance.now()`. Replays record the decision rather than recomputing it,
+  which is both smaller and more stable than making the search clock-free would
+  be; the engine is therefore outside the replay's trusted set.
+- **No transport trace format.** Network-race reproduction needs revision and
+  arrival order, which is not what a gameplay replay is for. Recorded here as a
+  known gap rather than guessed at.
+- **No observability framework, no telemetry, no new metric.** The failure path
+  gained a reproduction artifact, not a sink.
+- **`core` was not reorganised.** ARCH-009's upward imports
+  (settings→`ui/helpers`, persistence→`cosmetics`/`ai`) are layering, not
+  platform, and stay Phase 4.
+
+### Answers to the Wave 2D questions
+
+1. **What is needed to replay local gameplay?** The seed, the seat
+   configuration, the rules config and the ordered actions. Nothing else — the
+   deal is a function of the seed.
+2. **Same action path as live gameplay?** Yes: `runReplay` → `applyGameAction`,
+   the function `GameStore.dispatch` calls. No replay-only transition exists.
+3. **AI decisions?** Recorded, not recomputed (see above).
+4. **Replay versioning separate from saves?** Yes.
+5. **Multiplayer reproducible independently of transport timing?** Gameplay-wise
+   yes — the server's transitions are the same `rules` calls from the same seed
+   — but not from a client, which holds a redacted projection. No server-side
+   capture exists yet.
+6. **What would network-race reproduction need?** Revision numbers, message
+   ordering, disconnect/reconnect events and arrival timing. Deliberately out of
+   the gameplay replay format.
+7. **Browser APIs still leaking into reusable modules?** None in
+   `rules`/`mexe-mode`/`game-state`/`table`/`net/protocol`/`viewToState`
+   (guarded) and, since this wave, none in `core/playlog`. `core/settings`,
+   `core/persistence` and `core/pwa` remain browser-bound by role; the layering
+   problem there is ARCH-009, not a platform leak.
+8. **Which platform abstractions have real value?** The ones that already exist
+   and have callers and tests; the audit found no unabstracted dependency whose
+   abstraction would pay for itself today.
+9. **Wall clock separated from gameplay?** Yes. No transition reads a clock;
+   turn expiry is a server decision delivered as a normal transition.
+10. **Could a non-browser client reuse the core?** Rules, state, actions,
+    replay, serialization, protocol and the AI engine: yes, demonstrated by
+    `scripts/replay.ts` and the server. Settings/persistence/orchestration: not
+    yet — ARCH-009.
+11. **Playlog vs replay?** Timeline and statistics vs inputs. No overlap in
+    content; neither can be derived from the other.
+12. **Can a failure produce enough context to reproduce it?** Offline, yes:
+    `window.__MEXE__.replay()` is the reproduction, and the state digest says
+    whether a rerun matched. Online, the evidence is the server's structured log
+    plus the client's desync counter and rev; a full reproduction still needs a
+    server-side capture.
+13. **Does `window.__MEXE__` expose hidden online information?** No. `state()`
+    online returns `viewToState`'s projection, whose opponent hands and draw pile
+    are `__placeholder-N` cards; `replay()` is null online.
+14. **Do server logs redact tokens and private state?** Yes, in the logger
+    rather than at call sites — re-read this wave, unchanged.
+15. **Are metrics low-cardinality and operational?** Yes: process-wide
+    aggregates, one label drawn from a three-value set, asserted by a test.
+16. **Are logs noisy on success?** No. A clean `verify:multiplayer` run leaves
+    server stderr empty, and that is asserted.
+17. **Which signals are duplicated?** Only the two that were merged here (the
+    FNV-1a loop, and the server's inline draft rehydration). Play log, metrics,
+    server logs, the debug API and replay each answer a different question.
 
 ## Evidence gaps
 

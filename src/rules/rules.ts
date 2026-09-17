@@ -269,6 +269,38 @@ function countIds(cards: readonly Card[]): Map<string, number> {
  * `invalidMeldReasons`, when given, is reused instead of recomputed — pass the caller's own
  * `getInvalidMeldReasons(draft.melds)` result to avoid analyzing every meld twice.
  */
+/**
+ * Rehydrate a draft from card *ids* against the state the turn is being played on. Only the
+ * committed table and the acting player's own hand are eligible, so an opponent-hand or draw-pile
+ * id is refused here rather than downstream: `null` means "that id is not a card this player can
+ * be holding or moving".
+ *
+ * Card identity is never taken from the caller — the wire protocol and replay files both carry
+ * ids only, and this is the one place either of them turns back into cards.
+ */
+export function draftFromCardIds(
+  state: GameState,
+  playerIndex: number,
+  melds: readonly { id: string; cardIds: readonly string[] }[],
+): DraftState | null {
+  const byId = new Map<string, Card>();
+  for (const c of state.players[playerIndex]!.hand) byId.set(c.id, c);
+  for (const m of state.table) for (const c of m.cards) byId.set(c.id, c);
+  const draftMelds: Meld[] = [];
+  for (const m of melds) {
+    const cards: Card[] = [];
+    for (const cid of m.cardIds) {
+      const card = byId.get(cid);
+      if (!card) return null;
+      cards.push(card);
+    }
+    draftMelds.push({ id: m.id, cards });
+  }
+  // `handCardsPlayed` is the editor's own bookkeeping; no rule reads it, and the cards that came
+  // from hand are already implied by the melds.
+  return { melds: draftMelds, handCardsPlayed: [] };
+}
+
 export function canConfirmTurn(state: GameState, draft: DraftState, invalidMeldReasons?: MeldReason[]): ConfirmResult {
   const reasons: ReasonCode[] = [];
   const draftCards = draft.melds.flatMap((m) => m.cards);

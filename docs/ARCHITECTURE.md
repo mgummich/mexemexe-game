@@ -26,7 +26,8 @@ server/         authoritative room server (imports src/net/protocol + src/rules)
 `core/` is where the layering is weakest: it is a bucket of six roles rather
 than one layer, and four of its modules import *upward* into `ui/`,
 `cosmetics/`, `ai/` and `verification/` (settings→ui/helpers,
-persistence→cosmetics, playlog→ui/viewport, pwa→verification). Treat "put it in
+persistence→cosmetics, pwa→verification; playlog's viewport read was removed in Wave
+2D). Treat "put it in
 core" as a smell, not a default — see
 [ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md) ARCH-009.
 
@@ -39,9 +40,9 @@ legality.
 
 | Path | Responsibility |
 |---|---|
-| `src/rules` | deck, seeded rng (`rng.ts`), shuffle, deal (`createNewGame`), meld analysis, table validation, turn legality, card conservation, win check, serialize |
+| `src/rules` | deck, seeded rng (`rng.ts`), shuffle, deal (`createNewGame`), meld analysis, table validation, turn legality, card conservation, win check, serialize, `draftFromCardIds` (card ids → draft, used by the server and by replay), `hash.ts` (one FNV-1a, shared by the wire digest and the replay digest) |
 | `src/core` | `EventBus` (`events.ts`), settings + `localStorage` persistence, session play log, objective hints, results summary, error recovery, app sleep/resume, PWA registration |
-| `src/game-state` | `actions.ts`: the local gameplay-action vocabulary and the pure `applyGameAction`. `store.ts`: `GameStore`, the one mutable slot for the committed local `GameState`, which only `dispatch` replaces |
+| `src/game-state` | `actions.ts`: the local gameplay-action vocabulary and the pure `applyGameAction`. `store.ts`: `GameStore`, the one mutable slot for the committed local `GameState`, which only `dispatch` replaces. `replay.ts`: the deterministic reproduction format (record, validate, run) |
 | `src/mexe-mode` | draft state: melds under edit, cards played from hand, undo/redo history |
 | `src/ai` | `SimpleAi`, `RearrangerAi`, the four personalities and their presentation constants |
 | `src/net` | `protocol.ts` (shared wire types, redaction, boundary validation), `client.ts` (browser socket), `viewToState.ts` (server view → local-shaped state), `errors.ts` |
@@ -334,6 +335,64 @@ key and a different shape, so it cannot be confused with history. No hidden
 opponent information is persisted anywhere — see
 [OBSERVABILITY_PRIVACY.md](OBSERVABILITY_PRIVACY.md).
 
+## Replay and reproduction
+
+Three artifacts, three jobs. They share serialization helpers; they are not the
+same format and must not merge:
+
+```text
+SAVE     serializeGameState        restore the match the player left
+REPLAY   src/game-state/replay.ts  reproduce how a match reached a state
+PLAYLOG  src/core/playlog.ts       human/debug timeline and session statistics
+```
+
+A replay is **seed + start + ordered actions**, versioned separately from the
+save format (`REPLAY_VERSION = 1`; `GAME_STATE_VERSION = 2` moves on its own
+schedule, and a replay only embeds a save envelope in the snapshot case below):
+
+```text
+{ version, start, actions[], finalHash? }
+
+start  { kind: 'new', seed, players, config }     the normal case
+       { kind: 'snapshot', state }                tutorial/showcase states only
+actions  { type: 'confirmTurn', actorIndex, melds: [{id, cardIds}] }
+         { type: 'drawAndEndTurn', actorIndex }
+```
+
+Properties that make it worth having:
+
+- **One gameplay authority.** `runReplay` folds each action through
+  `applyGameAction` — the same function `GameStore.dispatch` calls. There is no
+  replay-only transition, and a replay can only reach states live play can.
+- **Card ids, never card identity.** Melds carry ids and `draftFromCardIds`
+  (`src/rules`) resolves them against the state the action lands on, exactly as
+  the server resolves `submit_turn`. A full two-player match is tens of kB.
+- **`start.kind` is proven, not declared.** `replayOf` emits a seed start only
+  when re-dealing from that seed reproduces the recorded initial state; a
+  tutorial fixture or a showcase table therefore records as a snapshot.
+- **Untrusted input.** `parseReplay` validates version, shape, action type,
+  actor and meld shape; legality is left to `applyGameAction`, so there is no
+  second legality check. Failures throw `RulesError` with
+  `unsupportedReplayVersion`, `corruptReplay` or `replayDiverged`.
+- **No platform.** `replay.ts` imports rules and actions only; it runs under
+  `tsx`/Vitest with no Phaser, DOM, storage, socket or clock.
+
+Capture and run: [DEVELOPMENT.md](DEVELOPMENT.md#reproducing-a-bug-from-a-replay).
+
+**AI decisions are recorded, not recomputed.** The rearranging engines budget
+their search with `performance.now()`, so re-running an AI would not reliably
+choose the same move on a different machine. A replay stores the action the AI
+actually produced, which makes AI turns exactly as reproducible as human ones
+and removes the engine from the replay's trusted set.
+
+**Online is not client-replayable.** `window.__MEXE__.replay()` returns `null`
+online: the local store there holds `viewToState`'s redacted projection with
+placeholder opponent cards, so its actions never ran against authoritative
+state. Server-side reproduction would start from the room's own seed. Network
+race reproduction needs what a gameplay replay deliberately omits — revision
+order, message arrival order, disconnect/reconnect timing — and belongs in a
+transport-level trace, not in this format.
+
 ### Game-state snapshots
 
 `serializeGameState` / `deserializeGameState` (`src/rules/rules.ts`) are the
@@ -493,6 +552,36 @@ Effects are worth separating by *kind* when deciding where one belongs:
 | application | turn clock, reconnect schedule, rate-limit windows, persistence writes | `game-state`/`server/*` application modules and their platform adapters |
 | platform | storage, sockets, service worker, wall clock, haptics | `src/core/*`, `src/net/client.ts`, `server/index.ts` |
 | presentation | Phaser, DOM, audio, animation timers, sfx detune | `src/scenes`, `src/ui`, `src/audio`, `src/main.ts` |
+
+### Platform ownership
+
+The rows above *are* the platform seams. There is no generic platform layer and
+no port without a current caller — a port is introduced only where it buys
+testability or removes a leak, which today means the ones already here:
+
+| Seam | Contract | Implementations |
+|---|---|---|
+| clock (server) | injected into `RoomManager` (clock, codes, tokens, seed) | `Date.now` in `server/index.ts`; fakes in `tests/server/*` |
+| app visibility | `onAppHidden` / `onAppVisible` (`src/core/lifecycle.ts`), `doc`/`win` injectable | browser listeners; plain objects in tests |
+| storage | `src/core/persistence.ts` (`mexe-save`) and `src/net/client.ts` (name, reconnect token) — domain-specific APIs, not a generic `StorageService` | `localStorage`/`sessionStorage`, with a no-op fallback when storage is blocked |
+| connectivity / service worker | `src/core/pwa.ts` | browser only |
+| transport | `NetClient` over the shared `src/net/protocol` contract | browser WebSocket; the server speaks the same contract |
+| URL input | read where it enters: `src/config.ts` (`?ws=`), `src/verification/debug-api.ts` (`?seed=`, `?playlog=`, capture flags), `src/demo` (`?showcase=`) | browser `location` |
+| haptics, audio | `src/core/haptics.ts`, `src/audio` | browser only; never consulted by application logic |
+
+**Wall clock vs gameplay time.** No gameplay transition reads a clock: the deal
+comes from a seed, and turn expiry is a server decision (`advanceStalledTurns`
+→ `timerExpireTurn`) that arrives as an ordinary transition. The client renders
+`turnMsLeft`; it never decides expiry. `performance.now()` appears in the play
+log's relative timeline and in the AI's search budget, both outside the state
+transition.
+
+**Non-browser reuse.** `rules`, `mexe-mode`, `game-state` (including
+`replay.ts`), `net/protocol`, `net/viewToState`, `table` and the AI engine run
+under plain Node today — `scripts/replay.ts` and the server are the proof. The
+remaining blockers for reusing the *application* layer are ARCH-009's upward
+imports out of `core` (settings→`ui/helpers`, persistence→`cosmetics`/`ai`),
+not the platform seams.
 
 ## Enforcement status
 

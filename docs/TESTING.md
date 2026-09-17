@@ -125,10 +125,18 @@ helper logic live as pure modules under `src/table` and `src/ui`.
   `helpers.test.ts`, `showcase.test.ts`, `motion.test.ts`, `feel.test.ts`,
   `intensity.test.ts`, `invalid-detail.test.ts`, `no-telemetry.test.ts`,
   `config.test.ts`, `viewToState.test.ts`, `net/errors.test.ts`.
+- `tests/replay.test.ts` — deterministic reproduction: same seed + same actions
+  → same state and digest, the two golden fixtures in
+  `tests/fixtures/replays/`, and the refusals (future version, malformed JSON,
+  unknown action type/actor/meld, illegal sequence, a card the seat cannot
+  play, corrupt snapshot start, diverged final hash). Regenerate a fixture with
+  `npm run replay record <seed> <out.json>` — it is committed output, so a
+  rules change that moves a recorded match's outcome fails here first.
 - `tests/boundaries.test.ts` — the architecture guard: the domain core's import
   allow-list, no platform/clock/unseeded randomness in `rules`, `mexe-mode`,
   `game-state` or `table`, Phaser confined to the presentation layer, and the
-  server importing only the shared rules/protocol/rng. See
+  server importing only the shared rules/protocol/rng, plus the play log
+  importing nothing outside `core` and reading no browser API. See
   [ARCHITECTURE.md](ARCHITECTURE.md#enforcement-status).
 - `tests/soak.test.ts` — long-running game loop, used as a perf/stability soak.
 
@@ -246,6 +254,12 @@ drive the game:
 
 `state()` returns the local state only — online it holds the redacted per-seat
 view, so it cannot leak an opponent's hand.
+
+`replay()` returns the deterministic reproduction of the match on screen (seed,
+start, ordered actions) and `null` online, where the local store is a projection
+rather than a match this client played. Save its JSON and run it with
+`npm run replay run <file>`; see
+[DEVELOPMENT.md](DEVELOPMENT.md#reproducing-a-bug-from-a-replay).
 
 The settings overlay also carries a **play-log export** (copies the in-memory
 session log to the clipboard) used during playtests. The log is session-only,

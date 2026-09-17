@@ -120,12 +120,11 @@ describe('playlog', () => {
   });
 
   it('records drops by outcome and pointer kind, and counts undo-after-drop', () => {
-    setProfileForTest({ w: 270, h: 480, portrait: true, touch: true });
-    playlog.recordDrop('played', 'hand');
+    // The pointer kind is the caller's to know: the log no longer reads the viewport itself.
+    playlog.recordDrop('played', 'hand', 'coarse');
     playlog.record('undo'); // regretted that one
-    playlog.recordDrop('rejected', 'table');
-    setProfileForTest({ w: 480, h: 270, portrait: false, touch: false });
-    playlog.recordDrop('played', 'hand');
+    playlog.recordDrop('rejected', 'table', 'coarse');
+    playlog.recordDrop('played', 'hand', 'fine');
     const summary = playlog.summary();
     expect(summary.dropsByOutcome).toEqual({ played: 2, rejected: 1 });
     expect(summary.dropsByPointer).toEqual({ coarse: 2, fine: 1 });
@@ -133,7 +132,7 @@ describe('playlog', () => {
   });
 
   it('counts a late undo as its own action, not as a mis-drop', () => {
-    playlog.recordDrop('played', 'hand');
+    playlog.recordDrop('played', 'hand', 'fine');
     const dropped = playlog.entries()[0]!;
     // Backdate the drop past the mis-drop window instead of waiting three real seconds.
     dropped.t -= 5000;
@@ -229,7 +228,7 @@ describe('playlog', () => {
 
   it('exports the new fields without leaking a player name', () => {
     playlog.setHumanPlayer('p0');
-    playlog.recordDrop('played', 'hand');
+    playlog.recordDrop('played', 'hand', 'fine');
     playlog.recordBoard({ deckRemaining: 5, handSize: 2, tableMelds: 1, tableCards: 3 });
     playlog.record('turn:confirmed', { playerId: 'p0', name: 'Secret Player' });
     const exported = playlog.exportJson();

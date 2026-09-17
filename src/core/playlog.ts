@@ -1,5 +1,4 @@
 import type { EventBus, GameEvents } from './events';
-import { view } from '../ui/viewport';
 
 const CAP = 2000;
 /** A gap this long between two actions inside your own turn is a hesitation worth reading (TELEMETRY-02). */
@@ -89,14 +88,6 @@ export interface PlaylogSummary {
 }
 
 const base = typeof performance !== 'undefined' ? performance.now() : 0;
-
-function readInitialEnabled(): boolean {
-  try {
-    return new URLSearchParams(location.search).get('playlog') !== '0';
-  } catch {
-    return true;
-  }
-}
 
 function sanitize(data?: Record<string, PlaylogValue>): Record<string, PlaylogValue> | undefined {
   if (!data) return undefined;
@@ -217,7 +208,9 @@ function mean(values: number[]): number {
 }
 
 let entries: PlaylogEntry[] = [];
-let enabled = readInitialEnabled();
+/** On unless a caller turns it off — `?playlog=0` is read where URL input is owned
+ * (`installDebugApi`), so this module needs no browser API but its own timeline clock. */
+let enabled = true;
 let lastTurnStartT: number | null = null;
 /** Which seat the person at the keyboard holds — set by GameScene, never exported or persisted. */
 let humanPlayerId: string | null = null;
@@ -284,10 +277,11 @@ export const playlog = {
     playlog.record('table:invalid', { ms, reasons: invalidReasons });
   },
 
-  /** One card drop resolved (TELEMETRY-09). The pointer kind rides along so desktop and touch
-   * mis-drop rates can be compared without recording anything about the device. */
-  recordDrop(outcome: DropOutcome, origin: 'hand' | 'table'): void {
-    playlog.record('drop', { outcome, origin, pointer: view().touch ? 'coarse' : 'fine' });
+  /** One card drop resolved (TELEMETRY-09). The pointer kind is passed in by the scene that owns
+   * the viewport profile, so desktop and touch mis-drop rates can be compared without this module
+   * reading anything about the device. */
+  recordDrop(outcome: DropOutcome, origin: 'hand' | 'table', pointer: 'coarse' | 'fine'): void {
+    playlog.record('drop', { outcome, origin, pointer });
   },
 
   /** A sample of the board's shape at a turn boundary (TELEMETRY-08, TELEMETRY-15). */

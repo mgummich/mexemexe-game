@@ -1,6 +1,7 @@
 import type { DraftState, GameState } from '../rules/types';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
+import type { Replay } from '../game-state/replay';
 import type { ConnStatus } from '../net/client';
 import type {
   PartyState, QueueTarget, ReactionId, RoomListing, RoomPlayerSummary, RoomSettings, RoomVisibility,
@@ -273,6 +274,17 @@ interface MexeDebugApi {
    * results-summary content above it) — null outside WinScene. Lets e2e click the real button
    * position instead of a coordinate that drifts whenever the summary content changes. */
   winButtonY: number | null;
+  /**
+   * The deterministic reproduction artifact for the match on screen — seed, start and the ordered
+   * actions that were dispatched (`src/game-state/replay.ts`). Attach its JSON to a bug report and
+   * run it with `npm run replay run <file>`.
+   *
+   * Null online, and not because of size: online the local store is a redacted projection whose
+   * actions never ran against the authoritative state, so a "replay" of it would be a fiction —
+   * and offering one would mean deciding what to do with placeholder opponent cards. The server
+   * owns online reproduction, from its own seed.
+   */
+  replay: () => Replay | null;
   /** Dev-only playtest instrumentation: session-scoped, in-memory, never a network sink. */
   playlog: {
     entries: () => PlaylogEntry[];
@@ -316,6 +328,7 @@ export const debugApi: MexeDebugApi = {
   online: null,
   results: null,
   winButtonY: null,
+  replay: () => null,
   playlog: {
     entries: () => playlog.entries(),
     summary: () => playlog.summary(),
@@ -334,6 +347,9 @@ export function installDebugApi(): void {
     debugApi.errors.push(`unhandledrejection: ${String(e.reason)}`);
   });
   const params = new URLSearchParams(location.search);
+  // URL input is owned here, not by the modules that react to it — `?playlog=0` opts a session
+  // out of the in-memory play log.
+  playlog.setEnabled(params.get('playlog') !== '0');
   debugApi.showcase = params.get('showcase');
   const crowd = params.get('crowd');
   debugApi.crowd = crowd ? Number(crowd) : null;
