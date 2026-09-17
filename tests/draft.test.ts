@@ -1,28 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DraftEditor } from '../src/mexe-mode/draft';
-import type { GameState } from '../src/rules/types';
-import { DEFAULT_RULES } from '../src/rules/types';
 import { n } from './helpers/cards';
-
-function state(): GameState {
-  return {
-    seed: 1,
-    players: [
-      {
-        id: 'p0', name: 'A', isAi: false,
-        hand: [n('hearts', 2), n('hearts', 6), n('spades', 9), n('clubs', 9), n('diamonds', 9)],
-      },
-      { id: 'p1', name: 'B', isAi: true, hand: [n('clubs', 4)] },
-    ],
-    activePlayerIndex: 0,
-    table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
-    drawPile: [],
-    turn: 1,
-    winnerId: null,
-    phase: 'playing',
-    config: DEFAULT_RULES,
-  };
-}
+import { tableRearrangement as state } from './helpers/scenarios';
 
 describe('DraftEditor', () => {
   it('starts as copy of committed table, cannot confirm untouched', () => {

@@ -69,7 +69,7 @@ only — the regression risk during Phase 3/4 extraction).
 | ID | Invariant | Enforced by | Scenarios |
 |---|---|---|---|
 | INV-A1 | The AI only ever proposes actions `src/rules` accepts. It owns no legality of its own. | test — `tests/ai.test.ts` ("never proposes illegal confirm"), `probes` (legal every turn, 40 seeds) | SCN-14, SCN-16 |
-| INV-A2 | The AI reads only the active player's hand and public state — never an opponent's cards. | convention — `src/ai/ai.ts` touches `state.players[state.activePlayerIndex].hand` and `players.length` only (gap: no test) | SCN-17 |
+| INV-A2 | The AI reads only the active player's hand and public state — never an opponent's cards. | test — `tests/ai.test.ts` hidden-information case: two states differing only in the opponent's hand yield the same decision | SCN-17 |
 | INV-A3 | An AI failure or timeout cannot corrupt committed state: the fallback is `drawAndEndTurn`, which is a legal move. | test — `tests/ai.test.ts` fallback + budget cases | SCN-15, SCN-16 |
 | INV-A4 | `decide`/`decideSliced` always return a decision within the search budget; a crowded table cannot hang a turn. | test — `tests/ai.test.ts` hardening (10+ melds, 20-card hand, <500 ms) | SCN-13, SCN-15 |
 
@@ -127,10 +127,15 @@ mechanized, and is recorded for a later testing phase — not a to-do for this
 wave.
 
 Fixture vocabulary: `n(suit, rank, deckId)` and `j(deckId, k)` from
-`tests/helpers/cards.ts`; `expectCardConservation` from
-`tests/helpers/invariants.ts`; `tests/server/harness.ts` for a `RoomManager`
-with injected clock, codes, tokens and seed; `e2e-multiplayer/harness.ts` for
-real browser clients.
+`tests/helpers/cards.ts`; the states themselves (`gameState`, `dealtMatch`,
+`tableRearrangement`, `oneCardFromWinning`, `finishedMatch`, `legalDraft`,
+`seedWithTriple`, `invalid.*`) from `tests/helpers/scenarios.ts`;
+`expectCardConservation` from `tests/helpers/invariants.ts`;
+`tests/server/manager.ts` for a `RoomManager` with injected clock, codes, tokens
+and seed, plus a started room; `tests/server/harness.ts` for the real server
+process on raw sockets; `e2e-multiplayer/harness.ts` for real browser clients.
+The layering and the rules that keep it cheap are
+[TESTING.md](TESTING.md#scenarios-and-fixtures).
 
 ### Local gameplay
 
@@ -163,7 +168,7 @@ real browser clients.
 | SCN-14 | Legal move available. Obvious group/run in hand → AI plays it; the proposal passes `canConfirmTurn`. | A1, S2 | `tests/ai.test.ts` SimpleAi |
 | SCN-15 | Multiple legal choices. Rearranging personality prefers the play using most hand cards; a thrown search still ends the turn legally by drawing. | A1, A3, A4, L2 | `tests/ai.test.ts` RearrangerAi + fallback |
 | SCN-16 | Full-match simulation. Seeded AI-vs-AI games to completion → legal every turn, conservation every turn, terminates. | A1, A3, G1, G7, R2 | `tests/probes.test.ts` (40 seeds), `tests/ai.test.ts` soak |
-| SCN-17 | Hidden information. AI decides on a state whose opponent hands differ but whose public state is identical → same decision. | A2 | **(gap)** — no test asserts this today |
+| SCN-17 | Hidden information. AI decides on a state whose opponent hands differ but whose public state is identical → same decision. | A2 | `tests/ai.test.ts` hidden-information case |
 | SCN-18 | Difficulty/personality-neutral baseline. One fixture state, all four difficulties and personalities → every decision legal; style differences are pacing and choice, never legality. | A1 | `tests/ai.test.ts` personalities + style regression |
 
 ### Multiplayer
@@ -199,7 +204,6 @@ defect today.
 
 | Invariant | Gap | Note |
 |---|---|---|
-| INV-A2 | SCN-17 has no test | The AI currently reads only the active hand; nothing stops a future search from reading `state.players[i].hand`. A fixture pair differing only in opponent hands would pin it. |
 | INV-S2 | Partly guarded | Committed `GameState` is readonly by type since Wave 2A (ARCH-005 resolved); ownership of everything else — scene fields, lobby mirror, connection state — is still convention. |
 | INV-L1, INV-L2 | SCN-29 is only covered end-to-end | Scene teardown has no unit-level proof; it becomes testable when orchestration leaves `GameScene` (ARCH-001). |
 | INV-U1 | Convention only | "No legality in the UI" holds because exactly one `analyzeMeld` exists, not because anything forbids a second. |

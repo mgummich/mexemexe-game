@@ -23,15 +23,57 @@ Two consequences run through everything below:
   one helper re-checked after every state transition, not one bespoke count per
   test.
 
-### Test-level ownership
+### Test levels
 
-| Level | Owns | Lives in |
+Six automated levels, cheapest first, plus manual. "Cost" is the order of
+magnitude a developer waits for the whole category on this repo — see
+[Runtime budgets](#runtime-budgets).
+
+| Level | Cost | Owns | Does not own | Lives in |
+|---|---|---|---|---|
+| Pure / unit | ms | Rules, validators, layout maths, serialization, protocol helpers, settings/i18n, state invariants | Anything needing a socket, a scene, storage or a real clock | `tests/*.test.ts` |
+| Application / integration | ms | Action orchestration (`LocalMatch`), online state adaptation (`OnlineSession`), lobby transitions (`LobbyMachine`), persistence and lifecycle coordination | Wire framing, rendering, engine behaviour | `tests/match`, `online-session`, `lobby`, `persistence`, `lifecycle`, `net/` |
+| Simulation | seconds | Emergent behaviour over many seeded states — AI, full matches, lobby random walks | Single rule cases, which are cheaper as unit tests | `tests/probes`, `soak`, `server/lobby-soak` |
+| Server integration | seconds | Room ownership, authoritative validation, revisions, reconnect, rematch, hidden information, the wire boundary | UI, engine parity | `tests/server/` |
+| Browser E2E | minutes | Real input, Phaser interaction, scene transitions, the service worker, several real clients against the real server | Rule legality, or anything a pure function already proves | `e2e/`, `e2e-multiplayer/`, `e2e-pwa/` |
+| Cross-browser / device | minutes | Behaviour that genuinely differs per engine or form factor: pointer/touch, viewport, orientation, iOS lifecycle | A second copy of a journey already proven on Chromium | `e2e-cross/`, the `firefox`/`webkit` multiplayer projects |
+| Manual | — | Comprehension, feel, presentation, exploratory abuse | Anything a machine can assert | [PLAYTEST_GUIDE.md](PLAYTEST_GUIDE.md) |
+
+Fuzz/property, mutation testing, large golden-replay suites and performance
+trending are **not** categories here yet. They are named so that nobody invents
+a seventh level by accident; when one arrives it gets a row, a gate and a
+budget like every other.
+
+#### Choosing a level
+
+> What is the cheapest level that fails when this behaviour breaks?
+
+Write the test there, and add a higher level only for the boundary risk the
+lower one cannot see. The same behaviour proven twice costs twice and protects
+once.
+
+| Behaviour | Cheapest proving level | Higher level, and only because |
 |---|---|---|
-| Unit | Pure rules, validators, layout maths, settings/i18n/serialization logic | `tests/*.test.ts` |
-| Simulation | Emergent gameplay over many seeded states — AI, full matches, lobby state machine | `tests/probes.test.ts`, `tests/soak.test.ts`, `tests/server/lobby-soak.test.ts` |
-| Integration | Component/state/server interaction, persistence round-trips, the turn clock on a fake clock | `tests/server/`, `tests/net/`, `tests/persistence.test.ts` |
-| E2E | Real player journeys, real input, real sockets, real service worker, real engines | `e2e/`, `e2e-cross/`, `e2e-multiplayer/`, `e2e-pwa/` |
-| Manual | Comprehension, game feel, presentation, exploratory abuse | [PLAYTEST_GUIDE.md](PLAYTEST_GUIDE.md) |
+| Meld legality, joker rules, winner | unit (`rules`) | — |
+| Draft editing, undo/reset | unit (`draft`) | E2E proves the *pointer* reaches it, not the rule |
+| Confirm/draw orchestration, AI turn routing, finish | application (`match`) | — |
+| Stale frame, desync policy, seat-gap translation | application (`online-session`) | — |
+| Lobby screens and refusals | application (`lobby`) | one E2E that the lobby renders and connects |
+| Stale revision, seat ownership, rematch reset, privacy | server (`tests/server/`) | multiplayer E2E for genuine client-to-client synchronization |
+| Malformed/oversized frame | server integration (`index.integration`) | — |
+| Two clients converge on one state | multiplayer E2E (independent clients) | — |
+| FEITO click, drag, scene transition | browser E2E | cross-browser only for touch/viewport/iOS lifecycle |
+| Offline reload, update handover | PWA E2E | — |
+
+#### Subsystem routing
+
+| Subsystem | Layers, cheapest first |
+|---|---|
+| Multiplayer | protocol/pure (`net/`, `viewToState`) → `RoomManager` server tests (fake clock, injected codes/tokens/seed) → real-process wire tests (`index.integration`) → a small browser suite with genuinely independent clients where synchronization *is* the subject |
+| AI | legality and determinism as unit (`ai`) → behaviour and personality as seeded simulation (`probes`, style regressions) → UX integration as one application/browser test. Subjective quality is a playtest, never a unit expectation |
+| UI / app shell | settings, menus and dialog *state* as pure/application tests → browser E2E only for critical navigation paths (`esc`, `pause-draft`, `second-match`). Not every button gets a journey |
+| Tutorial | progression logic and the per-step allow-list as application tests (`tutorial`) → the authority boundary as a rules assertion → one browser E2E for the interactive experience |
+| Persistence | round-trip, corrupt and unsupported saves as unit/integration (`persistence`, `error-recovery`) → PWA E2E for the real reload |
 
 ### New-test admission rule
 
@@ -89,6 +131,118 @@ cannot start or finish. S2 = wrong rule result, wrong turn, AI cannot finish,
 reconnect loses state, feature unusable. S3 = unclear feedback, non-blocking
 layout defect. S4 = cosmetic.
 
+## Scenarios and fixtures
+
+A new test should read as **scenario + a short action sequence + a meaningful
+assertion**. If it opens with thirty lines of object literal, the fixture is
+missing, not the test.
+
+Three layers, each importing only the one below it:
+
+```text
+primitive builders   tests/helpers/cards.ts        n(), j(), withHand()
+        ↓
+state fixtures       tests/helpers/scenarios.ts    gameState(), dealtMatch(), legalDraft()
+        ↓
+canonical scenarios  tests/helpers/scenarios.ts    tableRearrangement(), oneCardFromWinning(),
+                     tests/server/manager.ts       finishedMatch(), invalid.*, testManager(),
+                                                   startedRoom()
+```
+
+Rules that keep this cheap:
+
+- **Valid by default.** `gameState()` is a legal, playable two-seat state — SCN-03,
+  the normal legal turn. Patch only the field the test is about. Anything
+  deliberately broken lives under `invalid.*` (`duplicateCard`, `missingCard`,
+  `illegalTable`, `wrongActivePlayer`) so a reader never has to work out *which*
+  rule a fixture breaks. `tests/rules.test.ts` asserts those fixtures really are
+  invalid — an invariant check that cannot fail is not a check.
+- **Fresh every call.** Every helper constructs and returns; nothing shared is
+  mutable, and `GameState` is readonly anyway (INV-S2), so one test cannot
+  contaminate the next.
+- **Deterministic.** No `Math.random` and no wall clock in a fixture. A seeded
+  deal is `dealtMatch(seed)`; a seed that needs a property (`seedWithTriple()`)
+  is *searched* rather than hardcoded, so a shuffle change moves the seed instead
+  of silently breaking the test that depended on it.
+- **Lowest owner.** Domain fixtures import no Phaser, no DOM and no Playwright,
+  which is why a server test and a browser-free AI test can both use them.
+  Browser-only setup stays in `e2e-multiplayer/harness.ts` and the Playwright
+  configs.
+- **Test-local is fine.** A builder with exactly one consumer (the lobby message
+  builders in `tests/lobby.test.ts`, the AI's `base()` in `tests/ai.test.ts`)
+  stays where it is used. Promote it only when a second suite needs it.
+- **No DSL.** These are plain functions. The repo does not need, and will not
+  grow, a fixture language.
+
+Server-side, `tests/server/manager.ts` is the equivalent: `testManager()`
+injects the four things a room test must control (clock, room code, reconnect
+token, deal seed) and `startedRoom()` returns a dealt room and its per-seat
+tokens. `tests/server/harness.ts` is the other end — a *real* server process
+driven by raw `ws` clients, used only where the wire itself is the subject.
+
+The scenario library is deliberately small and matches the `SCN-xx` catalogue in
+[INVARIANTS.md](INVARIANTS.md#canonical-scenarios). A scenario earns a slot when
+a second suite needs it; until then the state belongs in the test that uses it.
+
+## Mocking policy
+
+> Mock the platform boundary, not the code under test.
+
+Fine to fake: the clock, the WebSocket transport, `localStorage`, vibration,
+document visibility, the network.
+
+Not fine to fake: `src/rules`, `GameState` transitions, action handlers,
+`DraftEditor`, `RoomManager`, or any internal collaborator that runs
+deterministically in milliseconds. Over-mocking produces a suite that stays
+green while the integration it describes is broken — which is exactly the class
+of bug the application-level tests exist to catch.
+
+The application seams (`LocalMatch`, `OnlineSession`, `LobbyMachine`,
+`GameStore`, `RoomManager`) are the preferred targets precisely because they
+need no mocks: they take state in and hand facts back.
+
+## Deterministic testing
+
+- Gameplay randomness comes from the seeded RNG (INV-R1); a failing seeded test
+  prints its seed and `npm run replay` reproduces the match exactly.
+- Time is injected, never waited on: `now()` on `RoomManager`, fake timers in
+  `tests/net/reconnect.test.ts`, explicit `sweep()` calls instead of a real
+  grace window.
+- No `sleep` in deterministic logic. The only permitted real waits are in
+  browser suites, and there they wait on observable state (`expect.poll`,
+  `waitFor`), never on a duration chosen to be "probably enough".
+- A test that needs a specific dealt hand searches for the seed that has it
+  rather than hardcoding card ids that a shuffle change would invalidate.
+
+## Test output
+
+Verbosity modes are `WORKFLOW.md` §1's subject, not this document's. What the
+suites owe it: a passing run says almost nothing, and a failing one prints only
+what the next step needs — the assertion, the seed of a randomized failure, the
+scenario or acceptance id, the file and line. Full logs go to `tmp/` or the
+Playwright artifacts and are referenced by path, not pasted. `lobby-soak`'s step
+log is the model: silent until it fails, then the exact walk plus the seed that
+replays it.
+
+## Runtime budgets
+
+Measured on a developer machine; CI is slower but the ratios hold. Treat these
+as orders of magnitude, not deadlines — nothing in the repo asserts them.
+
+| Command | Covers | Typical |
+|---|---|---|
+| `npx vitest run tests/<file>` | one suite, the iteration loop | < 1s |
+| `npm run test` | every unit/application/simulation/server test with coverage | ~6s, ~960 tests |
+| `npm run lint` | ESLint over six trees + `tsc --noEmit` | ~4s |
+| `npm run screenshot` | build + the browser journey/perf suite | minutes |
+| `npm run verify:multiplayer:chromium` | build + two-plus real clients | minutes |
+| `npm run verify:multiplayer` | the same on three engines | ~18 min — nightly, not per PR |
+| `npm run verify:cross` | build + 8 device/engine layout profiles | minutes |
+
+The developer loop is the first two rows. Everything below them is a gate, not
+a loop: do not re-run a browser suite after every edit, and do not make a commit
+wait on engine parity.
+
 ## Unit tests — `npm run test`
 
 Vitest with V8 coverage, node environment (no browser). Anything that imports
@@ -98,6 +252,10 @@ helper logic live as pure modules under `src/table` and `src/ui`.
 - `tests/rules.test.ts` — the rules engine: decks, deals, runs, groups, joker
   assignment, the one-joker-per-meld limit, ace low/high and the no-wrap case,
   `canConfirmTurn`, win and draw-pile-exhaustion, serialization.
+- `tests/helpers/scenarios.ts` — the canonical states (`gameState`, `dealtMatch`,
+  `tableRearrangement`, `oneCardFromWinning`, `finishedMatch`, `legalDraft`,
+  `seedWithTriple`, `invalid.*`) shared by the rules, application, AI and server
+  suites. See [Scenarios and fixtures](#scenarios-and-fixtures).
 - `tests/helpers/invariants.ts` — the shared card-conservation assertion
   (GQA-02). It checks the **id set**, not a total: one lost card paired with one
   duplicated card keeps a count intact. Reuse it rather than re-counting.
@@ -339,7 +497,34 @@ race:
   overhead ate into the fps budget) and on nightly instead.
 - Never raise a timeout to make a race pass. Wait on observable state.
 
+A test that flakes is a defect report, not noise. In order: **diagnose** (run it
+traced and un-retried; a race that only appears under tracing is still a race),
+**fix**, and only if neither is possible today, **quarantine** — skipped with
+`test.skip`, a comment naming the suspected cause, an owner and the condition
+that puts it back. A quarantine with no removal condition is a deletion in
+disguise; either is better than a retry loop that hides the bug. A permanently
+failing test is never silently skipped.
+
 ## Adding tests
+
+Answer these in order; each one is already decided above.
+
+1. **Should it exist?** Re-read the [admission rule](#new-test-admission-rule).
+   Strengthening an existing test beats adding one.
+2. **Which level?** The cheapest one that fails when the behaviour breaks —
+   [Choosing a level](#choosing-a-level).
+3. **Which scenario?** Look in `tests/helpers/scenarios.ts` (and
+   `tests/server/manager.ts` for rooms) before writing a state literal.
+4. **What may I fake?** Platform boundaries only — [Mocking policy](#mocking-policy).
+5. **Does it need a browser?** Only if the risk *is* input, rendering, the
+   service worker or two genuinely independent clients.
+6. **Cross-browser too?** Only for pointer/touch, viewport, orientation or iOS
+   lifecycle. One engine otherwise.
+7. **Which gate runs it?** [Which gate runs when](#which-gate-runs-when).
+
+Then name it for the failure it catches — *rejects a stale client revision*, not
+*test submitTurn* — and assert the contract (`ok`, the reason code, the
+conserved id set), not a snapshot of everything the call returned.
 
 - Re-read the admission rule above first. Strengthening an existing test beats
   adding one.

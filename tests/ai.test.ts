@@ -1,29 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { aiReasonKeySuffix, AI_SPEED_SCALE, createAi, DIFFICULTIES, RearrangerAi, SimpleAi } from '../src/ai/ai';
 import { t } from '../src/localization/i18n';
-import { applyConfirmedTurn, canConfirmTurn, cardId, drawAndEndTurn, jokerId } from '../src/rules/rules';
-import type { Card, GameState, Meld, Rank, Suit } from '../src/rules/types';
+import { applyConfirmedTurn, canConfirmTurn, drawAndEndTurn } from '../src/rules/rules';
+import type { Card, GameState, Meld, Suit } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
 import { createNewGame } from '../src/rules/rules';
-
-function c(suit: Suit, rank: number, deckId = 0): Card {
-  return { id: cardId(suit, rank as Rank, deckId), deckId, suit, rank: rank as Rank, isJoker: false };
-}
-
-function j(deckId = 0, n = 1): Card {
-  return { id: jokerId(deckId, n), deckId, suit: null, rank: null, isJoker: true };
-}
+import { j, n, withHand } from './helpers/cards';
 
 function base(hand: Card[], table: GameState['table'] = []): GameState {
   return {
     seed: 1,
     players: [
       { id: 'p0', name: 'Bot', isAi: true, hand },
-      { id: 'p1', name: 'X', isAi: false, hand: [c('clubs', 13)] },
+      { id: 'p1', name: 'X', isAi: false, hand: [n('clubs', 13)] },
     ],
     activePlayerIndex: 0,
     table,
-    drawPile: [c('diamonds', 13)],
+    drawPile: [n('diamonds', 13)],
     turn: 5,
     winnerId: null,
     phase: 'playing',
@@ -31,37 +24,54 @@ function base(hand: Card[], table: GameState['table'] = []): GameState {
   };
 }
 
+/**
+ * SCN-17 / INV-A2 — the AI reads the active hand and the public table, never an opponent's cards.
+ * Two states that differ *only* in what seat 1 holds must produce the same decision; if a future
+ * search starts peeking at `players[i].hand`, these diverge.
+ */
+describe('hidden information', () => {
+  it('decides identically whatever the opponent is holding', () => {
+    const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }];
+    const hand = [n('hearts', 6), n('spades', 9), n('clubs', 9), n('diamonds', 9)];
+    const blind = base(hand, table);
+    const peeking = withHand(blind, 1, [n('hearts', 7), n('hearts', 8), j(1, 1)]);
+    for (const ai of [new SimpleAi(), new RearrangerAi()]) {
+      expect(ai.decide(peeking)).toEqual(ai.decide(blind));
+    }
+  });
+});
+
 describe('SimpleAi', () => {
   it('plays obvious set', () => {
     const ai = new SimpleAi();
-    const d = ai.decide(base([c('hearts', 9), c('spades', 9), c('clubs', 9), c('hearts', 2)]));
+    const d = ai.decide(base([n('hearts', 9), n('spades', 9), n('clubs', 9), n('hearts', 2)]));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toHaveLength(3);
   });
 
   it('plays obvious run', () => {
     const ai = new SimpleAi();
-    const d = ai.decide(base([c('hearts', 4), c('hearts', 5), c('hearts', 6), c('clubs', 2)]));
+    const d = ai.decide(base([n('hearts', 4), n('hearts', 5), n('hearts', 6), n('clubs', 2)]));
     expect(d.kind).toBe('confirm');
   });
 
   it('extends table meld with single card', () => {
     const ai = new SimpleAi();
-    const table = [{ id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5)] }];
-    const d = ai.decide(base([c('hearts', 6), c('clubs', 2), c('spades', 11)], table));
+    const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }];
+    const d = ai.decide(base([n('hearts', 6), n('clubs', 2), n('spades', 11)], table));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toEqual(['hearts-6-d0']);
   });
 
   it('draws when no play', () => {
     const ai = new SimpleAi();
-    const d = ai.decide(base([c('hearts', 2), c('spades', 7), c('clubs', 12)]));
+    const d = ai.decide(base([n('hearts', 2), n('spades', 7), n('clubs', 12)]));
     expect(d.kind).toBe('draw');
   });
 
   it('never proposes illegal confirm', () => {
     const ai = new SimpleAi();
-    const state = base([c('hearts', 9), c('spades', 9), c('clubs', 9)]);
+    const state = base([n('hearts', 9), n('spades', 9), n('clubs', 9)]);
     const d = ai.decide(state);
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
@@ -70,7 +80,7 @@ describe('SimpleAi', () => {
 
   it('is deterministic', () => {
     const ai = new SimpleAi();
-    const s = base([c('hearts', 9), c('spades', 9), c('clubs', 9), c('hearts', 4), c('hearts', 5), c('hearts', 6)]);
+    const s = base([n('hearts', 9), n('spades', 9), n('clubs', 9), n('hearts', 4), n('hearts', 5), n('hearts', 6)]);
     const a = ai.decide(s);
     const b = ai.decide(s);
     expect(a).toEqual(b);
@@ -81,8 +91,8 @@ describe('RearrangerAi', () => {
   it('steals from 4-card run to complete a set', () => {
     const ai = new RearrangerAi();
     // Table: hearts 3-4-5-6. Hand: spades-6, clubs-6 → steal hearts-6 for set of 6s.
-    const table = [{ id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5), c('hearts', 6)] }];
-    const state = base([c('spades', 6), c('clubs', 6), c('diamonds', 12)], table);
+    const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] }];
+    const state = base([n('spades', 6), n('clubs', 6), n('diamonds', 12)], table);
     const d = ai.decide(state);
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
@@ -93,17 +103,17 @@ describe('RearrangerAi', () => {
 
   it('falls back to draw', () => {
     const ai = new RearrangerAi();
-    const d = ai.decide(base([c('hearts', 2), c('spades', 7)]));
+    const d = ai.decide(base([n('hearts', 2), n('spades', 7)]));
     expect(d.kind).toBe('draw');
   });
 
   it('decideSliced reaches the same decision as decide (#8 frame slicing)', async () => {
     const ai = new RearrangerAi();
-    const table = [{ id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5), c('hearts', 6)] }];
-    const state = base([c('spades', 6), c('clubs', 6), c('diamonds', 12)], table);
+    const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] }];
+    const state = base([n('spades', 6), n('clubs', 6), n('diamonds', 12)], table);
     const sliced = await ai.decideSliced(state);
     expect(sliced).toEqual(ai.decide(state));
-    expect(await ai.decideSliced(base([c('hearts', 2), c('spades', 7)]))).toEqual({
+    expect(await ai.decideSliced(base([n('hearts', 2), n('spades', 7)]))).toEqual({
       kind: 'draw',
       explanation: 'no play even with rearrange — drawing',
     });
@@ -112,7 +122,7 @@ describe('RearrangerAi', () => {
   it('createAi exposes decideSliced for rearranging personalities and tags its reason', async () => {
     const ai = createAi('bia');
     expect(ai.decideSliced).toBeDefined();
-    const d = await ai.decideSliced!(base([c('hearts', 2), c('spades', 7)]));
+    const d = await ai.decideSliced!(base([n('hearts', 2), n('spades', 7)]));
     expect(d.kind).toBe('draw');
     expect(d.explanation.startsWith('bia:')).toBe(true);
   });
@@ -125,10 +135,10 @@ describe('RearrangerAi', () => {
     const table = [
       {
         id: 't1',
-        cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5), c('hearts', 6), c('hearts', 7), c('hearts', 8), c('hearts', 9)],
+        cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6), n('hearts', 7), n('hearts', 8), n('hearts', 9)],
       },
     ];
-    const state = base([c('diamonds', 6), c('clubs', 6), c('spades', 2)], table);
+    const state = base([n('diamonds', 6), n('clubs', 6), n('spades', 2)], table);
     const d = ai.decide(state);
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
@@ -144,10 +154,10 @@ describe('RearrangerAi', () => {
     // Moving hearts-6 onto the target run makes it 3-4-5-6, which then lets
     // hand hearts-7 extend it — impossible before the move (target ended at 5).
     const table = [
-      { id: 'src', cards: [c('hearts', 6), c('spades', 6), c('clubs', 6), c('diamonds', 6)] },
-      { id: 'tgt', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5)] },
+      { id: 'src', cards: [n('hearts', 6), n('spades', 6), n('clubs', 6), n('diamonds', 6)] },
+      { id: 'tgt', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] },
     ];
-    const state = base([c('hearts', 7), c('clubs', 2), c('spades', 11)], table);
+    const state = base([n('hearts', 7), n('clubs', 2), n('spades', 11)], table);
     const d = ai.decide(state);
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
@@ -159,8 +169,8 @@ describe('RearrangerAi', () => {
 
   it('prefers the play that uses the most hand cards', () => {
     // A 3-card meld straight from hand (9s) beats a 2-card rearrange (steal + form 6s).
-    const table = [{ id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5), c('hearts', 6)] }];
-    const hand = [c('hearts', 9), c('spades', 9), c('clubs', 9), c('diamonds', 6), c('clubs', 6)];
+    const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] }];
+    const hand = [n('hearts', 9), n('spades', 9), n('clubs', 9), n('diamonds', 6), n('clubs', 6)];
     const state = base(hand, table);
     const ai = new RearrangerAi();
     const d = ai.decide(state);
@@ -176,10 +186,10 @@ describe('RearrangerAi', () => {
     const table = [
       {
         id: 't1',
-        cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5), c('hearts', 6), c('hearts', 7), c('hearts', 8), c('hearts', 9)],
+        cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6), n('hearts', 7), n('hearts', 8), n('hearts', 9)],
       },
     ];
-    const state = base([c('diamonds', 6), c('clubs', 6), c('spades', 2)], table);
+    const state = base([n('diamonds', 6), n('clubs', 6), n('spades', 2)], table);
     const ai = new RearrangerAi();
     const a = ai.decide(state);
     const b = ai.decide(state);
@@ -188,17 +198,17 @@ describe('RearrangerAi', () => {
 
   it('respects its budget on a full 4-meld table', () => {
     const table = [
-      { id: 't1', cards: [c('hearts', 2), c('hearts', 3), c('hearts', 4), c('hearts', 5), c('hearts', 6), c('hearts', 7)] },
-      { id: 't2', cards: [c('spades', 8), c('spades', 9), c('spades', 10), c('spades', 11)] },
-      { id: 't3', cards: [c('clubs', 4), c('diamonds', 4), c('spades', 4)] },
-      { id: 't4', cards: [c('diamonds', 8), c('diamonds', 9), c('diamonds', 10)] },
-      { id: 't5', cards: [c('clubs', 11), c('clubs', 12), c('clubs', 13)] },
+      { id: 't1', cards: [n('hearts', 2), n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6), n('hearts', 7)] },
+      { id: 't2', cards: [n('spades', 8), n('spades', 9), n('spades', 10), n('spades', 11)] },
+      { id: 't3', cards: [n('clubs', 4), n('diamonds', 4), n('spades', 4)] },
+      { id: 't4', cards: [n('diamonds', 8), n('diamonds', 9), n('diamonds', 10)] },
+      { id: 't5', cards: [n('clubs', 11), n('clubs', 12), n('clubs', 13)] },
     ];
     const hand = [
-      c('hearts', 12), c('hearts', 13), c('spades', 2), c('spades', 3),
-      c('clubs', 2), c('clubs', 3), c('diamonds', 2), c('diamonds', 3),
-      c('hearts', 10), c('spades', 6), c('clubs', 8), c('diamonds', 12),
-      c('hearts', 11),
+      n('hearts', 12), n('hearts', 13), n('spades', 2), n('spades', 3),
+      n('clubs', 2), n('clubs', 3), n('diamonds', 2), n('diamonds', 3),
+      n('hearts', 10), n('spades', 6), n('clubs', 8), n('diamonds', 12),
+      n('hearts', 11),
     ];
     const state = base(hand, table);
     const t0 = performance.now();
@@ -214,8 +224,8 @@ describe('RearrangerAi', () => {
 describe('personalities', () => {
   it('cida plays fewer cards than juninho on rich hand', () => {
     const hand = [
-      c('hearts', 9), c('spades', 9), c('clubs', 9),
-      c('hearts', 4), c('hearts', 5), c('hearts', 6),
+      n('hearts', 9), n('spades', 9), n('clubs', 9),
+      n('hearts', 4), n('hearts', 5), n('hearts', 6),
     ];
     const cida = createAi('cida').decide(base(hand));
     const juninho = createAi('juninho').decide(base(hand));
@@ -228,8 +238,8 @@ describe('personalities', () => {
 
   it('ze holds small plays early game', () => {
     const hand = [
-      c('hearts', 9), c('spades', 9), c('clubs', 9),
-      c('hearts', 2), c('diamonds', 5), c('clubs', 7), c('spades', 12),
+      n('hearts', 9), n('spades', 9), n('clubs', 9),
+      n('hearts', 2), n('diamonds', 5), n('clubs', 7), n('spades', 12),
     ];
     const state = { ...base(hand), turn: 1 };
     const d = createAi('ze').decide(state);
@@ -242,7 +252,7 @@ describe('AI + jokers', () => {
   const personalities = ['cida', 'juninho', 'bia', 'ze'] as const;
 
   it('every personality returns a decision on a joker-containing hand without throwing', () => {
-    const hand = [c('hearts', 4), c('hearts', 5), j(0, 1), c('spades', 2), c('clubs', 10)];
+    const hand = [n('hearts', 4), n('hearts', 5), j(0, 1), n('spades', 2), n('clubs', 10)];
     const state = base(hand);
     for (const p of personalities) {
       expect(() => createAi(p).decide(state)).not.toThrow();
@@ -251,7 +261,7 @@ describe('AI + jokers', () => {
 
   it('uses a joker to complete a group when that is the only play', () => {
     // Two 8s + a joker is the only meld in hand; no run, no natural set of 3.
-    const hand = [c('hearts', 8), c('spades', 8), j(0, 1), c('clubs', 2), c('diamonds', 11)];
+    const hand = [n('hearts', 8), n('spades', 8), j(0, 1), n('clubs', 2), n('diamonds', 11)];
     const state = base(hand);
     const d = new SimpleAi().decide(state);
     expect(d.kind).toBe('confirm');
@@ -264,7 +274,7 @@ describe('AI + jokers', () => {
 
   it('uses a joker to complete a run when that is the only play', () => {
     // hearts 4, hearts 5, gap at 6, joker fills it. No other meld in hand.
-    const hand = [c('hearts', 4), c('hearts', 5), j(0, 1), c('clubs', 2), c('diamonds', 11)];
+    const hand = [n('hearts', 4), n('hearts', 5), j(0, 1), n('clubs', 2), n('diamonds', 11)];
     const state = base(hand);
     const d = new SimpleAi().decide(state);
     expect(d.kind).toBe('confirm');
@@ -276,7 +286,7 @@ describe('AI + jokers', () => {
 
   it('draws when it has no legal play, even with a joker present', () => {
     // A lone joker can't meld by itself (needs a natural), and nothing else pairs up.
-    const hand = [j(0, 1), c('hearts', 2), c('spades', 7)];
+    const hand = [j(0, 1), n('hearts', 2), n('spades', 7)];
     const d = new SimpleAi().decide(base(hand));
     expect(d.kind).toBe('draw');
   });
@@ -284,8 +294,8 @@ describe('AI + jokers', () => {
   it('confirm-validity invariant holds with jokers and duplicate cards in hand', () => {
     // Two identical naturals (same suit+rank, different deck) plus a joker-completed run.
     const hand = [
-      c('hearts', 7, 0), c('hearts', 7, 1), c('spades', 7), // duplicate 7s + a 3rd suit → natural group
-      c('clubs', 4), c('clubs', 5), j(0, 1), // joker-completed run
+      n('hearts', 7, 0), n('hearts', 7, 1), n('spades', 7), // duplicate 7s + a 3rd suit → natural group
+      n('clubs', 4), n('clubs', 5), j(0, 1), // joker-completed run
     ];
     const state = base(hand);
     for (const p of personalities) {
@@ -321,7 +331,7 @@ describe('AI + jokers', () => {
   it('holds the joker when an equivalent natural play exists, but spends it to go out', () => {
     // natural run clubs 4-5-6 and a joker-completed group of 8s are both available.
     // the dead diamonds-2 means the joker group would NOT empty the hand — so hold it.
-    const hand = [c('clubs', 4), c('clubs', 5), c('clubs', 6), c('hearts', 8), c('spades', 8), j(0, 1), c('diamonds', 2)];
+    const hand = [n('clubs', 4), n('clubs', 5), n('clubs', 6), n('hearts', 8), n('spades', 8), j(0, 1), n('diamonds', 2)];
     const patient = createAi('bia').decide(base(hand));
     expect(patient.kind).toBe('confirm');
     if (patient.kind === 'confirm') {
@@ -336,7 +346,7 @@ describe('AI + jokers', () => {
   });
 
   it('a joker-holding personality still spends the joker when that play empties the hand', () => {
-    const hand = [c('hearts', 8), c('spades', 8), j(0, 1)];
+    const hand = [n('hearts', 8), n('spades', 8), j(0, 1)];
     const d = createAi('bia').decide(base(hand));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
@@ -347,7 +357,7 @@ describe('AI + jokers', () => {
   it('a duplicate natural does not break the run scanner and stays legal filler for a group', () => {
     // hearts 6,7,7,8 (two decks' worth of 7): run scanner must find 6-7-8 using one 7,
     // leaving the spare 7 out (no legal use for it here — just must not crash or corrupt the run).
-    const hand = [c('hearts', 6), c('hearts', 7, 0), c('hearts', 7, 1), c('hearts', 8)];
+    const hand = [n('hearts', 6), n('hearts', 7, 0), n('hearts', 7, 1), n('hearts', 8)];
     const d = new SimpleAi().decide(base(hand));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
@@ -428,17 +438,17 @@ describe('AI hardening', () => {
       const s0 = suits[rank % 4]!;
       const s1 = suits[(rank + 1) % 4]!;
       const s2 = suits[(rank + 2) % 4]!;
-      table.push({ id: `t${rank}`, cards: [c(s0, rank), c(s1, rank), c(s2, rank)] });
+      table.push({ id: `t${rank}`, cards: [n(s0, rank), n(s1, rank), n(s2, rank)] });
     }
     // 20-card hand: the 4th suit of ranks 1..10 (each could extend a set to 4) + ranks 11..13 x? pad to 20.
     const hand: Card[] = [];
     for (let rank = 1; rank <= 10; rank++) {
       const used = new Set([suits[rank % 4]!, suits[(rank + 1) % 4]!, suits[(rank + 2) % 4]!]);
       const remaining = suits.find((s) => !used.has(s))!;
-      hand.push(c(remaining, rank));
+      hand.push(n(remaining, rank));
     }
-    hand.push(c('hearts', 11), c('hearts', 12), c('hearts', 13), c('diamonds', 11), c('diamonds', 12), c('diamonds', 13));
-    hand.push(c('clubs', 11), c('clubs', 12), c('clubs', 13), c('spades', 11));
+    hand.push(n('hearts', 11), n('hearts', 12), n('hearts', 13), n('diamonds', 11), n('diamonds', 12), n('diamonds', 13));
+    hand.push(n('clubs', 11), n('clubs', 12), n('clubs', 13), n('spades', 11));
     expect(hand).toHaveLength(20);
 
     const state = base(hand, table);
@@ -452,7 +462,7 @@ describe('AI hardening', () => {
   });
 
   it('empty pile with no legal play: AI decides to draw (pass) without hanging', () => {
-    const state = { ...base([c('hearts', 2), c('spades', 7), c('clubs', 12)]), drawPile: [] };
+    const state = { ...base([n('hearts', 2), n('spades', 7), n('clubs', 12)]), drawPile: [] };
     const t0 = performance.now();
     const d = new RearrangerAi().decide(state);
     const ms = performance.now() - t0;
@@ -461,7 +471,7 @@ describe('AI hardening', () => {
   });
 
   it('empty pile, no legal play: drawAndEndTurn ends the game instead of looping', () => {
-    const state = { ...base([c('hearts', 2), c('spades', 7), c('clubs', 12)]), drawPile: [] };
+    const state = { ...base([n('hearts', 2), n('spades', 7), n('clubs', 12)]), drawPile: [] };
     const d = new RearrangerAi().decide(state);
     expect(d.kind).toBe('draw');
     const next = drawAndEndTurn(state);
@@ -471,12 +481,12 @@ describe('AI hardening', () => {
 
   it('RearrangerAi never proposes a confirm that plays zero hand cards', () => {
     const fixtures: GameState[] = [
-      base([c('hearts', 9), c('spades', 9), c('clubs', 9), c('hearts', 2)]),
+      base([n('hearts', 9), n('spades', 9), n('clubs', 9), n('hearts', 2)]),
       base(
-        [c('spades', 6), c('clubs', 6), c('diamonds', 12)],
-        [{ id: 't1', cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5), c('hearts', 6)] }],
+        [n('spades', 6), n('clubs', 6), n('diamonds', 12)],
+        [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] }],
       ),
-      base([c('hearts', 2), c('spades', 7)]),
+      base([n('hearts', 2), n('spades', 7)]),
       base([]),
     ];
     for (const state of fixtures) {
@@ -491,14 +501,14 @@ describe('AI hardening', () => {
     const table = [
       {
         id: 't1',
-        cards: [c('hearts', 3), c('hearts', 4), c('hearts', 5), c('hearts', 6), c('hearts', 7), c('hearts', 8), c('hearts', 9)],
+        cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6), n('hearts', 7), n('hearts', 8), n('hearts', 9)],
       },
     ];
     // Only a 2-card rearrange play is reachable (split + steal hearts-6 for a set) —
     // the extra padding cards don't form any hand meld or extension of their own.
     const hand = [
-      c('diamonds', 6), c('clubs', 6), c('spades', 2),
-      c('clubs', 2), c('diamonds', 9), c('spades', 4), c('clubs', 11),
+      n('diamonds', 6), n('clubs', 6), n('spades', 2),
+      n('clubs', 2), n('diamonds', 9), n('spades', 4), n('clubs', 11),
     ];
     const state = { ...base(hand, table), turn: 1 };
 
@@ -552,8 +562,8 @@ describe('AI personality regression snapshots (deterministic, hard-coded expecta
 describe('cida (conservative) plays exactly one action per turn', () => {
   it('extends a run once, not with every card that fits', () => {
     // clubs 3-4-5 on the table, clubs 6 and 7 in hand: both extend, only one may be played.
-    const st = base([c('clubs', 6), c('clubs', 7), c('hearts', 2)], [
-      { id: 't1', cards: [c('clubs', 3), c('clubs', 4), c('clubs', 5)] },
+    const st = base([n('clubs', 6), n('clubs', 7), n('hearts', 2)], [
+      { id: 't1', cards: [n('clubs', 3), n('clubs', 4), n('clubs', 5)] },
     ]);
     const d = createAi('cida').decide(st);
     expect(d.kind).toBe('confirm');
@@ -561,8 +571,8 @@ describe('cida (conservative) plays exactly one action per turn', () => {
   });
 
   it('lays one meld and stops, never also extending the table', () => {
-    const st = base([c('hearts', 9), c('spades', 9), c('clubs', 9), c('clubs', 6)], [
-      { id: 't1', cards: [c('clubs', 3), c('clubs', 4), c('clubs', 5)] },
+    const st = base([n('hearts', 9), n('spades', 9), n('clubs', 9), n('clubs', 6)], [
+      { id: 't1', cards: [n('clubs', 3), n('clubs', 4), n('clubs', 5)] },
     ]);
     const d = createAi('cida').decide(st);
     expect(d.kind).toBe('confirm');
@@ -575,8 +585,8 @@ describe('personality expression (Phase 9)', () => {
 
   it('every personality tags its explanation with a personality:reason code', () => {
     const hand = [
-      c('hearts', 9), c('spades', 9), c('clubs', 9),
-      c('hearts', 4), c('hearts', 5), c('hearts', 6),
+      n('hearts', 9), n('spades', 9), n('clubs', 9),
+      n('hearts', 4), n('hearts', 5), n('hearts', 6),
     ];
     const state = base(hand);
     for (const p of personalities) {
@@ -587,9 +597,9 @@ describe('personality expression (Phase 9)', () => {
 
   it('same seed, same deal: the four personalities are observably different (played/draw counts or reasons diverge)', () => {
     const hand = [
-      c('hearts', 9), c('spades', 9), c('clubs', 9),
-      c('hearts', 4), c('hearts', 5), c('hearts', 6),
-      c('diamonds', 2),
+      n('hearts', 9), n('spades', 9), n('clubs', 9),
+      n('hearts', 4), n('hearts', 5), n('hearts', 6),
+      n('diamonds', 2),
     ];
     const state = { ...base(hand), turn: 1 };
     const signatures = personalities.map((p) => {
@@ -602,7 +612,7 @@ describe('personality expression (Phase 9)', () => {
   });
 
   it('joker + trinca legality holds for every personality on a joker-containing deal', () => {
-    const hand = [c('hearts', 4), c('hearts', 5), j(0, 1), c('spades', 2), c('clubs', 10), c('diamonds', 7)];
+    const hand = [n('hearts', 4), n('hearts', 5), j(0, 1), n('spades', 2), n('clubs', 10), n('diamonds', 7)];
     const state = base(hand);
     for (const p of personalities) {
       const d = createAi(p).decide(state);
@@ -641,15 +651,15 @@ describe('AI difficulty', () => {
   it("'smart' is the tier every personality had before difficulty existed", () => {
     // The default argument must reproduce the shipped behaviour exactly, or every existing
     // personality expectation above silently becomes a test of something else.
-    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), c('hearts', 6), c('hearts', 7), c('hearts', 8)];
+    const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), n('hearts', 6), n('hearts', 7), n('hearts', 8)];
     for (const p of personalities) {
       expect(createAi(p, 'smart').decide(base(hand))).toEqual(createAi(p).decide(base(hand)));
     }
   });
 
   it('never proposes an illegal confirm, at any tier or personality', () => {
-    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), j(0, 1), c('hearts', 6), c('hearts', 7)];
-    const table = [{ id: 'm1', cards: [c('diamonds', 9), c('diamonds', 10), c('diamonds', 11), c('diamonds', 12)] }];
+    const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), j(0, 1), n('hearts', 6), n('hearts', 7)];
+    const table = [{ id: 'm1', cards: [n('diamonds', 9), n('diamonds', 10), n('diamonds', 11), n('diamonds', 12)] }];
     for (const difficulty of DIFFICULTIES) {
       for (const p of personalities) {
         const state = base(hand, table);
@@ -660,7 +670,7 @@ describe('AI difficulty', () => {
   });
 
   it('is deterministic at every tier: the same state gives the same decision', () => {
-    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), c('hearts', 6), c('hearts', 7), c('hearts', 8)];
+    const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), n('hearts', 6), n('hearts', 7), n('hearts', 8)];
     for (const difficulty of DIFFICULTIES) {
       for (const p of personalities) {
         const first = createAi(p, difficulty).decide(base(hand));
@@ -694,7 +704,7 @@ describe('AI difficulty', () => {
 
   it('beginner takes at most one action per turn where smart takes several', () => {
     // Two independent melds in hand: the minimal tier lays one, the full tiers lay both.
-    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), c('hearts', 9), c('hearts', 10), c('hearts', 11)];
+    const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), n('hearts', 9), n('hearts', 10), n('hearts', 11)];
     const beginner = createAi('juninho', 'beginner').decide(base(hand));
     const smart = createAi('juninho', 'smart').decide(base(hand));
     if (beginner.kind !== 'confirm' || smart.kind !== 'confirm') throw new Error('expected plays');
@@ -703,8 +713,8 @@ describe('AI difficulty', () => {
 
   it('expert rearranges the shared table even for a personality that never would', () => {
     // cida is the minimal personality: at 'smart' it cannot reach the 6 by stealing an edge card.
-    const table = [{ id: 'm1', cards: [c('diamonds', 9), c('diamonds', 10), c('diamonds', 11), c('diamonds', 12)] }];
-    const hand = [c('spades', 9), c('clubs', 9)];
+    const table = [{ id: 'm1', cards: [n('diamonds', 9), n('diamonds', 10), n('diamonds', 11), n('diamonds', 12)] }];
+    const hand = [n('spades', 9), n('clubs', 9)];
     const smart = createAi('cida', 'smart').decide(base(hand, table));
     const expert = createAi('cida', 'expert').decide(base(hand, table));
     expect(smart.kind).toBe('draw');
@@ -712,7 +722,7 @@ describe('AI difficulty', () => {
   });
 
   it('the reason suffix of every decision is a real ai.why.* key', () => {
-    const hand = [c('hearts', 5), c('spades', 5), c('clubs', 5), c('hearts', 6), c('hearts', 7)];
+    const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), n('hearts', 6), n('hearts', 7)];
     for (const difficulty of DIFFICULTIES) {
       for (const p of personalities) {
         const suffix = aiReasonKeySuffix(createAi(p, difficulty).decide(base(hand)).explanation);

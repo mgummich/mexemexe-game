@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
+import { testManager } from './manager';
 import { MAX_ACTIVITY, MAX_MATCH_HISTORY, parseClientMessage, PROTOCOL_VERSION, REACTION_COOLDOWN_MS } from '../../src/net/protocol';
 import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
 import { createRng } from '../../src/rules/rng';
@@ -7,19 +8,8 @@ import type { Card } from '../../src/rules/types';
 import { withHand } from '../helpers/cards';
 
 /** Clock the manager reads, so the reaction cooldown can be advanced deterministically. */
-function managerAt(clock: { t: number }, seed = 1): RoomManager {
-  let codes = 0;
-  let tokens = 0;
-  return new RoomManager({
-    now: () => clock.t,
-    genCode: () => `CODE${++codes}`,
-    genToken: () => `TOKEN${++tokens}`,
-    genSeed: () => seed,
-  });
-}
-
 function startedRoom(clock: { t: number }, seed: number): { mgr: RoomManager; code: string } {
-  const mgr = managerAt(clock, seed);
+  const mgr = testManager({ clock, seed });
   const created = mgr.createRoom('Alice');
   if (!created.ok) throw new Error('unexpected room_limit');
   mgr.joinRoom(created.code, 'Bob');
@@ -75,7 +65,7 @@ describe('preset reactions (ONLINE-21)', () => {
 
   it('enforces the cooldown on the server, per seat', () => {
     const clock = { t: 10_000 };
-    const mgr = managerAt(clock);
+    const mgr = testManager({ clock });
     const created = mgr.createRoom('Alice');
     if (!created.ok) throw new Error('unexpected room_limit');
     mgr.joinRoom(created.code, 'Bob');
@@ -93,7 +83,7 @@ describe('preset reactions (ONLINE-21)', () => {
 
   it('refuses a reaction for an empty seat or an unknown room', () => {
     const clock = { t: 0 };
-    const mgr = managerAt(clock);
+    const mgr = testManager({ clock });
     const created = mgr.createRoom('Alice');
     if (!created.ok) throw new Error('unexpected room_limit');
     expect(mgr.claimReaction(created.code, 3)).toBe(false);
@@ -147,7 +137,7 @@ describe('rematch in the same room (ONLINE-23/24)', () => {
   });
 
   it('is a no-op for a room that no longer exists', () => {
-    const mgr = managerAt({ t: 0 });
+    const mgr = testManager({ clock: { t: 0 } });
     expect(mgr.recycleForRematch('GONE1')).toBe(false);
   });
 });
@@ -332,7 +322,7 @@ describe('party session (OS-01..OS-19)', () => {
 
   it('OS-18 the feed drops its oldest entries rather than growing with the session', () => {
     const clock = { t: 0 };
-    const mgr = managerAt(clock);
+    const mgr = testManager({ clock });
     const created = mgr.createRoom('Alice');
     if (!created.ok) throw new Error('unexpected room_limit');
     for (let i = 0; i < MAX_ACTIVITY * 2; i++) {

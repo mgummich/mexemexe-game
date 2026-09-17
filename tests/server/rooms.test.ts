@@ -5,22 +5,8 @@ import { createDeck, createNewGame, dealInitialHands, shuffleDeck } from '../../
 import { createRng } from '../../src/rules/rng';
 import { RulesError, type Card } from '../../src/rules/types';
 import { expectCardConservation } from '../helpers/invariants';
-
-function testManager(
-  seed = 1,
-  overrides: Partial<{ disconnectGraceMs: number; idleTimeoutMs: number; maxRooms: number; now: () => number }> = {},
-) {
-  let codeCounter = 0;
-  let tokenCounter = 0;
-  const t = 1000;
-  return new RoomManager({
-    now: () => t,
-    genCode: () => `CODE${++codeCounter}`,
-    genToken: () => `TOKEN${++tokenCounter}`,
-    genSeed: () => seed,
-    ...overrides,
-  });
-}
+import { seedWithTriple } from '../helpers/scenarios';
+import { testManager } from './manager';
 
 /** createRoom fails only past MAX_ROOMS; every test below stays well under it, so unwrap the
  * success case and fail loudly if that ever stops being true. */
@@ -35,27 +21,6 @@ function mustCreate(mgr: RoomManager, name: string) {
 function dealFor(seed: number): { hands: Card[][] } {
   const deck = shuffleDeck(createDeck(), createRng(seed));
   return { hands: dealInitialHands(deck, 2).hands };
-}
-
-/** Find a seed whose seat-0 hand contains a same-rank triple, for legal-turn tests. */
-function findSeedWithSet(): { seed: number; triple: Card[] } {
-  for (let seed = 1; seed < 200; seed++) {
-    const { hands } = dealFor(seed);
-    const hand = hands[0]!.filter((c) => !c.isJoker);
-    const byRank = new Map<number, Card[]>();
-    for (const c of hand) {
-      const arr = byRank.get(c.rank!) ?? [];
-      arr.push(c);
-      byRank.set(c.rank!, arr);
-    }
-    for (const arr of byRank.values()) {
-      const onePerSuit = new Map<string, Card>();
-      for (const card of arr) if (!onePerSuit.has(card.suit!)) onePerSuit.set(card.suit!, card);
-      const triple = [...onePerSuit.values()].slice(0, 3);
-      if (triple.length === 3) return { seed, triple };
-    }
-  }
-  throw new Error('no seed found with a set in seat 0 hand (test setup bug)');
 }
 
 /** Find a seed whose seat-0 hand contains a joker plus a same-rank natural pair, so
@@ -106,7 +71,7 @@ function findSeedWithRepeatedSuitGroup(): { seed: number; cards: [Card, Card, Ca
 }
 
 function startRoom(seed: number) {
-  const mgr = testManager(seed);
+  const mgr = testManager({ seed });
   const { code, token: token0 } = mustCreate(mgr, 'Alice');
   mgr.joinRoom(code, 'Bob');
   mgr.setReady(code, 0, true);
@@ -119,7 +84,7 @@ describe('shared deal', () => {
   it('a room deals exactly what the offline client deals for the same seed (ARCH-004)', () => {
     // One `createNewGame`, two callers. If the server ever grows its own deal again, a seed stops
     // meaning one game and a replay/desync bug becomes possible.
-    const mgr = testManager(4242);
+    const mgr = testManager({ seed: 4242 });
     const created = mustCreate(mgr, 'Alice');
     mgr.joinRoom(created.code, 'Bob');
     mgr.setReady(created.code, 0, true);
@@ -211,7 +176,7 @@ describe('room lifecycle', () => {
 
   it('deals deterministically for three and four ready players and preserves clockwise turns', () => {
     for (const playerCount of [3, 4]) {
-      const mgr = testManager(42);
+      const mgr = testManager({ seed: 42 });
       const { code } = mustCreate(mgr, 'Alice');
       for (const name of ['Bob', 'Carol', 'Dina'].slice(0, playerCount - 1)) mgr.joinRoom(code, name);
       for (let seat = 0; seat < playerCount; seat++) mgr.setReady(code, seat, true);
@@ -329,7 +294,7 @@ describe('room lifecycle', () => {
 
 describe('submit_turn validation', () => {
   it('accepts a full legal turn and increments rev', () => {
-    const { seed, triple } = findSeedWithSet();
+    const { seed, triple } = seedWithTriple();
     const { mgr, code } = startRoom(seed);
     const result = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     expect(result).toEqual({ ok: true, gameOver: false });
@@ -374,7 +339,7 @@ describe('submit_turn validation', () => {
   });
 
   it('rejects a proposal that returns a committed table card to hand', () => {
-    const { seed, triple } = findSeedWithSet();
+    const { seed, triple } = seedWithTriple();
     const { mgr, code } = startRoom(seed);
     mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     // Seat 1's turn: submit without including seat 0's committed meld.
@@ -385,7 +350,7 @@ describe('submit_turn validation', () => {
   });
 
   it('rejects a turn with zero hand cards played', () => {
-    const { seed, triple } = findSeedWithSet();
+    const { seed, triple } = seedWithTriple();
     const { mgr, code } = startRoom(seed);
     mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     // Seat 1 resubmits exactly the existing table, adding nothing from hand.
@@ -461,7 +426,7 @@ describe('submit_turn validation', () => {
   });
 
   it('rejects a double submit (resubmitting the same already-applied rev)', () => {
-    const { seed, triple } = findSeedWithSet();
+    const { seed, triple } = seedWithTriple();
     const { mgr, code } = startRoom(seed);
     const first = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     expect(first.ok).toBe(true);
@@ -514,7 +479,7 @@ describe('draw / end turn', () => {
   });
 
   it('conservation holds across a submit + draw sequence', () => {
-    const { seed, triple } = findSeedWithSet();
+    const { seed, triple } = seedWithTriple();
     const { mgr, code } = startRoom(seed);
     const submitResult = mgr.submitTurn(code, 0, 1, [{ id: 'm1', cardIds: triple.map((c) => c.id) }]);
     expect(submitResult.ok).toBe(true);
@@ -588,7 +553,7 @@ describe('lifecycle and liveness', () => {
 
   it('OH-14: S1: sweep reports codes for rooms with every seat disconnected past the grace window (the caller must notify+detach those sockets)', () => {
     let now = 1000;
-    const mgr = testManager(7, { now: () => now, disconnectGraceMs: 1000 });
+    const mgr = testManager({ seed: 7, now: () => now, disconnectGraceMs: 1000 });
     const { code } = mustCreate(mgr, 'Alice');
     mgr.joinRoom(code, 'Bob');
     mgr.disconnect(code, 0);
@@ -601,7 +566,7 @@ describe('lifecycle and liveness', () => {
 
   it('OH-16: S3: a live lobby with both seats connected is never reaped by the idle timeout', () => {
     let now = 1000;
-    const mgr = testManager(7, { now: () => now, idleTimeoutMs: 1000 });
+    const mgr = testManager({ seed: 7, now: () => now, idleTimeoutMs: 1000 });
     const { code } = mustCreate(mgr, 'Alice');
     mgr.joinRoom(code, 'Bob');
     now += 10 * 60_000; // way past idleTimeoutMs, but both seats stay connected
@@ -612,7 +577,7 @@ describe('lifecycle and liveness', () => {
 
   it('OH-15: S3: idle timeout still applies as a backstop once nobody is connected', () => {
     let now = 1000;
-    const mgr = testManager(7, { now: () => now, idleTimeoutMs: 1000, disconnectGraceMs: 60_000 });
+    const mgr = testManager({ seed: 7, now: () => now, idleTimeoutMs: 1000, disconnectGraceMs: 60_000 });
     const { code } = mustCreate(mgr, 'Alice');
     mgr.joinRoom(code, 'Bob');
     mgr.disconnect(code, 0);
@@ -623,7 +588,7 @@ describe('lifecycle and liveness', () => {
   });
 
   it('S5: createRoom rejects with room_limit once at capacity', () => {
-    const mgr = testManager(1, { maxRooms: 2 });
+    const mgr = testManager({ seed: 1, maxRooms: 2 });
     expect(mustCreate(mgr, 'A').code).toBeTruthy();
     expect(mustCreate(mgr, 'B').code).toBeTruthy();
     const third = mgr.createRoom('C');
@@ -874,7 +839,7 @@ describe('per-room isolation and crash policy', () => {
 
   it('OH-33: a corrupt room is dropped without stopping other stalled rooms from advancing', () => {
     const clock = { t: 1000 };
-    const mgr = testManager(1, { disconnectGraceMs: 100, now: () => clock.t });
+    const mgr = testManager({ seed: 1, disconnectGraceMs: 100, now: () => clock.t });
     startedRoom(mgr, 'CODE1');
     startedRoom(mgr, 'CODE2');
     // Break card conservation in CODE1 so its stalled-turn advance throws.
@@ -897,7 +862,7 @@ describe('per-room isolation and crash policy', () => {
 
   it('OH-19/OH-20: a room deleted mid-stall is never advanced, resurrected or re-broadcast', () => {
     const clock = { t: 1000 };
-    const mgr = testManager(1, { disconnectGraceMs: 100, now: () => clock.t });
+    const mgr = testManager({ seed: 1, disconnectGraceMs: 100, now: () => clock.t });
     startedRoom(mgr, 'CODE1');
     startedRoom(mgr, 'CODE2');
     mgr.disconnect('CODE1', 0);

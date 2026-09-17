@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
+import { testManager } from './manager';
 import { createRng } from '../../src/rules/rng';
 
 /**
@@ -16,15 +17,8 @@ import { createRng } from '../../src/rules/rng';
 type Member = { seat: number; token: string; name: string };
 
 function makeManager(seed: number): RoomManager {
-  let codes = 0;
-  let tokens = 0;
   let seeds = seed;
-  return new RoomManager({
-    now: () => 1000,
-    genCode: () => `CODE${++codes}`,
-    genToken: () => `TOKEN${++tokens}`,
-    genSeed: () => ++seeds,
-  });
+  return testManager({ seed: () => ++seeds });
 }
 
 /** Every invariant that must hold between any two operations, whatever the room is doing. */

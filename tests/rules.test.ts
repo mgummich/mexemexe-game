@@ -24,6 +24,7 @@ import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import { createNewGame } from '../src/rules/rules';
 import { n, j, withHand } from './helpers/cards';
 import { allCards, expectCardConservation } from './helpers/invariants';
+import { gameState, invalid } from './helpers/scenarios';
 
 describe('createDeck', () => {
   it('default config: 108 cards, 4 jokers, 104 naturals, all ids unique', () => {
@@ -903,5 +904,21 @@ describe('one joker per meld', () => {
     const r = canConfirmTurn(s, draft);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reasons).toContain('reason.tooManyJokers');
+  });
+});
+
+describe('the invalid fixtures', () => {
+  /**
+   * The invariant checks are only worth running if they can fail, and a fixture named `invalid`
+   * is only useful if it really is. One test pins both: each state in `invalid` is rejected by
+   * the check that owns it, and the valid baseline is not.
+   */
+  it('really are invalid, and the valid baseline really is not (INV-G1, INV-G2)', () => {
+    const dealt = allCards(gameState()).map((c) => c.id);
+    expect(() => expectCardConservation(gameState(), dealt)).not.toThrow();
+    expect(() => expectCardConservation(invalid.duplicateCard(), dealt)).toThrow();
+    expect(() => expectCardConservation(invalid.missingCard(), dealt)).toThrow();
+    expect(analyzeMeld(invalid.illegalTable().table[0]!.cards).valid).toBe(false);
+    expect(invalid.wrongActivePlayer().activePlayerIndex).not.toBe(gameState().activePlayerIndex);
   });
 });

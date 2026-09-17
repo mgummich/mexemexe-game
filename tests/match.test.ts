@@ -1,39 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { LocalMatch, type MatchEvent } from '../src/game-state/match';
-import { DraftEditor } from '../src/mexe-mode/draft';
-import { DEFAULT_RULES, type GameState } from '../src/rules/types';
-import { n } from './helpers/cards';
+import type { GameState } from '../src/rules/types';
+import { gameState as state, legalDraft, oneCardFromWinning } from './helpers/scenarios';
 
 /**
  * The local match orchestration, exercised with no Phaser anywhere in the process (ARCH-001).
  * This is the seam a long-lived gameplay test should be written against: an action goes in, an
  * outcome and a set of announced facts come out.
  */
-
-/** Seat 0 can extend the table run with hearts-2; seat 1 is an AI seat holding two clubs. */
-function state(patch: Partial<GameState> = {}): GameState {
-  return {
-    seed: 1,
-    players: [
-      { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 2), n('spades', 9), n('clubs', 9)] },
-      { id: 'p1', name: 'B', isAi: true, hand: [n('clubs', 4), n('clubs', 5)] },
-    ],
-    activePlayerIndex: 0,
-    table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
-    drawPile: [n('spades', 7), n('spades', 8)],
-    turn: 1,
-    winnerId: null,
-    phase: 'playing',
-    config: DEFAULT_RULES,
-    ...patch,
-  };
-}
-
-function legalDraft(s: GameState) {
-  const ed = new DraftEditor(s);
-  ed.playHandCard('hearts-2-d0', 't1', 0);
-  return ed.getDraft();
-}
 
 function newMatch(patch: Partial<GameState> = {}) {
   const match = new LocalMatch(state(patch), { localSeat: 0, personalities: [null, 'cida'] });
@@ -63,6 +37,16 @@ describe('LocalMatch', () => {
     expect(match.dispatch({ type: 'drawAndEndTurn', actorIndex: 0 }).ok).toBe(true);
     expect(types()).toEqual(['turn:drawn', 'game:won']);
     expect(seen.at(-1)).toMatchObject({ type: 'game:won' });
+  });
+
+  it('announces the win when the last hand card is played out, not another turn', () => {
+    const match = new LocalMatch(oneCardFromWinning(), { localSeat: 0, personalities: [null, 'cida'] });
+    const seen: MatchEvent[] = [];
+    match.on((e) => seen.push(e));
+    const out = match.dispatch({ type: 'confirmTurn', actorIndex: 0, draft: legalDraft(match.state()) });
+    expect(out).toMatchObject({ ok: true, finished: true });
+    expect(match.state()).toMatchObject({ phase: 'finished', winnerId: 'p0' });
+    expect(seen.map((e) => e.type)).toEqual(['turn:confirmed', 'game:won']);
   });
 
   it('refuses an out-of-turn action, changes nothing and announces nothing', () => {

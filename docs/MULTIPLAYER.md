@@ -835,7 +835,9 @@ commands; a single `docker compose` service pair is the deployment shape.
 Server unit suites (`tests/server/`) cover room lifecycle, legal and rejected
 turns, redaction, reconnect and a malformed-message battery; the integration
 suite spawns the real process and drives raw `ws` clients (shared harness in
-`tests/server/harness.ts`). `tests/server/party.test.ts` and
+`tests/server/harness.ts`). A manager-level suite builds its `RoomManager`
+through `tests/server/manager.ts`, which injects the clock, room code,
+reconnect token and deal seed so every room test is reproducible. `tests/server/party.test.ts` and
 `tests/server/party.integration.test.ts` carry the `OS-*` party-session
 acceptance: session wins and their duplicate guard, rematch voting, between-match
 leave/join, bounded history and feed, and the room-scoped, rate-limited,

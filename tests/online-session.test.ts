@@ -1,32 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { OnlineSession } from '../src/net/online-session';
 import { buildView, DEFAULT_ROOM_SETTINGS, type GameView, type RoomSettings } from '../src/net/protocol';
-import { DEFAULT_RULES, type GameState } from '../src/rules/types';
-import { n } from './helpers/cards';
+import type { GameState } from '../src/rules/types';
+import { gameState as state } from './helpers/scenarios';
 
 /**
  * The online client's application layer, driven by recorded server frames with no socket, no
  * Phaser and no clock (ARCH-002). Every question a scene used to answer inline — stale frame,
  * desync, dropped draft, seat gap, missed-turn limit — is asked of the session here.
  */
-
-function state(patch: Partial<GameState> = {}): GameState {
-  return {
-    seed: 1,
-    players: [
-      { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 2), n('spades', 9)] },
-      { id: 'p1', name: 'B', isAi: false, hand: [n('clubs', 4), n('diamonds', 7)] },
-    ],
-    activePlayerIndex: 0,
-    table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
-    drawPile: [n('spades', 1), n('spades', 2)],
-    turn: 3,
-    winnerId: null,
-    phase: 'playing',
-    config: DEFAULT_RULES,
-    ...patch,
-  };
-}
 
 interface ViewOpts {
   seat?: number;
