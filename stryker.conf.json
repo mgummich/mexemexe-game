@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Mutation testing scope: the deterministic gameplay core only. These are the modules where a subtly wrong comparison silently changes a match \u2014 legality, transitions, the save/replay validators. Scenes, rendering, network glue and the AI are deliberately out: see docs/TESTING.md#mutation-testing. Run with `npm run test:mutation`; it is a diagnostic, not a gate, and no score threshold is enforced.",
+  "packageManager": "npm",
+  "testRunner": "command",
+  "reporters": [
+    "progress",
+    "clear-text",
+    "html"
+  ],
+  "coverageAnalysis": "off",
+  "mutate": [
+    "src/rules/rules.ts",
+    "src/rules/rng.ts",
+    "src/rules/hash.ts",
+    "src/game-state/actions.ts",
+    "src/game-state/replay.ts",
+    "src/mexe-mode/draft.ts"
+  ],
+  "tempDirName": "tmp/stryker",
+  "htmlReporter": {
+    "fileName": "tmp/mutation/index.html"
+  },
+  "thresholds": {
+    "high": 100,
+    "low": 0,
+    "break": null
+  },
+  "ignorePatterns": [
+    ".venv",
+    "dist",
+    "coverage",
+    "test-results",
+    "tmp",
+    "docs",
+    "music",
+    "public",
+    "monitoring",
+    "theme",
+    "e2e",
+    "e2e-cross",
+    "e2e-multiplayer",
+    "e2e-pwa",
+    ".git"
+  ],
+  "disableTypeChecks": "{src,tests,server,scripts}/**/*.ts",
+  "commandRunner": {
+    "command": "node node_modules/vitest/vitest.mjs run -c vitest.mutation.config.ts --silent --reporter=dot"
+  },
+  "timeoutMS": 60000,
+  "concurrency": 6,
+  "_comment_runner": "Command runner, not @stryker-mutator/vitest-runner: that runner predates vitest 5 and reports zero tests per mutant against it, which silently marks every mutant as survived. The command below is the ordinary vitest CLI, so a non-zero exit is a killed mutant whatever vitest version the repo is on. Revisit when the vitest runner supports vitest 5."
+}

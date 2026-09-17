@@ -25,13 +25,15 @@ Two consequences run through everything below:
 
 ### Test levels
 
-Six automated levels, cheapest first, plus manual. "Cost" is the order of
+Eight automated levels, cheapest first, plus manual. "Cost" is the order of
 magnitude a developer waits for the whole category on this repo — see
 [Runtime budgets](#runtime-budgets).
 
 | Level | Cost | Owns | Does not own | Lives in |
 |---|---|---|---|---|
 | Pure / unit | ms | Rules, validators, layout maths, serialization, protocol helpers, settings/i18n, state invariants | Anything needing a socket, a scene, storage or a real clock | `tests/*.test.ts` |
+| Property / generative | ms | Invariants that hold across *every* generated deal, meld and legal action sequence — conservation, round-trips, determinism, refusal | The specific answers this game gives (that is a unit test's job), anything impure | `tests/property/` |
+| Golden replay | ms | Whole-match outcomes: the endings, the rotations, a recorded rearrangement | Any rule a unit test can prove; anything presentational | `tests/replay.test.ts` + `tests/fixtures/replays/` |
 | Application / integration | ms | Action orchestration (`LocalMatch`), online state adaptation (`OnlineSession`), lobby transitions (`LobbyMachine`), persistence and lifecycle coordination | Wire framing, rendering, engine behaviour | `tests/match`, `online-session`, `lobby`, `persistence`, `lifecycle`, `net/` |
 | Simulation | seconds | Emergent behaviour over many seeded states — AI, full matches, lobby random walks | Single rule cases, which are cheaper as unit tests | `tests/probes`, `soak`, `server/lobby-soak` |
 | Server integration | seconds | Room ownership, authoritative validation, revisions, reconnect, rematch, hidden information, the wire boundary | UI, engine parity | `tests/server/` |
@@ -39,10 +41,14 @@ magnitude a developer waits for the whole category on this repo — see
 | Cross-browser / device | minutes | Behaviour that genuinely differs per engine or form factor: pointer/touch, viewport, orientation, iOS lifecycle | A second copy of a journey already proven on Chromium | `e2e-cross/`, the `firefox`/`webkit` multiplayer projects |
 | Manual | — | Comprehension, feel, presentation, exploratory abuse | Anything a machine can assert | [PLAYTEST_GUIDE.md](PLAYTEST_GUIDE.md) |
 
-Fuzz/property, mutation testing, large golden-replay suites and performance
-trending are **not** categories here yet. They are named so that nobody invents
-a seventh level by accident; when one arrives it gets a row, a gate and a
-budget like every other.
+Mutation testing is not a level: it has no tests of its own. It is a
+**diagnostic on the levels above** — it asks whether they would notice a wrong
+comparison — and it is run on demand, never as a gate. See
+[Mutation testing](#mutation-testing).
+
+Performance trending is still not a category here. It is named so that nobody
+invents a level by accident; when it arrives it gets a row, a gate and a budget
+like every other.
 
 #### Choosing a level
 
@@ -104,17 +110,17 @@ instead. That is usually the smaller, better change.
 | ID | Area | Primary risk | Strongest proving test | Level | Status |
 |---|---|---|---|---|---|
 | GQA-01 | Core rules | illegal state accepted | `tests/rules.test.ts` (runs, groups, jokers, `canConfirmTurn`) | unit | Covered |
-| GQA-02 | Card integrity | card lost/duplicated | `tests/helpers/invariants.ts` → `expectCardConservation`, re-checked in `rules`, `probes` (every turn, 40 seeds), `server/rooms` | unit + simulation + server | Covered |
+| GQA-02 | Card integrity | card lost/duplicated | `tests/helpers/invariants.ts` → `expectCardConservation`, re-checked in `rules`, `probes` (every turn, 40 seeds), `server/rooms`, and over generated matches in `tests/property/state.property.test.ts` | unit + property + simulation + server | Covered |
 | GQA-03 | Turn flow | softlock / dead state | `tests/actions.test.ts` (the local action path: accepted, refused, after-finish, out-of-turn), `tests/probes.test.ts` (every seed terminates, turn rotation asserted each turn) | unit + simulation | Covered |
 | GQA-04 | Mexe | draft/state corruption | `tests/draft.test.ts`, `tests/probes.test.ts` undo/reset abuse; `e2e/screenshot.spec.ts` mexe + editor journeys | unit + E2E | Covered |
-| GQA-05 | End game | wrong winner/end state | `tests/rules.test.ts` win + draw-pile exhaustion; `e2e` `win-real-finish` | unit + E2E | Covered |
+| GQA-05 | End game | wrong winner/end state | `tests/rules.test.ts` win + draw-pile exhaustion; the three finished golden replays (empty hand, two-seat exhaustion, four-seat tiebreak); `e2e` `win-real-finish` | unit + golden replay + E2E | Covered |
 | GQA-06 | AI | illegal action / hang | `tests/ai.test.ts` (legality, budgets, determinism), `tests/probes.test.ts` (terminates, legal every turn) | unit + simulation | Covered |
-| GQA-07 | Multiplayer sync | state divergence | `e2e-multiplayer/multiplayer.spec.ts` state-hash agreement; `tests/server/rooms.test.ts` | E2E + server | Covered |
-| GQA-08 | Privacy | hidden hand leaked | `tests/server/index.integration.test.ts` (privacy in a real frame, log redaction), `e2e-multiplayer` hand-privacy probe | server + E2E | Covered |
+| GQA-07 | Multiplayer sync | state divergence | `e2e-multiplayer/multiplayer.spec.ts` state-hash agreement; `tests/server/rooms.test.ts`; `tests/property/protocol.property.test.ts` proves the same digest agreement purely, for every seat of every generated state | E2E + server + property | Covered |
+| GQA-08 | Privacy | hidden hand leaked | `tests/server/index.integration.test.ts` (privacy in a real frame, log redaction), `e2e-multiplayer` hand-privacy probe, `tests/property/protocol.property.test.ts` (no seat's view carries another hand, any state) | server + E2E + property | Covered |
 | GQA-09 | Reconnect | state/identity corruption | `tests/server/reconnect.test.ts`, `tests/net/reconnect.test.ts`, `e2e-multiplayer/lobby.spec.ts` LB reload/second-tab | server + E2E | Covered |
 | GQA-10 | Timer | race / softlock | `tests/server/timer.test.ts` — DONE vs deadline, duplicate tick, disconnect grace, post-finish clock, all on a fake clock | integration | Covered |
 | GQA-11 | Duplicate input | action processed twice | `tests/server/rooms.test.ts` double submit, `queue.integration.test.ts` duplicate join, `public-rooms.test.ts` double leave; nightly traced multiplayer for the UI double-click class | server + E2E (nightly) | Covered |
-| GQA-12 | Persistence | restored state differs | `tests/persistence.test.ts` (round-trip, corrupt saves, versioning), `tests/lifecycle.test.ts` | integration | Covered |
+| GQA-12 | Persistence | restored state differs | `tests/persistence.test.ts` (round-trip, corrupt saves, versioning), `tests/lifecycle.test.ts`, `tests/property/serialization.property.test.ts` (round-trip and refusal over generated states — where the out-of-range active seat was found) | integration + property | Covered |
 | GQA-13 | Compatibility | unusable on a target platform | `e2e-cross/` on 8 device/engine profiles; multiplayer lobby on Firefox + WebKit (nightly) | E2E | Covered |
 | GQA-14 | PWA/offline | expected offline flow unavailable | `e2e-pwa/offline.spec.ts`, `update.spec.ts`, `tests/pwa.test.ts` | E2E + unit | Covered |
 | GQA-15 | Player feedback | player cannot understand state | `tests/invalid-detail.test.ts`, `objective.test.ts`, `results-summary.test.ts`; `e2e` blocked-FEITO / reason-badge journeys. Comprehension itself is manual | unit + E2E + manual | Partial (by design) |
@@ -147,7 +153,14 @@ state fixtures       tests/helpers/scenarios.ts    gameState(), dealtMatch(), le
 canonical scenarios  tests/helpers/scenarios.ts    tableRearrangement(), oneCardFromWinning(),
                      tests/server/manager.ts       finishedMatch(), invalid.*, testManager(),
                                                    startedRoom()
+        ↓
+generated families   tests/helpers/generators.ts   randomDeal(), playedMatch(), validMeld(),
+                     tests/helpers/property.ts     arbitraryCards(), corrupt.*, forAll()
 ```
+
+The last layer is the generative one, used only by `tests/property/`: the named
+scenarios are single states, the generators are the families they are drawn
+from. See [Property and fuzz testing](#property-and-fuzz-testing).
 
 Rules that keep this cheap:
 
@@ -213,6 +226,10 @@ need no mocks: they take state in and hand facts back.
   `waitFor`), never on a duration chosen to be "probably enough".
 - A test that needs a specific dealt hand searches for the seed that has it
   rather than hardcoding card ids that a shuffle change would invalidate.
+- A generated test is seeded from the same stream and prints the seed, the
+  minimized counterexample and the command that re-runs that one case —
+  [Property and fuzz testing](#property-and-fuzz-testing). A randomized test
+  whose failure cannot be reproduced is not allowed in this repository.
 
 ## Test output
 
@@ -232,16 +249,21 @@ as orders of magnitude, not deadlines — nothing in the repo asserts them.
 | Command | Covers | Typical |
 |---|---|---|
 | `npx vitest run tests/<file>` | one suite, the iteration loop | < 1s |
-| `npm run test` | every unit/application/simulation/server test with coverage | ~6s, ~960 tests |
+| `npm run test` | every unit/application/simulation/server test with coverage, the fast property budget and the golden replays | ~7s, ~990 tests |
+| `npm run test:replay` | the five golden replays alone | < 1s |
 | `npm run lint` | ESLint over six trees + `tsc --noEmit` | ~4s |
+| `npm run test:property` | the same properties at the extended budget | ~3.5s |
 | `npm run screenshot` | build + the browser journey/perf suite | minutes |
 | `npm run verify:multiplayer:chromium` | build + two-plus real clients | minutes |
 | `npm run verify:multiplayer` | the same on three engines | ~18 min — nightly, not per PR |
 | `npm run verify:cross` | build + 8 device/engine layout profiles | minutes |
+| `npm run test:mutation` | 1098 mutants over six core modules, six concurrent vitest sandboxes | ~75 min — on demand only |
 
 The developer loop is the first two rows. Everything below them is a gate, not
 a loop: do not re-run a browser suite after every edit, and do not make a commit
-wait on engine parity.
+wait on engine parity. The property and replay suites are inside `npm run test`
+because they are milliseconds; the extended fuzz budget and mutation testing are
+outside every gate because they are not.
 
 ## Unit tests — `npm run test`
 
@@ -305,12 +327,13 @@ helper logic live as pure modules under `src/table` and `src/ui`.
   `intensity.test.ts`, `invalid-detail.test.ts`, `no-telemetry.test.ts`,
   `config.test.ts`, `viewToState.test.ts`, `net/errors.test.ts`.
 - `tests/replay.test.ts` — deterministic reproduction: same seed + same actions
-  → same state and digest, the two golden fixtures in
+  → same state and digest, the five golden fixtures in
   `tests/fixtures/replays/`, and the refusals (future version, malformed JSON,
   unknown action type/actor/meld, illegal sequence, a card the seat cannot
-  play, corrupt snapshot start, diverged final hash). Regenerate a fixture with
-  `npm run replay record <seed> <out.json>` — it is committed output, so a
-  rules change that moves a recorded match's outcome fails here first.
+  play, corrupt snapshot start, an active player that is not a seat, diverged
+  final hash). See [Golden replays](#golden-replays).
+- `tests/property/*.test.ts` — the generative invariants, in their fast budget.
+  See [Property and fuzz testing](#property-and-fuzz-testing).
 - `tests/boundaries.test.ts` — the architecture guard: the domain core's import
   allow-list, no platform/clock/unseeded randomness in `rules`, `mexe-mode`,
   `game-state` or `table`, Phaser confined to the presentation layer, and the
@@ -323,6 +346,267 @@ helper logic live as pure modules under `src/table` and `src/ui`.
 - `tests/soak.test.ts` — long-running game loop, used as a perf/stability soak.
 
 `npm run test:watch` for the watch loop.
+
+## Property and fuzz testing — `npm run test:property`
+
+`tests/property/` asks a different question from every suite above it. A unit
+test says *this deal, this meld, this answer*. A property says **this is true of
+every deal, every meld, every legal action sequence** — and then generates a few
+hundred of them looking for the one that is not.
+
+### When a property is the right test
+
+Use one where the invariant is clearer than the examples:
+
+- card conservation, table legality and turn rotation over generated matches
+- a round trip: `deserialize(serialize(state))`, `runReplay(replayOf(match))`
+- determinism: same state + same action ⇒ same next state
+- an *agreement* between two entry points — `analyzeMeld` vs `validateTable` vs
+  `getInvalidMeldReasons`
+- a refusal: every named corruption of a valid state comes back as a
+  `RulesError` with a code, never as a crash and never as trusted state
+
+Do not use one where the example is the point. `Q-K-A-2` being illegal is a
+rule, not a property; it belongs in `tests/rules.test.ts` where a reader can see
+the case. And never assert a property by re-deriving the implementation —
+`expect(result).toEqual(reimplementTheAlgorithm(input))` proves only that the
+bug was copied twice.
+
+**Not fuzzed at all:** rendering, Phaser, audio, animation, input, the service
+worker, anything with a real clock. Their failures are not invariant-shaped, and
+a generator cannot tell a good frame from a bad one.
+
+The four files, and what each owns:
+
+| File | Owns |
+|---|---|
+| `tests/property/rules.property.test.ts` | deck, shuffle, deal; meld analysis, jokers, the validators agreeing, display sorting |
+| `tests/property/state.property.test.ts` | the `applyGameAction` contract: what an accepted action reports, that a refusal changes nothing, determinism, a finished match refusing everything |
+| `tests/property/serialization.property.test.ts` | save round-trip and refusal; replay round-trip, divergence and a foreign card id |
+| `tests/property/protocol.property.test.ts` | every seat's redacted view: own hand only, and the client's reconstruction digesting to the server's hash |
+
+### Generators
+
+`tests/helpers/generators.ts`, layered under the fixtures the same way
+`scenarios.ts` is: `cards.ts` builds cards, `scenarios.ts` builds named states,
+`generators.ts` builds *families* of them — `randomDeal`, `playedMatch`,
+`reachableState`, `validMeld`, `arbitraryCards`, `corrupt.*`.
+
+Two rules keep them honest:
+
+- **Valid by construction.** A generated meld is built as a run or a group with
+  at most one joker filling a slot the naturals leave open. "The validator
+  accepts it" is then a real claim, not a tautology. Generating arbitrary JSON
+  and discarding 99.9% of it would prove nothing about a card game.
+- **Invalid by name.** `corrupt.duplicateCard`, `missingCard`, `illegalTable`
+  and `wrongActivePlayer` each break exactly one documented invariant, so a
+  rejection can be attributed. Random garbage only proves garbage is refused.
+
+Action sequences come from `SimpleAi`, deliberately: `RearrangerAi` searches
+against a `performance.now()` deadline, so a loaded machine decides differently
+— fine for a player, fatal for a generator whose value is that a seed
+reproduces the failure.
+
+### Seeds, reproduction and minimization
+
+Every property runs on the game's own seeded RNG (INV-R1). Iteration *i* uses
+`baseSeed + i`, so CI and a laptop see the same corpus.
+
+On failure `tests/helpers/property.ts` prints the property name, the seed, the
+minimized size, the counterexample and the command that runs that one case:
+
+```bash
+MEXE_PROP_SEED=42 MEXE_PROP_SIZE=3 npx vitest run -t "a corrupted save is refused"
+```
+
+Minimization is exact rather than heuristic: a generator takes a `size` (action
+count, meld length), and the runner scans sizes upwards from 0 for the smallest
+one that still fails at that seed. There is no shrinking framework and no
+library — the only dimension worth shrinking here is "the same match with fewer
+turns", which is one number.
+
+When a property finds a real defect: fix production, then **keep the smallest
+durable regression** as an ordinary unit case (naming the property that found
+it), not the whole generated match. The property stays as the generative net;
+the unit test is what a reader sees. `tests/rules.test.ts` → *rejects a save
+whose active player is not a seat* is the worked example.
+
+### Fast and extended budgets
+
+Each property declares both counts inline as `runs(fast, extended)`:
+
+| Mode | Command | Iterations | Runs in |
+|---|---|---|---|
+| Fast | `npm run test` (included) | 10–80 per property | every PR, the developer loop |
+| Extended | `npm run test:property` | 60–3000 per property | on demand, before a rules change lands, nightly if it ever earns it |
+
+Extended is the same tests with `MEXE_FUZZ=extended` and a 60-second per-test
+timeout (a few hundred generated matches outlast vitest's 5-second default on a
+loaded machine — a timeout there is a starved CPU, not a failed invariant); it
+is not a different suite and it never has different assertions. The fast budget is sized to stay
+inside the unit-test runtime — if a property cannot pay for itself there, it
+belongs only in extended.
+
+## Golden replays — `npm run test:replay`
+
+A golden replay answers one question no unit test does: *did this whole match
+still end the way it ended?* Five committed artifacts in
+`tests/fixtures/replays/`, replayed on every `npm run test`:
+
+| Replay | Protects |
+|---|---|
+| `basic-turns` | the ordinary opening — draws, one confirmed turn, the turn counter and the seat rotating |
+| `rearrange-joker` | Mexe rearrangement: cards, jokers included, moving between committed melds without loss |
+| `win-empty-hand` | the win ending: a seat empties its hand while cards remain in the pile |
+| `ai-match-finish` | the exhaustion ending at two seats: the pile runs out, fewest cards wins |
+| `four-seat-pile-out` | four-seat rotation to an exhausted pile, decided by the seat-order tiebreak |
+
+The corpus is deliberately small: **one artifact per ending, not one per rule.**
+A sixth replay that re-proves a rule `tests/rules.test.ts` already owns is a
+liability — it is slower, larger and harder to read than the unit test it
+duplicates.
+
+### What a replay is, and what it is not
+
+The format is `src/game-state/replay.ts` (`REPLAY_VERSION` 1): a start point
+(seed + seats, or a snapshot) plus the ordered actions, carrying card **ids**
+only. No coordinates, no animation, no timing, no presentation state — nothing
+Phaser can see. A recorded match is a few kB, it is JSON a human can open, and
+it replays through `applyGameAction`, the same function live gameplay
+dispatches, so a replay can only reach states the game could reach.
+
+The contract each one defends is the table in `tests/replay.test.ts`: the
+outcome facts a player would notice (actions, turn, phase, winner, pile size,
+hand sizes), plus card conservation, table legality and the file's own
+full-state digest. Assertions are targeted, not "snapshot everything".
+
+### Running and regenerating
+
+```bash
+npm run test:replay                                   # the whole corpus
+npm run replay run tests/fixtures/replays/<id>.json   # one, with its final hash
+npm run replay record <seed> <out.json> [maxActions] [personalities]
+```
+
+### Golden update policy
+
+There is no "update the snapshots" command, on purpose: a flag that rewrites
+every expectation turns a behaviour change into a green diff.
+
+When a golden replay fails:
+
+1. **Read the diff.** The failure prints the replay id, its start (seed and
+   seat count), the contract fields that moved, and — if an action was refused
+   — its index and reasons. An action refused mid-replay means a legality
+   change; a matching contract with a different digest means something moved
+   inside the state that the contract does not name.
+2. **Decide whether the product changed.** A rules or deal change that moves a
+   recorded outcome is expected to fail here. A change that was not supposed to
+   touch gameplay is a defect, and the replay just caught it.
+3. **Only then regenerate**, with `npm run replay record` and the same seed and
+   personalities, and review the regenerated file's contract line by line in the
+   PR.
+4. **Say why in the commit message.** A regenerated golden with no stated reason
+   is an unreviewed behaviour change.
+
+Never edit a fixture by hand, and never relax a contract to make a run pass —
+that is the "weaken a test" prohibition in `AGENTS.md`.
+
+## Mutation testing — `npm run test:mutation`
+
+Coverage says a line ran. Mutation testing asks the question that matters:
+**would these tests fail if the logic were subtly wrong?** Stryker rewrites one
+operator, branch or literal at a time and re-runs the suite. A mutant the tests
+kill is a defect class they would catch; a mutant that survives is one they
+would not.
+
+### Scope
+
+`stryker.conf.json` mutates the deterministic gameplay core only:
+
+```text
+src/rules/rules.ts        legality, transitions, the deal, the save reader
+src/rules/rng.ts          the seeded stream
+src/rules/hash.ts         the digest replays and the server compare on
+src/game-state/actions.ts the one validated local transition
+src/game-state/replay.ts  the replay parser and runner
+src/mexe-mode/draft.ts    the draft editor
+```
+
+Scenes, rendering, audio, the network glue, the AI and generated assets are out.
+A mutant in a scene is either killed by a browser suite that costs minutes or
+survives for reasons that say nothing about product risk. Expand the scope only
+when a survivor elsewhere is shown to matter.
+
+The mutants run against `vitest.mutation.config.ts` — the rules, draft, action,
+match, replay, probe, AI and property suites — not the whole tree. Suites that
+scan the source or drive a socket cannot kill a mutant in `src/rules` and would
+be paid for once per mutant.
+
+### Interpreting survivors
+
+For each surviving mutant, in order: *is this a realistic defect? would a player
+notice? should an existing test have caught it?* Classify it, and only then
+decide whether anything changes:
+
+| Class | Meaning | Action |
+|---|---|---|
+| **Important gap** | A realistic wrong answer no test notices | Fix the *cheapest* level that sees it — usually one unit assertion or one property, rarely a new integration test |
+| **Equivalent** | The mutant cannot change observable behaviour (a redundant guard, a defensive fallback that is unreachable) | Document, move on |
+| **Low value** | Observable but harmless — a display sort order inside an invalid meld, a reason-code preference | Document, move on |
+| **Unreachable** | Dead under current configuration (a config the product never sets) | Document, move on |
+| **Tool artifact** | A string/literal mutation with no semantic meaning | Ignore |
+
+Accepted survivors are listed below with their class, so the next run's report
+can be diffed instead of re-litigated.
+
+### The run of record
+
+Full scope, 2026-09-17, on the six modules above:
+
+| Module | Mutants | Killed | Timed out | Survived |
+|---|---|---|---|---|
+| `src/rules/rules.ts` | 650 | 633 | 16 | 1 |
+| `src/game-state/replay.ts` | 197 | 197 | 0 | 0 |
+| `src/mexe-mode/draft.ts` | 194 | 182 | 12 | 0 |
+| `src/game-state/actions.ts` | 41 | 41 | 0 | 0 |
+| `src/rules/rng.ts` | 9 | 9 | 0 | 0 |
+| `src/rules/hash.ts` | 7 | 6 | 1 | 0 |
+| **Total** | **1098** | **1068** | **29** | **1** |
+
+A timed-out mutant is a killed one: it made a loop stop terminating, and the
+suite noticed by not finishing. The score is recorded because it is evidence
+from one run, not because it is a target — see [Not a gate](#not-a-gate).
+
+### Accepted survivors
+
+| Mutant | Class | Why it is accepted |
+|---|---|---|
+| `src/rules/rules.ts:542` — the *message* of `RulesError('corrupt save: invalid table', 'corruptSave')` replaced with `""` | Tool artifact | The message is developer diagnostics; the contract is the `code`, and the tests assert `corruptSave`. Asserting message prose would pin a string that is meant to be rewritten freely, and would make the suite fail on a typo fix. |
+
+That single survivor is also the run's control: a harness that marked
+everything killed regardless would have "killed" this one too.
+
+No important gaps were found, so no test was added to chase a survivor. What
+the run does show is where sensitivity came from — the reason-code mutants in
+`analyzeMeld` die against
+`tests/property/rules.property.test.ts`'s validator-agreement property, which
+asserts the exact reason `getInvalidMeldReasons` reports for every generated
+card set.
+
+### Not a gate
+
+There is **no mutation-score threshold** (`thresholds.break` is `null`) and
+there never should be: a score target is gamed by adding assertions to whatever
+is cheapest to kill, which is the opposite of the portfolio rule at the top of
+this document. Mutation testing is a diagnostic run on demand — before a rules
+change, when a suite is being restructured, or when a defect escaped a level
+that should have caught it — never on every commit. It takes about 75 minutes;
+the developer loop is seven seconds.
+
+Do not run it next to `npm run test`: six concurrent vitest sandboxes starve the
+one wall-clock budget in the codebase (`RearrangerAi`'s search deadline) and the
+AI soak in `tests/ai.test.ts` can fail for lack of CPU rather than for a defect.
 
 ## Server tests — `npm run test:server`
 
@@ -392,7 +676,16 @@ not baseline-diffed.
 **PR gate** (`.github/workflows/ci.yml`, every push and PR): lint + unit tests +
 build; `verify:multiplayer:chromium`; `verify:pwa`; the screenshot suite plus
 `check-verify.mjs`; the cross-browser layout suite. Fast, deterministic,
-high-signal — engine parity is deliberately *not* on this path.
+high-signal — engine parity is deliberately *not* on this path. `npm run test`
+carries the fast property budget and the golden replays; they cost about a
+second between them and need no job of their own.
+
+**On demand, gating nothing:** `npm run test:property` (the extended fuzz
+budget) before a rules or deal change lands, and `npm run test:mutation` when a
+core module is being restructured or a defect escaped the level that should have
+caught it. Neither is scheduled: nightly is for races and engine parity, and
+adding a 70-minute mutation job to it would buy a number nobody reads. Promote
+them to a job the first time one of them catches something CI did not.
 
 **Nightly** (`.github/workflows/nightly.yml`, 04:00 UTC): the expensive and the
 race-hunting work — WebKit touch flake detection (`--repeat-each=5`,
@@ -518,6 +811,11 @@ Answer these in order; each one is already decided above.
    [Choosing a level](#choosing-a-level).
 3. **Which scenario?** Look in `tests/helpers/scenarios.ts` (and
    `tests/server/manager.ts` for rooms) before writing a state literal.
+   **One case or every case?** If the claim is "for all deals/melds/actions",
+   it is a property, not twenty copies of a unit test —
+   [Property and fuzz testing](#property-and-fuzz-testing). If the claim is
+   about how a whole match *ends*, check whether a
+   [golden replay](#golden-replays) already carries it before recording a sixth.
 4. **What may I fake?** Platform boundaries only — [Mocking policy](#mocking-policy).
 5. **Does it need a browser?** Only if the risk *is* input, rendering, the
    service worker or two genuinely independent clients.

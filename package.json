@@ -10,6 +10,9 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "test:server": "vitest run tests/server",
+    "test:property": "MEXE_FUZZ=extended vitest run tests/property --testTimeout=60000",
+    "test:replay": "vitest run tests/replay.test.ts",
+    "test:mutation": "stryker run",
     "server": "tsx server/index.ts",
     "replay": "tsx scripts/replay.ts",
     "gen:cosmetics": "node scripts/gen-cosmetics.mjs",
@@ -31,6 +34,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
+    "@stryker-mutator/core": "^10.0.0",
     "@types/node": "^26.5.0",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^5.0.0",

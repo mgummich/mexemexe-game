@@ -787,6 +787,18 @@ describe('serialize/deserialize', () => {
     expect(() => deserializeGameState(envelope(duped))).toThrow(RulesError);
   });
 
+  it('rejects a save whose active player is not a seat', () => {
+    // Found by `tests/property/serialization.property.test.ts`: every card was accounted for and
+    // the table was legal, so the state was trusted — and the first action then died on
+    // `players[9].hand` with a TypeError instead of being refused.
+    const state = createNewGame(7, [{ name: 'A', isAi: false }, { name: 'B', isAi: true }]);
+    for (const activePlayerIndex of [-1, 2, 9, 0.5]) {
+      expect(() => deserializeGameState(envelope({ ...state, activePlayerIndex }))).toThrow(
+        expect.objectContaining({ code: 'corruptSave' }),
+      );
+    }
+  });
+
   it('rejects a save whose table holds an invalid meld (card count conserved but table is illegal)', () => {
     const state = createNewGame(123, [
       { name: 'A', isAi: false },
