@@ -3,7 +3,7 @@ dist/
 test-results/
 playwright-report/
 coverage/
-verify-log.json
+*-log.json
 verify-log-parts/
 verify-multiplayer-log-parts/
 verify-lobby-log-parts/

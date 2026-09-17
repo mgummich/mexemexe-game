@@ -4,6 +4,44 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
+## Unreleased — Phase 0 baseline
+
+### Fixed
+
+- **`AGENTS.md` was one 9292-byte line.** A compression pass collapsed the
+  84-line rules file into a single line with no newlines, so every heading,
+  table and code fence rendered as one wall of abbreviated text — the first
+  file an agent is told to read, and the least readable one in the repo. It is
+  structured Markdown again with every rule preserved.
+- Corrected two stale README claims: the turn timer's custom values *do* have a
+  lobby control (a host-only CUSTOM screen), and an online win screen *does*
+  show the room's running score — only the per-turn counters are local-only.
+
+### Changes
+
+- **9.8 MB of one-off screenshots removed.** `docs/screenshots/final/`
+  (untouched since the initial commit), `ios-baseline/` and `ios-fixed/` (the
+  simulator audit captures from the iOS tap/drag fix) and `phase20/`: no suite
+  produces them, nothing links to them, and git history still has them. The
+  README and docs hero image now point at the suite-generated
+  `docs/screenshots/game.png`, so it refreshes with every verify run.
+- The four generated verify logs (`verify-multiplayer-log.json`,
+  `verify-lobby-log.json`, `verify-lobby-ios-log.json`, `pwa/pwa-log.json`) are
+  ignored rather than committed, matching `verify-log.json`, which always was.
+  They are rewritten by every run and read only within it.
+- `AGENTS.md` no longer carries its own copy of the output-mode policy or the
+  validation-cycle cap; both point at `WORKFLOW.md` §1 and §7, which own them.
+  `mkdocs.yml` drops an `exclude_docs` entry for a directory that never existed.
+
+### Documentation
+
+- `DEVELOPMENT.md` documents the four e2e URL parameters that existed but were
+  undocumented (`?helper=`, `?textscale=`, `?motion=`, `?crowd=`) and the
+  `verify:multiplayer:chromium` script; `TESTING.md` says plainly that the
+  release gate is run by hand before tagging and that `release.yml` re-runs only
+  lint, tests and the build; `ASSETS.md` and `MULTIPLAYER.md` drop pointers to
+  audit files deleted in an earlier cleanup.
+
 ## Unreleased — Gaming QA audit
 
 ### Fixed

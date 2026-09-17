@@ -210,7 +210,9 @@ how the double-click `create_room` duplicate was found).
 **Release gate:** `verify`, `verify:preview`, `verify:multiplayer` and
 `verify:pwa`, all green, with zero console errors and zero server stderr lines.
 `verify:multiplayer` here means the three-engine form, not the Chromium PR
-variant.
+variant. This is a human gate run before tagging: `.github/workflows/release.yml`
+itself only re-runs lint, unit tests and the build, checks the tag against
+`package.json`, and then publishes the Release and the container images.
 
 Not every useful QA check blocks every PR. Engine parity for the lobby, traced
 race hunting and fps trend lines are a within-a-day guarantee, not a
