@@ -9,6 +9,7 @@ import { bus } from '../core/events';
 import { onAppHidden, onAppVisible } from '../core/lifecycle';
 import { haptic } from '../core/haptics';
 import { playlog } from '../core/playlog';
+import type { ActionOutcome, GameAction } from '../game-state/actions';
 import { GameStore } from '../game-state/store';
 import { buildShowcaseState } from '../demo/showcase';
 import { isComeback, matchIntensity, threatOf } from '../core/intensity';
@@ -320,7 +321,7 @@ export class GameScene extends Phaser.Scene {
   private lastMoveText: Phaser.GameObjects.Text | null = null;
   /** Readback of the most recently *confirmed* (meld) turn — read by onWin() to build the
    * results-screen "winning move" line. Cleared on a draw, since a stalemate win has no meld play
-   * to describe. Set right before store.confirmTurn(), since game:won fires synchronously inside it. */
+   * to describe. Set before the confirmTurn action, since dispatch() runs onWin() synchronously. */
   private lastConfirmedMoveText: string | null = null;
   /** Reason tag of the move the AI just made (`ai.why.*` suffix), or null when the last move was
    * a person's. Drives the `aiExplain` setting — a human opponent's move is never suppressed. */
@@ -543,8 +544,6 @@ export class GameScene extends Phaser.Scene {
     this.startAmbience();
     this.layoutSettingsKey = this.layoutKey();
     this.unsubs.push(
-      bus.on('game:won', () => this.onWin()),
-      bus.on('turn:start', () => this.onTurnStart()),
       settings.onChange(() => {
         if (this.ambienceSound) this.ambienceSound.volume = settings.musicVolume();
         // D12: large text, language and table theme are all read once at build time (regionsForMode
@@ -1007,6 +1006,30 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- turn flow ----------
 
+  /**
+   * The one local gameplay-action path. Human FEITO/COMPRAR, the AI, the tutorial opponent and
+   * the `window.__MEXE__` hooks all commit through here and nowhere else — nothing in this scene
+   * calls a `src/rules` transition directly.
+   *
+   * Post-transition orchestration is owned right here, from the returned outcome: the bus no
+   * longer advances the turn cycle (ARCH-006). Online is deliberately absent — an online client
+   * never commits authoritative state, it sends an intent and waits for `state_sync` (see
+   * `onFeitoOnline`/`onComprarOnline`).
+   */
+  private dispatch(action: GameAction): ActionOutcome {
+    const outcome = this.store.dispatch(action);
+    if (!outcome.ok) {
+      // Nothing local should reach this: the human path is gated by feitoAccepted() and the AI
+      // only proposes drafts it checked. Make the refusal visible instead of silently no-opping.
+      debugApi.errors.push(`action ${action.type} rejected: ${outcome.reasons.join(',')}`);
+      playSfx(this, 'sfx-invalid');
+      return outcome;
+    }
+    if (outcome.finished) this.onWin();
+    else this.onTurnStart();
+    return outcome;
+  }
+
   private onTurnStart(): void {
     const state = this.store.get();
     if (state.phase !== 'playing') return;
@@ -1056,7 +1079,7 @@ export class GameScene extends Phaser.Scene {
     if (this.tutorialDirector) {
       // tutorial opponent: no thinking, always draws so the human's next scripted turn arrives fast
       this.aiTimer = this.time.delayedCall(500, () => {
-        this.store.drawEndTurn();
+        this.dispatch({ type: 'drawAndEndTurn', actorIndex: this.store.get().activePlayerIndex });
         if (this.store.get().phase === 'playing') this.renderAll();
       });
     } else {
@@ -1351,7 +1374,6 @@ export class GameScene extends Phaser.Scene {
       // run mid-search, so the guard below re-checks scene and store before acting.
       const decision = ai.decideSliced ? await ai.decideSliced(state) : ai.decide(state);
       if (this.sceneGone || this.store.get() !== state) return; // scene quit or state moved on mid-search
-      bus.emit('ai:thought', { playerId: player.id, text: decision.explanation });
       debugApi.lastAiThought = decision.explanation;
       this.lastAiReason = aiReasonKeySuffix(decision.explanation);
       const style = PERSONALITY_STYLE[personality];
@@ -1364,19 +1386,19 @@ export class GameScene extends Phaser.Scene {
         playSfx(this, 'sfx-feito');
         const { key, params } = summarizeMoveKey(state.table, decision.draft.melds, played);
         this.lastConfirmedMoveText = t(key, { name: player.name, ...params });
-        this.store.confirmTurn(decision.draft);
+        this.dispatch({ type: 'confirmTurn', actorIndex: actingSeat, draft: decision.draft });
       } else {
         this.showEmote(state.activePlayerIndex, style.emoteDraw, 'forcedDraw', personality);
         playSfx(this, 'sfx-draw');
         this.lastConfirmedMoveText = null; // a stalemate win has no meld play to describe
-        this.store.drawEndTurn();
+        this.dispatch({ type: 'drawAndEndTurn', actorIndex: actingSeat });
       }
     } catch (e) {
       if (this.sceneGone) return;
       // AI must never break the game: fall back to draw.
       debugApi.errors.push(`ai fallback: ${String(e)}`);
       this.showEmote(state.activePlayerIndex, 'annoyed');
-      this.store.drawEndTurn();
+      this.dispatch({ type: 'drawAndEndTurn', actorIndex: actingSeat });
     }
     this.noteOpponentMove(state, this.store.get(), actingSeat);
     // presentAiMove does the re-render itself, so that the new board can be animated in from the
@@ -1981,7 +2003,7 @@ export class GameScene extends Phaser.Scene {
     this.lastAiReason = null; // a local player's own confirmed turn, not an AI move
     this.lastConfirmedMoveText = t(key, { name: activePlayer.name, ...params });
     this.editor = null;
-    this.store.confirmTurn(draft);
+    this.dispatch({ type: 'confirmTurn', actorIndex: beforeState.activePlayerIndex, draft });
     // Weighed from the committed before/after only, so a player who drags a card back and forth
     // twenty times gets exactly the same recognition as one who did it in two moves.
     const afterState = this.store.get();
@@ -2034,7 +2056,7 @@ export class GameScene extends Phaser.Scene {
     this.lastConfirmedMoveText = null; // a stalemate win has no meld play to describe
     this.editor = null;
     const before = this.cardPositions();
-    this.store.drawEndTurn();
+    this.dispatch({ type: 'drawAndEndTurn', actorIndex: this.store.get().activePlayerIndex });
     if (this.store.get().phase !== 'playing') return;
     this.renderAll();
     // The new card is the only one without a previous position, so it is the only one that moves:

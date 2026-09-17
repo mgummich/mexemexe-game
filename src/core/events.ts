@@ -1,14 +1,21 @@
 /** Minimal typed event bus. Decouples game logic from Phaser layer. */
 type EventMap = Record<string, unknown>;
 
+/**
+ * Every event here is a *notification of a fact that already happened*, never a command and never
+ * a step in advancing the game. Gameplay control flow runs on `GameStore.dispatch`'s returned
+ * outcome (see src/game-state/actions.ts), so no subscriber is load-bearing and delivery order
+ * carries no gameplay meaning. Nothing is added here that a return value could carry instead.
+ */
 export interface GameEvents extends EventMap {
-  'game:ready': { seed: number };
-  'turn:start': { playerId: string; turn: number };
-  'draft:changed': { valid: boolean; reasons: string[] };
+  /** A turn was committed to the local store. Publisher: `GameStore`. */
   'turn:confirmed': { playerId: string; cardsPlayed: number };
+  /** A card was drawn and the turn passed, locally. Publisher: `GameStore`. */
   'turn:drawn': { playerId: string };
+  /** The next local turn began. Publisher: `GameStore`. */
+  'turn:start': { playerId: string; turn: number };
+  /** The local match ended. Publisher: `GameStore`. */
   'game:won': { winnerId: string };
-  'ai:thought': { playerId: string; text: string };
   /** Orientation/pointer profile flipped (see src/ui/viewport.ts) — scenes re-lay-out. */
   'viewport:changed': { portrait: boolean };
 }

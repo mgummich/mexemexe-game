@@ -175,7 +175,7 @@ interface MexeDebugApi {
   dealing: boolean;
   /** Current interactive-tutorial step index (0-based), or null outside tutorial mode. */
   tutorialStep: number | null;
-  /** Explanation text of the most recent AI decision (`ai:thought`), or null before any AI turn. */
+  /** Explanation text of the most recent AI decision, written by GameScene.runAiTurn. Null before any AI turn. */
   lastAiThought: string | null;
   /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
   a11y: { invalidBadges: number };

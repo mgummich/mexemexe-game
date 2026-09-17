@@ -41,7 +41,7 @@ legality.
 |---|---|
 | `src/rules` | deck, seeded rng (`rng.ts`), shuffle, deal (`createNewGame`), meld analysis, table validation, turn legality, card conservation, win check, serialize |
 | `src/core` | `EventBus` (`events.ts`), settings + `localStorage` persistence, session play log, objective hints, results summary, error recovery, app sleep/resume, PWA registration |
-| `src/game-state` | `GameStore`: holds the committed local `GameState`, applies `src/rules` transitions to it and announces them on the bus |
+| `src/game-state` | `actions.ts`: the local gameplay-action vocabulary and the pure `applyGameAction`. `store.ts`: `GameStore`, the one mutable slot for the committed local `GameState`, which only `dispatch` replaces |
 | `src/mexe-mode` | draft state: melds under edit, cards played from hand, undo/redo history |
 | `src/ai` | `SimpleAi`, `RearrangerAi`, the four personalities and their presentation constants |
 | `src/net` | `protocol.ts` (shared wire types, redaction, boundary validation), `client.ts` (browser socket), `viewToState.ts` (server view → local-shaped state), `errors.ts` |
@@ -129,28 +129,73 @@ save loader and the server's `assertConservation` both call it.
 
 ```
 MenuScene → SetupScene → GameScene
-  START_TURN(player)
-   ├─ human: edit draft (mexe-mode) → FEITO if canConfirmTurn → applyConfirmedTurn
-   │                                └─ or COMPRAR → drawAndEndTurn
-   ├─ ai:    plan (sync, budgeted) → confirm a legal move, or drawAndEndTurn
-   └─ then:  checkWinner → WinScene, else START_TURN(next)
+ START_TURN(player)
+ ├─ human: edit draft (mexe-mode) → FEITO → dispatch(confirmTurn)
+ │ └─ or COMPRAR → dispatch(drawAndEndTurn)
+ ├─ ai: plan (sync, budgeted) → dispatch(confirmTurn), or dispatch(drawAndEndTurn)
+ └─ then, from the returned outcome: finished → WinScene, else START_TURN(next)
 ```
 
-Events on the bus, and what each one actually is:
+### The local action path
 
-| Event | Publisher | Subscribers | Kind |
+Every local gameplay intent — human FEITO/COMPRAR, AI, the tutorial opponent, the
+`window.__MEXE__` hooks — goes through one path and nothing else calls a `src/rules`
+transition directly:
+
+```
+intent → GameScene.dispatch(action) → GameStore.dispatch → applyGameAction (pure)
+       → outcome → onWin() | onTurnStart() → render + notifications
+```
+
+| Piece | Where | What it owns |
+|---|---|---|
+| `GameAction` | `src/game-state/actions.ts` | the vocabulary: `confirmTurn`, `drawAndEndTurn`. Nothing else changes committed local state. |
+| `applyGameAction` | `src/game-state/actions.ts` | preconditions (match still playing, actor is the active seat) then the `src/rules` transition. Pure — a test or replay can drive it without Phaser. |
+| `ActionOutcome` | `src/game-state/actions.ts` | `{ ok: false, reasons }` (state untouched) or `{ ok: true, state, actorId, cardsPlayed, finished }`. |
+| `GameStore.dispatch` | `src/game-state/store.ts` | the one mutable state slot, plus announcing the fact on the bus. |
+| `GameScene.dispatch` | `src/scenes/GameScene.ts` | post-transition orchestration: win vs next turn, presentation, logging. |
+
+The actor differs between a human and an AI seat; the transition authority does not. UI intents
+(open settings, zoom the table, hover a card, play a sound) are *not* actions and never become
+ones.
+
+Online is deliberately not on this path. An online client never commits authoritative state: it
+sends an intent (`submit_turn` / `draw`) and waits for the server's `state_sync`. The server's own
+action path is `RoomManager.claimTurn` (room exists, mid-match, not already processing, caller is
+the active seat at the revision it believes in) → the same `src/rules` transition → `commitTurn`.
+Same semantics, different authority — see [MULTIPLAYER.md](MULTIPLAYER.md).
+
+### Invalid transitions
+
+Both action paths refuse rather than throw, with `ReasonCode`s the UI already translates:
+
+| Attempt | Result |
+|---|---|
+| confirm or draw after the match finished | `reason.notYourTurn`, state untouched |
+| action from a seat that is not the active player | `reason.notYourTurn` |
+| illegal draft | the rules' own reasons from `canConfirmTurn` |
+| online action at a stale `rev` | `reason.staleRevision`, client requests a resync |
+| second online action while one is in flight | `reason.alreadySubmitted` |
+
+### Events
+
+Every bus event is a **notification of a fact that already happened**. None of them advance the
+game, so no subscriber is load-bearing and delivery order carries no gameplay meaning.
+
+| Event | Publisher | Subscribers | Payload |
 |---|---|---|---|
-| `turn:start` | `GameStore.postTurn` | `GameScene.onTurnStart`, playlog | **control flow** — advances the local turn cycle. Online, `GameScene` calls `onTurnStart()` directly instead. |
-| `game:won` | `GameStore.postTurn` | `GameScene.onWin`, playlog | **control flow** |
-| `turn:confirmed`, `turn:drawn` | `GameStore` | playlog | notification |
-| `viewport:changed` | `main.ts` resize handler | every scene, playlog | notification |
-| `ai:thought` | `GameScene.runAiTurn` | *none* — the same value is written straight to `debugApi.lastAiThought` | dead |
-| `game:ready`, `draft:changed` | *none* | *none* | declared in `GameEvents`, never used |
+| `turn:confirmed` | `GameStore.dispatch` | playlog | `{ playerId, cardsPlayed }` |
+| `turn:drawn` | `GameStore.dispatch` | playlog | `{ playerId }` |
+| `turn:start` | `GameStore.dispatch` | playlog | `{ playerId, turn }` |
+| `game:won` | `GameStore.dispatch` | playlog | `{ winnerId }` |
+| `viewport:changed` | `main.ts` resize handler | every scene, playlog | `{ portrait }` |
 
-The control-flow entries are why `GameScene` guards every async continuation
-with `sceneGone` and a store-identity check: the bus is a process-global
-singleton, so an event can reach a scene that has already shut down. See
-ARCH-006/ARCH-008 in [ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md).
+A refused action emits nothing. `GameStore` is the publisher of the turn facts because it *is*
+the local application-action executor; the server does not use it (ARCH-004) and does not inherit
+the bus. Every subscription returns an unsubscribe and every scene calls it from
+`this.events.once('shutdown', …)`, so a dead scene cannot be reached. `GameScene` still guards its
+async AI continuation with `sceneGone` and a store-identity check, because the search yields
+across frames — not because an event might arrive late.
 
 ## Online game flow
 
@@ -250,7 +295,12 @@ Two ownership facts worth knowing before changing anything:
   gameplay. (ARCH-004.)
 - **`GameScene` currently owns more than presentation** — online state
   adaptation, AI scheduling and the online turn clock live there. That is a
-  known concentration, not the intended end state. (ARCH-001/ARCH-002.)
+  known concentration, not the intended end state. (ARCH-001/ARCH-002.) What it
+  no longer owns is the turn transition itself: it issues actions and reacts to
+  outcomes, and the rules-facing part of that (`applyGameAction`) is testable
+  without Phaser.
+- **Post-transition orchestration is the caller's, not a subscriber's.** The bus
+  announces facts; `GameScene.dispatch` decides what happens next. (ARCH-006.)
 
 ## Module categories and dependency rules
 
@@ -284,7 +334,7 @@ contract as the client — that shared edge is the point, not an accident.
 | presentation → a second legality implementation | one `analyzeMeld`, one `canConfirmTurn` | convention (ARCH-019) |
 | `src/ai` → opponent hand identities | AI must not see what a player cannot | convention (INV-A2) |
 | `src/core/*` → `ui`, `cosmetics`, `ai`, `verification` | makes the platform layer unusable without presentation | **violated today** — ARCH-009/ARCH-011, Phase 3/4 |
-| `src/game-state` → the global bus | announcement, not turn application — the shareable half now lives in `src/rules` | **narrowed** — ARCH-004; the bus-as-control-flow half is ARCH-006 |
+| `src/game-state` → the global bus | announcement, not turn application — the shareable half lives in `src/rules`, the transition in the pure `applyGameAction` | **narrowed to notification only** — ARCH-004; the control-flow half closed with ARCH-006 |
 
 New violations belong in the [ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md)
 register as an `ARCH-xxx` finding with a phase, not in a second list.
@@ -378,6 +428,22 @@ Every scene releases through `this.events.once('shutdown', …)`. `GameScene`
 additionally resets ~45 fields in `resetForNewMatch()` because the scene is
 relaunched rather than reconstructed — a new field needs an entry there, not a
 field initializer.
+
+### Explicit state machines
+
+These are the lifecycles whose states are a value you can read, not a set of booleans to infer:
+
+| Machine | States | Owner | Transitions |
+|---|---|---|---|
+| match | `GameState.phase`: `playing` \| `finished` (+ `winnerId`) | `src/rules` transitions, held by `GameStore` (local) / `RoomManager` (online) | only `applyGameAction` locally; only `submitTurn`/`drawEndTurn`/`advanceStalledTurns` on the server |
+| turn | `GameState.activePlayerIndex` / `turn` | same | one per accepted action; no partial turn is ever committed (the draft never leaves the client until FEITO) |
+| draft | `DraftEditor` history (untouched / edited / confirmable), `canConfirm()` | `DraftEditor` | its own edit methods; discarded whole on confirm, draw, rejection or `state_sync` |
+| lobby screen | `OnlineScene.phase`: `idle` \| `join` \| `name` \| `lobby` \| `custom` \| `party` \| `browse` \| `queue` \| `matched` \| `error` | `OnlineScene` | its own handlers, driven by server messages — a **screen** machine mirroring server state, never an authority (ARCH-003) |
+| connection | `NetClient` status: `closed` \| `connecting` \| `open` \| `reconnecting` | `NetClient` | `connect`/`retryNow`/socket events; the reconnect schedule is the client's, the seat grace window is the server's |
+| room | `RoomManager` room record: lobby → started (`state !== null`) → finished → recycled for rematch → swept/closed | `RoomManager` | `startGame`, turn actions, `recycleForRematch`, `sweep`. A rematch reuses the room in place and resets per-match state (`rev`, ready flags, `missedTurns`, `winningMove`), so no prior-match value survives into the new one |
+
+Everything that can refuse does so with a `ReasonCode` — see *Invalid transitions* above. Nothing
+here is a generic state-machine framework, and none of it should become one.
 
 ## Where new code goes
 

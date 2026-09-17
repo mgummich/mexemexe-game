@@ -106,7 +106,7 @@ every resolved relative import). Both are erased at runtime.
 
 | State | Authoritative owner | Writers | Readers | Lifetime | Serialized | Derived | Multiple-writer risk |
 |---|---|---|---|---|---|---|---|
-| Committed local `GameState` | `GameStore` (`src/game-state/store.ts`) | `GameStore.confirmTurn`/`drawEndTurn` only | GameScene, WinScene, playlog, debugApi | one local match | `serializeGameState` (v2) | canonical | **yes, latent** — `get()` returns the live object (ARCH-005) |
+| Committed local `GameState` | `GameStore` (`src/game-state/store.ts`) | `GameStore.dispatch(action)` only | GameScene, WinScene, playlog, debugApi | one local match | `serializeGameState` (v2) | canonical | **yes, latent** — `get()` returns the live object (ARCH-005) |
 | Mexe draft | `DraftEditor` (`src/mexe-mode/draft.ts`) | GameScene input handlers via editor methods | GameScene render, `canConfirmTurn` | one turn | never | canonical | no — every accessor clones |
 | AI decision state | per-call inside `src/ai` | AI search | AI only | one decision | no | derived | no |
 | Scene UI state (selection, focus, zoom/pan, editor scroll, emotes, notices, timers) | `GameScene` fields (~45) | GameScene methods | GameScene | scene instance; reset in `resetForNewMatch` | no | canonical | **yes** — reset is manual (ARCH-018) |
@@ -156,10 +156,10 @@ pointer/key (GameScene.wireDrag, handleShortcut)
  → DraftEditor mutation (playCard/moveCard/...)
  → DraftEditor.analyze() → rules.canConfirmTurn        [legality]
  → GameScene.renderAll() paints reasons/checklist
- → FEITO → GameScene.feitoAccepted → GameStore.confirmTurn(draft)
- → rules.applyConfirmedTurn → new immutable GameState
- → bus.emit('turn:confirmed') → playlog
- → bus.emit('turn:start' | 'game:won') → GameScene.onTurnStart / onWin   [control flow, ARCH-006]
+ → FEITO → GameScene.feitoAccepted → GameScene.dispatch({confirmTurn})
+ → GameStore.dispatch → applyGameAction → rules.applyConfirmedTurn → new immutable GameState
+ → bus.emit('turn:confirmed' + 'turn:start' | 'game:won') → playlog        [notification only]
+ → outcome.finished ? GameScene.onWin() : GameScene.onTurnStart()         [explicit, ARCH-006 resolved]
  → renderAll
 ```
 
@@ -171,8 +171,8 @@ bus 'turn:start' → GameScene.onTurnStart
  → createAi(personality, settings.aiDifficulty).decideSliced(state)
  → candidates (findHandMelds/tryExtend/search*) filtered through rules
  → guard: scene alive && store.get() unchanged
- → bus.emit('ai:thought')  [no subscriber]  + debugApi.lastAiThought = …   [ARCH-008]
- → GameStore.confirmTurn | drawEndTurn
+ → debugApi.lastAiThought = …                                             [ARCH-008 resolved]
+ → GameScene.dispatch({confirmTurn} | {drawAndEndTurn})                   [same path as the human]
  → presentAiMove → renderAll
 ```
 
@@ -186,7 +186,7 @@ GameScene.onFeitoOnline → NetClient.submitTurn(rev, melds)
  → server/index.ts broadcastStateSync → buildView(state, seat) per seat   [redaction]
  → NetClient 'state_sync' → GameScene.onOnlineStateSync
  → viewToState(view) → new GameStore(...)   [store used as a container only]
- → verifyOnlineHash(digestOfState) → onTurnStart() called directly        [ARCH-006]
+ → verifyOnlineHash(digestOfState) → onTurnStart() called directly        [server is the authority; no local commit]
  → renderAll
 ```
 
@@ -450,7 +450,7 @@ introducing a state-machine library.
 **P1 · COUPLING**
 
 **Evidence:** `src/game-state/store.ts:2` imports the `bus` singleton and emits
-from `confirmTurn`/`drawEndTurn`/`postTurn`; `server/rooms.ts:5-8` states the
+from `confirmTurn`/`drawEndTurn`/`postTurn` (now one `dispatch`); `server/rooms.ts:5-8` states the
 reason it calls `src/rules` directly; `server/rooms.ts:598-608` rebuilds the
 deal that `createNewGame` already performs.
 
@@ -481,6 +481,16 @@ which is the same coupling as ARCH-006 and moves with it.
 the constructor with the server — done). **Do NOT do yet:** injecting a bus into
 `GameStore` as a constructor parameter — that keeps the coupling and adds a seam
 no one needs.
+
+---
+
+**Update (Wave 2B):** narrowed, not closed. `GameStore` still imports the bus,
+but it now emits notifications only — the turn cycle advances on `dispatch`'s
+returned outcome (ARCH-006). The reusable half is the pure `applyGameAction` in
+`src/game-state/actions.ts`, which the server *could* share if the import
+boundary were widened; it deliberately does not today, because `RoomManager`
+also owns `rev`, seat and `processing` preconditions that a local store has no
+concept of. Semantics are aligned; authority is not shared.
 
 ---
 
@@ -515,34 +525,25 @@ mutating it now build the state they want, and the server exposes a documented
 
 ---
 
-### ARCH-006 — The event bus carries control flow, not only notification
+### ARCH-006 — ~~The event bus carries control flow, not only notification~~ RESOLVED (Wave 2B)
 
-**P1 · BOUNDARY**
+**P1 · BOUNDARY · resolved**
 
-**Evidence:** `GameStore.postTurn` emits `turn:start`; `GameScene` line 546
-subscribes `bus.on('turn:start', () => this.onTurnStart())`, and `onTurnStart`
-constructs the `DraftEditor` and schedules the AI timer. `GameScene.onWin` is
-reached the same way. The online path instead calls `this.onTurnStart()`
-**directly** (`GameScene.onOnlineStateSync:794`).
+**Was:** `GameStore.postTurn` emitted `turn:start`/`game:won`; `GameScene`
+subscribed and advanced the local turn cycle from the handler, while the online
+path called `this.onTurnStart()` directly. One entry point, two invisible paths,
+both running through a process-global singleton.
 
-**Current behavior:** the local turn cycle advances *through* a global singleton
-bus; the online turn cycle advances by direct call. Same entry point, two
-invisible paths.
+**Now:** `GameStore.dispatch` returns an `ActionOutcome` and `GameScene.dispatch`
+advances the cycle from it (`onWin()` / `onTurnStart()`) — the same explicit call
+the online path already used. The two `bus.on` subscriptions are gone. The bus
+still carries `turn:start`/`game:won`, but as facts for the playlog only: no
+subscriber is load-bearing, and `tests/actions.test.ts` covers that a stale
+subscriber cannot affect the next lifecycle.
 
-**Why it matters:** the local game loop is not readable from the call graph, and
-the bus is a process-global singleton — two concurrently live scenes (or two
-matches) would both receive every event.
-
-**Current risk:** concrete. `GameScene` guards with `sceneGone` and
-`store.get() !== state` precisely because events can arrive for a dead scene.
-
-**Desired direction:** turn advancement as an explicit call on an owner; the bus
-kept for genuine fan-out notifications (playlog, viewport).
-
-**Do now:** documented; ARCHITECTURE.md now states which events are control flow.
-
-**Earliest phase:** Phase 3. **Do NOT do yet:** replacing the bus, or adding
-per-scene bus instances before ownership is decided.
+**Residual:** `GameScene` still guards its async AI continuation with `sceneGone`
+and a store-identity check. That guard is now about the AI search yielding across
+frames, not about late bus delivery, and it stays.
 
 ---
 
@@ -567,24 +568,19 @@ log instances with no consumer for them.
 
 ---
 
-### ARCH-008 — Dead and duplicated bus events
+### ARCH-008 — ~~Dead and duplicated bus events~~ RESOLVED (Wave 2B)
 
-**P3 · DUPLICATION**
+**P3 · DUPLICATION · resolved**
 
-**Evidence:** `src/core/events.ts` declares `game:ready` and `draft:changed` —
-zero publishers, zero subscribers repo-wide. `ai:thought` has one publisher
-(`GameScene:1354`) and zero subscribers; the very next line writes the same
-value to `debugApi.lastAiThought`.
+**Was:** `src/core/events.ts` declared `game:ready` and `draft:changed` with zero
+publishers and zero subscribers, and `ai:thought` with one publisher and no
+subscriber — the very next line wrote the same value to
+`debugApi.lastAiThought`.
 
-**Current behavior:** the typed event map advertises a contract that is partly
-fiction. `docs/ARCHITECTURE.md` listed all three as live events (corrected in
-this phase).
-
-**Why it matters:** a reader infers a decoupled design that does not exist.
-
-**Earliest phase:** Phase 2 — delete the two dead keys and either subscribe to
-`ai:thought` or drop it in favour of the direct write. **Do NOT do yet:**
-deleting `ai:thought` before checking the e2e suite reads `lastAiThought`.
+**Now:** all three keys are deleted, along with the `ai:thought` emission in
+`GameScene.runAiTurn`. `debugApi.lastAiThought` is unchanged, so the e2e suites
+that read it still do. Every remaining key in `GameEvents` has a live publisher
+and at least one subscriber, and each is documented with both.
 
 ---
 
@@ -993,8 +989,8 @@ finding above — no competing ID space.
 | Current edge | Desired edge | Risk if left | Depends on | Phase |
 |---|---|---|---|---|
 | `core/settings` → `ui/helpers`; `core/persistence` → `cosmetics`, `ai`; `core/playlog` → `ui/viewport`; `core/pwa` → `verification` (ARCH-009, ARCH-011, ARCH-016) | platform modules depend downward only; presentation catalogues are passed in, not imported | `core` cannot be reused by any non-Phaser client, and "put it in core" stays the default | splitting `core` by role | 4 |
-| `game-state` → global `bus` (ARCH-004) | turn application separated from announcement, so the server can share it | ~~deal duplication~~ closed in Wave 2A (one `createNewGame` in `src/rules`); the remaining risk is the bus emission, which moves with ARCH-006 | ARCH-006 first | 3 |
-| bus carries control flow (`turn:start`, `game:won`) (ARCH-006) | explicit turn-cycle call graph; the bus keeps notification only | a process-global singleton drives the match loop; every async continuation needs a liveness guard | — (do first) | 3 |
+| `game-state` → global `bus` (ARCH-004) | turn application separated from announcement, so the server *could* share it | ~~deal duplication~~ closed in Wave 2A; ~~bus as control flow~~ closed in Wave 2B — what remains is a notification-only import, and the shareable transition is the pure `applyGameAction` | — | **narrowed** |
+| ~~bus carries control flow (`turn:start`, `game:won`) (ARCH-006)~~ | explicit turn-cycle call graph; the bus keeps notification only | **resolved in Wave 2B** — `GameStore.dispatch` returns an outcome, `GameScene.dispatch` advances the cycle from it; the two `bus.on` control-flow subscriptions are gone | — | done |
 | `GameScene` owns online adaptation, AI scheduling, turn clock (ARCH-001, ARCH-002) | a match-orchestration owner outside the scene | application logic remains untestable without Phaser; `resetForNewMatch` keeps growing | ARCH-006, ARCH-004 | 3 |
 | `OnlineScene` holds an implicit 10-phase machine (ARCH-003) | explicit, testable lobby machine; scene renders and dispatches | every new lobby feature is reasoned about across ~25 handlers | ARCH-002 | 3 |
 | ~~`GameStore.get()` returns the live object (ARCH-005)~~ | `readonly`-typed state | **resolved in Wave 2A** — `GameState`/`DraftState` are readonly by type, guarded in `tests/boundaries.test.ts` | — | done |

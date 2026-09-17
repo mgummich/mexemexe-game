@@ -63,7 +63,7 @@ instead. That is usually the smaller, better change.
 |---|---|---|---|---|---|
 | GQA-01 | Core rules | illegal state accepted | `tests/rules.test.ts` (runs, groups, jokers, `canConfirmTurn`) | unit | Covered |
 | GQA-02 | Card integrity | card lost/duplicated | `tests/helpers/invariants.ts` → `expectCardConservation`, re-checked in `rules`, `probes` (every turn, 40 seeds), `server/rooms` | unit + simulation + server | Covered |
-| GQA-03 | Turn flow | softlock / dead state | `tests/probes.test.ts` (every seed terminates, turn rotation asserted each turn) | simulation | Covered |
+| GQA-03 | Turn flow | softlock / dead state | `tests/actions.test.ts` (the local action path: accepted, refused, after-finish, out-of-turn), `tests/probes.test.ts` (every seed terminates, turn rotation asserted each turn) | unit + simulation | Covered |
 | GQA-04 | Mexe | draft/state corruption | `tests/draft.test.ts`, `tests/probes.test.ts` undo/reset abuse; `e2e/screenshot.spec.ts` mexe + editor journeys | unit + E2E | Covered |
 | GQA-05 | End game | wrong winner/end state | `tests/rules.test.ts` win + draw-pile exhaustion; `e2e` `win-real-finish` | unit + E2E | Covered |
 | GQA-06 | AI | illegal action / hang | `tests/ai.test.ts` (legality, budgets, determinism), `tests/probes.test.ts` (terminates, legal every turn) | unit + simulation | Covered |

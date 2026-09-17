@@ -1,15 +1,19 @@
 import { bus } from '../core/events';
-import { applyConfirmedTurn, drawAndEndTurn } from '../rules/rules';
-import type { DraftState, GameState, PlayerState } from '../rules/types';
+import type { GameState, PlayerState } from '../rules/types';
+import { applyGameAction, type ActionOutcome, type GameAction } from './actions';
 
 /**
  * Authoritative local store. Committed state only; drafts live in mexe-mode.
  *
- * It owns one mutable field — the current `GameState` — and replaces it only with what a pure
- * `src/rules` transition returned. `GameState` itself is readonly (ARCH-005), so `get()` can hand
- * out the live object on the render path without a copy and still not be mutable by its readers.
- * Deals and transitions live in `src/rules` so the server shares them; the bus emission below is
- * the part that stays client-side (ARCH-004).
+ * It owns one mutable field — the current `GameState` — and replaces it only with what
+ * `applyGameAction` returned. `GameState` itself is readonly (ARCH-005), so `get()` can hand out
+ * the live object on the render path without a copy and still not be mutable by its readers.
+ *
+ * `dispatch` is the only way in. It is the local *application* boundary: preconditions and the
+ * transition are the pure `applyGameAction`; the store adds the one mutable slot and announces
+ * what happened. The bus emissions below are notifications only — a refused action emits nothing,
+ * and no subscriber is part of advancing the turn cycle. The caller drives what happens next from
+ * the returned outcome (ARCH-006). The server shares the rules, not this class (ARCH-004).
  */
 export class GameStore {
   private state: GameState;
@@ -27,29 +31,18 @@ export class GameStore {
     return this.state.players[this.state.activePlayerIndex]!;
   }
 
-  confirmTurn(draft: DraftState): GameState {
-    const prev = this.activePlayer;
-    const before = prev.hand.length;
-    this.state = applyConfirmedTurn(this.state, draft);
-    const after = this.state.players.find((p) => p.id === prev.id)!.hand.length;
-    bus.emit('turn:confirmed', { playerId: prev.id, cardsPlayed: before - after });
-    this.postTurn();
-    return this.state;
-  }
-
-  drawEndTurn(): GameState {
-    const playerId = this.activePlayer.id;
-    this.state = drawAndEndTurn(this.state);
-    bus.emit('turn:drawn', { playerId });
-    this.postTurn();
-    return this.state;
-  }
-
-  private postTurn(): void {
-    if (this.state.winnerId) {
-      bus.emit('game:won', { winnerId: this.state.winnerId });
+  /** Validate, apply, announce. Returns the outcome; the state is untouched when `ok` is false. */
+  dispatch(action: GameAction): ActionOutcome {
+    const outcome = applyGameAction(this.state, action);
+    if (!outcome.ok) return outcome;
+    this.state = outcome.state;
+    if (action.type === 'confirmTurn') {
+      bus.emit('turn:confirmed', { playerId: outcome.actorId, cardsPlayed: outcome.cardsPlayed });
     } else {
-      bus.emit('turn:start', { playerId: this.activePlayer.id, turn: this.state.turn });
+      bus.emit('turn:drawn', { playerId: outcome.actorId });
     }
+    if (outcome.finished) bus.emit('game:won', { winnerId: this.state.winnerId! });
+    else bus.emit('turn:start', { playerId: this.activePlayer.id, turn: this.state.turn });
+    return outcome;
   }
 }
