@@ -53,7 +53,3 @@ nav:
       - Playtest guide: PLAYTEST_GUIDE.md
   - History:
       - Changelog: CHANGELOG.md
-
-# Working notes for the not-yet-built marketing page; not part of the published site.
-exclude_docs: |
-  landing-page/

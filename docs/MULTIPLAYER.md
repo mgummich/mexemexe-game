@@ -515,7 +515,7 @@ room object exists in memory — there is no separate check against the
 disconnect timestamp or the grace window inside `reconnect` itself. The grace
 window (`DEFAULT_DISCONNECT_GRACE_MS`, 30s) only governs when the periodic
 `sweep()` is allowed to delete a room whose seats are *all* disconnected past
-that window (S1/S3 in `archive/PHASE5_SERVER_REVIEW.md`); once a room is swept,
+that window; once a room is swept,
 its token stops working because the room itself is gone, not because the
 token was individually invalidated. A reconnect that lands before the sweep
 runs succeeds even if it arrives after the nominal 30s, and reconnecting

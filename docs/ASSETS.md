@@ -198,8 +198,8 @@ base64-ing, which reliably fit.
 runtime** by `src/assets/compose-cards.ts` from three real assets — `cards/blank.png`,
 the four `ui/suit-*.png` pips, and `ui/font.ttf` — into 72×96 canvases. Generating 52
 full faces would scramble the rank glyphs. They are flagged `composed: true` in
-`src/assets/manifest.ts` so `BootScene` never probes or loads them (see
-`archive/PHASE22_ASSET_VISUAL_AUDIT.md`); the on-disk files listed for them in older
+`src/assets/manifest.ts` so `BootScene` never probes or loads them; the on-disk
+files listed for them in older
 tables above never existed and are not expected to.
 
 All five shipped music tracks are normalised to 128 kbps.

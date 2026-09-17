@@ -40,9 +40,16 @@ environment-variable reference, log format and health check live in
 | `?showcase=menu\|game\|game4\|mexe\|setup\|settings\|win` | Jump straight to a scene/state |
 | `?ai=cida\|juninho\|bia\|ze` | Force the opponent personality in a 2-player showcase |
 | `?playlog=0` | Disable the in-memory session play log |
+| `?helper=beginner\|standard\|expert` | Force the helper mode before the scene loads |
+| `?textscale=125` | Turn the large-text setting on |
+| `?motion=0` | Turn reduced motion on |
+| `?crowd=N` | Drive the showcase state on until the table holds ≥ `N` cards (stress captures) |
+| `?room=CODE` | Invite link: join that online room on entry (see [MULTIPLAYER.md](MULTIPLAYER.md)) |
 
-`?showcase=`, `?seed=` and `?ai=` exist for the screenshot suite and for
-reproducing bugs — they are developer tools, not game features.
+Everything above except `?lang=` and `?room=` exists for the screenshot suite
+and for reproducing bugs — they are developer tools, not game features. The
+settings-flipping ones (`helper`, `textscale`, `motion`) write the real setting,
+so a capture does not have to click through the settings panel.
 
 ## Scripts
 
@@ -55,7 +62,7 @@ reproducing bugs — they are developer tools, not game features.
 | `npm run test` / `test:watch` / `test:server` | Vitest — see [TESTING.md](TESTING.md) |
 | `npm run lint` | ESLint + `tsc --noEmit` |
 | `npm run screenshot` | Build + Playwright screenshot/perf suite |
-| `npm run verify` / `verify:multiplayer` / `verify:cross` / `verify:pwa` / `verify:preview` | Verification gates — see [TESTING.md](TESTING.md) |
+| `npm run verify` / `verify:multiplayer` / `verify:multiplayer:chromium` / `verify:cross` / `verify:pwa` / `verify:preview` | Verification gates — see [TESTING.md](TESTING.md) |
 | `npm run gen:cosmetics` | Regenerate procedural table/card-back/emote PNGs (deterministic) |
 | `npm run gen:icons` | Regenerate the PWA manifest icons (deterministic) |
 | `npm run release` | Version bump + CHANGELOG collapse + tag (see [CONTRIBUTING.md](CONTRIBUTING.md)) |

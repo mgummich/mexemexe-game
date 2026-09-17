@@ -15,7 +15,7 @@ Vite + TypeScript + Phaser.
 **[📚 Documentation](https://mgummich.github.io/mexemexe-game/docs/)** ·
 **[🤝 Contributing](CONTRIBUTING.md)**
 
-![game](docs/screenshots/final/game.png)
+![game](docs/screenshots/game.png)
 
 </div>
 
@@ -78,8 +78,8 @@ Full setup, URL parameters, env vars and troubleshooting:
 - **Cosmetics**: 4 table themes, 5 card backs, 9 avatars. Purely client-side.
 - **Audio**: context-aware music (menu / mexe / game) plus procedural SFX, with
   separate volume sliders and a reduced-motion option.
-- **Online turn timer**: Casual / Fast / Off presets chosen by the host in the
-  lobby and frozen at match start, with a once-per-turn Mexe extension, a
+- **Online turn timer**: Casual / Fast / Off presets — or a host-only CUSTOM
+  screen — chosen in the lobby and frozen at match start, with a once-per-turn Mexe extension, a
   warning window, reconnect grace and a missed-turn limit. The server owns the
   clock end to end; the client only renders it.
 - **Installable PWA** that works fully offline — see
@@ -136,12 +136,14 @@ or read the sources here:
 ## Known limitations
 
 - Online rooms are alpha: no accounts, no ranked matchmaking, no chat, no
-  spectators, and no rematch stats on the win screen. Discovery is limited to
+  spectators, and no per-turn result stats on an online win screen (the room's
+  running score is shown; per-turn counters are local-only). Discovery is limited to
   rooms whose host explicitly listed them; there is no public directory. Full
   list in [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md).
 - The turn timer is **online only** — a local hot-seat or AI match is never on a
-  clock. Custom timer values are validated on the wire but have no lobby control;
-  the three presets are what a host can pick.
+  clock. The host picks one of the three presets in the lobby, or a custom
+  value on the lobby's CUSTOM screen; either way the choice freezes at match
+  start.
 - Background music is streamed, never cached, so it stays silent offline.
 - Pointer-drag drops are verified in e2e through editor hooks, not raw
   synthetic pointer drags.

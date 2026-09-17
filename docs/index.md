@@ -13,7 +13,7 @@ offline against AI opponents.
 [▶ Play in your browser](https://mgummich.github.io/mexemexe-game/) ·
 [Source on GitHub](https://github.com/mgummich/mexemexe-game)
 
-![The table mid-turn](screenshots/final/game.png)
+![The table mid-turn](screenshots/game.png)
 
 ## The game in one minute
 
