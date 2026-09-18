@@ -75,8 +75,8 @@ legality.
 | `src/assets` | asset manifest, procedural fallbacks, card composition |
 | `src/audio` | SFX player and the streamed music playlist |
 | `src/cosmetics` | table themes, card backs, avatars (client-side only) |
-| `src/localization` | pt-BR (default) + en-US dictionaries, `t(key)` |
-| `src/tutorial` | scripted steps, fixture table, step director |
+| `src/localization` | pt-BR (default) + en-US dictionaries, `t(key)`, `plural(key, n)` |
+| `src/tutorial` | scripted steps, fixture table, step director. `script.ts` carries the lesson's learning objectives, step by step |
 | `src/demo` | `?showcase=` scenarios used by the screenshot suite |
 | `src/verification` | `debug-api.ts` (`window.__MEXE__` shape and installation), `online-debug.ts` (the online surface, **built from** `OnlineSession`/`LobbyMachine` rather than assembled by them) — see [TESTING.md](TESTING.md) |
 | `server/` | `index.ts` process + HTTP health/metrics + socket dispatch + broadcast, `rooms.ts` room/turn authority, `connections.ts` socket registry and rate-limit windows, `matchmaking.ts` casual FIFO queue, `metrics.ts` counters + Prometheus text, `config.ts` env parsing, `log.ts` redacting logger |
@@ -323,6 +323,78 @@ Rules that follow from this:
   other for consistency's sake — share the *semantics* instead: those four DOM
   plates take their fill, ink, padding and z-order from `plateCss()`/`DOM_LAYER`
   in the same token module the canvas reads, so one re-point moves both surfaces.
+
+## Localization
+
+Two locales ship (`pt` default, `en`), and the shape below is what lets a third
+be a dictionary edit rather than a code change.
+
+- **Domain code never speaks prose.** Rules, game state, AI and the server
+  produce stable codes (`ReasonCode`, `ServerErrorCode`, the `check.*` /
+  `objective.*` / `game.lastMove.*` keys); presentation resolves them. A
+  translated string is never part of a wire contract — see the failure model
+  above.
+- **One dictionary, one lookup.** `src/localization/i18n.ts` holds both locales
+  and exports `t(key, params)` and `plural(key, n, params)`. There is no i18n
+  framework and no runtime loader; the dictionary is a module, so a missing key
+  is a build-visible edit rather than a fetch.
+- **Interpolation, never concatenation.** `t('{player} wins', { player })`, not
+  `player + ' wins'` — word order belongs to the locale. Every occurrence of a
+  placeholder is replaced, so a locale may use a value more than once.
+- **Quantities go through `plural()`.** It resolves `<key>.one` / `<key>.many`,
+  plus `<key>.zero` where a locale declares one, and passes the count as `{n}`.
+  It is a lookup rule, not a plural engine: a locale needing more CLDR forms
+  than `pt`/`en` would need a real selector, and that is the point at which to
+  add one.
+- **Fallback is predictable.** Active locale → `pt` → the key itself. A blank
+  string is never rendered, and in dev a missing key logs once; production stays
+  quiet.
+- **Accessible names are localized too.** The offscreen input's `aria-label` and
+  `<html lang>` come from the same dictionary and the same `setLocale`, so no
+  English label survives a language switch.
+- **Layout assumes expansion.** Panel copy word-wraps, button captions shrink to
+  their plate via `fitTextScale()`, and the lobby column degrades in a fixed
+  order at 125% text in the longer locale (see the UI rules above). Copy refers
+  to controls by name ("press FEITO"), never by screen position.
+
+`tests/i18n.test.ts` holds the contracts: key parity across locales, no blank or
+raw-key copy, every literal `t('…')` in `src/` declared, every `plural('…')` base
+declaring `.one` and `.many`, interpolation, fallback and the dev warning.
+
+## Accessibility
+
+What the game guarantees, and what it does not. The guarantees are the ones a
+change is allowed to break only deliberately; the limits are real and are stated
+here rather than implied away.
+
+**Guaranteed**
+
+| Concern | How it holds | Enforced by |
+|---|---|---|
+| No critical meaning is colour-only | every state carries a word, glyph, ring or position as well (`✗` badges, spelled-out lobby badges, `setSelected`'s ring, the tutorial's `✗` refusal line) | `docs/ARCHITECTURE.md` UI rules; `window.__MEXE__.a11y` assertions in `e2e/screenshot.spec.ts` |
+| No critical meaning is sound-only | every cue that plays `sfx-invalid` also writes its reason somewhere visible — the reason line, the blocking-reason text, the tutorial step panel | `tests/objective.test.ts`, the tutorial-refusal e2e |
+| Reduced motion is respected | `settings.motionScale()` returns 0 and `feelMs()` collapses cosmetic tweens; information-bearing changes stay (outline instead of pulse, arrow instead of wiggle). The boot placeholder, which runs before any JS, follows `prefers-reduced-motion` in CSS | `tests/motion.test.ts`, `tutorial-reduced-motion` e2e |
+| Reduced motion is not a setting you have to find | seeded from the OS preference on first run (`systemSettings`, `src/core/persistence.ts`); a stored save always wins. The *language* is deliberately not seeded this way — pt-BR is the product default, and the language button is one tap from the menu | `tests/persistence.test.ts` |
+| Touch targets stay usable | `view().touch` grows `PixelButton`'s hit box to `TOUCH_TARGET` and `controlH()`'s coarse heights; artwork keeps its authored size | `tests/regions.test.ts` |
+| Text can grow | `fontStyle()` is the single font-size choke point (+25% large text); `fitTextScale()` keeps captions on their plates instead of off the wood | `tests/tokens.test.ts` |
+| The DOM surfaces are real controls | the update prompt is a `<button>`, the status plates are `role="status"`, the error toast is `role="alert"`, the offscreen room-code/name input carries a localized `aria-label`, and `<html lang>` tracks the chosen locale | `setLocale` (`src/localization/i18n.ts`), `src/core/pwa.ts`, `src/main.ts` |
+
+**Not guaranteed — known limits**
+
+- **The board is a canvas.** Cards, melds, the HUD and every panel are Phaser
+  objects with no DOM node and no accessibility tree. A screen reader can reach
+  the DOM plates listed above and nothing else. Making gameplay screen-reader
+  navigable is a structural change (a parallel DOM mirror of board state), not a
+  labelling pass, and has not been done.
+- **Pinch zoom is off.** `user-scalable=no` in `index.html` is deliberate: a
+  drag across the board must not become a browser gesture. The in-game large-text
+  setting is the substitute for browser zoom, and it is the only one.
+- **Keyboard reaches the game, not every gesture.** Esc, the FEITO/COMPRAR
+  shortcuts and the focus ring's select-then-place path are keyboard-operable
+  (`PixelButton.press()`); free-form dragging is not, and select-then-place is
+  the supported equivalent rather than a drag emulation.
+- **No compliance level is claimed.** Nothing here has been validated against a
+  WCAG conformance level, and automated scanning is not part of any gate.
 
 ## Failure model
 

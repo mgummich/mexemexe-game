@@ -154,6 +154,22 @@ export const CONTROL_H = {
 } as const;
 
 /** Height for a control of `kind` on the current pointer type. */
+/** How far a caption may shrink to stay on its plate before shrinking stops helping. Below this
+ * the text is unreadable, so the remainder is allowed to overhang instead — a visibly too-long
+ * label is a reportable layout bug; an unreadable one just looks broken. */
+export const LABEL_FIT_FLOOR = 0.7;
+
+/**
+ * Scale factor that keeps a caption inside a fixed-width button plate (see PixelButton in
+ * `src/ui/widgets.ts`). Plate widths are authored in world units against Portuguese copy, so a
+ * longer translation — or the +25% large-text setting — otherwise runs straight off the wood.
+ */
+export function fitTextScale(textW: number, plateW: number, padding = 6): number {
+  const room = plateW - padding;
+  if (textW <= 0 || room <= 0 || textW <= room) return 1;
+  return Math.max(LABEL_FIT_FLOOR, room / textW);
+}
+
 export function controlH(kind: keyof typeof CONTROL_H, touch: boolean): number {
   const h = CONTROL_H[kind];
   return touch ? h.touch : h.fine;

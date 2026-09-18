@@ -167,18 +167,47 @@ function defaultStorage(): StorageLike {
   }
 }
 
+/** The platform preferences first-run settings are allowed to follow. Injectable so tests (and
+ * the node environment, which has no `matchMedia`) can be explicit. */
+export type PlatformPrefs = { reducedMotion?: boolean };
+
+/**
+ * Pure: the first-run settings that should follow the platform rather than a hardcoded default.
+ * Applied only when there is no save at all — once a player has touched Settings, their choice
+ * owns the value and the platform never overrides it again.
+ *
+ * Only reduced motion. A player who already asked their system for less motion should not have to
+ * find the same switch in a game menu. The *language* deliberately stays pt-BR regardless of what
+ * the browser reports: it is the product's default, not a preference to be guessed at, and the
+ * language button is one tap from the menu.
+ */
+export function systemSettings(env: PlatformPrefs): Partial<Settings> {
+  return { reducedMotion: env.reducedMotion === true };
+}
+
+/** Reads the preference above. Guarded: `matchMedia` is absent in the node test environment and
+ * throws in some webviews. */
+function readPlatformPrefs(): PlatformPrefs {
+  try {
+    return { reducedMotion: typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches };
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Reads the versioned save, migrating the old unversioned `mexe-settings`
  * key (settings-only, no envelope) into a v1 save on first read and
  * removing the old key. `storage` is injectable for tests; defaults to
  * `localStorage`, or to a no-op storage when that is unreachable.
  */
-export function loadSave(storage: StorageLike = defaultStorage()): Save {
+export function loadSave(storage: StorageLike = defaultStorage(), prefs: PlatformPrefs = readPlatformPrefs()): Save {
+  const freshSave = (): Save => ({ ...DEFAULT_SAVE, settings: { ...DEFAULT_SETTINGS, ...systemSettings(prefs) } });
   const raw = safeGet(storage, SAVE_KEY);
   if (raw !== null) return parseSave(raw);
 
   const old = safeGet(storage, OLD_SETTINGS_KEY);
-  if (old === null) return { ...DEFAULT_SAVE };
+  if (old === null) return freshSave();
 
   let oldSettings: Partial<Settings> = {};
   try {
@@ -186,7 +215,10 @@ export function loadSave(storage: StorageLike = defaultStorage()): Save {
   } catch {
     // corrupt old data — migrate to defaults anyway
   }
-  const migrated: Save = { version: 1, settings: { ...DEFAULT_SETTINGS, ...oldSettings }, progress: { ...DEFAULT_PROGRESS }, cosmetics: { ...DEFAULT_COSMETICS } };
+  // A migrated save already carries the player's own settings — only the keys it never had
+  // fall back, and those fall back to the platform's answer like a first run would.
+  const fresh = freshSave();
+  const migrated: Save = { ...fresh, settings: { ...fresh.settings, ...oldSettings } };
   try {
     storage.setItem(SAVE_KEY, JSON.stringify(migrated));
     storage.removeItem(OLD_SETTINGS_KEY);

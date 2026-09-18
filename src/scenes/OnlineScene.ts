@@ -4,7 +4,7 @@ import { bus } from '../core/events';
 import { onAppVisible } from '../core/lifecycle';
 import { settings } from '../core/settings';
 import { isOffline, onConnectivityChange } from '../core/pwa';
-import { t } from '../localization/i18n';
+import { plural, t } from '../localization/i18n';
 import {
   forgetRoom, MAX_NAME_LENGTH, MIN_NAME_LENGTH, NetClient, readDisplayName, readRecentRooms,
   rememberRoom, writeDisplayName, type ConnStatus, type RecentRoom,
@@ -316,6 +316,10 @@ export class OnlineScene extends Phaser.Scene {
     // 1px, off-canvas but still focusable/tappable — a display:none input never opens a
     // soft keyboard on iOS/Android.
     el.style.cssText = 'position:fixed;left:-1px;top:-1px;width:1px;height:1px;opacity:0;border:0;padding:0;';
+    // The visible label for this field is painted on the canvas, where no assistive technology can
+    // reach it — so the input carries its own localized name instead of being announced as a
+    // nameless text box that just took focus.
+    el.setAttribute('aria-label', t(isCode ? 'online.enterCodePrompt' : 'online.namePrompt'));
     el.addEventListener('input', () => {
       const sanitized = isCode ? sanitizeCode(el.value) : sanitizeName(el.value);
       if (el.value !== sanitized) el.value = sanitized;
@@ -990,7 +994,7 @@ export class OnlineScene extends Phaser.Scene {
    * decide: the room, the seat and the deal already exist. */
   private renderMatchFound(): void {
     label(this, cx(), vy(100), t('online.matchFound'), 14, TEXT.accent);
-    label(this, cx(), vy(122), t('online.matchPlayers', { n: this.matchPlayers }), 9, TEXT.primary);
+    label(this, cx(), vy(122), plural('online.matchPlayers', this.matchPlayers), 9, TEXT.primary);
     label(this, cx(), vy(140), t('online.matchJoining'), 8, TEXT.muted);
   }
 
@@ -1437,7 +1441,7 @@ export class OnlineScene extends Phaser.Scene {
     ranked.slice(0, MAX_SEATS).forEach((p, i) => {
       const y = vy(84 + i * 10);
       label(this, left + 6, y, p.name, 7, p.seat === this.seat ? TEXT.accent : TEXT.primary).setOrigin(0, 0.5);
-      const wins = p.wins === 0 ? t('online.winsNone') : p.wins === 1 ? t('online.winsOne') : t('online.wins', { n: p.wins });
+      const wins = plural('online.wins', p.wins);
       label(this, left + rowW - 4, y, wins, 7, TEXT.muted).setOrigin(1, 0.5);
     });
 

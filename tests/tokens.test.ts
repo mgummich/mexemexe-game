@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ACTION, CONTROL_H, controlH, FOCUS, STATE_FILL, SURFACE, TEXT, toInt } from '../src/ui/tokens';
+import { ACTION, CONTROL_H, controlH, fitTextScale, FOCUS, LABEL_FIT_FLOOR, STATE_FILL, SURFACE, TEXT, toInt } from '../src/ui/tokens';
 
 /** Every .ts under a directory, non-recursively — src/ui and src/scenes are both flat. */
 function files(dir: string): string[] {
@@ -98,5 +98,30 @@ describe('DS-02 a coarse pointer gets a bigger control', () => {
       // 24 units is the smallest target the panels ship; below it a finger starts missing rows.
       expect(controlH(kind, true)).toBeGreaterThanOrEqual(24);
     }
+  });
+});
+
+/**
+ * A11Y-008 / text expansion: every button plate is a fixed world-unit width authored against
+ * Portuguese copy. A longer translation, or the +25% large-text setting, used to run the caption
+ * straight off the wood with nothing to stop it.
+ */
+describe('fitTextScale', () => {
+  it('leaves a caption that already fits completely alone', () => {
+    expect(fitTextScale(40, 72)).toBe(1);
+    expect(fitTextScale(66, 72)).toBe(1); // exactly the padded room
+  });
+
+  it('shrinks an overlong caption to the padded room', () => {
+    expect(fitTextScale(88, 72)).toBeCloseTo(66 / 88); // 72 - 6 padding
+  });
+
+  it('stops shrinking at the readability floor rather than shrinking to fit at any cost', () => {
+    expect(fitTextScale(1000, 72)).toBe(LABEL_FIT_FLOOR);
+  });
+
+  it('is a no-op for degenerate inputs instead of returning 0 or Infinity', () => {
+    expect(fitTextScale(0, 72)).toBe(1);
+    expect(fitTextScale(40, 0)).toBe(1);
   });
 });

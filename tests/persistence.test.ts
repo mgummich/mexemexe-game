@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clearSave, DEFAULT_COSMETICS, DEFAULT_PROGRESS, DEFAULT_SETTINGS, loadSave, OLD_SETTINGS_KEY, parseSave, SAVE_KEY, storeSave, type Save } from '../src/core/persistence';
+import { clearSave, DEFAULT_COSMETICS, DEFAULT_PROGRESS, DEFAULT_SETTINGS, loadSave, OLD_SETTINGS_KEY, parseSave, SAVE_KEY, storeSave, systemSettings, type Save } from '../src/core/persistence';
 
 /** Minimal in-memory Storage stand-in — avoids pulling jsdom into the node test env. */
 function memoryStorage(initial: Record<string, string> = {}): Storage {
@@ -96,7 +96,7 @@ describe('parseSave', () => {
 
 describe('loadSave', () => {
   it('returns defaults when nothing is stored', () => {
-    expect(loadSave(memoryStorage())).toEqual({ version: 1, settings: DEFAULT_SETTINGS, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
+    expect(loadSave(memoryStorage(), {})).toEqual({ version: 1, settings: DEFAULT_SETTINGS, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
   });
 
   it('reads an existing v1 save directly', () => {
@@ -127,7 +127,7 @@ describe('loadSave', () => {
 
   it('migrates to defaults when the old key is corrupt', () => {
     const storage = memoryStorage({ [OLD_SETTINGS_KEY]: 'not json' });
-    const result = loadSave(storage);
+    const result = loadSave(storage, {});
     expect(result).toEqual({ version: 1, settings: DEFAULT_SETTINGS, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
     expect(storage.getItem(OLD_SETTINGS_KEY)).toBeNull();
   });
@@ -155,8 +155,8 @@ describe('loadSave', () => {
       key: () => null,
       length: 0,
     } as Storage;
-    expect(() => loadSave(storage)).not.toThrow();
-    expect(loadSave(storage)).toEqual({ version: 1, settings: DEFAULT_SETTINGS, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
+    expect(() => loadSave(storage, {})).not.toThrow();
+    expect(loadSave(storage, {})).toEqual({ version: 1, settings: DEFAULT_SETTINGS, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
   });
 });
 
@@ -210,5 +210,31 @@ describe('storeSave / clearSave', () => {
     expect(storage.getItem(SAVE_KEY)).toBeNull();
     expect(storage.getItem(OLD_SETTINGS_KEY)).toBeNull();
     expect(loadSave(storage).settings.muted).toBe(false);
+  });
+});
+
+/**
+ * A11Y-001: a preference the platform already knows the answer to. Asking a player who has set
+ * "reduce motion" system-wide to find the same switch in a game's settings menu is a barrier made
+ * of navigation. First run only — a stored save always wins.
+ */
+describe('systemSettings (first-run platform defaults)', () => {
+  it('mirrors the OS reduced-motion preference', () => {
+    expect(systemSettings({ reducedMotion: true }).reducedMotion).toBe(true);
+    expect(systemSettings({ reducedMotion: false }).reducedMotion).toBe(false);
+    expect(systemSettings({}).reducedMotion).toBe(false); // unknown means "no", never "yes"
+  });
+
+  it('leaves the shipped language alone — pt-BR is a product default, not a guess', () => {
+    expect(systemSettings({ reducedMotion: true }).locale).toBeUndefined();
+    expect(loadSave(memoryStorage(), { reducedMotion: true }).settings.locale).toBe('pt');
+  });
+
+  it('applies to a first run, and never to an existing save', () => {
+    expect(loadSave(memoryStorage(), { reducedMotion: true }).settings.reducedMotion).toBe(true);
+
+    const stored: Save = { version: 1, settings: { ...DEFAULT_SETTINGS, reducedMotion: false }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS };
+    const storage = memoryStorage({ [SAVE_KEY]: JSON.stringify(stored) });
+    expect(loadSave(storage, { reducedMotion: true }).settings.reducedMotion).toBe(false);
   });
 });

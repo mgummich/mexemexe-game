@@ -4,7 +4,7 @@ import { PERSONALITY_STYLE, type Personality } from '../ai/ai';
 import { bus } from '../core/events';
 import { headToHeadRecord, matchStoryKey } from '../core/results-summary';
 import { settings } from '../core/settings';
-import { t } from '../localization/i18n';
+import { plural, t } from '../localization/i18n';
 import type { NetClient } from '../net/client';
 import type { RoomPlayerSummary } from '../net/protocol';
 import type { Meld } from '../rules/types';
@@ -382,7 +382,7 @@ export class WinScene extends Phaser.Scene {
       objects.push(label(this, x, rowY + 5, r.name, 8, ink));
       objects.push(label(this, x, rowY + 14, `x${r.cardsLeft}`, 8, inkDim));
       if (withStats) {
-        objects.push(label(this, x, rowY + 24, t('win.statCards', { n: r.cardsPlayed ?? 0 }), 6, r.isWinner ? inkDim : TEXT.muted));
+        objects.push(label(this, x, rowY + 24, plural('win.statCards', r.cardsPlayed ?? 0), 6, r.isWinner ? inkDim : TEXT.muted));
       }
       const record = withRecord ? this.recordLine(r) : '';
       if (record) objects.push(label(this, x, rowY + 24 + (withStats ? RECORD_H : 0), record, 6, r.isWinner ? inkDim : TEXT.muted));

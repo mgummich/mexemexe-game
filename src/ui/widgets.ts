@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { playSfx } from '../audio/sfx';
 import { PIXEL_FONT } from '../assets/compose-cards';
 import { settings } from '../core/settings';
-import { ACTION, CHROME_GOLD, LAYER, SURFACE, TEXT, TOUCH_TARGET } from './tokens';
+import { ACTION, CHROME_GOLD, fitTextScale, LAYER, SURFACE, TEXT, TOUCH_TARGET } from './tokens';
 import { view } from './viewport';
 
 /** Nothing user-facing renders below this (logical px, pre large-text scale) — small pixel-font glyphs turn to mush once upscaled to 720p/1080p. */
@@ -181,6 +181,7 @@ export class PixelButton extends Phaser.GameObjects.Container {
       this.add(this.bgRect);
     }
     this.txt = label(scene, 0, 0, text, opts.size ?? 8);
+    this.fitLabel();
     this.add(this.txt);
     // Coarse pointer: grow the hit box past the artwork so a touch target never shrinks below a
     // usable size — the art itself (visualW/visualH) stays exactly w x h either way.
@@ -284,7 +285,14 @@ export class PixelButton extends Phaser.GameObjects.Container {
 
   setLabel(text: string): this {
     this.txt.setText(text);
+    this.fitLabel();
     return this;
+  }
+
+  /** Re-apply the fit rule after the caption changed — a label set later (FEITO becoming BATER,
+   * a re-rendered lobby row) is just as translatable as the one passed to the constructor. */
+  private fitLabel(): void {
+    this.txt.setScale(fitTextScale(this.txt.width, this.visualW));
   }
 
   /** The text on the button, for a caller that needs to say *which* button it means — the

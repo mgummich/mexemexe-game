@@ -127,9 +127,9 @@ instead. That is usually the smaller, better change.
 | GQA-16 | Full match | emergent integration failure | `tests/probes.test.ts` (40 seeded full matches), `tests/server/lobby-soak.test.ts` (10 seeds × 1200 steps), `e2e-multiplayer` real 2/3/4P matches | simulation + E2E | Covered |
 | GQA-17 | Navigation | dead end / wrong return path | `e2e` `esc` (backs out one level at a time), `pause-draft` (draft survives pause → settings → rules → resume), `second-match` | E2E | Covered |
 | GQA-18 | Settings | state/persistence incorrect | `tests/persistence.test.ts`, `settings-layout.test.ts`, `audio.test.ts`; `e2e` `ai-settings` persistence journey | unit + integration + E2E | Covered |
-| GQA-19 | Localization | missing/mixed/raw UI copy | `tests/i18n.test.ts` — pt/en parity, every declared key non-empty and not a raw key, every `t()` literal in `src/` declared | unit | Covered |
+| GQA-19 | Localization | missing/mixed/raw UI copy | `tests/i18n.test.ts` — pt/en parity, every declared key non-empty and not a raw key, every `t()` literal in `src/` declared, every `plural()` base declaring its forms, interpolation/plural/fallback behaviour | unit | Covered |
 | GQA-20 | Game setup | selected config not applied | `e2e` `setup: seat/personality picker` — asserts the dealt lineup is the 4 seats and 3 distinct opponents picked | E2E | Covered |
-| GQA-21 | Accessibility | critical flow inaccessible | `tests/motion.test.ts`, `feel.test.ts`, `menu/settings-layout` geometry; `e2e` `a11y-reduced-motion`, `*-large-text`, `keyboard`, `mobile-badge-reason` (non-colour-only signalling) | unit + E2E | Covered |
+| GQA-21 | Accessibility | critical flow inaccessible | `tests/motion.test.ts`, `feel.test.ts`, `persistence.test.ts` (OS reduced-motion/locale on first run), `tokens.test.ts` (`fitTextScale`), `menu/settings-layout` geometry; `e2e` `a11y-reduced-motion`, `*-large-text`, `keyboard`, `mobile-badge-reason` and `tutorial refusal` (non-colour-only, non-sound-only signalling) | unit + E2E | Covered, within the canvas limits documented in [ARCHITECTURE.md](ARCHITECTURE.md) |
 
 Severity is kept separate from priority. S1 = crash, softlock, card loss,
 hidden-information leak, seat/session theft, authoritative corruption, match
@@ -308,10 +308,15 @@ helper logic live as pure modules under `src/table` and `src/ui`.
 - `tests/tutorial.test.ts` — all 12 steps, the per-step allow-list, completion,
   and the **authority boundary**: the tutorial gate is pedagogical only, so it
   can refuse a legal action and can never let an illegal one past `src/rules`
-  (ARCH-021).
+  (ARCH-021). Also the refusal itself: an off-script move is held as state the
+  step panel writes out, survives until the step gets what it asked for, and
+  never outlives a restart (A11Y-007).
 - `tests/i18n.test.ts` — pt-BR/en-US key parity, every declared key resolving to
   non-empty copy that is not the raw key, and every `t('...')` string literal in
-  `src/` being a declared key.
+  `src/` being a declared key, every `plural('...')` base declaring `.one` and
+  `.many`, `{param}` interpolation replacing *every* occurrence, `plural()`
+  choosing one/many/zero, and a missing key falling back to its own name while
+  warning once in dev.
 - `tests/net/room-settings.test.ts` — timer presets, custom-value clamping,
   `set_room_settings` on the wire, and that a ticking clock stays out of the
   state digest.

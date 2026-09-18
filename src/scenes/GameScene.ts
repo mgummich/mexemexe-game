@@ -14,9 +14,9 @@ import { LocalMatch } from '../game-state/match';
 import { buildShowcaseState } from '../demo/showcase';
 import { isComeback, matchIntensity, threatOf } from '../core/intensity';
 import { doneChecklist, formatChecklist, objectiveKey, objectivePhase } from '../core/objective';
-import { playerStats, summarizeMoveKey } from '../core/results-summary';
+import { lastMoveKey, playerStats, summarizeMoveKey } from '../core/results-summary';
 import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES } from '../cosmetics';
-import { t } from '../localization/i18n';
+import { plural, t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
@@ -46,7 +46,7 @@ import { gameRegions, wideReason, type GameRegions } from '../ui/regions';
 import { openRulesPanel } from '../ui/rules-panel';
 import { view } from '../ui/viewport';
 import { coverBackground } from '../ui/menu-layout';
-import { ACTION, CHROME_GOLD, CHROME_GOLD_TEXT, FOCUS, STATE_FILL, SURFACE, TEXT } from '../ui/tokens';
+import { ACTION, CHROME_GOLD, CHROME_GOLD_TEXT, fitTextScale, FOCUS, STATE_FILL, SURFACE, TEXT } from '../ui/tokens';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 import { matchDebugSurface } from '../verification/online-debug';
@@ -521,6 +521,7 @@ export class GameScene extends Phaser.Scene {
     debugApi.replay = this.match ? () => this.match!.replay() : () => null;
     this.tutorialDirector = config.tutorial ? new TutorialDirector() : null;
     debugApi.tutorialStep = this.tutorialDirector?.stepIndex ?? null;
+    debugApi.a11y = { ...debugApi.a11y, tutorialRefusalShown: false }; // never leaks past the lesson it belongs to
 
     this.r = this.regionsForMode();
 
@@ -788,7 +789,7 @@ export class GameScene extends Phaser.Scene {
     // winner put down — never the cards themselves.
     const mover = msg.winningMove ? state.players[this.online!.playerIndexOf(msg.winningMove.seat)] : undefined;
     const winningMoveText = mover && msg.winningMove
-      ? t('game.lastMove.played', { name: mover.name, n: msg.winningMove.cardsPlayed })
+      ? plural('game.lastMove.played', msg.winningMove.cardsPlayed, { name: mover.name })
       : '';
     this.time.delayedCall(400, () => {
       gotoScene(this, 'win', {
@@ -1150,11 +1151,13 @@ export class GameScene extends Phaser.Scene {
     };
     debugApi.mexe = {
       playHandCard: wrap((cardId: string, meldId: string | null) => {
-        if (!this.tutorialAllows({ type: 'playHandCard', cardId })) return false;
+        // Same refusal the pointer paths get — the hook exists to drive the real gate, not a
+        // quieter copy of it, so an e2e can assert what a player would actually see.
+        if (!this.tutorialPermits({ type: 'playHandCard', cardId })) return this.tutorialRejected();
         return this.editor?.playHandCard(cardId, meldId) ?? false;
       }),
       moveTableCard: wrap((cardId: string, meldId: string | null) => {
-        if (!this.tutorialAllows({ type: 'moveTableCard', cardId })) return false;
+        if (!this.tutorialPermits({ type: 'moveTableCard', cardId })) return this.tutorialRejected();
         return this.editor?.moveTableCard(cardId, meldId) ?? false;
       }),
       undo: wrap(() => {
@@ -1163,7 +1166,7 @@ export class GameScene extends Phaser.Scene {
         return ok;
       }),
       feito: () => {
-        if (!this.tutorialAllows({ type: 'feito' })) return false;
+        if (!this.tutorialPermits({ type: 'feito' })) return this.tutorialRejected();
         const ok = this.editor?.canConfirm().ok ?? false;
         if (ok) this.onFeito();
         return ok;
@@ -1259,6 +1262,38 @@ export class GameScene extends Phaser.Scene {
     return this.tutorialDirector.isAllowed(action);
   }
 
+  /**
+   * The gate every *action* path uses. Same answer as `tutorialAllows`, plus the one side effect
+   * that belongs to acting rather than rendering: a permitted action retires the refusal notice,
+   * because the player has moved on from whatever the lesson turned down. Kept separate from
+   * `tutorialAllows` because that one also runs during render (button enablement), where clearing
+   * would erase the notice before the same frame drew it.
+   */
+  private tutorialPermits(action: TutorialAction): boolean {
+    if (!this.tutorialAllows(action)) return false;
+    this.tutorialDirector?.clearBlocked();
+    return true;
+  }
+
+  /**
+   * What a refused tutorial interaction does. The sound alone said "no" to nobody playing muted,
+   * and said nothing at all about what to do instead — so the refusal is also written into the
+   * step panel (renderTutorialOverlay) and stays there until the player does something the step
+   * accepts. The draft is untouched: refusing is not undoing, so retrying costs nothing.
+   */
+  private tutorialReject(): void {
+    this.tutorialDirector?.noteBlocked();
+    playSfx(this, 'sfx-invalid', 0.15);
+    this.renderAll();
+  }
+
+  /** `tutorialReject()` for the debug hooks, which have to answer "did anything happen" — always
+   * false, because a refusal changes nothing. */
+  private tutorialRejected(): false {
+    this.tutorialReject();
+    return false;
+  }
+
   /** cardId -> meld it currently sits in, for diffing one table position against the next. */
   private static meldOf(state: GameState): Map<string, string> {
     const m = new Map<string, string>();
@@ -1287,8 +1322,7 @@ export class GameScene extends Phaser.Scene {
       this.lastMoveText?.setText('');
       return;
     }
-    const key = played <= 0 ? 'game.lastMove.drew' : moved > 0 ? 'game.lastMove.mexeu' : 'game.lastMove.played';
-    let text = t(key, { name, n: Math.max(0, played), m: moved });
+    let text = t(lastMoveKey(played, moved), { name, n: Math.max(0, played), m: moved });
     if (this.ui.lastAiReason !== null && explain === 'detailed') text += ` ${t(`ai.why.${this.ui.lastAiReason}`)}`;
     this.lastMoveText?.setText(text);
   }
@@ -1858,8 +1892,8 @@ export class GameScene extends Phaser.Scene {
       : kind === 'hand'
         ? { type: 'returnToHand' }
         : { type: 'moveTableCard', cardId };
-    if (!this.tutorialAllows(action)) {
-      playSfx(this, 'sfx-invalid', 0.15);
+    if (!this.tutorialPermits(action)) {
+      this.tutorialReject();
       return;
     }
     let acted = false;
@@ -1923,8 +1957,8 @@ export class GameScene extends Phaser.Scene {
       this.onFeitoOnline();
       return;
     }
-    if (!this.tutorialAllows({ type: 'feito' })) {
-      playSfx(this, 'sfx-invalid', 0.15);
+    if (!this.tutorialPermits({ type: 'feito' })) {
+      this.tutorialReject();
       return;
     }
     if (!this.feitoAccepted(this.editor)) return;
@@ -1986,8 +2020,8 @@ export class GameScene extends Phaser.Scene {
       this.onComprarOnline();
       return;
     }
-    if (!this.tutorialAllows({ type: 'comprar' })) {
-      playSfx(this, 'sfx-invalid', 0.15);
+    if (!this.tutorialPermits({ type: 'comprar' })) {
+      this.tutorialReject();
       return;
     }
     playSfx(this, 'sfx-draw');
@@ -2543,7 +2577,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.renderSelectionLayer(interactive, invalidReasons.size > 0);
     }
-    debugApi.a11y = { invalidBadges: invalidReasons.size };
+    debugApi.a11y = { ...debugApi.a11y, invalidBadges: invalidReasons.size };
     debugApi.invalidMeldReasons = () => [...invalidReasons].map(([meldId, reasons]) => ({ meldId, reasons }));
     // R1: expose what was actually painted, not what the draft says — the resting-board counterpart
     // of mexe.snapTargets()'s drag-time status, so the two can be asserted to agree.
@@ -2634,7 +2668,7 @@ export class GameScene extends Phaser.Scene {
    */
   private unresolvedCountText(open: number): string {
     if (open === 0) return '';
-    return t(open === 1 ? 'objective.unresolved.one' : 'objective.unresolved.many', { n: open });
+    return plural('objective.unresolved', open);
   }
 
   /**
@@ -2836,12 +2870,29 @@ export class GameScene extends Phaser.Scene {
       .setDepth(301);
     this.hud.push(txt);
 
-    // While the opponent is playing, every board control is disabled — say so, or a step that
-    // asks for DRAW/DONE reads as a broken button for as long as that turn lasts.
-    if (!dir.finished && !this.editor && this.state().phase === 'playing') {
+    // One line under the instruction, shared by the two things worth saying between steps. The
+    // refusal wins the slot when both apply: it answers something the player just did.
+    const noteY = Math.min(txt.y + txt.height + 6, nextY - 12);
+    debugApi.a11y = { ...debugApi.a11y, tutorialRefusalShown: dir.blocked && !dir.finished };
+    if (dir.blocked && !dir.finished) {
+      // A11Y-007: the refusal is text plus a glyph, not just the rejection sound and not just a
+      // colour — a muted player, a colour-blind player and a screen-magnifier user all get it.
+      const note = this.add
+        .text(cx, noteY, `✗ ${t('tutorial.blocked')}`, { ...fontStyle(6, TEXT.error), align: 'center', wordWrap: { width: p.w - 10 } })
+        .setOrigin(0.5, 0).setDepth(301);
+      // The panel is a fixed band and the instruction above is already as long as its lesson needs
+      // — so the refusal has to make its own room rather than land on top of the text or under the
+      // buttons. The instruction yields first (the player has just read it); it shrinks only as far
+      // as `fitTextScale`'s readability floor, same rule button captions follow.
+      const room = nextY - 8 - txt.y - note.height - 4;
+      if (txt.height > room) txt.setScale(fitTextScale(txt.height, room, 0));
+      note.y = txt.y + txt.displayHeight + 4;
+      this.hud.push(note);
+    } else if (!dir.finished && !this.editor && this.state().phase === 'playing') {
+      // While the opponent is playing, every board control is disabled — say so, or a step that
+      // asks for DRAW/DONE reads as a broken button for as long as that turn lasts.
       const active = this.state().players[this.state().activePlayerIndex]!;
-      const waitY = Math.min(txt.y + txt.height + 6, nextY - 12);
-      this.hud.push(label(this, cx, waitY, t('game.turnOf', { name: active.name }), 6, TEXT.accent).setDepth(301));
+      this.hud.push(label(this, cx, noteY, t('game.turnOf', { name: active.name }), 6, TEXT.accent).setDepth(301));
     }
 
     if (dir.finished) {
@@ -4254,10 +4305,12 @@ export class GameScene extends Phaser.Scene {
       : inHandArea && !zone
         ? { type: 'returnToHand' }
         : { type: 'moveTableCard', cardId };
-    if (!this.tutorialAllows(action)) {
-      playSfx(this, 'sfx-invalid', 0.15);
+    if (!this.tutorialPermits(action)) {
       playlog.recordDrop('blocked', origin, pointerKind());
-      this.tweenSpriteHome(sprite);
+      // No tweenSpriteHome here: tutorialReject() re-renders, and that rebuilds every card sprite
+      // at its state position — the card goes home by being redrawn, not by tweening a sprite the
+      // same call is about to destroy (see D4 in renderAll).
+      this.tutorialReject();
       return;
     }
 

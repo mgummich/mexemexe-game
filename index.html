@@ -72,6 +72,14 @@
           opacity: 0.2;
         }
       }
+      /* This one animation runs before any JS, so it cannot read the in-game reduced-motion
+         setting — it follows the OS preference directly. The square stays visible; only the
+         blink stops, so "still loading" is still shown. */
+      @media (prefers-reduced-motion: reduce) {
+        #boot-loading div {
+          animation: none;
+        }
+      }
     </style>
   </head>
   <body>

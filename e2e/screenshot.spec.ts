@@ -131,6 +131,36 @@ test('tutorial step 2: lay a set of three nines', async ({ page }) => {
   });
 });
 
+/**
+ * A11Y-007 / Phase 40 Part E: an off-script move used to answer with the rejection sound and
+ * nothing else — indistinguishable, muted, from a control that simply does not work. The panel
+ * now says so in words, and stops saying it the moment the player does something the step wants.
+ */
+test('tutorial refusal: an off-script move is written out, not just played as a sound', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=menu', 'tutorial-refusal', async (p) => {
+    await p.mouse.click(640, 448);
+    await p.waitForFunction(() => window.__MEXE__.scene === 'tutorial' && window.__MEXE__.mexe !== null);
+    await p.waitForFunction(() => window.__MEXE__.tutorialStep === 0);
+    const [nx, ny] = toScreen(438, 144);
+    await p.mouse.click(nx, ny);
+    await p.waitForFunction(() => window.__MEXE__.tutorialStep === 1);
+
+    // Step 2 asks for the three 9s. The 3 of diamonds is a legal card to play — the *rules* would
+    // take it — and belongs to a later step, so only the lesson refuses it.
+    const refused = await p.evaluate(() => window.__MEXE__.mexe!.playHandCard('diamonds-3-d0', null));
+    expect(refused).toBe(false);
+    await p.waitForFunction(() => window.__MEXE__.a11y.tutorialRefusalShown === true, undefined, { timeout: 5000 });
+    expect(await p.evaluate(() => window.__MEXE__.tutorialStep)).toBe(1); // no progress lost, nothing to undo
+  });
+
+  // ...and it clears as soon as the step gets what it asked for.
+  await page.evaluate(() => {
+    const mexe = window.__MEXE__.mexe!;
+    mexe.playHandCard('hearts-9-d0', null);
+  });
+  await page.waitForFunction(() => window.__MEXE__.a11y.tutorialRefusalShown === false, undefined, { timeout: 5000 });
+});
+
 test('setup: seat/personality picker', async ({ page }) => {
   await capture(page, '/?seed=42&showcase=setup', 'setup', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'setup');

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
-import { getLocale, setLocale, t } from '../localization/i18n';
+import { getLocale, plural, setLocale, t } from '../localization/i18n';
 import { settings } from '../core/settings';
 import { bus } from '../core/events';
 import { isOffline, onConnectivityChange } from '../core/pwa';
@@ -51,7 +51,7 @@ export class MenuScene extends Phaser.Scene {
         winnerName: t('menu.you'),
         stalemate: false,
         config: { seed: urlSeed(), players: [{ name: t('menu.you'), isAi: false }, { name: 'Juninho', isAi: true, personality: 'juninho' as const }] },
-        winningMoveText: t('game.lastMove.played', { name: t('menu.you'), n: 2 }),
+        winningMoveText: plural('game.lastMove.played', 2, { name: t('menu.you') }),
         results: [
           { name: t('menu.you'), cardsLeft: 0, isWinner: true, avatarKey: 'avatar-player' },
           { name: 'Juninho', cardsLeft: 4, isWinner: false, avatarKey: 'avatar-juninho', personality: 'juninho' as const },

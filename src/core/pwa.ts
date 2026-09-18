@@ -32,9 +32,13 @@ export function onConnectivityChange(
 
 // ---------- offline / update banners ----------
 // Same plate as the portrait hint / error toast in src/main.ts — one recipe, in src/ui/tokens.ts.
-function makeBanner(bottom: number, pointerEvents: 'none' | 'auto'): HTMLDivElement {
-  const el = document.createElement('div');
-  // e2e-pwa selects the banners by this; they are otherwise unmarked inline-styled divs.
+function makeBanner(bottom: number, pointerEvents: 'none' | 'auto'): HTMLButtonElement {
+  // A real <button>, not a clickable <div>: this is the one DOM control the game ships, and as a
+  // div it was unreachable by keyboard and announced as nothing. Native semantics also give it
+  // Enter/Space activation and a focus ring for free.
+  const el = document.createElement('button');
+  el.type = 'button';
+  // e2e-pwa selects the banners by this; they are otherwise unmarked inline-styled elements.
   el.dataset.mexeBanner = 'update';
   el.style.cssText = plateCss({
     anchor: `bottom:calc(${bottom}px + env(safe-area-inset-bottom))`,
@@ -48,6 +52,7 @@ function makeBanner(bottom: number, pointerEvents: 'none' | 'auto'): HTMLDivElem
 
 function setupOfflineBanner(): void {
   const el = document.createElement('div');
+  el.setAttribute('role', 'status');
   el.dataset.mexeBanner = 'offline';
   el.style.cssText = plateCss({
     // top:44px, not 12px — clears src/main.ts's portraitHint box (top:12px, ~28px tall) so the

@@ -93,6 +93,9 @@ game.events.on('step', () => {
 const DENSE_TABLE_MELDS = 5;
 const portraitHint = document.createElement('div');
 portraitHint.id = 'portrait-hint'; // e2e selector — MOBILE-13's density gate is asserted against this
+// These plates are the only screen-reader-legible part of a canvas game's status: without a live
+// region the text appears silently, and nothing about the canvas announces it instead.
+portraitHint.setAttribute('role', 'status');
 portraitHint.style.cssText = plateCss({
   // top offset adds the safe-area inset: installed as a PWA the status bar is translucent
   // (apple-mobile-web-app-status-bar-style in index.html), so a bare 12px lands under the notch.
@@ -142,6 +145,7 @@ updatePortraitHint();
 // per 5s to avoid a start->throw->start loop, falls back to the menu scene.
 function showErrorToast(): void {
   const el = document.createElement('div');
+  el.setAttribute('role', 'alert'); // a recovered crash is an interruption, not a background notice
   el.textContent = t('errors.recoverable');
   el.style.cssText = plateCss({
     anchor: 'bottom:calc(24px + env(safe-area-inset-bottom))',

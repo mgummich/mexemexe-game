@@ -200,8 +200,10 @@ interface MexeDebugApi {
   tutorialStep: number | null;
   /** Explanation text of the most recent AI decision, written by GameScene.runAiTurn. Null before any AI turn. */
   lastAiThought: string | null;
-  /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
-  a11y: { invalidBadges: number };
+  /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge,
+   * and whether the tutorial panel is currently *writing out* a refused interaction rather than
+   * only playing the rejection sound (A11Y-007). */
+  a11y: { invalidBadges: number; tutorialRefusalShown: boolean };
   /** Verification-only (Phase 15 PWA): current offline state, kept in sync by src/core/pwa.ts. */
   offline: boolean;
   /** Verification-only (Phase 14 perf fix): running count of DraftEditor.analyze() calls this
@@ -339,7 +341,7 @@ export const debugApi: MexeDebugApi = {
   dealing: false,
   tutorialStep: null,
   lastAiThought: null,
-  a11y: { invalidBadges: 0 },
+  a11y: { invalidBadges: 0, tutorialRefusalShown: false },
   offline: false,
   analyzeCount: 0,
   invalidMeldReasons: () => [],
