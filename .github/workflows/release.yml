@@ -130,7 +130,7 @@ jobs:
         id: prefix
         run: echo "value=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: digests-${{ matrix.target }}-*
           merge-multiple: true
