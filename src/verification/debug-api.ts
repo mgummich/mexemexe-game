@@ -1,4 +1,5 @@
 import type { DraftState, GameState } from '../rules/types';
+import { isOffline, onConnectivityChange } from '../core/pwa';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { Replay } from '../game-state/replay';
@@ -204,7 +205,9 @@ interface MexeDebugApi {
    * and whether the tutorial panel is currently *writing out* a refused interaction rather than
    * only playing the rejection sound (A11Y-007). */
   a11y: { invalidBadges: number; tutorialRefusalShown: boolean };
-  /** Verification-only (Phase 15 PWA): current offline state, kept in sync by src/core/pwa.ts. */
+  /** Verification-only (Phase 15 PWA): current offline state. Observed here, from the same
+   * browser events the offline banner reacts to — the banner used to write it, which made the
+   * product module import this one (ARCH-011) and closed a type-only import cycle (ARCH-012). */
   offline: boolean;
   /** Verification-only (Phase 14 perf fix): running count of DraftEditor.analyze() calls this
    * session — used to prove a table pan / editor scroll never re-triggers a legality analysis
@@ -364,6 +367,10 @@ export const debugApi: MexeDebugApi = {
 
 export function installDebugApi(): void {
   window.__MEXE__ = debugApi;
+  debugApi.offline = isOffline();
+  onConnectivityChange((offline) => {
+    debugApi.offline = offline;
+  });
   window.addEventListener('error', (e) => {
     debugApi.errors.push(String(e.message));
   });

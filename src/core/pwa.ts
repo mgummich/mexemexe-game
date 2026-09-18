@@ -1,6 +1,5 @@
 import { t } from '../localization/i18n';
 import { DOM_LAYER, plateCss } from '../ui/tokens';
-import { debugApi } from '../verification/debug-api';
 
 /** True when the browser reports no network. `navigator` doesn't exist under the vitest node
  * environment, so guard it — importing this module in a unit test must never throw. */
@@ -64,7 +63,6 @@ function setupOfflineBanner(): void {
   });
   document.body.appendChild(el);
   const render = (offline: boolean): void => {
-    debugApi.offline = offline;
     el.textContent = t('offline.banner');
     el.style.display = offline ? 'block' : 'none';
   };

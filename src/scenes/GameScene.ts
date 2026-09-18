@@ -21,6 +21,7 @@ import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
 import { OnlineSession } from '../net/online-session';
+import { createRng } from '../rules/rng';
 import { analyzeMeld, createNewGame, sortMeldCards } from '../rules/rules';
 import type { Card, GameState, JokerAssignment, Meld, MeldReason, ReasonCode, RulesConfig } from '../rules/types';
 import {
@@ -4480,10 +4481,14 @@ export class GameScene extends Phaser.Scene {
    * so it can never double up with one already showing.
    */
   private reactToPlayerMexe(state: GameState): void {
-    if (Math.random() >= 0.5) return;
+    // Drawn from a presentation stream keyed on (seed, turn), not from `Math.random` and not from
+    // the gameplay stream (ARCH-017): a replayed seed now paints the same screen, while the deal
+    // for that seed is untouched because this never advances the state's own RNG.
+    const rng = createRng(state.seed + state.turn * 7919);
+    if (rng.next() >= 0.5) return;
     const seats = state.players.map((_, i) => i).filter((i) => i !== this.localSeat && state.players[i]!.isAi);
     if (seats.length === 0) return;
-    const seat = seats[Math.floor(Math.random() * seats.length)]!;
+    const seat = seats[rng.int(seats.length)]!;
     const personality = this.personalities[seat];
     if (!personality) return;
     this.showEmote(seat, PERSONALITY_STYLE[personality].emoteBig, 'playerMexe', personality);

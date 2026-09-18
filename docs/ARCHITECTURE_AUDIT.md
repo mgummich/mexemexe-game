@@ -667,6 +667,13 @@ domain, platform adapters into a platform module, settings into application.
 classification in §2 is the deliverable; moving files before ARCH-001/003/004
 would churn every import for no behavioural gain.
 
+**Status (Wave 3C): still open, but frozen.** The reorganisation is untouched —
+`core` is still six roles in one folder. What changed is that its eleven measured
+upward imports are now an explicit list in `tests/boundaries.test.ts`: removing
+one is always fine, adding one fails the suite. The register's actual complaint
+was that "probably core" is why it keeps growing; it can no longer grow by
+default.
+
 ---
 
 ### ARCH-010 — `src/rules` depends on `src/core/rng`
@@ -752,6 +759,10 @@ reconnect token is unreachable: it lives behind a module-private `readToken()` i
 `verify:multiplayer`, which is what exercises it; a unit test asserting that a
 getter delegates would restate the file, not catch a defect.
 
+**Update (Wave 3C):** one product write left the product: `core/pwa` no longer
+sets `debugApi.offline`; `installDebugApi` subscribes to the same
+`onConnectivityChange` the banner uses. That also closed half of ARCH-012.
+
 **Residual:** scenes still *write* observation values onto `debugApi`
 (`scene`, `seed`, `dealing`, `lastAiThought`, `renderedMeldStatus`, the `mexe`
 readbacks). Those are observations of facts the scene alone knows, and one of
@@ -775,6 +786,18 @@ the repository.
 **Why it matters:** they are symptoms of ARCH-009, not independent problems.
 
 **Earliest phase:** Phase 4, resolved as a side effect of ARCH-009.
+
+**Status (Wave 3C): resolved, ahead of ARCH-009 and without moving a folder.**
+Both edges were pointing the wrong way rather than needing a new layer.
+`AiSpeed` was declared in `core/persistence` and consumed by `ai/ai`; it is an AI
+concept the setting merely stores, so it now lives in `ai/ai` and `persistence`
+imports the type (an edge that already existed). `core/pwa` imported
+`verification/debug-api` for one line — `debugApi.offline = offline` inside the
+banner's render — so the verification surface now observes the same browser
+events itself in `installDebugApi`, which also removes one ARCH-011 residual
+write. `tests/boundaries.test.ts` walks the relative-import graph of `src` and
+fails on any cycle, type-only included; a deliberately reintroduced
+`core/pwa -> verification/debug-api` edge was confirmed to fail it.
 
 ---
 
@@ -825,6 +848,12 @@ code go elsewhere.
 
 **Earliest phase:** none scheduled. Re-evaluate if a second aggregate (accounts,
 persistence, spectators) appears.
+
+**Status (Wave 3C): watched mechanically.** "Watch its growth" was a note to
+reviewers, which is the class of guarantee ARCH-019 exists to replace.
+`tests/boundaries.test.ts` now holds `server/rooms.ts` to a 1050-line ceiling
+(970 today), so the next few hundred lines of room policy have to be a decision
+about where they belong rather than an accident of convenience.
 
 ---
 
@@ -914,6 +943,13 @@ draw from the state's stream for exact replay.
 **Earliest phase:** Phase 2 if a screenshot gate ever covers emotes; otherwise
 no action. **Do NOT do yet:** routing presentation randomness through the
 gameplay RNG stream — that would change the deal for a given seed.
+
+**Status (Wave 3C): resolved.** `reactToPlayerMexe` draws from its own
+`createRng(state.seed + state.turn * 7919)` stream: a seed replays the same
+screen, and because the stream is created per call and never advances the state's
+own RNG, the deal for that seed is bit-identical. The two remaining
+`Math.random()` calls (`net/client` reconnect jitter, `audio/sfx` detune) are
+non-gameplay by nature and stay.
 
 ---
 
@@ -1012,9 +1048,16 @@ domain-purity half mechanically — an allow-list of imports for `src/rules`,
 platform/clock/`Math.random` usage in those plus `src/table`, Phaser confined to
 the presentation layer, and the server's `src/` imports limited to
 rules/protocol/rng. One source-scanning test rather than an eslint zone *and* a
-test: it covers more (type-only imports included) for less configuration. Still
-unenforced: rules-as-sole-authority, single-writer ownership, and the `core`
-layering that ARCH-009 has not settled.
+test: it covers more (type-only imports included) for less configuration.
+
+**Update (Wave 3C):** three more rules became mechanical, in the same file: the
+`core` upward-import allow-list (ARCH-009), an acyclic check over the whole `src`
+import graph (ARCH-012), and `RoomManager`'s size ceiling (ARCH-014). Legality
+authority was already enforced here despite the note above — see "gameplay
+legality is decided in src/rules and nowhere else". Still unenforced:
+single-writer ownership, which needs the ownership work itself rather than a
+scan, since the writers are methods on the owners and no text pattern separates
+a write from a read.
 
 ---
 

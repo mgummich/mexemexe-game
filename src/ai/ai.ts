@@ -1,6 +1,5 @@
 import { DraftEditor } from '../mexe-mode/draft';
 import { isValidMeld, isValidRun } from '../rules/rules';
-import type { AiSpeed } from '../core/persistence';
 import type { Card, DraftState, GameState } from '../rules/types';
 
 export type AiDecision =
@@ -517,6 +516,11 @@ export const PERSONALITY_STYLE: Record<
   bia: { thinkMs: 600, emoteBig: 'happy', emoteSmall: 'excited', emoteDraw: 'thinking', thinkEmote: 'confident' },
   ze: { thinkMs: 700, emoteBig: 'confident', emoteSmall: 'happy', emoteDraw: 'sleepy', thinkEmote: 'sleepy' },
 };
+
+/** Presentation-only pace of an AI's "thinking" pause. Never changes what the AI decides. Declared
+ * here rather than next to the setting that stores it: `settings` reads it, the AI owns it, and
+ * the other direction was the type-only import cycle in ARCH-012. */
+export type AiSpeed = 'instant' | 'fast' | 'normal' | 'slow';
 
 /** Presentation-only multiplier on an AI's pre-move "thinking" pause. Never touches the search
  * budget: a faster pace shows the same decision sooner, it does not make the AI weaker. */

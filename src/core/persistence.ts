@@ -1,12 +1,9 @@
-import type { Difficulty } from '../ai/ai';
+import type { AiSpeed, Difficulty } from '../ai/ai';
 import type { Locale } from '../localization/i18n';
 import { AVATARS, CARD_BACKS, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, resolveCosmeticId, TABLE_THEMES } from '../cosmetics';
 
 /** Display-only helper aggressiveness. See `src/ui/helpers.ts` — never gates rules. */
 export type HelperMode = 'beginner' | 'standard' | 'expert';
-
-/** Presentation-only pace of an AI's "thinking" pause. Never changes what the AI decides. */
-export type AiSpeed = 'instant' | 'fast' | 'normal' | 'slow';
 
 /** How much an AI move explains itself in the last-move line. */
 type AiExplain = 'off' | 'simple' | 'detailed';
