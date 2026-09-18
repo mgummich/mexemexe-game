@@ -318,6 +318,18 @@ helper logic live as pure modules under `src/table` and `src/ui`.
 - `tests/layout.test.ts`, `snap.test.ts`, `zoom.test.ts`, `regions.test.ts`,
   `editor-layout.test.ts`, `menu-layout.test.ts`, `settings-layout.test.ts`,
   `viewport.test.ts`, `tap-destination.test.ts` — pure layout/interaction maths.
+- `tests/overlay.test.ts` — the modal contract: Esc backs out one overlay at a
+  time, and a scene shutdown under an open panel runs its `close()` once, so an
+  orientation flip (every menu-family scene restarts on one) strands no Esc
+  entry, canvas listener or "panel open" flag.
+- `tests/tokens.test.ts` — the design-system guard: no `src/ui`, `src/scenes`,
+  `src/main.ts` or `src/core/pwa.ts` module (the Phaser UI plus the DOM chrome
+  drawn over it) hardcodes a text colour or uses an inline integer colour (a content
+  colour must be a named, documented constant), each semantic role is distinct,
+  a colour that exists as both text and fill is defined once, no focus ring
+  reuses a gameplay-status colour, the ground colour agrees with `index.html`,
+  and every control is taller on a coarse pointer. See
+  [ARCHITECTURE.md](ARCHITECTURE.md) "UI design system".
 - `tests/persistence.test.ts`, `lifecycle.test.ts`, `error-recovery.test.ts`,
   `offline.test.ts`, `pwa.test.ts` — settings, sleep/resume, corrupt saves,
   connectivity, service-worker registration behaviour.
@@ -736,8 +748,20 @@ ESLint over `src tests e2e e2e-cross e2e-multiplayer e2e-pwa server`, then
 | Suite | Config | Command | Covers |
 |---|---|---|---|
 | Screenshots + perf | `playwright.config.ts` (`e2e/`) | `npm run screenshot` | Boots the built game, drives real journeys (Mexe, pause/help/Esc navigation, setup → match, mobile tap play, helper modes, tutorial) through the debug API, captures `docs/screenshots/*.png`, records fps and console errors into `verify-log.json` |
-| Cross-browser layout | `playwright.cross.config.ts` (`e2e-cross/`) | `npm run verify:cross` | Canvas fits, centres and keeps 16:9 on Chrome, Firefox, Safari, Pixel 7, iPhone 14 (both orientations) and iPad; rotation and mobile tap gameplay |
-| Multiplayer | `playwright.multiplayer.config.ts` (`e2e-multiplayer/`) | `npm run verify:multiplayer` | Two-plus real clients against the real server: legal turns, illegal-proposal rejection, hand privacy, 3P/4P rotation, reconnect/resync. Three projects: `chromium` runs everything, `firefox` and `webkit` run the `LB-*` lobby state-machine suite, `webkit` also the iOS-viewport one |
+| Cross-browser layout | `playwright.cross.config.ts` (`e2e-cross/`) | `npm run verify:cross` | Canvas fits, centres and keeps 16:9 on Chrome, Firefox, Safari, Pixel 7, iPhone 14 (both orientations) and iPad; rotation (including a panel left open across the flip) and mobile tap gameplay |
+| Multiplayer | `playwright.multiplayer.config.ts` (`e2e-multiplayer/`) | `npm run verify:multiplayer` | Two-plus real clients against the real server: legal turns, illegal-proposal rejection, hand privacy, 3P/4P rotation, reconnect/resync, and LB-46's lobby flow at both text scales. Three projects: `chromium` runs everything, `firefox` and `webkit` run the `LB-*` lobby state-machine suite, `webkit` also the iOS-viewport one |
+
+Every spec here starts its own server on an **OS-assigned** port (`freePort()`
+in `e2e-multiplayer/harness.ts`), never on a fixed block. A fixed port is shared
+with whatever else is on the machine: when something already held it, the test
+server died on `EADDRINUSE` while the health probe was answered by that other
+process, so the suite ran against a stranger and the first visible symptom was a
+WebSocket timeout in whichever engine ran that file — Firefox, which runs only
+the lobby spec. `startTestServer` now fails the run with the child's stdout and
+stderr if it exits during startup, or if the healthy answer came from a server
+this process did not start (it waits for that process's own `server_listening`
+line). The server itself logs `server_listen_failed` and exits 1 rather than
+throwing an unhandled `error` event.
 | PWA / offline | `playwright.pwa.config.ts` (`e2e-pwa/`) | `npm run verify:pwa` | Service worker registers, offline reload boots to the menu, offline local/AI/tutorial play, online disabled offline, the update handover |
 
 All four serve the production build via `npm run preview` — the service worker

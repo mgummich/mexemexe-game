@@ -910,6 +910,24 @@ function shutdown(signal: NodeJS.Signals): void {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+// A port that is already taken (a stale server, a local proxy, a second test worker) is a
+// startup failure, not an unhandled event: say which port and exit non-zero, so a supervisor —
+// or the e2e harness — reports "could not bind" instead of a stack trace, or worse, nothing.
+//
+// Both emitters, and `wss` first: `ws` forwards the HTTP server's 'error' to the WebSocketServer,
+// and an EventEmitter with no 'error' listener *throws*. With only the `server` handler below,
+// that forward reached an empty wss and the process died as an uncaught exception before this
+// ever ran — which is precisely the unreadable failure this exists to remove.
+const listenFailed = (err: NodeJS.ErrnoException): never => {
+  // `errno`, not `code`: the logger redacts every key containing "code" (room codes are shared
+  // secrets), and an operator reading this line needs to see EADDRINUSE. The message itself stays
+  // out — free-form error text is redacted by policy, and the errno is the actionable half.
+  log.error('server_listen_failed', { port: config.port, host: config.host, errno: err.code ?? 'UNKNOWN' });
+  process.exit(1);
+};
+wss.on('error', listenFailed);
+server.on('error', listenFailed);
+
 server.listen(config.port, config.host, () => {
   log.info('server_listening', {
     port: config.port,
