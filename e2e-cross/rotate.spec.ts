@@ -48,3 +48,37 @@ for (const [from, to, name] of [
     expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
   });
 }
+
+/**
+ * Rotating with a panel open (Wave 5B, app-shell lifecycle). MenuScene, SetupScene and
+ * OnlineScene all `scene.restart()` on `viewport:changed`, which destroys the panel's objects
+ * without ever running its close path — so the panel used to vanish while its Esc-stack entry,
+ * its raw canvas listeners and its "rules open" flag stayed behind, once per flip.
+ * See src/ui/overlay.ts `closeOnShutdown`.
+ */
+test('a panel open over a restarting scene closes cleanly on rotate', async ({ page }) => {
+  await page.setViewportSize(LANDSCAPE);
+  await page.goto('/?seed=42&showcase=menu');
+  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 30_000 });
+  await page.waitForTimeout(700); // the menu's staggered entrance has to finish before a click lands
+
+  // MenuScene's REGRAS button: authored at x 182 on the 480-wide grid, i.e. 58 units left of
+  // centre, y 234. Converted through the live world so it holds in any landscape width.
+  const point = await page.evaluate(() => {
+    const r = document.querySelector('canvas')!.getBoundingClientRect();
+    const v = window.__MEXE__.viewport();
+    return {
+      x: r.x + ((v.w / 2 - 58) / v.w) * r.width,
+      y: r.y + (234 / v.h) * r.height,
+    };
+  });
+  await page.mouse.click(point.x, point.y);
+  await page.waitForFunction(() => window.__MEXE__.rulesOpen === true, undefined, { timeout: 5_000 });
+
+  await page.setViewportSize(PORTRAIT);
+  await page.waitForTimeout(500); // main.ts debounces the resize by 150ms
+
+  expect(await page.evaluate(() => window.__MEXE__.rulesOpen)).toBe(false);
+  expect(await page.evaluate(() => window.__MEXE__.scene)).toBe('menu');
+  expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+});
