@@ -24,6 +24,21 @@ export interface RenderedSeatRow {
 }
 
 /**
+ * One painted block of the lobby's vertical stack, in world units, recorded by
+ * `OnlineScene.renderLobby` as it lays out. The lobby is a flow, not a set of fixed
+ * y-coordinates, so "nothing overlaps and nothing leaves the screen" is a property a test can
+ * only check against what was actually painted — at the text scale and in the locale it ran in.
+ */
+export interface LobbyBox {
+  /** Stable name of the block: 'code', 'actions', 'summary', 'seat0'…, 'notice', 'reactions',
+   * 'ready', 'start', 'startReason'. */
+  id: string;
+  /** Top edge and height in world units; the stack is vertical, so x/width are not tracked. */
+  top: number;
+  h: number;
+}
+
+/**
  * Online-alpha e2e surface — present from OnlineScene entry through the online match, null
  * otherwise. Built in `src/verification/online-debug.ts` from the lobby machine or the online
  * session; product code hands over the owner rather than registering closures into it (ARCH-011).
@@ -101,6 +116,9 @@ export interface MexeOnlineDebugApi {
    * lobby screen. Asserting on this (not on `players()`) is what makes a vanished occupied seat
    * visible to a test. */
   lobbySeats?: () => RenderedSeatRow[];
+  /** Verification-only: the lobby's painted vertical blocks, top to bottom. Empty off the lobby
+   * screen. See `LobbyBox`. */
+  lobbyBoxes?: () => LobbyBox[];
   /** Verification-only: the lobby's in-place refusal line (not ready / not host / already
    * started), or null when nothing is being explained. */
   lobbyNotice?: () => string | null;
