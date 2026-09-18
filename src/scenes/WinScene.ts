@@ -13,7 +13,8 @@ import { computeMeldLayout } from '../table/layout';
 import { FEEL, feelMs } from '../ui/feel';
 import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
-import { CHROME_GOLD, CHROME_GOLD_TEXT, fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
+import { CHROME_GOLD, CHROME_GOLD_TEXT, SURFACE, TEXT } from '../ui/tokens';
+import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi } from '../verification/debug-api';
 import type { GameSceneConfig } from './GameScene';
 
@@ -50,6 +51,12 @@ interface WinData {
 const STATS_H = 12;
 /** Vertical cost of the per-player head-to-head tally inside the results block. */
 const RECORD_H = 9;
+
+/** Edges of the two result plates: a darker gold under the gold story chip and the winner's plate,
+ * a warm brown under everyone else's. Shadow lines for one specific plate, not a border role other
+ * screens share. */
+const ACCENT_PLATE_EDGE = 0x8a6b1f;
+const RESULT_PLATE_EDGE = 0x4a3a28;
 
 export class WinScene extends Phaser.Scene {
   constructor() {
@@ -93,7 +100,7 @@ export class WinScene extends Phaser.Scene {
     // One offset pushes the celebration down so the result sits in the middle of the phone.
     const off = view().portrait ? 40 : 0;
     coverBackground(this, 'bg-boteco');
-    this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.55);
+    this.add.rectangle(cx(), cy(), view().w, view().h, SURFACE.base, 0.55);
     this.renderFinalTable(data.finalTable ?? []);
     // banner ships at 3x (480x144); logical size is 160x48, so scale 1/3 is "full size"
     const bannerScale = 1 / 3;
@@ -179,10 +186,10 @@ export class WinScene extends Phaser.Scene {
     const story: Phaser.GameObjects.GameObject[] = [];
     if (storyKey) {
       // RESULT-03: exactly one label for how the match went, above the move that decided it.
-      const chip = this.add.text(cx(), y, t(storyKey), { ...fontStyle(9, '#1a0f0a'), align: 'center' }).setOrigin(0.5, 0);
+      const chip = this.add.text(cx(), y, t(storyKey), { ...fontStyle(9, TEXT.onAccent), align: 'center' }).setOrigin(0.5, 0);
       const plate = this.add
         .rectangle(cx(), y + chip.height / 2, chip.width + 12, chip.height + 2, CHROME_GOLD, 0.92)
-        .setStrokeStyle(1, 0x8a6b1f, 1);
+        .setStrokeStyle(1, ACCENT_PLATE_EDGE, 1);
       this.children.moveBelow(plate, chip);
       story.push(chip, plate);
       y += storyH;
@@ -191,7 +198,7 @@ export class WinScene extends Phaser.Scene {
     // On a loss this line is the whole framing — what the winner pulled off, never "you lost".
     if (includeHeadline) {
       const moveTxt = this.add
-        .text(cx(), y, headline, { ...fontStyle(9, '#f2e6c0'), align: 'center', wordWrap: { width: panelW(360) } })
+        .text(cx(), y, headline, { ...fontStyle(9, TEXT.primary), align: 'center', wordWrap: { width: panelW(360) } })
         .setOrigin(0.5, 0);
       story.push(moveTxt);
       y += headlineH;
@@ -202,7 +209,7 @@ export class WinScene extends Phaser.Scene {
     if (includeReaction) {
       // RESULT-05/13: the opponent stays a character across the rematch, not an anonymous seat.
       tail.push(this.add
-        .text(cx(), y, reaction, { ...fontStyle(7, '#d8c890'), align: 'center', wordWrap: { width: panelW(380) } })
+        .text(cx(), y, reaction, { ...fontStyle(7, TEXT.muted), align: 'center', wordWrap: { width: panelW(380) } })
         .setOrigin(0.5, 0));
       y += reactionH;
     }
@@ -216,7 +223,7 @@ export class WinScene extends Phaser.Scene {
         .setOrigin(0.5, 0);
       y += 11;
       voteLine = this.add
-        .text(cx(), y, '', { ...fontStyle(7, '#d8c890'), align: 'center', wordWrap: { width: panelW(360) } })
+        .text(cx(), y, '', { ...fontStyle(7, TEXT.muted), align: 'center', wordWrap: { width: panelW(360) } })
         .setOrigin(0.5, 0);
       y += 10;
       tail.push(scoreLine, voteLine);
@@ -249,7 +256,7 @@ export class WinScene extends Phaser.Scene {
       // (and its host authority, see server/rooms.ts leaveRoom) still works once someone else
       // joins — but the player is told what actually happened.
       const leftNotice = this.add
-        .text(cx(), buttonY0 + 64, '', { ...fontStyle(7, '#ff6b5e'), align: 'center', wordWrap: { width: panelW(360) } })
+        .text(cx(), buttonY0 + 64, '', { ...fontStyle(7, TEXT.error), align: 'center', wordWrap: { width: panelW(360) } })
         .setOrigin(0.5, 0);
       tail.push(leftNotice);
       const applyRoom = (players: RoomPlayerSummary[]): void => {
@@ -297,7 +304,7 @@ export class WinScene extends Phaser.Scene {
     url.hash = '';
     const link = url.toString();
     const flash = (key: string): void => {
-      const el = label(this, cx(), vy(30), t(key), 8, '#3ec06a');
+      const el = label(this, cx(), vy(30), t(key), 8, TEXT.success);
       this.time.delayedCall(1500, () => { if (el.active) el.destroy(); });
     };
     if (typeof navigator.share === 'function') {
@@ -359,8 +366,8 @@ export class WinScene extends Phaser.Scene {
       // gold-tinted and opaque for the winner, neutral and opaque for everyone else — gives the
       // text a clean surface regardless of what meld happens to sit behind that seat.
       objects.push(this.add
-        .rectangle(x, rowY + extra / 2, slotW - 6, 32 + extra, r.isWinner ? CHROME_GOLD : 0x1a0f0a, r.isWinner ? 0.85 : 0.72)
-        .setStrokeStyle(1, r.isWinner ? CHROME_GOLD : 0x4a3a28, r.isWinner ? 0.9 : 0.6));
+        .rectangle(x, rowY + extra / 2, slotW - 6, 32 + extra, r.isWinner ? CHROME_GOLD : SURFACE.base, r.isWinner ? 0.85 : 0.72)
+        .setStrokeStyle(1, r.isWinner ? CHROME_GOLD : RESULT_PLATE_EDGE, r.isWinner ? 0.9 : 0.6));
       if (this.textures.exists(r.avatarKey)) objects.push(this.add.image(x, rowY - 8, r.avatarKey).setDisplaySize(16, 16));
       if (r.personality) {
         const emote = r.isWinner ? PERSONALITY_STYLE[r.personality].emoteBig : PERSONALITY_STYLE[r.personality].emoteDraw;
@@ -370,15 +377,15 @@ export class WinScene extends Phaser.Scene {
       // Winner text sits on an opaque gold plate now (see above), so it needs the same dark
       // ink the win.story chip already uses on gold rather than the gold-on-felt colour that
       // made sense when the plate was a thin 0.16-alpha tint.
-      const ink = r.isWinner ? '#1a0f0a' : '#d8d0c0';
-      const inkDim = r.isWinner ? '#4a3420' : '#c0b8a8';
+      const ink = r.isWinner ? TEXT.onAccent : TEXT.primary;
+      const inkDim = r.isWinner ? TEXT.onAccentMuted : TEXT.muted;
       objects.push(label(this, x, rowY + 5, r.name, 8, ink));
       objects.push(label(this, x, rowY + 14, `x${r.cardsLeft}`, 8, inkDim));
       if (withStats) {
-        objects.push(label(this, x, rowY + 24, t('win.statCards', { n: r.cardsPlayed ?? 0 }), 6, r.isWinner ? inkDim : '#b8ac98'));
+        objects.push(label(this, x, rowY + 24, t('win.statCards', { n: r.cardsPlayed ?? 0 }), 6, r.isWinner ? inkDim : TEXT.muted));
       }
       const record = withRecord ? this.recordLine(r) : '';
-      if (record) objects.push(label(this, x, rowY + 24 + (withStats ? RECORD_H : 0), record, 6, r.isWinner ? inkDim : '#b8ac98'));
+      if (record) objects.push(label(this, x, rowY + 24 + (withStats ? RECORD_H : 0), record, 6, r.isWinner ? inkDim : TEXT.muted));
     });
     return { y: rowY + 20 + (withStats ? STATS_H : 0) + (withRecord ? RECORD_H : 0), objects };
   }

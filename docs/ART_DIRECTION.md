@@ -17,6 +17,11 @@
 - Hearts `#d82e2e`, Diamonds `#e07b28` (orange-red for suit distinction), Clubs/Spades `#2b2b33`
 - Accent gold: `#f7d23e`, confirm green `#2e9e50`, draw orange `#d8892e`, invalid red `#d83a3a`
 
+This is the *art* palette — what the world is painted in. The UI chrome reads
+its colours by role from `src/ui/tokens.ts` (`TEXT.*`, `SURFACE.*`, `ACTION.*`),
+which is where a re-point of the interface happens; see
+[ARCHITECTURE.md](ARCHITECTURE.md) "UI design system".
+
 ## Canvas & scaling
 
 - Logical canvas **480×270**, Phaser `pixelArt: true`, FIT scaling → 1280×720 (×2.67 letterbox-free), 1920×1080 (×4 exact).

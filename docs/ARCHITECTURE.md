@@ -279,6 +279,51 @@ never crashes the game. Fallbacks are reported in
 `window.__MEXE__.missingAssets`, and verification fails if that is non-empty.
 See [ASSETS.md](ASSETS.md).
 
+## UI design system
+
+The UI is a small vocabulary, not a component library. Four modules own it, and
+a new screen should reach for them before inventing anything:
+
+| Concern | Owner | Contract |
+|---|---|---|
+| Semantic colours, control priorities, layering, control heights, spacing | `src/ui/tokens.ts` | Phaser-free. Name the **role** (`TEXT.muted`, `ACTION.danger`, `LAYER.panelContent`, `FOCUS.keyboard`, `STATE_FILL.error`), never a hex. `tests/tokens.test.ts` fails a raw `'#rrggbb'` anywhere in `src/ui` or `src/scenes`, and an integer colour used *inline*: an integer that is genuinely content (per-seat identity, the board's felt, a mask's coverage value) must at least be a named module constant whose comment says why it is not a token |
+| Buttons, labels, text metrics, scene transitions | `src/ui/widgets.ts` | `PixelButton` is *the* button — priority via `ACTION.*` + `primary: true`, states via `setEnabled` / `setSelected`, keyboard via `press()`. `fontStyle()` is the only place a font size is decided, so the large-text setting scales everything at once |
+| Modal behaviour | `src/ui/overlay.ts` | `buildOverlay` draws scrim + panel and closes on a backdrop tap; `onEscape` stacks Esc so it backs out one level at a time; `closeOnShutdown` ties the panel's `close()` to the scene's shutdown, so a scene restart (every orientation flip) can't strand its listeners |
+| World geometry and the two authored layouts | `src/ui/viewport.ts`, `src/ui/menu-layout.ts`, `src/ui/regions.ts` | Landscape 480×270 (widening to 630) and portrait 270×480. Menu-family screens map their authored coordinates through `cx()`/`vy()` and sit on `woodPanel`; only the board has a hand-authored portrait layout |
+
+Rules that follow from this:
+
+- **One primary per screen.** `primary: true` is the screen's single call to
+  action. Two full-strength greens beside each other is a bug, not emphasis.
+- **State is never colour alone.** Ready/host/active/selected all carry a word
+  or a ring as well (`setSelected`, the spelled-out lobby badges).
+- **Gameplay colours are not chrome.** `STATUS_COLOR` (`src/table/snap.ts`) and
+  the per-seat badge colours are rules/identity signals; reusing one as a title
+  or a banner colour is exactly what the token layer exists to prevent.
+- **Motion picks a band, not a number.** `src/ui/feel.ts` (`FEEL.fast` …
+  `FEEL.major`) and `feelMs()`, which already returns 0 under reduced motion.
+- **A screen with a stack is a flow, not a set of coordinates.** The lobby
+  (`OnlineScene.renderLobby`) is the worked example: the informational blocks
+  flow down from the room code, the controls are anchored up from VOLTAR, and
+  the leftover space becomes the gaps. When the column genuinely cannot fit —
+  a 270-unit landscape world at 125% text in the longer locale — it degrades in
+  a fixed order (gaps close, the room code gives back its large-text bonus, the
+  emote row goes, the *empty* chair goes) and never by dropping a seat, a
+  control or an explanation. Each painted block is recorded in
+  `window.__MEXE__.online.lobbyBoxes()`, which is what LB-46 asserts against on
+  every engine.
+- **A coarse pointer grows targets, never moves layout.** `view().touch` feeds
+  `controlH()` and `TOUCH_TARGET`; the artwork keeps its authored size.
+- **Phaser and the DOM share semantics, not implementations.** The board, menus
+  and panels are Phaser. The DOM owns exactly what the canvas cannot do: the
+  boot placeholder (`index.html`), the offscreen `<input>` that opens a mobile
+  soft keyboard for the name/room-code screens (`OnlineScene.ensureTextInput`),
+  and the PWA/error toasts (`src/core/pwa.ts`, `src/main.ts`). Each of those is
+  created once, tracked, and removed on shutdown. Do not port one surface to the
+  other for consistency's sake — share the *semantics* instead: those four DOM
+  plates take their fill, ink, padding and z-order from `plateCss()`/`DOM_LAYER`
+  in the same token module the canvas reads, so one re-point moves both surfaces.
+
 ## Failure model
 
 Two families, and every failure in the project is deliberately in one of them.
@@ -716,6 +761,7 @@ here is a generic state-machine framework, and none of it should become one.
 | Table editing behaviour | `src/mexe-mode` | `GameScene` |
 | Layout, snapping, zoom maths | `src/table` (pure, unit-tested) | `GameScene` |
 | A new widget, panel or helper affordance | `src/ui` | `src/rules` |
+| A colour, control height, spacing step or z-layer | `src/ui/tokens.ts`, as a semantic name | a literal in a scene |
 | AI behaviour or a new personality | `src/ai` | `src/game-state` |
 | A new wire message or field | `src/net/protocol.ts` **and** `server/` together, bumping `PROTOCOL_VERSION` | client-only shortcuts |
 | Player-visible text | `src/localization/i18n.ts` (both locales) | inline literals |

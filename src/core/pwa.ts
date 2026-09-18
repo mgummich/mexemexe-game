@@ -1,4 +1,5 @@
 import { t } from '../localization/i18n';
+import { DOM_LAYER, plateCss } from '../ui/tokens';
 import { debugApi } from '../verification/debug-api';
 
 /** True when the browser reports no network. `navigator` doesn't exist under the vitest node
@@ -30,16 +31,17 @@ export function onConnectivityChange(
 }
 
 // ---------- offline / update banners ----------
-// Same inline-cssText recipe as the portrait hint / error toast in src/main.ts (no stylesheet in
-// this project), same palette, z-index kept below the error toast's 9999.
+// Same plate as the portrait hint / error toast in src/main.ts — one recipe, in src/ui/tokens.ts.
 function makeBanner(bottom: number, pointerEvents: 'none' | 'auto'): HTMLDivElement {
   const el = document.createElement('div');
   // e2e-pwa selects the banners by this; they are otherwise unmarked inline-styled divs.
   el.dataset.mexeBanner = 'update';
-  el.style.cssText =
-    `position:fixed;left:50%;bottom:calc(${bottom}px + env(safe-area-inset-bottom));transform:translateX(-50%);display:none;` +
-    `background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:6px 12px;` +
-    `font:12px monospace;border-radius:4px;z-index:9990;opacity:0.95;pointer-events:${pointerEvents};`;
+  el.style.cssText = plateCss({
+    anchor: `bottom:calc(${bottom}px + env(safe-area-inset-bottom))`,
+    z: DOM_LAYER.banner,
+    display: 'none',
+    pointerEvents,
+  });
   document.body.appendChild(el);
   return el;
 }
@@ -47,13 +49,14 @@ function makeBanner(bottom: number, pointerEvents: 'none' | 'auto'): HTMLDivElem
 function setupOfflineBanner(): void {
   const el = document.createElement('div');
   el.dataset.mexeBanner = 'offline';
-  el.style.cssText =
+  el.style.cssText = plateCss({
     // top:44px, not 12px — clears src/main.ts's portraitHint box (top:12px, ~28px tall) so the
     // two don't stack during the hint's first 6s in portrait.
     // Both offsets add the safe-area inset — see the portrait hint in src/main.ts.
-    'position:fixed;left:50%;top:calc(44px + env(safe-area-inset-top));transform:translateX(-50%);display:none;' +
-    'background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:6px 12px;' +
-    'font:12px monospace;border-radius:4px;z-index:9990;opacity:0.95;pointer-events:none;';
+    anchor: 'top:calc(44px + env(safe-area-inset-top))',
+    z: DOM_LAYER.banner,
+    display: 'none',
+  });
   document.body.appendChild(el);
   const render = (offline: boolean): void => {
     debugApi.offline = offline;
