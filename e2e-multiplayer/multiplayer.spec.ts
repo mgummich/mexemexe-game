@@ -1893,8 +1893,19 @@ test('CH-04: a dropped answer to the guest\'s own move recovers through the pend
     }
     deliver(frame);
   });
-  // Two turns: the host's, then the guest's own — whose answer is the one dropped.
-  await takeTurns([host, guest], 2);
+  // The guest has to be the one that moves, because its own answer is the frame being dropped.
+  // Waiting for the clock rather than counting turns: on a slow runner a seat can still be
+  // rendering the previous frame when a turn-counting helper looks at it, and then the host
+  // takes both turns and nothing is ever dropped.
+  await takeTurns([host, guest], 1);
+  await guest.waitForFunction(
+    () => window.__MEXE__.state?.()?.activePlayerIndex === window.__MEXE__.online?.localSeat?.(),
+    undefined,
+    { timeout: 20_000 },
+  );
+  await guest.evaluate(() => window.__MEXE__.online!.comprar());
+  // The mangler runs in this process, so wait on it directly rather than on a page condition.
+  for (let i = 0; i < 100 && !dropped; i++) await guest.waitForTimeout(100);
   expect(dropped).toBe(true);
   // Long enough for ONLINE_PENDING_TIMEOUT_MS (10s) plus the resync round trip.
   await expectConverged(host, guest, 25_000);
