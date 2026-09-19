@@ -782,8 +782,17 @@ Adverse network conditions are exercised in the same suite rather than in a
 level of their own: `CH-01..CH-05` intercept one client's socket with
 `page.routeWebSocket` and delay, duplicate, re-deliver, drop or hold its
 incoming frames, with the other client as the clean control. Deterministic by
-construction — the mangler decides, not the network — and about 30s for all
-five. See [MULTIPLAYER.md](MULTIPLAYER.md) §11.
+construction — the mangler decides, not the network.
+
+They are tagged `@chaos` and **excluded from the PR path**
+(`verify:multiplayer:chromium` greps them out); the nightly
+`verify:multiplayer` runs them. Not for their own cost — 57s for all five on
+CI — but for peak concurrency: this suite is contention-bound, it already went
+from three workers to two because the heaviest tests starved, and five more
+tests each holding two browser contexts plus a Node-side frame proxy pushed
+`LB-19..LB-24` past its 7-minute budget and `OD-28/OD-29` past its 3-minute one
+on a 4-core runner. Locally they are `-g CH-0`. See
+[MULTIPLAYER.md](MULTIPLAYER.md) §11.
 
 `e2e-multiplayer/harness.ts` is also the single definition of a simulated
 player: `newClient`/`newPhoneClient` (own browser context, own storage, own

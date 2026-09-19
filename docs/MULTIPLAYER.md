@@ -965,6 +965,8 @@ refusal) held until the board has moved past them. The host stays clean and is
 the control — whatever the other seat went through, both end on the same
 revision with `desyncs() === 0`. Withholding a frame the client is *waiting* on
 is CH-04's case and is recovered by the pending timeout, not by a later frame.
+They are tagged `@chaos` and run nightly rather than per PR — see
+[TESTING.md](TESTING.md) for why the PR path keeps its concurrency where it was.
 
 `e2e-multiplayer/lobby.spec.ts` carries the `LB-*` lobby acceptance and runs on
 **Chromium, Firefox and WebKit** — a Chrome pass is not evidence for another

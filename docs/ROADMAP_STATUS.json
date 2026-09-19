@@ -654,6 +654,15 @@
       "change": "The four heaviest tests in that describe carry an explicit 30s deadline, the same treatment commit 21eac38 already gave the AI soak. Nothing about the searches changed.",
       "rationale": "What they assert is that the heaviest search returns the identical answer every time; the wall clock is incidental to that. The search's actual time budget stays asserted by 'terminates on the heaviest search, both tiers' (expectWithinMs 2000 per decide), so no timing coverage is lost.",
       "evidence": "npm run lint exit 0; npm run test 1117/1117; tests/ai.test.ts 78/78 in 9.27s"
+    },
+    {
+      "task": "the two heaviest multiplayer e2e tests blew their budgets on CI after Phase 65 added five chaos tests",
+      "trigger": "runs 35466617437 and 35468329303: LB-19..LB-24 exceeded its 420s budget (7.1m) and OD-28/OD-29 its 180s one (3.1m), on a branch whose previous CI run passed the same job in 16m16s. The suite went 44 -> 49 tests and 16m16s -> 22.7m.",
+      "ruledOut": "not the Phase 62/65 product changes. Same machine, same eight busy loops: LB-19..LB-24 took 1.5m with src/net/client.ts + src/net/online-session.ts at HEAD, and 1.5m with both reverted to c9e2e96 (under a heavier load average, 19.8 vs 6.7). The chaos tests' own cost is not it either — all five together are 57s on CI.",
+      "cause": "peak concurrency. This suite is contention-bound and already dropped from three workers to two because these same two tests starved; five more tests each holding two browser contexts plus a Node-side frame proxy put it back over the edge.",
+      "change": "CH-01..CH-05 are tagged @chaos and greped out of verify:multiplayer:chromium (the PR path). The nightly verify:multiplayer still runs them. Locally they are -g CH-0.",
+      "evidence": "PR selection is back to 44 tests in 2 files; npm run verify:multiplayer:chromium exit 0 (tmp/agent-logs/verify-mp-chaos-split.log); the five @chaos tests pass 5/5 in 21.9s when selected",
+      "stillOpen": "OD-28/OD-29 also fails nightly on main, so it has a contention problem of its own that predates this branch. Owner: Phase 66."
     }
   ]
 }

@@ -1729,7 +1729,15 @@ test('the name can be set from the join screen, without losing the half-typed co
   for (const p of [host, guest]) await p.context().close();
 });
 
-// ---------- CH-01..CH-04: adverse delivery (Phase 65) ----------
+// ---------- CH-01..CH-05: adverse delivery (Phase 65) ----------
+//
+// Tagged @chaos and kept off the PR path (`verify:multiplayer:chromium` greps them out), because
+// this suite is contention-bound rather than CPU-bound: it already dropped from three workers to
+// two after the heaviest tests starved, and five more tests that each hold two browser contexts
+// plus a Node-side frame proxy pushed LB-19..LB-24 past its 7-minute budget and OD-28/OD-29 past
+// its 3-minute one on a 4-core runner. Their own cost is not the problem — 57s for all five — the
+// peak concurrency is. They run in the nightly `verify:multiplayer`, where the wall clock is not
+// on anyone's critical path. Locally they are just `-g CH-0`.
 //
 // Real frames, mangled in the browser's own WebSocket route: the guest's socket is intercepted
 // and its *incoming* frames are delayed, duplicated, dropped or reordered before the app sees
@@ -1828,7 +1836,7 @@ async function expectConverged(host: Page, guest: Page, timeout = 20_000): Promi
   return rev;
 }
 
-test('CH-01: a client whose frames arrive late still converges on the authoritative board', async ({ browser }) => {
+test('CH-01 @chaos: a client whose frames arrive late still converges on the authoritative board', async ({ browser }) => {
   // Every sync held back 800ms — well inside the 10s pending timeout, so this is pure lateness,
   // not a dropped proposal. The player waits; the board is never wrong.
   const { host, guest } = await chaosMatch(browser, (frame, _context, deliver) => {
@@ -1841,7 +1849,7 @@ test('CH-01: a client whose frames arrive late still converges on the authoritat
   for (const p of [host, guest]) await p.context().close();
 });
 
-test('CH-02: duplicated frames are applied idempotently, not twice', async ({ browser }) => {
+test('CH-02 @chaos: duplicated frames are applied idempotently, not twice', async ({ browser }) => {
   // The same authoritative frame delivered three times is the same board three times: an equal-rev
   // frame is re-applied on purpose (MULTIPLAYER.md §6), so what this proves is that re-applying
   // changes nothing — no double-counted turn, no desync, no drifting hand counts.
@@ -1856,7 +1864,7 @@ test('CH-02: duplicated frames are applied idempotently, not twice', async ({ br
   for (const p of [host, guest]) await p.context().close();
 });
 
-test('CH-03: a stale frame arriving after a newer one leaves the newest board standing', async ({ browser }) => {
+test('CH-03 @chaos: a stale frame arriving after a newer one leaves the newest board standing', async ({ browser }) => {
   // Every frame is delivered in order, and the *previous* one is then re-delivered behind it —
   // the shape late delivery actually takes on one ordered socket: an old board turning up after
   // the client has already moved past it. It must be ignored as stale, not applied as a rewind.
@@ -1879,7 +1887,7 @@ test('CH-03: a stale frame arriving after a newer one leaves the newest board st
   for (const p of [host, guest]) await p.context().close();
 });
 
-test('CH-04: a dropped answer to the guest\'s own move recovers through the pending timeout', async ({ browser }) => {
+test('CH-04 @chaos: a dropped answer to the guest\'s own move recovers through the pending timeout', async ({ browser }) => {
   // The answer to the guest's *own* move is thrown away — the one case nothing else recovers
   // from, because the client is holding its input lock waiting for exactly that frame. The 10s
   // pending timeout has to break it: it resyncs and the board comes back. This is the path
@@ -1913,7 +1921,7 @@ test('CH-04: a dropped answer to the guest\'s own move recovers through the pend
   for (const p of [host, guest]) await p.context().close();
 });
 
-test('CH-05: a rejection that arrives after the board moved on is ignored, not replayed', async ({ browser }) => {
+test('CH-05 @chaos: a rejection that arrives after the board moved on is ignored, not replayed', async ({ browser }) => {
   // The guest sends an illegal proposal and the server refuses it, but the refusal is held back
   // until after the next authoritative frame has landed. By then it answers nothing: the board is
   // already correct, and acting on it would sound the error and rebuild the editor under whatever
