@@ -432,7 +432,9 @@ describe('AI full-game smoke', () => {
       expect(state.phase).toBe('finished');
       expect(state.winnerId).not.toBeNull();
     }
-  });
+    // Fifteen full matches of the rearrange search: ~4s alone, more than vitest's 5s default
+    // under full-suite contention. The deadline is not what this test asserts.
+  }, 30_000);
 });
 
 /**
