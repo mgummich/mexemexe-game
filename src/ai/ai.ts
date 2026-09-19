@@ -1,16 +1,30 @@
 import { DraftEditor } from '../mexe-mode/draft';
 import { isValidMeld, isValidRun } from '../rules/rules';
 import type { Card, DraftState, GameState } from '../rules/types';
+import { compareByBaseEvaluation, evaluateDraft, type CandidateFeatures } from './evaluate';
+import type { AiObservation } from './observation';
+
+export type { AiObservation } from './observation';
+export { observeForAi } from './observation';
 
 export type AiDecision =
   | { kind: 'confirm'; draft: DraftState; explanation: string }
   | { kind: 'draw'; explanation: string };
 
+/**
+ * The AI boundary. The only inputs to a decision are the observation (the seat's player view —
+ * see `observeForAi`), the engine's own configuration, fixed when the engine is constructed
+ * (personality policy, search tier, trial budget), and nothing else: no clock, no settings read,
+ * no scene, no unseeded randomness. Same observation + same engine ⇒ same decision (INV-A5).
+ *
+ * The result is gameplay intent, not presentation: `LocalMatch.runAiTurn` routes it to the same
+ * `confirmTurn` / `drawAndEndTurn` action a person's FEITO or COMPRAR takes (INV-S7).
+ */
 export interface AiPlayer {
-  decide(state: GameState): AiDecision;
+  decide(observation: AiObservation): AiDecision;
   /** Same decision, but computed in event-loop slices so a long search never blocks a whole
    * frame (see RearrangerAi). Absent on engines whose decide() is already cheap. */
-  decideSliced?(state: GameState): Promise<AiDecision>;
+  decideSliced?(observation: AiObservation): Promise<AiDecision>;
 }
 
 /** All personalities are deterministic: sorted iteration, first hit wins. */
@@ -151,7 +165,7 @@ export class SimpleAi implements AiPlayer {
     private readonly holdJokers = false,
   ) {}
 
-  decide(state: GameState): AiDecision {
+  decide(state: AiObservation): AiDecision {
     const ed = new DraftEditor(state);
     const notes: string[] = [];
     const hand = state.players[state.activePlayerIndex]!.hand;
@@ -193,7 +207,7 @@ export class SimpleAi implements AiPlayer {
     return { kind: 'draw', explanation: 'no legal play — drawing' };
   }
 
-  private decideMinimalExtendOnly(state: GameState): AiDecision {
+  private decideMinimalExtendOnly(state: AiObservation): AiDecision {
     const ed = new DraftEditor(state);
     const hand = sortCards(state.players[state.activePlayerIndex]!.hand);
     for (const card of hand) {
@@ -216,9 +230,8 @@ export class SimpleAi implements AiPlayer {
 interface Candidate {
   draft: DraftState;
   explanation: string;
-  played: string[];
-  /** jokers left on the table by this draft — tiebreak only, fewer wins at equal card count. */
-  jokers: number;
+  /** Base evaluation of this draft — the only thing `compareCandidates` looks at. */
+  features: CandidateFeatures;
 }
 
 const MAX_CANDIDATES = 20;
@@ -263,13 +276,8 @@ class SearchBudget {
   }
 }
 
-function sortedPlayed(draft: DraftState): string[] {
-  return [...draft.handCardsPlayed].sort();
-}
-
-function addCandidate(candidates: Candidate[], draft: DraftState, explanation: string): void {
-  const jokers = draft.melds.flatMap((m) => m.cards).filter((c) => c.isJoker).length;
-  candidates.push({ draft, explanation, played: sortedPlayed(draft), jokers });
+function addCandidate(candidates: Candidate[], state: GameState, draft: DraftState, explanation: string): void {
+  candidates.push({ draft, explanation, features: evaluateDraft(state, draft) });
 }
 
 /** Steal an edge card (first/last) from a 4+ meld and form a brand-new meld with 2 or 3 hand cards. */
@@ -293,6 +301,7 @@ function tryStealForm(
   if (check.ok) {
     addCandidate(
       candidates,
+      state,
       ed.getDraft(),
       `rearranged: took ${steal.id} from ${sourceLabel}, formed meld with ${handCards.map((c) => c.id).join('+')}`,
     );
@@ -341,7 +350,7 @@ function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[],
       if (ed.splitMeld(meld.id, splitIdx)) {
         const played = tryExtend(ed);
         if (played.length && ed.canConfirm().ok) {
-          addCandidate(candidates, ed.getDraft(), `split ${meld.id} at ${splitIdx}, extended with ${played.join(',')}`);
+          addCandidate(candidates, state, ed.getDraft(), `split ${meld.id} at ${splitIdx}, extended with ${played.join(',')}`);
         }
       }
       if (candidates.length >= cap || budget.spent) return;
@@ -366,6 +375,7 @@ function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[],
             if (ed2.canConfirm().ok) {
               addCandidate(
                 candidates,
+                state,
                 ed2.getDraft(),
                 `split ${meld.id} at ${splitIdx}, took ${steal.id}, formed meld with ${hand[i]!.id}+${hand[j]!.id}`,
               );
@@ -405,6 +415,7 @@ function searchInterMeldMove(state: GameState, hand: Card[], candidates: Candida
         if (played.length && ed.canConfirm().ok) {
           addCandidate(
             candidates,
+            state,
             ed.getDraft(),
             `moved ${steal.id} from ${source.id} to ${target.id}, then played ${played.join(',')}`,
           );
@@ -415,15 +426,7 @@ function searchInterMeldMove(state: GameState, hand: Card[], candidates: Candida
 }
 
 function compareCandidates(a: Candidate, b: Candidate): number {
-  if (a.played.length !== b.played.length) return b.played.length - a.played.length;
-  // equal-size plays: prefer the one that spends fewer jokers (save them for the final move)
-  if (a.jokers !== b.jokers) return a.jokers - b.jokers;
-  for (let i = 0; i < a.played.length; i++) {
-    const x = a.played[i]!;
-    const y = b.played[i]!;
-    if (x !== y) return x < y ? -1 : 1;
-  }
-  return 0;
+  return compareByBaseEvaluation(a.features, b.features);
 }
 
 /**
@@ -439,10 +442,13 @@ export class RearrangerAi implements AiPlayer {
   private simple: SimpleAi;
   private readonly cap: number;
 
-  /** `wide` is the Expert tier: the same searches, more candidates kept. */
+  /** `wide` is the Expert tier: the same searches, more candidates kept. `budgetTrials` is the
+   * deterministic work bound, an explicit decision input rather than a hidden constant — the
+   * default is the shipped one and only tests ask for a smaller search. */
   constructor(
     private readonly holdJokers = false,
     wide = false,
+    private readonly budgetTrials = SEARCH_BUDGET_TRIALS,
   ) {
     this.simple = new SimpleAi(false, holdJokers);
     this.cap = wide ? EXPERT_MAX_CANDIDATES : MAX_CANDIDATES;
@@ -450,16 +456,16 @@ export class RearrangerAi implements AiPlayer {
 
   /** Both search paths start from the same place: the plain play SimpleAi would have made (if
    * any) as the first candidate, plus the sorted hand every rearrange search works from. */
-  private seedFromSimplePlay(state: GameState): { candidates: Candidate[]; hand: Card[] } {
+  private seedFromSimplePlay(state: AiObservation): { candidates: Candidate[]; hand: Card[] } {
     const candidates: Candidate[] = [];
     const simple = this.simple.decide(state);
-    if (simple.kind === 'confirm') addCandidate(candidates, simple.draft, simple.explanation);
+    if (simple.kind === 'confirm') addCandidate(candidates, state, simple.draft, simple.explanation);
     return { candidates, hand: sortCards(state.players[state.activePlayerIndex]!.hand) };
   }
 
-  decide(state: GameState): AiDecision {
+  decide(state: AiObservation): AiDecision {
     const cap = this.cap;
-    const budget = new SearchBudget(SEARCH_BUDGET_TRIALS);
+    const budget = new SearchBudget(this.budgetTrials);
     const { candidates, hand } = this.seedFromSimplePlay(state);
 
     for (const search of REARRANGE_SEARCHES) {
@@ -474,9 +480,9 @@ export class RearrangerAi implements AiPlayer {
    * paths do not merely tend to agree — they compute the same thing, and the frame yields are the
    * only difference. (They used to split the budget into per-phase wall-clock slices, which is
    * what made them two searches instead of one.) */
-  async decideSliced(state: GameState): Promise<AiDecision> {
+  async decideSliced(state: AiObservation): Promise<AiDecision> {
     const cap = this.cap;
-    const budget = new SearchBudget(SEARCH_BUDGET_TRIALS);
+    const budget = new SearchBudget(this.budgetTrials);
     const { candidates, hand } = this.seedFromSimplePlay(state);
 
     for (const search of REARRANGE_SEARCHES) {
@@ -615,21 +621,21 @@ export function createAi(personality: Personality, difficulty: Difficulty = 'sma
   return {
     decide: (state) => tagReason(personality, engine.decide(state)),
     ...(engine.decideSliced
-      ? { decideSliced: async (state: GameState) => tagReason(personality, await engine.decideSliced!(state)) }
+      ? { decideSliced: async (state: AiObservation) => tagReason(personality, await engine.decideSliced!(state)) }
       : {}),
   };
 }
 
 class PatientAi implements AiPlayer {
   constructor(private readonly inner: AiPlayer) {}
-  decide(state: GameState): AiDecision {
+  decide(state: AiObservation): AiDecision {
     return this.applyPatience(state, this.inner.decide(state));
   }
-  async decideSliced(state: GameState): Promise<AiDecision> {
+  async decideSliced(state: AiObservation): Promise<AiDecision> {
     const d = this.inner.decideSliced ? await this.inner.decideSliced(state) : this.inner.decide(state);
     return this.applyPatience(state, d);
   }
-  private applyPatience(state: GameState, d: AiDecision): AiDecision {
+  private applyPatience(state: AiObservation, d: AiDecision): AiDecision {
     if (d.kind === 'confirm') {
       const played = d.draft.handCardsPlayed.length;
       const hand = state.players[state.activePlayerIndex]!.hand.length;

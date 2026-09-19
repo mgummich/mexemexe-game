@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RearrangerAi, SimpleAi } from '../src/ai/ai';
+import { observeForAi } from '../src/ai/observation';
 import { applyConfirmedTurn, drawAndEndTurn } from '../src/rules/rules';
 import type { GameState } from '../src/rules/types';
 import { createNewGame } from '../src/rules/rules';
@@ -19,7 +20,7 @@ function playFullGame(seed: number): { turns: number; winnerId: string | null } 
   let turns = 0;
   while (state.phase === 'playing' && turns < TURN_CAP) {
     const ai = ais[state.activePlayerIndex]!;
-    const decision = ai.decide(state);
+    const decision = ai.decide(observeForAi(state));
     state = decision.kind === 'confirm' ? applyConfirmedTurn(state, decision.draft) : drawAndEndTurn(state);
     turns++;
   }

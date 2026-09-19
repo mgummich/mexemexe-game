@@ -1032,7 +1032,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Presentation-only "thinking" pause before an AI's move lands — never affects the AI's own
-   * 400ms search deadline. Bia's pace grows with table complexity (more melds to weigh); every
+   * search budget (a trial count, not a deadline). Bia's pace grows with table complexity (more melds to weigh); every
    * personality is capped and scaled by settings.motionScale() (0 under reducedMotion). */
   private aiThinkDelay(personality: Personality, state: GameState): number {
     const style = PERSONALITY_STYLE[personality];

@@ -114,7 +114,7 @@ instead. That is usually the smaller, better change.
 | GQA-03 | Turn flow | softlock / dead state | `tests/actions.test.ts` (the local action path: accepted, refused, after-finish, out-of-turn), `tests/probes.test.ts` (every seed terminates, turn rotation asserted each turn) | unit + simulation | Covered |
 | GQA-04 | Mexe | draft/state corruption | `tests/draft.test.ts`, `tests/probes.test.ts` undo/reset abuse; `e2e/screenshot.spec.ts` mexe + editor journeys | unit + E2E | Covered |
 | GQA-05 | End game | wrong winner/end state | `tests/rules.test.ts` win + draw-pile exhaustion; the three finished golden replays (empty hand, two-seat exhaustion, four-seat tiebreak); `e2e` `win-real-finish` | unit + golden replay + E2E | Covered |
-| GQA-06 | AI | illegal action / hang | `tests/ai.test.ts` (legality, budgets, determinism), `tests/probes.test.ts` (terminates, legal every turn) | unit + simulation | Covered |
+| GQA-06 | AI | illegal action / hang | `tests/ai.test.ts` (legality, budgets, determinism, observation redaction and no-mutation), `tests/probes.test.ts` (terminates, legal every turn), `tests/property/ai.property.test.ts` (legal, unmutated, reproducible over generated states) | unit + property + simulation | Covered |
 | GQA-07 | Multiplayer sync | state divergence | `e2e-multiplayer/multiplayer.spec.ts` state-hash agreement; `tests/server/rooms.test.ts`; `tests/property/protocol.property.test.ts` proves the same digest agreement purely, for every seat of every generated state | E2E + server + property | Covered |
 | GQA-08 | Privacy | hidden hand leaked | `tests/server/index.integration.test.ts` (privacy in a real frame, log redaction), `e2e-multiplayer` hand-privacy probe, `tests/property/protocol.property.test.ts` (no seat's view carries another hand, any state) | server + E2E + property | Covered |
 | GQA-09 | Reconnect | state/identity corruption | `tests/server/reconnect.test.ts`, `tests/net/reconnect.test.ts`, `e2e-multiplayer/lobby.spec.ts` LB reload/second-tab | server + E2E | Covered |
@@ -400,6 +400,7 @@ The four files, and what each owns:
 | `tests/property/rules.property.test.ts` | deck, shuffle, deal; meld analysis, jokers, the validators agreeing, display sorting |
 | `tests/property/state.property.test.ts` | the `applyGameAction` contract: what an accepted action reports, that a refusal changes nothing, determinism, a finished match refusing everything |
 | `tests/property/serialization.property.test.ts` | save round-trip and refusal; replay round-trip, divergence and a foreign card id |
+| `tests/property/ai.property.test.ts` | every AI decision over reachable states: legal or a draw, observation untouched, reproducible — on small budgets, not the shipped search |
 | `tests/property/protocol.property.test.ts` | every seat's redacted view: own hand only, and the client's reconstruction digesting to the server's hash |
 
 ### Generators

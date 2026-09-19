@@ -3,6 +3,7 @@ import { LocalMatch, type MatchEvent } from '../src/game-state/match';
 import { DraftEditor } from '../src/mexe-mode/draft';
 import { validateTable } from '../src/rules/rules';
 import type { GameState } from '../src/rules/types';
+import { n } from './helpers/cards';
 import { allCards, expectCardConservation } from './helpers/invariants';
 import { gameState as state, legalDraft, oneCardFromWinning, tableRearrangement } from './helpers/scenarios';
 
@@ -105,6 +106,34 @@ describe('LocalMatch', () => {
     expect(match.state().activePlayerIndex).toBe(0);
     expect(types()).toHaveLength(2);
     expect(types()[1]).toBe('turn:start');
+  });
+
+  it('draws instead of keeping the turn when the rules refuse an AI confirm', async () => {
+    // A refusal cannot be produced from a legal board — every candidate the engine offers has
+    // already passed `DraftEditor.canConfirm` — so the disagreement is staged. What must hold is
+    // that the seat does not keep the turn: an engine/rules bug costs a card, not the match.
+    const { match, types } = newMatch({
+      activePlayerIndex: 1,
+      players: [
+        { id: 'p0', name: 'A', isAi: false, hand: [n('spades', 9)] },
+        { id: 'p1', name: 'B', isAi: true, hand: [n('hearts', 2), n('hearts', 6)] },
+      ],
+    });
+    const real = match.dispatch.bind(match);
+    let refused = false;
+    match.dispatch = (action) => {
+      if (action.type === 'confirmTurn' && !refused) {
+        refused = true;
+        return { ok: false, reasons: ['reason.notAMeld'] };
+      }
+      return real(action);
+    };
+    const result = await match.runAiTurn('cida', 'smart');
+    expect(refused).toBe(true); // the engine did propose a confirm, so the guard was the path taken
+    expect(result.kind).toBe('fallback');
+    expect(result.kind === 'fallback' && result.outcome.ok).toBe(true);
+    expect(match.state().activePlayerIndex).toBe(0);
+    expect(types()).toEqual(['turn:drawn', 'turn:start']);
   });
 
   it('a disposed match accepts no further action and announces nothing', () => {

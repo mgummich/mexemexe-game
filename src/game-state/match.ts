@@ -1,4 +1,4 @@
-import { createAi, type AiDecision, type Difficulty, type Personality } from '../ai/ai';
+import { createAi, observeForAi, type AiDecision, type Difficulty, type Personality } from '../ai/ai';
 import type { GameState, PlayerState } from '../rules/types';
 import type { ActionOutcome, GameAction } from './actions';
 import type { Replay } from './replay';
@@ -107,13 +107,28 @@ export class LocalMatch {
     const actorIndex = before.activePlayerIndex;
     try {
       const ai = createAi(personality, difficulty);
-      const decision = ai.decideSliced ? await ai.decideSliced(before) : ai.decide(before);
+      // The engine is handed the seat's player view, not the authoritative state: the hidden
+      // halves (other hands, pile order, deal seed) are absent from the object it decides on.
+      const observation = observeForAi(before);
+      const decision = ai.decideSliced ? await ai.decideSliced(observation) : ai.decide(observation);
       if (this.disposed || this.store.get() !== before) return { kind: 'stale' };
       const outcome = this.dispatch(
         decision.kind === 'confirm'
           ? { type: 'confirmTurn', actorIndex, draft: decision.draft }
           : { type: 'drawAndEndTurn', actorIndex },
       );
+      // Every candidate the engine offers has already passed `DraftEditor.canConfirm`, so a
+      // refusal here means the proposal and the rules disagree — a bug, not a legal outcome. The
+      // turn still has to end: without this the seat would keep the turn forever and the match
+      // would stall on a board nobody can move (INV-A3).
+      if (!outcome.ok && decision.kind === 'confirm') {
+        return {
+          kind: 'fallback',
+          error: `ai confirm refused: ${outcome.reasons.join(',')}`,
+          outcome: this.dispatch({ type: 'drawAndEndTurn', actorIndex }),
+          before,
+        };
+      }
       return { kind: 'acted', decision, outcome, before };
     } catch (e) {
       if (this.disposed) return { kind: 'stale' };

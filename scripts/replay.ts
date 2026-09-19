@@ -13,6 +13,7 @@
  */
 import fs from 'node:fs';
 import { createAi } from '../src/ai/ai';
+import { observeForAi } from '../src/ai/observation';
 import { GameStore } from '../src/game-state/store';
 import { parseReplay, runReplay, serializeReplay } from '../src/game-state/replay';
 import { createNewGame } from '../src/rules/rules';
@@ -36,7 +37,7 @@ function record(seed: number, out: string, maxActions: number, personalities: Re
   const ais = personalities.map((p) => createAi(p, 'smart'));
   for (let i = 0; i < Math.min(maxActions, MAX_TURNS) && store.get().phase === 'playing'; i++) {
     const actorIndex = store.get().activePlayerIndex;
-    const decision = ais[actorIndex]!.decide(store.get());
+    const decision = ais[actorIndex]!.decide(observeForAi(store.get()));
     const outcome = store.dispatch(
       decision.kind === 'confirm'
         ? { type: 'confirmTurn', actorIndex, draft: decision.draft }

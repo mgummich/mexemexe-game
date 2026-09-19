@@ -16,7 +16,7 @@ rules/          pure functions + seeded rng, no Phaser/DOM/Date  ← the only ru
 core/           event bus, settings, persistence, play log, PWA, lifecycle
 game-state/     GameStore (the committed state slot) + LocalMatch (match orchestration)
 mexe-mode/      table draft editor (break/split/merge/move, undo/redo/reset)
-ai/             SimpleAi, RearrangerAi, personalities        ← rules + mexe-mode only
+ai/             observation → candidates → evaluation → choice   ← rules + mexe-mode only
 net/            wire protocol, WebSocket client, view→state projection,
                 OnlineSession (online application state) + LobbyMachine (lobby state)
 table/ ui/ scenes/ assets/ audio/ cosmetics/                  ← Phaser + DOM layer
@@ -67,7 +67,7 @@ legality.
 | `src/core` | `EventBus` (`events.ts`), settings + `localStorage` persistence, session play log, objective hints, results summary, error recovery, app sleep/resume, PWA registration |
 | `src/game-state` | `actions.ts`: the local gameplay-action vocabulary and the pure `applyGameAction`. `store.ts`: `GameStore`, the one mutable slot for the committed local `GameState`, which only `dispatch` replaces — it emits nothing and imports no bus, so an online client and a server could both hold one. `match.ts`: `LocalMatch`, the local match's application boundary (turn cycle, AI turn routing, per-instance notifications). `replay.ts`: the deterministic reproduction format (record, validate, run) |
 | `src/mexe-mode` | draft state: melds under edit, cards played from hand, undo/redo history |
-| `src/ai` | `SimpleAi`, `RearrangerAi`, the four personalities and their presentation constants |
+| `src/ai` | `observation.ts` (the seat's player view), `evaluate.ts` (the neutral comparison of legal candidates), `ai.ts` (`SimpleAi`, `RearrangerAi`, the four personalities and their presentation constants) |
 | `src/net` | `protocol.ts` (shared wire types, redaction, boundary validation), `client.ts` (browser socket), `viewToState.ts` (server view → local-shaped state), `online-session.ts` (`OnlineSession`: the online match's application state and every policy over a server frame — staleness, desync/resync, seat-gap translation, missed-turn limit), `lobby.ts` (`LobbyMachine`: the explicit lobby state and its transitions), `errors.ts` |
 | `src/table` | table layout, snapping, zoom, tap destinations, the portrait editor layout |
 | `src/ui` | widgets, overlays, panels (settings, rules, pause), helper modes, regions, viewport |
@@ -185,6 +185,51 @@ The AI is on this same path: `GameScene` owns the thinking *pause* and the chara
 `LocalMatch.runAiTurn` owns the decision and its routing to a `GameAction`. A search that yields
 across frames and comes back after the match moved on (or was disposed) is reported `stale` and
 dropped, rather than applied to a board it was not computed for.
+
+### The AI foundation
+
+Five steps, each with one owner, so later AI work changes *how well* a seat plays without
+reopening what it may see or what counts as legal:
+
+```text
+observeForAi(state)          player view of the seat about to move   src/ai/observation.ts
+  → candidate generation     drafts built with DraftEditor           src/ai/ai.ts
+  → DraftEditor.canConfirm   the rules decide, per candidate         src/rules
+  → base evaluation          one neutral comparison of legal moves   src/ai/evaluate.ts
+  → deterministic choice     best features, stable tie-break         src/ai/ai.ts
+  → LocalMatch.runAiTurn     confirmTurn / drawAndEndTurn            src/game-state/match.ts
+```
+
+**Observation.** `observeForAi` projects authoritative state into the seat's own view: own hand,
+committed table, active seat, turn number, public per-seat metadata, rules config. Redacted: the
+other hands' identities, the pile's order, and the deal seed (the pile's order, one step removed).
+It is still a `GameState`, so `DraftEditor` and `canConfirmTurn` read it unchanged, and it is a
+deep-frozen copy, so an engine cannot work in place on the board it is deciding about. The type is
+branded: only `observeForAi` produces an `AiObservation`, so handing an engine authoritative state
+does not compile. That is INV-A2 as a type rather than a habit, and it is the same information a
+remote player is sent, which is why nothing here would need rewriting for a server-side AI.
+
+**Decision.** `AiPlayer.decide(observation)` (or `decideSliced`, the same search yielding between
+phases) returns gameplay intent — `confirm` with a draft, or `draw`. The inputs are the
+observation and the engine's construction-time configuration (personality policy, search tier,
+trial budget); there is no clock, no settings read, no scene and no unseeded randomness. Tie-breaks
+are lexicographic rather than random, so no RNG is threaded in at all.
+
+**Legality.** The AI owns none. Every candidate is a `DraftEditor` draft that `canConfirm`
+accepted before it was kept, and `applyGameAction` validates it again on the way in. If the two
+ever disagreed, `runAiTurn` draws instead of keeping the turn — a bug costs a card, not the match.
+
+**Generation scope, honestly.** Nothing here is exhaustive. `SimpleAi` is **greedy**: hand melds in
+a fixed order, then single-card extensions, first fit wins. `RearrangerAi` is a **bounded
+heuristic search** over three shapes (edge steal, run split, single inter-meld move), seeded with
+SimpleAi's own play, capped at `MAX_CANDIDATES`/`EXPERT_MAX_CANDIDATES` kept and
+`SEARCH_BUDGET_TRIALS` attempted. Move classes outside those shapes are simply not generated.
+
+**Evaluation.** `src/ai/evaluate.ts` compares legal candidates on four features in strict
+priority: immediate win, then hand cards shed, then fewer jokers left on the shared table, then
+the sorted played-card ids as a stable tie-break. Ordinal, not a weighted sum — no amount of joker
+thrift buys back a card. Neutral on purpose: personality lives in which candidates get generated
+(minimal play, joker holding, patience) and difficulty in the search tier, not in these features.
 
 The actor differs between a human and an AI seat; the transition authority does not. UI intents
 (open settings, zoom the table, hover a card, play a sound) are *not* actions and never become
@@ -538,11 +583,12 @@ Properties that make it worth having:
 
 Capture and run: [DEVELOPMENT.md](DEVELOPMENT.md#reproducing-a-bug-from-a-replay).
 
-**AI decisions are recorded, not recomputed.** The rearranging engines budget
-their search with `performance.now()`, so re-running an AI would not reliably
-choose the same move on a different machine. A replay stores the action the AI
-actually produced, which makes AI turns exactly as reproducible as human ones
-and removes the engine from the replay's trusted set.
+**AI decisions are recorded, not recomputed.** A decision is reproducible on
+its own terms — the search spends a trial budget and reads no clock (INV-A5) —
+but a replay stores the action the AI actually produced anyway. That keeps the
+engine out of the replay's trusted set: a replay from last week still runs
+after the AI is retuned, and an AI turn is exactly as reproducible as a human
+one.
 
 **Online is not client-replayable.** `window.__MEXE__.replay()` returns `null`
 online: the local store there holds `viewToState`'s redacted projection with
@@ -609,6 +655,8 @@ suites (through `window.__MEXE__`, never through internals).
 | lobby screen state and its transitions | `LobbyMachine` (`src/net/lobby.ts`) | `OnlineScene` renders it and dispatches into it |
 | Mexe draft | `DraftEditor` (`src/mexe-mode`) | never serialized, never sent until FEITO |
 | AI choice | `src/ai` behind `AiPlayer.decide` | scene only schedules and presents it |
+| what an AI seat may know | `observeForAi` (`src/ai/observation.ts`) | no engine reads authoritative state — the type forbids it |
+| how legal AI moves compare | `src/ai/evaluate.ts` | personality/difficulty choose policy and tier, never the features |
 | online match state, `rev`, deal seed, turn timer, room membership, host, ready, reconnect seat | the server's `RoomManager` | clients render the per-seat view they are given |
 | hidden information | `buildView` redaction (`src/net/protocol.ts`) | no client path may reconstruct an opponent hand |
 | settings, progress, cosmetics | `src/core/settings` over `persistence` | no scene-local copies |
@@ -740,8 +788,8 @@ testability or removes a leak, which today means the ones already here:
 comes from a seed, and turn expiry is a server decision (`advanceStalledTurns`
 → `timerExpireTurn`) that arrives as an ordinary transition. The client renders
 `turnMsLeft`; it never decides expiry. `performance.now()` appears in the play
-log's relative timeline and in the AI's search budget, both outside the state
-transition.
+log's relative timeline, outside the state transition; the AI's search budget
+is a trial count, so no clock reaches move selection either.
 
 **Non-browser reuse.** `rules`, `mexe-mode`, `game-state` (including
 `replay.ts`), `net/protocol`, `net/viewToState`, `table` and the AI engine run

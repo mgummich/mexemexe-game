@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { aiReasonKeySuffix, AI_SPEED_SCALE, createAi, DIFFICULTIES, RearrangerAi, SimpleAi } from '../src/ai/ai';
+import { compareByBaseEvaluation, evaluateDraft, type CandidateFeatures } from '../src/ai/evaluate';
+import { observeForAi } from '../src/ai/observation';
 import { t } from '../src/localization/i18n';
 import { applyConfirmedTurn, canConfirmTurn, drawAndEndTurn } from '../src/rules/rules';
 import type { Card, GameState, Meld, Suit } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
 import { createNewGame } from '../src/rules/rules';
 import { j, n, withHand } from './helpers/cards';
+import { allCards, expectCardConservation } from './helpers/invariants';
+import { tableRearrangement } from './helpers/scenarios';
 import { expectWithinMs } from './helpers/timing';
 
 function base(hand: Card[], table: GameState['table'] = []): GameState {
@@ -37,7 +41,7 @@ describe('hidden information', () => {
     const blind = base(hand, table);
     const peeking = withHand(blind, 1, [n('hearts', 7), n('hearts', 8), j(1, 1)]);
     for (const ai of [new SimpleAi(), new RearrangerAi()]) {
-      expect(ai.decide(peeking)).toEqual(ai.decide(blind));
+      expect(ai.decide(observeForAi(peeking))).toEqual(ai.decide(observeForAi(blind)));
     }
   });
 });
@@ -45,35 +49,35 @@ describe('hidden information', () => {
 describe('SimpleAi', () => {
   it('plays obvious set', () => {
     const ai = new SimpleAi();
-    const d = ai.decide(base([n('hearts', 9), n('spades', 9), n('clubs', 9), n('hearts', 2)]));
+    const d = ai.decide(observeForAi(base([n('hearts', 9), n('spades', 9), n('clubs', 9), n('hearts', 2)])));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toHaveLength(3);
   });
 
   it('plays obvious run', () => {
     const ai = new SimpleAi();
-    const d = ai.decide(base([n('hearts', 4), n('hearts', 5), n('hearts', 6), n('clubs', 2)]));
+    const d = ai.decide(observeForAi(base([n('hearts', 4), n('hearts', 5), n('hearts', 6), n('clubs', 2)])));
     expect(d.kind).toBe('confirm');
   });
 
   it('extends table meld with single card', () => {
     const ai = new SimpleAi();
     const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }];
-    const d = ai.decide(base([n('hearts', 6), n('clubs', 2), n('spades', 11)], table));
+    const d = ai.decide(observeForAi(base([n('hearts', 6), n('clubs', 2), n('spades', 11)], table)));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toEqual(['hearts-6-d0']);
   });
 
   it('draws when no play', () => {
     const ai = new SimpleAi();
-    const d = ai.decide(base([n('hearts', 2), n('spades', 7), n('clubs', 12)]));
+    const d = ai.decide(observeForAi(base([n('hearts', 2), n('spades', 7), n('clubs', 12)])));
     expect(d.kind).toBe('draw');
   });
 
   it('never proposes illegal confirm', () => {
     const ai = new SimpleAi();
     const state = base([n('hearts', 9), n('spades', 9), n('clubs', 9)]);
-    const d = ai.decide(state);
+    const d = ai.decide(observeForAi(state));
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
     }
@@ -82,8 +86,8 @@ describe('SimpleAi', () => {
   it('is deterministic', () => {
     const ai = new SimpleAi();
     const s = base([n('hearts', 9), n('spades', 9), n('clubs', 9), n('hearts', 4), n('hearts', 5), n('hearts', 6)]);
-    const a = ai.decide(s);
-    const b = ai.decide(s);
+    const a = ai.decide(observeForAi(s));
+    const b = ai.decide(observeForAi(s));
     expect(a).toEqual(b);
   });
 });
@@ -94,7 +98,7 @@ describe('RearrangerAi', () => {
     // Table: hearts 3-4-5-6. Hand: spades-6, clubs-6 → steal hearts-6 for set of 6s.
     const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] }];
     const state = base([n('spades', 6), n('clubs', 6), n('diamonds', 12)], table);
-    const d = ai.decide(state);
+    const d = ai.decide(observeForAi(state));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
@@ -104,7 +108,7 @@ describe('RearrangerAi', () => {
 
   it('falls back to draw', () => {
     const ai = new RearrangerAi();
-    const d = ai.decide(base([n('hearts', 2), n('spades', 7)]));
+    const d = ai.decide(observeForAi(base([n('hearts', 2), n('spades', 7)])));
     expect(d.kind).toBe('draw');
   });
 
@@ -112,9 +116,9 @@ describe('RearrangerAi', () => {
     const ai = new RearrangerAi();
     const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] }];
     const state = base([n('spades', 6), n('clubs', 6), n('diamonds', 12)], table);
-    const sliced = await ai.decideSliced(state);
-    expect(sliced).toEqual(ai.decide(state));
-    expect(await ai.decideSliced(base([n('hearts', 2), n('spades', 7)]))).toEqual({
+    const sliced = await ai.decideSliced(observeForAi(state));
+    expect(sliced).toEqual(ai.decide(observeForAi(state)));
+    expect(await ai.decideSliced(observeForAi(base([n('hearts', 2), n('spades', 7)])))).toEqual({
       kind: 'draw',
       explanation: 'no play even with rearrange — drawing',
     });
@@ -123,7 +127,7 @@ describe('RearrangerAi', () => {
   it('createAi exposes decideSliced for rearranging personalities and tags its reason', async () => {
     const ai = createAi('bia');
     expect(ai.decideSliced).toBeDefined();
-    const d = await ai.decideSliced!(base([n('hearts', 2), n('spades', 7)]));
+    const d = await ai.decideSliced!(observeForAi(base([n('hearts', 2), n('spades', 7)])));
     expect(d.kind).toBe('draw');
     expect(d.explanation.startsWith('bia:')).toBe(true);
   });
@@ -140,7 +144,7 @@ describe('RearrangerAi', () => {
       },
     ];
     const state = base([n('diamonds', 6), n('clubs', 6), n('spades', 2)], table);
-    const d = ai.decide(state);
+    const d = ai.decide(observeForAi(state));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
@@ -159,7 +163,7 @@ describe('RearrangerAi', () => {
       { id: 'tgt', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] },
     ];
     const state = base([n('hearts', 7), n('clubs', 2), n('spades', 11)], table);
-    const d = ai.decide(state);
+    const d = ai.decide(observeForAi(state));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
@@ -174,7 +178,7 @@ describe('RearrangerAi', () => {
     const hand = [n('hearts', 9), n('spades', 9), n('clubs', 9), n('diamonds', 6), n('clubs', 6)];
     const state = base(hand, table);
     const ai = new RearrangerAi();
-    const d = ai.decide(state);
+    const d = ai.decide(observeForAi(state));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
@@ -192,8 +196,8 @@ describe('RearrangerAi', () => {
     ];
     const state = base([n('diamonds', 6), n('clubs', 6), n('spades', 2)], table);
     const ai = new RearrangerAi();
-    const a = ai.decide(state);
-    const b = ai.decide(state);
+    const a = ai.decide(observeForAi(state));
+    const b = ai.decide(observeForAi(state));
     expect(a).toEqual(b);
   });
 
@@ -213,7 +217,7 @@ describe('RearrangerAi', () => {
     ];
     const state = base(hand, table);
     const t0 = performance.now();
-    const d = new RearrangerAi().decide(state);
+    const d = new RearrangerAi().decide(observeForAi(state));
     const ms = performance.now() - t0;
     expectWithinMs(ms, 500);
     if (d.kind === 'confirm') {
@@ -228,8 +232,8 @@ describe('personalities', () => {
       n('hearts', 9), n('spades', 9), n('clubs', 9),
       n('hearts', 4), n('hearts', 5), n('hearts', 6),
     ];
-    const cida = createAi('cida').decide(base(hand));
-    const juninho = createAi('juninho').decide(base(hand));
+    const cida = createAi('cida').decide(observeForAi(base(hand)));
+    const juninho = createAi('juninho').decide(observeForAi(base(hand)));
     expect(cida.kind).toBe('confirm');
     expect(juninho.kind).toBe('confirm');
     if (cida.kind === 'confirm' && juninho.kind === 'confirm') {
@@ -243,7 +247,7 @@ describe('personalities', () => {
       n('hearts', 2), n('diamonds', 5), n('clubs', 7), n('spades', 12),
     ];
     const state = { ...base(hand), turn: 1 };
-    const d = createAi('ze').decide(state);
+    const d = createAi('ze').decide(observeForAi(state));
     // 3-card play, hand 7, turn 1 → patient draws... 3 played is not < 3, so plays. Use 7-card hand w/ pair play impossible; verify behavior stable:
     expect(['confirm', 'draw']).toContain(d.kind);
   });
@@ -256,7 +260,7 @@ describe('AI + jokers', () => {
     const hand = [n('hearts', 4), n('hearts', 5), j(0, 1), n('spades', 2), n('clubs', 10)];
     const state = base(hand);
     for (const p of personalities) {
-      expect(() => createAi(p).decide(state)).not.toThrow();
+      expect(() => createAi(p).decide(observeForAi(state))).not.toThrow();
     }
   });
 
@@ -264,7 +268,7 @@ describe('AI + jokers', () => {
     // Two 8s + a joker is the only meld in hand; no run, no natural set of 3.
     const hand = [n('hearts', 8), n('spades', 8), j(0, 1), n('clubs', 2), n('diamonds', 11)];
     const state = base(hand);
-    const d = new SimpleAi().decide(state);
+    const d = new SimpleAi().decide(observeForAi(state));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
@@ -277,7 +281,7 @@ describe('AI + jokers', () => {
     // hearts 4, hearts 5, gap at 6, joker fills it. No other meld in hand.
     const hand = [n('hearts', 4), n('hearts', 5), j(0, 1), n('clubs', 2), n('diamonds', 11)];
     const state = base(hand);
-    const d = new SimpleAi().decide(state);
+    const d = new SimpleAi().decide(observeForAi(state));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
@@ -288,7 +292,7 @@ describe('AI + jokers', () => {
   it('draws when it has no legal play, even with a joker present', () => {
     // A lone joker can't meld by itself (needs a natural), and nothing else pairs up.
     const hand = [j(0, 1), n('hearts', 2), n('spades', 7)];
-    const d = new SimpleAi().decide(base(hand));
+    const d = new SimpleAi().decide(observeForAi(base(hand)));
     expect(d.kind).toBe('draw');
   });
 
@@ -300,7 +304,7 @@ describe('AI + jokers', () => {
     ];
     const state = base(hand);
     for (const p of personalities) {
-      const d = createAi(p).decide(state);
+      const d = createAi(p).decide(observeForAi(state));
       if (d.kind === 'confirm') {
         expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
       }
@@ -316,7 +320,7 @@ describe('AI + jokers', () => {
       ]);
       const ais = [createAi(cycle[seed % 4]!), createAi(cycle[(seed + 1) % 4]!)];
       for (let turn = 0; turn < 200 && state.phase === 'playing'; turn++) {
-        const d = ais[state.activePlayerIndex]!.decide(state);
+        const d = ais[state.activePlayerIndex]!.decide(observeForAi(state));
         if (d.kind === 'confirm') {
           for (const meld of d.draft.melds) {
             expect(meld.cards.filter((card) => card.isJoker).length).toBeLessThanOrEqual(1);
@@ -333,13 +337,13 @@ describe('AI + jokers', () => {
     // natural run clubs 4-5-6 and a joker-completed group of 8s are both available.
     // the dead diamonds-2 means the joker group would NOT empty the hand — so hold it.
     const hand = [n('clubs', 4), n('clubs', 5), n('clubs', 6), n('hearts', 8), n('spades', 8), j(0, 1), n('diamonds', 2)];
-    const patient = createAi('bia').decide(base(hand));
+    const patient = createAi('bia').decide(observeForAi(base(hand)));
     expect(patient.kind).toBe('confirm');
     if (patient.kind === 'confirm') {
       expect(patient.draft.handCardsPlayed).not.toContain(j(0, 1).id);
     }
     // aggressive juninho spends jokers early
-    const aggressive = createAi('juninho').decide(base(hand));
+    const aggressive = createAi('juninho').decide(observeForAi(base(hand)));
     expect(aggressive.kind).toBe('confirm');
     if (aggressive.kind === 'confirm') {
       expect(aggressive.draft.handCardsPlayed).toContain(j(0, 1).id);
@@ -348,7 +352,7 @@ describe('AI + jokers', () => {
 
   it('a joker-holding personality still spends the joker when that play empties the hand', () => {
     const hand = [n('hearts', 8), n('spades', 8), j(0, 1)];
-    const d = createAi('bia').decide(base(hand));
+    const d = createAi('bia').decide(observeForAi(base(hand)));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
       expect(d.draft.handCardsPlayed).toContain(j(0, 1).id);
@@ -359,7 +363,7 @@ describe('AI + jokers', () => {
     // hearts 6,7,7,8 (two decks' worth of 7): run scanner must find 6-7-8 using one 7,
     // leaving the spare 7 out (no legal use for it here — just must not crash or corrupt the run).
     const hand = [n('hearts', 6), n('hearts', 7, 0), n('hearts', 7, 1), n('hearts', 8)];
-    const d = new SimpleAi().decide(base(hand));
+    const d = new SimpleAi().decide(observeForAi(base(hand)));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(base(hand), d.draft)).toEqual({ ok: true });
@@ -377,7 +381,7 @@ describe('AI full-game smoke', () => {
     let turns = 0;
     while (state.phase === 'playing' && turns < 300) {
       const ai = ais[state.activePlayerIndex]!;
-      const d = ai.decide(state);
+      const d = ai.decide(observeForAi(state));
       if (d.kind === 'confirm') {
         expect(canConfirmTurn(state, d.draft).ok).toBe(true);
         state = applyConfirmedTurn(state, d.draft);
@@ -395,10 +399,10 @@ describe('AI full-game smoke', () => {
       { name: 'B', isAi: true },
     ]);
     const t0 = performance.now();
-    new SimpleAi().decide(state);
+    new SimpleAi().decide(observeForAi(state));
     const simpleMs = performance.now() - t0;
     const t1 = performance.now();
-    new RearrangerAi().decide(state);
+    new RearrangerAi().decide(observeForAi(state));
     const rearrangeMs = performance.now() - t1;
     expectWithinMs(simpleMs, 100);
     expectWithinMs(rearrangeMs, 500);
@@ -414,7 +418,7 @@ describe('AI full-game smoke', () => {
       expect(() => {
         while (state.phase === 'playing' && turns < 1000) {
           const ai = ais[state.activePlayerIndex]!;
-          const d = ai.decide(state);
+          const d = ai.decide(observeForAi(state));
           if (d.kind === 'confirm') {
             expect(canConfirmTurn(state, d.draft).ok).toBe(true);
             state = applyConfirmedTurn(state, d.draft);
@@ -458,24 +462,24 @@ describe('decision reproducibility', () => {
 
   it('returns the identical move across repeated runs of the heaviest search', () => {
     const state = maximalRunTable();
-    const first = new RearrangerAi().decide(state);
+    const first = new RearrangerAi().decide(observeForAi(state));
     for (let i = 0; i < 12; i++) {
-      expect(new RearrangerAi().decide(state)).toEqual(first);
+      expect(new RearrangerAi().decide(observeForAi(state))).toEqual(first);
     }
   });
 
   it('reuses one engine instance without carrying state between decisions', () => {
     const state = maximalRunTable();
     const ai = new RearrangerAi();
-    const first = ai.decide(state);
-    for (let i = 0; i < 12; i++) expect(ai.decide(state)).toEqual(first);
+    const first = ai.decide(observeForAi(state));
+    for (let i = 0; i < 12; i++) expect(ai.decide(observeForAi(state))).toEqual(first);
   });
 
   it('holds for every shipped personality, on the same table', () => {
     const state = maximalRunTable();
     for (const p of ['cida', 'juninho', 'bia', 'ze'] as const) {
-      const first = createAi(p).decide(state);
-      for (let i = 0; i < 5; i++) expect(createAi(p).decide(state)).toEqual(first);
+      const first = createAi(p).decide(observeForAi(state));
+      for (let i = 0; i < 5; i++) expect(createAi(p).decide(observeForAi(state))).toEqual(first);
     }
   });
 
@@ -484,8 +488,8 @@ describe('decision reproducibility', () => {
   // so if anything in the search read a clock, this is where the two would part.
   it('decideSliced agrees with decide on the heaviest search', async () => {
     const state = maximalRunTable();
-    expect(await new RearrangerAi().decideSliced(state)).toEqual(new RearrangerAi().decide(state));
-    expect(await new RearrangerAi(false, true).decideSliced(state)).toEqual(new RearrangerAi(false, true).decide(state));
+    expect(await new RearrangerAi().decideSliced(observeForAi(state))).toEqual(new RearrangerAi().decide(observeForAi(state)));
+    expect(await new RearrangerAi(false, true).decideSliced(observeForAi(state))).toEqual(new RearrangerAi(false, true).decide(observeForAi(state)));
   });
 
   // The budget replaced the deadline, so it — not a clock — is what guarantees termination.
@@ -493,7 +497,7 @@ describe('decision reproducibility', () => {
     const state = maximalRunTable();
     for (const ai of [new RearrangerAi(), new RearrangerAi(false, true)]) {
       const t0 = performance.now();
-      const d = ai.decide(state);
+      const d = ai.decide(observeForAi(state));
       expectWithinMs(performance.now() - t0, 2000);
       if (d.kind === 'confirm') expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
     }
@@ -524,7 +528,7 @@ describe('AI hardening', () => {
 
     const state = base(hand, table);
     const t0 = performance.now();
-    const d = new RearrangerAi().decide(state);
+    const d = new RearrangerAi().decide(observeForAi(state));
     const ms = performance.now() - t0;
     expectWithinMs(ms, 500);
     if (d.kind === 'confirm') {
@@ -535,7 +539,7 @@ describe('AI hardening', () => {
   it('empty pile with no legal play: AI decides to draw (pass) without hanging', () => {
     const state = { ...base([n('hearts', 2), n('spades', 7), n('clubs', 12)]), drawPile: [] };
     const t0 = performance.now();
-    const d = new RearrangerAi().decide(state);
+    const d = new RearrangerAi().decide(observeForAi(state));
     const ms = performance.now() - t0;
     expectWithinMs(ms, 500);
     expect(d.kind).toBe('draw');
@@ -543,7 +547,7 @@ describe('AI hardening', () => {
 
   it('empty pile, no legal play: drawAndEndTurn ends the game instead of looping', () => {
     const state = { ...base([n('hearts', 2), n('spades', 7), n('clubs', 12)]), drawPile: [] };
-    const d = new RearrangerAi().decide(state);
+    const d = new RearrangerAi().decide(observeForAi(state));
     expect(d.kind).toBe('draw');
     const next = drawAndEndTurn(state);
     expect(next.phase).toBe('finished');
@@ -561,7 +565,7 @@ describe('AI hardening', () => {
       base([]),
     ];
     for (const state of fixtures) {
-      const d = new RearrangerAi().decide(state);
+      const d = new RearrangerAi().decide(observeForAi(state));
       if (d.kind === 'confirm') {
         expect(d.draft.handCardsPlayed.length).toBeGreaterThanOrEqual(1);
       }
@@ -583,14 +587,14 @@ describe('AI hardening', () => {
     ];
     const state = { ...base(hand, table), turn: 1 };
 
-    const bia = createAi('bia').decide(state);
+    const bia = createAi('bia').decide(observeForAi(state));
     expect(bia.kind).toBe('confirm');
     if (bia.kind === 'confirm') {
       expect(canConfirmTurn(state, bia.draft)).toEqual({ ok: true });
       expect(bia.draft.handCardsPlayed).toHaveLength(2);
     }
 
-    const ze = createAi('ze').decide(state);
+    const ze = createAi('ze').decide(observeForAi(state));
     expect(ze.kind).toBe('draw');
   });
 });
@@ -610,7 +614,7 @@ describe('AI personality regression snapshots (deterministic, hard-coded expecta
     const ai = new SimpleAi();
     let turns = 0;
     while (state.table.length < 3 && turns < 60) {
-      const d = ai.decide(state);
+      const d = ai.decide(observeForAi(state));
       state = d.kind === 'confirm' ? applyConfirmedTurn(state, d.draft) : drawAndEndTurn(state);
       turns++;
     }
@@ -621,7 +625,7 @@ describe('AI personality regression snapshots (deterministic, hard-coded expecta
     for (const seed of [11, 22, 33]) {
       const state = richFixture(seed);
       for (const p of ['cida', 'juninho', 'bia', 'ze'] as const) {
-        const d = createAi(p).decide(state);
+        const d = createAi(p).decide(observeForAi(state));
         if (d.kind === 'confirm') {
           expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
         }
@@ -636,7 +640,7 @@ describe('cida (conservative) plays exactly one action per turn', () => {
     const st = base([n('clubs', 6), n('clubs', 7), n('hearts', 2)], [
       { id: 't1', cards: [n('clubs', 3), n('clubs', 4), n('clubs', 5)] },
     ]);
-    const d = createAi('cida').decide(st);
+    const d = createAi('cida').decide(observeForAi(st));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toEqual(['clubs-6-d0']);
   });
@@ -645,7 +649,7 @@ describe('cida (conservative) plays exactly one action per turn', () => {
     const st = base([n('hearts', 9), n('spades', 9), n('clubs', 9), n('clubs', 6)], [
       { id: 't1', cards: [n('clubs', 3), n('clubs', 4), n('clubs', 5)] },
     ]);
-    const d = createAi('cida').decide(st);
+    const d = createAi('cida').decide(observeForAi(st));
     expect(d.kind).toBe('confirm');
     if (d.kind === 'confirm') expect(d.draft.handCardsPlayed).toHaveLength(3);
   });
@@ -661,7 +665,7 @@ describe('personality expression (Phase 9)', () => {
     ];
     const state = base(hand);
     for (const p of personalities) {
-      const d = createAi(p).decide(state);
+      const d = createAi(p).decide(observeForAi(state));
       expect(d.explanation.startsWith(`${p}:`)).toBe(true);
     }
   });
@@ -674,7 +678,7 @@ describe('personality expression (Phase 9)', () => {
     ];
     const state = { ...base(hand), turn: 1 };
     const signatures = personalities.map((p) => {
-      const d = createAi(p).decide(state);
+      const d = createAi(p).decide(observeForAi(state));
       const playedN = d.kind === 'confirm' ? d.draft.handCardsPlayed.length : -1;
       return `${p}:${d.kind}:${playedN}`;
     });
@@ -686,7 +690,7 @@ describe('personality expression (Phase 9)', () => {
     const hand = [n('hearts', 4), n('hearts', 5), j(0, 1), n('spades', 2), n('clubs', 10), n('diamonds', 7)];
     const state = base(hand);
     for (const p of personalities) {
-      const d = createAi(p).decide(state);
+      const d = createAi(p).decide(observeForAi(state));
       if (d.kind === 'confirm') {
         expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
       }
@@ -703,7 +707,7 @@ describe('personality expression (Phase 9)', () => {
       const seq: string[] = [];
       let turns = 0;
       while (state.phase === 'playing' && turns < 200) {
-        const d = ai.decide(state);
+        const d = ai.decide(observeForAi(state));
         seq.push(d.explanation);
         state = d.kind === 'confirm' ? applyConfirmedTurn(state, d.draft) : drawAndEndTurn(state);
         turns++;
@@ -724,7 +728,7 @@ describe('AI difficulty', () => {
     // personality expectation above silently becomes a test of something else.
     const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), n('hearts', 6), n('hearts', 7), n('hearts', 8)];
     for (const p of personalities) {
-      expect(createAi(p, 'smart').decide(base(hand))).toEqual(createAi(p).decide(base(hand)));
+      expect(createAi(p, 'smart').decide(observeForAi(base(hand)))).toEqual(createAi(p).decide(observeForAi(base(hand))));
     }
   });
 
@@ -734,7 +738,7 @@ describe('AI difficulty', () => {
     for (const difficulty of DIFFICULTIES) {
       for (const p of personalities) {
         const state = base(hand, table);
-        const d = createAi(p, difficulty).decide(state);
+        const d = createAi(p, difficulty).decide(observeForAi(state));
         if (d.kind === 'confirm') expect(canConfirmTurn(state, d.draft).ok).toBe(true);
       }
     }
@@ -744,8 +748,8 @@ describe('AI difficulty', () => {
     const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), n('hearts', 6), n('hearts', 7), n('hearts', 8)];
     for (const difficulty of DIFFICULTIES) {
       for (const p of personalities) {
-        const first = createAi(p, difficulty).decide(base(hand));
-        const second = createAi(p, difficulty).decide(base(hand));
+        const first = createAi(p, difficulty).decide(observeForAi(base(hand)));
+        const second = createAi(p, difficulty).decide(observeForAi(base(hand)));
         expect(second).toEqual(first);
       }
     }
@@ -760,7 +764,7 @@ describe('AI difficulty', () => {
       const ais = [createAi('bia', difficulty), createAi('juninho', difficulty)];
       let turns = 0;
       while (state.phase === 'playing' && turns < 400) {
-        const d = ais[state.activePlayerIndex]!.decide(state);
+        const d = ais[state.activePlayerIndex]!.decide(observeForAi(state));
         if (d.kind === 'confirm') {
           expect(canConfirmTurn(state, d.draft).ok).toBe(true);
           state = applyConfirmedTurn(state, d.draft);
@@ -776,8 +780,8 @@ describe('AI difficulty', () => {
   it('beginner takes at most one action per turn where smart takes several', () => {
     // Two independent melds in hand: the minimal tier lays one, the full tiers lay both.
     const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), n('hearts', 9), n('hearts', 10), n('hearts', 11)];
-    const beginner = createAi('juninho', 'beginner').decide(base(hand));
-    const smart = createAi('juninho', 'smart').decide(base(hand));
+    const beginner = createAi('juninho', 'beginner').decide(observeForAi(base(hand)));
+    const smart = createAi('juninho', 'smart').decide(observeForAi(base(hand)));
     if (beginner.kind !== 'confirm' || smart.kind !== 'confirm') throw new Error('expected plays');
     expect(beginner.draft.handCardsPlayed.length).toBeLessThan(smart.draft.handCardsPlayed.length);
   });
@@ -786,8 +790,8 @@ describe('AI difficulty', () => {
     // cida is the minimal personality: at 'smart' it cannot reach the 6 by stealing an edge card.
     const table = [{ id: 'm1', cards: [n('diamonds', 9), n('diamonds', 10), n('diamonds', 11), n('diamonds', 12)] }];
     const hand = [n('spades', 9), n('clubs', 9)];
-    const smart = createAi('cida', 'smart').decide(base(hand, table));
-    const expert = createAi('cida', 'expert').decide(base(hand, table));
+    const smart = createAi('cida', 'smart').decide(observeForAi(base(hand, table)));
+    const expert = createAi('cida', 'expert').decide(observeForAi(base(hand, table)));
     expect(smart.kind).toBe('draw');
     expect(expert.kind).toBe('confirm');
   });
@@ -796,7 +800,7 @@ describe('AI difficulty', () => {
     const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), n('hearts', 6), n('hearts', 7)];
     for (const difficulty of DIFFICULTIES) {
       for (const p of personalities) {
-        const suffix = aiReasonKeySuffix(createAi(p, difficulty).decide(base(hand)).explanation);
+        const suffix = aiReasonKeySuffix(createAi(p, difficulty).decide(observeForAi(base(hand))).explanation);
         expect(t(`ai.why.${suffix}`)).not.toBe(`ai.why.${suffix}`); // a missing key renders as the key
       }
     }
@@ -811,5 +815,161 @@ describe('AI difficulty', () => {
     expect(AI_SPEED_SCALE.instant).toBe(0);
     expect(AI_SPEED_SCALE.fast).toBeLessThan(AI_SPEED_SCALE.normal);
     expect(AI_SPEED_SCALE.slow).toBeGreaterThan(AI_SPEED_SCALE.normal);
+  });
+});
+
+/**
+ * Phase 43 — the observation boundary. INV-A2 used to be a convention ("the search only reads
+ * `players[active].hand`"), checked by showing that two states differing in an opponent's hand
+ * decide the same. It is structural now: the hidden halves are not in the object the engine is
+ * given, and only `observeForAi` can build that object, so handing an engine authoritative state
+ * does not type-check.
+ */
+describe('AI observation', () => {
+  it('keeps the own hand, the table and the public turn state', () => {
+    const state = tableRearrangement();
+    const obs = observeForAi(state);
+    expect(obs.players[0]!.hand).toEqual(state.players[0]!.hand);
+    expect(obs.table).toEqual(state.table);
+    expect(obs.activePlayerIndex).toBe(state.activePlayerIndex);
+    expect(obs.turn).toBe(state.turn);
+    expect(obs.phase).toBe(state.phase);
+    expect(obs.config).toEqual(state.config);
+    expect(obs.players.map((p) => p.name)).toEqual(state.players.map((p) => p.name));
+  });
+
+  it('redacts the other hands, the pile order and the deal seed, keeping only their counts', () => {
+    const state = base([n('hearts', 9), n('spades', 9)]);
+    const obs = observeForAi(state);
+    expect(obs.players[1]!.hand).toHaveLength(state.players[1]!.hand.length);
+    expect(obs.players[1]!.hand.map((c) => c.id)).not.toContain('clubs-13-d0');
+    expect(obs.drawPile).toHaveLength(state.drawPile.length);
+    expect(obs.drawPile.map((c) => c.id)).not.toContain('diamonds-13-d0');
+    for (const card of [...obs.players[1]!.hand, ...obs.drawPile]) {
+      expect(card.id.startsWith('__hidden-')).toBe(true);
+    }
+    expect(obs.seed).toBe(0);
+  });
+
+  it('leaves the authoritative state untouched', () => {
+    const state = tableRearrangement();
+    const snapshot = JSON.stringify(state);
+    observeForAi(state);
+    expect(JSON.stringify(state)).toBe(snapshot);
+  });
+
+  it('is frozen, so an engine that tried to edit its input would throw rather than corrupt it', () => {
+    const obs = observeForAi(tableRearrangement());
+    expect(() => {
+      (obs.table[0]!.cards as Card[]).push(n('hearts', 7));
+    }).toThrow();
+  });
+
+  it('no decision mutates the observation it was given', () => {
+    for (const ai of [new SimpleAi(), new SimpleAi(true, true), new RearrangerAi(), new RearrangerAi(false, true)]) {
+      for (const state of [tableRearrangement(), base([n('hearts', 9), n('spades', 9), n('clubs', 9), j(0, 1)])]) {
+        const obs = observeForAi(state);
+        const snapshot = JSON.stringify(obs);
+        ai.decide(obs);
+        expect(JSON.stringify(obs)).toBe(snapshot);
+      }
+    }
+  });
+
+  it('a rearranging confirm off a canonical scenario is legal and conserves every card', () => {
+    const state = tableRearrangement();
+    const d = new RearrangerAi().decide(observeForAi(state));
+    expect(d.kind).toBe('confirm');
+    if (d.kind !== 'confirm') return;
+    expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
+    const after = applyConfirmedTurn(state, d.draft);
+    expectCardConservation(after, allCards(state).map((c) => c.id));
+  });
+});
+
+/**
+ * Phase 45 — the base evaluation. Relative ranking, not exact scores: what must not regress is
+ * the priority order, and a magnitude nobody reads is not a contract.
+ */
+describe('base evaluation', () => {
+  const features = (patch: Partial<CandidateFeatures> = {}): CandidateFeatures => ({
+    winsNow: false,
+    cardsPlayed: 1,
+    jokersOnTable: 0,
+    playedIds: ['a'],
+    ...patch,
+  });
+  const better = (a: CandidateFeatures, b: CandidateFeatures) => compareByBaseEvaluation(a, b) < 0;
+
+  it('ranks an immediate win above any larger non-winning play', () => {
+    const win = features({ winsNow: true, cardsPlayed: 1, jokersOnTable: 4, playedIds: ['z'] });
+    const big = features({ cardsPlayed: 9, playedIds: ['a'] });
+    expect(better(win, big)).toBe(true);
+  });
+
+  it('prefers the bigger hand reduction, all else equal', () => {
+    expect(better(features({ cardsPlayed: 3 }), features({ cardsPlayed: 2 }))).toBe(true);
+  });
+
+  it('prefers leaving fewer jokers on the shared table at equal hand reduction', () => {
+    expect(better(features({ cardsPlayed: 2, jokersOnTable: 0 }), features({ cardsPlayed: 2, jokersOnTable: 1 }))).toBe(true);
+    // ...but never at the cost of a card: the hierarchy is ordinal, not a weighted sum.
+    expect(better(features({ cardsPlayed: 3, jokersOnTable: 2 }), features({ cardsPlayed: 2, jokersOnTable: 0 }))).toBe(true);
+  });
+
+  it('resolves the remaining ties deterministically, whatever order the candidates arrived in', () => {
+    const a = features({ playedIds: ['clubs-9-d0'] });
+    const b = features({ playedIds: ['hearts-9-d0'] });
+    expect([...[a, b]].sort(compareByBaseEvaluation)[0]).toBe(a);
+    expect([...[b, a]].sort(compareByBaseEvaluation)[0]).toBe(a);
+    expect(compareByBaseEvaluation(a, a)).toBe(0);
+  });
+
+  it('describes the draft it scored', () => {
+    const state = base([n('hearts', 9), n('spades', 9), n('clubs', 9)]);
+    const d = new SimpleAi().decide(observeForAi(state));
+    expect(d.kind).toBe('confirm');
+    if (d.kind !== 'confirm') return;
+    expect(evaluateDraft(state, d.draft)).toEqual({
+      winsNow: true, // that group is the whole hand
+      cardsPlayed: 3,
+      jokersOnTable: 0,
+      playedIds: ['clubs-9-d0', 'hearts-9-d0', 'spades-9-d0'],
+    });
+  });
+
+  it('an empty hand is not a win — there is no turn to win with', () => {
+    const state = base([]);
+    expect(evaluateDraft(state, { melds: [], handCardsPlayed: [] }).winsNow).toBe(false);
+  });
+});
+
+/**
+ * Phase 43 Part D/F — the search budget is a decision input, not a hidden constant, and running
+ * out of it is an ordinary outcome: the engine plays the best candidate it has (or draws), and
+ * that is still a legal move.
+ */
+describe('search budget', () => {
+  const rearrangeState = () =>
+    base([n('spades', 6), n('clubs', 6), n('diamonds', 12)], [
+      { id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] },
+    ]);
+
+  it('a one-trial budget still returns a legal decision', () => {
+    const state = rearrangeState();
+    const d = new RearrangerAi(false, false, 1).decide(observeForAi(state));
+    if (d.kind === 'confirm') expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
+    else expect(d.kind).toBe('draw');
+  });
+
+  it('is deterministic at any budget, and a wider budget never loses a candidate', () => {
+    const state = rearrangeState();
+    const tiny = new RearrangerAi(false, false, 1).decide(observeForAi(state));
+    expect(new RearrangerAi(false, false, 1).decide(observeForAi(state))).toEqual(tiny);
+    const full = new RearrangerAi().decide(observeForAi(state));
+    expect(full.kind).toBe('confirm');
+    if (full.kind === 'confirm' && tiny.kind === 'confirm') {
+      expect(full.draft.handCardsPlayed.length).toBeGreaterThanOrEqual(tiny.draft.handCardsPlayed.length);
+    }
   });
 });

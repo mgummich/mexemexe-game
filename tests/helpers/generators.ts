@@ -12,6 +12,7 @@
  * `(rng, size)`, which is what makes a failing property reproducible from its seed alone.
  */
 import { RearrangerAi } from '../../src/ai/ai';
+import { observeForAi } from '../../src/ai/observation';
 import { applyGameAction, type GameAction } from '../../src/game-state/actions';
 import { createDeck, createNewGame } from '../../src/rules/rules';
 import type { Rng } from '../../src/rules/rng';
@@ -62,7 +63,7 @@ const AI = new RearrangerAi();
  */
 export function aiAction(state: GameState): GameAction {
   const actorIndex = state.activePlayerIndex;
-  const decision = AI.decide(state);
+  const decision = AI.decide(observeForAi(state));
   return decision.kind === 'confirm'
     ? { type: 'confirmTurn', actorIndex, draft: decision.draft }
     : { type: 'drawAndEndTurn', actorIndex };
