@@ -3,7 +3,7 @@
   "updated": "2026-09-19",
   "current": {
     "wave": "7A",
-    "phase": "57 \u2014 Multiplayer Contract Audit",
+    "phase": "58 \u2014 Authoritative Multiplayer State Flow",
     "status": "AUDITING"
   },
   "head": "5abd5da",
@@ -336,6 +336,39 @@
         "result": "CRITIC PASS after repair. Round 1 called the win-count-only threshold under-powered for moderate regressions (~60% detection at a 10% quality loss); the margin assertion was added as a continuous measurement, one value per game instead of one bit."
       },
       "roadmapMismatch": "Phase 56 lists 'selective mutation' in scope. stryker.conf.json deliberately excludes src/ai (documented in docs/TESTING.md): mutating a heuristic search measures the heuristic, not a contract. Repo truth preserved."
+    },
+    {
+      "phase": "57 \u2014 Multiplayer Contract Audit",
+      "wave": "7A",
+      "status": "PASS",
+      "result": "Three read-only audits (protocol drift, redaction, revision/reconnect identity). One P1 defect found and fixed: RoomManager.sweep() reaped rooms at the deployment default grace (30s) while the stalled-turn path used the room's own reconnectGraceMs (60s for every matchmade room and the casual/off presets, up to 300s custom), so a room could be closed while its players were inside the window it promised. Plus protocol doc drift and an undocumented, untested revision asymmetry.",
+      "acceptance": "one owner for the reconnect window; reaction messages documented; revision comparison rules written down and the equal-rev frame pinned by a test; redaction verified end to end",
+      "verification": [
+        "npx vitest run tests/server (305 tests)",
+        "npx vitest run tests/online-session.test.ts (19)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p57.log)",
+        "npm run verify:multiplayer:chromium (exit 0, 77 screenshots, tmp/agent-logs/verify-mp-p57.log)"
+      ],
+      "evidence": {
+        "regressionTest": "tests/server/rooms.test.ts S1 sweep-grace test verified red with the fix stashed",
+        "redaction": "single projection point viewFor -> buildView, per recipient seat, 8 asserting tests incl. a property test and a raw-frame check that the seed never appears"
+      },
+      "critic": {
+        "round": 1,
+        "result": "CRITIC PASS, all exit criteria met, no issues"
+      },
+      "docs": [
+        "docs/MULTIPLAYER.md section 4 reaction rows",
+        "docs/MULTIPLAYER.md section 6 revision asymmetry"
+      ],
+      "nonFinding": "The audit flagged 4 server error codes as undocumented. Section 8 deliberately names SERVER_ERROR_CODES as the single list instead of duplicating it, and src/net/errors.ts has a test that fails on a code without copy. Repo truth preserved.",
+      "deferredRisks": [
+        {
+          "id": "P3-matchseats-identity-fallback",
+          "note": "room.seats[room.matchSeats[i] ?? i] silently falls back to identity mapping when matchSeats has no entry, inventing a seat rather than failing on a violated invariant (AGENTS.md says fail).",
+          "owner": "Phase 58 \u2014 Authoritative Multiplayer State Flow"
+        }
+      ]
     }
   ]
 }

@@ -456,6 +456,7 @@ submission that caused it.
 | `list_rooms` | — | no filters are representable on the wire; the answer is bounded and rate-limited (§3d) |
 | `join_queue` | `target: 2 \| 3 \| 4 \| 'any'`, `name` | casual queue (§3e); idempotent per session, refused with `already_in_match` for a seated player and `queue_busy` at capacity |
 | `cancel_queue` | — | idempotent; answered with authoritative queue state, so a cancel that raced a formed match is told `matched` |
+| `reaction` | `reaction: ReactionId` | one of the four closed `REACTIONS` ids (§3c); anything else is dropped at the parser, and a seat inside `REACTION_COOLDOWN_MS` is dropped by the server |
 | `resync` | — | "resend authoritative state"; never carries client state |
 | `ping` | — | |
 
@@ -475,6 +476,7 @@ submission that caused it.
 | `error` | `code`, `message`, `reqId?` | protocol-level problems; a refusal about the room's own state (`not_ready`, `not_host`, `game_started`, `room_full`, `rate_limited`) is answered on the lobby itself rather than replacing it with an error screen — the caller is still seated and every other control still works; `reqId` echoes the request that failed, absent for server-initiated errors including `room_closed` (S1/S2: a reaped or abandoned room notifies every attached socket before dropping it) |
 | `queue_state` | `status`, `target`, `token?`, `players?` | the caller's own queue state and nothing else (§3e): `token` only while `queued`, `players` only on `matched`. Never a queue size, a position or another waiting player |
 | `room_list` | `reqId`, `rooms: RoomListing[]` | the discovery projection only (§3d): `code`, `hostName`, `players`, `capacity`, `status`, `timerMode`. Never a room snapshot, never a room the caller has not joined |
+| `player_reaction` | `seat`, `reaction: ReactionId` | relay of another seat's reaction (§3c). The id is the server's validated value, never the sender's payload echoed back, and the relay touches no `rev`, hash, turn or hand |
 | `pong` | — | |
 
 `ReasonCode` values are the existing localized keys (`reason.duplicateCard`,
@@ -551,6 +553,14 @@ and re-renders from the server view. On `proposal_rejected` it shows the
 localized reason and restores the last synced state — never a half-applied
 draft. A `state_sync` with a `rev` lower than the one already rendered is
 ignored (late/out-of-order delivery).
+
+The two ends compare revisions differently, on purpose. The server rejects a
+*proposal* whose `rev` is not exactly the room's current one (`reason.staleRevision`):
+a turn computed against any other board is a turn about a board that no longer
+exists. The client only ignores a *frame* strictly older than the one it has
+(`view.rev < lastRev`): an equal-`rev` frame is the same authoritative board
+restated — a duplicate delivery or the answer to a `resync` — so applying it
+again is idempotent and safer than second-guessing which copy was the real one.
 
 All of those decisions are `OnlineSession.applySync`, which answers one of four
 things — `stale` (ignored), `invalid` (the frame failed §5a's projection check;

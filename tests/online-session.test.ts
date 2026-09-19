@@ -57,6 +57,20 @@ describe('OnlineSession', () => {
     expect(s.lastRev).toBe(5);
   });
 
+  it('applies a duplicate frame at the revision it already holds, rather than guessing which copy was real', () => {
+    // A repeated delivery and the answer to a `resync` look identical from here: same rev, same
+    // board. The server is the only authority on both, so re-applying is idempotent — what must
+    // not happen is the frame being dropped as "stale" and a genuine resync answer with it.
+    const s = session({ rev: 5 });
+    const same = state({ activePlayerIndex: 1, turn: 4 });
+    const first = s.applySync(view(same, { rev: 6 }), false);
+    expect(first).toMatchObject({ kind: 'applied' });
+    const duplicate = s.applySync(view(same, { rev: 6 }), false);
+    expect(duplicate).toMatchObject({ kind: 'applied' });
+    expect(s.lastRev).toBe(6);
+    expect(s.state().activePlayerIndex).toBe(1);
+  });
+
   it('asks for a resync when the local reconstruction does not hash to the server digest', () => {
     const s = session();
     // A frame whose digest was computed for a different revision: exactly the shape of a client

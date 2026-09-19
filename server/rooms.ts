@@ -943,8 +943,13 @@ export class RoomManager {
     const removed: string[] = [];
     for (const [code, room] of this.rooms) {
       const hasAnySeat = room.seats.some((s) => s !== null);
+      // The room's own window, not the deployment default: `disconnectGraceMs` only seeds a fresh
+      // room's settings (createRoom), after which a preset or a custom screen may have widened it.
+      // Reaping on the default would delete a room inside the grace it promised its players —
+      // every matchmade room runs the casual preset's 60s against a 30s default.
+      const grace = room.settings.reconnectGraceMs;
       const allGone = room.seats.every(
-        (s) => s === null || (!s.connected && s.disconnectedAt !== null && t - s.disconnectedAt > this.disconnectGraceMs),
+        (s) => s === null || (!s.connected && s.disconnectedAt !== null && t - s.disconnectedAt > grace),
       );
       const anyConnected = room.seats.some((s) => s !== null && s.connected);
       const idleBackstop = !anyConnected && t - room.lastActivityAt > this.idleTimeoutMs;

@@ -564,6 +564,24 @@ describe('lifecycle and liveness', () => {
     expect(mgr.getRoom(code)).toBeNull();
   });
 
+  it('S1: sweep honours the room\'s own reconnect window, not the deployment default', () => {
+    // Every matchmade room runs the casual preset (60s grace) while the deployment default is
+    // 30s, so reaping on the default would close a room while its players are still inside the
+    // window it promised them.
+    let now = 1000;
+    const mgr = testManager({ seed: 7, now: () => now, disconnectGraceMs: 1000 });
+    const { code } = mustCreate(mgr, 'Alice');
+    mgr.joinRoom(code, 'Bob');
+    expect(mgr.setRoomSettings(code, 0, { ...TIMER_PRESETS.casual })).toMatchObject({ ok: true });
+    expect(TIMER_PRESETS.casual.reconnectGraceMs).toBe(60_000);
+    mgr.disconnect(code, 0);
+    mgr.disconnect(code, 1);
+    now += 30_000; // past the 1s default, well inside the room's 60s
+    expect(mgr.sweep()).not.toContain(code);
+    now += 31_000; // now past the room's own window
+    expect(mgr.sweep()).toContain(code);
+  });
+
   it('OH-16: S3: a live lobby with both seats connected is never reaped by the idle timeout', () => {
     let now = 1000;
     const mgr = testManager({ seed: 7, now: () => now, idleTimeoutMs: 1000 });
