@@ -209,12 +209,23 @@ export async function attachClientContexts(testInfo: TestInfo): Promise<void> {
   await testInfo.attach('client-context', { body: JSON.stringify(clients, null, 2), contentType: 'application/json' });
 }
 
-/** A desktop player: own context, own storage, own socket. */
-export async function newClient(browser: Browser, wsUrl: string): Promise<Page> {
+/**
+ * A desktop player: own context, own storage, own socket.
+ *
+ * `prepare` runs on the fresh page *before* it navigates — the only window in which
+ * `page.routeWebSocket` can be installed, since the app opens its socket during the boot this
+ * navigation starts. Chaos tests are its one caller; a normal client passes nothing.
+ */
+export async function newClient(
+  browser: Browser,
+  wsUrl: string,
+  prepare?: (page: Page) => Promise<void>,
+): Promise<Page> {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   trackConsoleErrors(page);
   openedClients.push(page);
+  if (prepare) await prepare(page);
   await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu`);
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   // MenuScene ONLINE button, logical (240, 254) — see MenuScene's onlineBtn.

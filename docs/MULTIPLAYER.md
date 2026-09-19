@@ -566,6 +566,15 @@ exists. The client only ignores a *frame* strictly older than the one it has
 restated — a duplicate delivery or the answer to a `resync` — so applying it
 again is idempotent and safer than second-guessing which copy was the real one.
 
+A refusal is correlated the same way, one layer lower: `NetClient` remembers the
+`reqId` of the proposal still in flight, clears it when any authoritative frame
+arrives (`state_sync`, `game_started`, `game_over`) and drops a
+`proposal_rejected` carrying any other `reqId`. A refusal that lands after the
+board was already replaced answers nothing — delivering it would sound the error
+over a correct board and rebuild the editor under a draft the player has since
+started. Correlation lives in the transport because that is where the `reqId`
+ledger is; the scene still handles every refusal it is given.
+
 That comparison is only sound inside one match, because `rev` restarts at 1 on
 every deal. So the client checks match identity first: a `state_sync` whose
 `view.matchId` is not the session's is answered `invalid` — nothing applied,
@@ -948,6 +957,14 @@ room resurrection, and a concurrent-room load that has to return to baseline. `n
 verify:multiplayer` runs two-plus real browser clients against the real server
 and gates on client console errors, server stderr, accepted illegal proposals,
 hand privacy and state-hash agreement.
+
+`CH-01..CH-05` in `e2e-multiplayer/multiplayer.spec.ts` are the adverse-delivery
+gate: one client's socket is intercepted with `page.routeWebSocket` and its
+incoming frames are delayed, duplicated, re-delivered stale, dropped, or (for a
+refusal) held until the board has moved past them. The host stays clean and is
+the control — whatever the other seat went through, both end on the same
+revision with `desyncs() === 0`. Withholding a frame the client is *waiting* on
+is CH-04's case and is recovered by the pending timeout, not by a later frame.
 
 `e2e-multiplayer/lobby.spec.ts` carries the `LB-*` lobby acceptance and runs on
 **Chromium, Firefox and WebKit** — a Chrome pass is not evidence for another

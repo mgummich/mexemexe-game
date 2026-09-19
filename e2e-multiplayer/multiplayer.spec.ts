@@ -56,7 +56,8 @@ test.afterAll(async () => {
 // The browser-side client/screenshot helpers live in ./harness, shared with the lobby specs
 // (docs/TESTING.md): one definition of what a simulated player is. Only the two things that are
 // this file's own stay here — its worker's server URL, and the `mp-` screenshot prefix.
-const newClient = (browser: Browser, wsUrl = WS_URL): Promise<Page> => openClient(browser, wsUrl);
+const newClient = (browser: Browser, wsUrl = WS_URL, prepare?: (page: Page) => Promise<void>): Promise<Page> =>
+  openClient(browser, wsUrl, prepare);
 const shot = (pages: Record<string, Page>, name: string, screenshots: string[]): Promise<void> =>
   saveShots(pages, `mp-${name}`, screenshots);
 
@@ -1725,5 +1726,235 @@ test('the name can be set from the join screen, without losing the half-typed co
   expect(guestName).toBe('Convidada');
 
   for (const p of [host, guest]) expect(trackConsoleErrors(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+// ---------- CH-01..CH-04: adverse delivery (Phase 65) ----------
+//
+// Real frames, mangled in the browser's own WebSocket route: the guest's socket is intercepted
+// and its *incoming* frames are delayed, duplicated, dropped or reordered before the app sees
+// them. The host stays clean, so it is the control — whatever the guest went through, both seats
+// have to end on the same authoritative revision with no desync and no lost board.
+//
+// `state_sync` is the only frame mangled. Everything else is relayed untouched, so the room
+// lifecycle itself is never the thing under test here — the client's reconciliation is.
+
+/** `sentOwnMove` is true when this client's own turn action is the one awaiting an answer. */
+type SyncMangler = (
+  frame: string,
+  context: { index: number; sentOwnMove: boolean },
+  deliver: (frame: string) => void,
+) => void;
+
+/** Installs an incoming-frame mangler on the next page load. Only `state_sync` reaches it. */
+function manglingSyncs(mangle: SyncMangler): (page: Page) => Promise<void> {
+  return async (page: Page) => {
+    await page.routeWebSocket((url) => url.protocol === 'ws:', (ws) => {
+      const server = ws.connectToServer();
+      let syncs = 0;
+      let sentOwnMove = false;
+      ws.onMessage((m) => {
+        const frame = String(m);
+        if (frame.includes('"type":"draw_end_turn"') || frame.includes('"type":"submit_turn"')) sentOwnMove = true;
+        server.send(frame);
+      });
+      server.onMessage((m) => {
+        const frame = String(m);
+        if (!frame.includes('"type":"state_sync"')) {
+          ws.send(frame);
+          return;
+        }
+        const own = sentOwnMove;
+        sentOwnMove = false;
+        mangle(frame, { index: syncs++, sentOwnMove: own }, (out) => ws.send(out));
+      });
+    });
+  };
+}
+
+/** Host + a guest whose incoming syncs are mangled, in a started 2-seat match. */
+async function chaosMatch(browser: Browser, mangle: SyncMangler): Promise<{ host: Page; guest: Page }> {
+  const host = await newClient(browser);
+  const guest = await newClient(browser, WS_URL, manglingSyncs(mangle));
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+  await guest.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Joao'), code);
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+  await readyAndStart(host, [host, guest]);
+  return { host, guest };
+}
+
+/**
+ * Draw-and-pass from whichever seat is on the clock, `turns` times.
+ *
+ * It waits for a seat to *claim* the clock rather than sampling once: under delayed or withheld
+ * frames a client can legitimately not know yet that it is its turn, and that lag is the
+ * condition under test, not a failure.
+ */
+async function takeTurns(pages: Page[], turns: number, waitMs = 15_000): Promise<void> {
+  for (let i = 0; i < turns; i++) {
+    const deadline = Date.now() + waitMs;
+    let acted = false;
+    while (!acted && Date.now() < deadline) {
+      for (const p of pages) {
+        const mine = await p.evaluate(() => {
+          const s = window.__MEXE__.state?.();
+          return !!s && s.winnerId === null && s.activePlayerIndex === window.__MEXE__.online?.localSeat?.();
+        });
+        if (!mine) continue;
+        await p.evaluate(() => window.__MEXE__.online!.comprar());
+        acted = true;
+        break;
+      }
+      if (!acted) await pages[0]!.waitForTimeout(100);
+    }
+    if (!acted) throw new Error(`no seat claimed the clock within ${waitMs}ms at turn ${i}`);
+    await pages[0]!.waitForTimeout(150);
+  }
+}
+
+/** Both seats agree on the revision, neither hashed a divergence, and the boards match. */
+async function expectConverged(host: Page, guest: Page, timeout = 20_000): Promise<number> {
+  const rev = (await host.evaluate(() => window.__MEXE__.online!.rev()))!;
+  await guest.waitForFunction((r) => window.__MEXE__.online!.rev() === r, rev, { timeout });
+  for (const p of [host, guest]) expect(await p.evaluate(() => window.__MEXE__.online!.desyncs())).toBe(0);
+  const boards = await Promise.all([host, guest].map((p) => p.evaluate(() => {
+    const s = window.__MEXE__.state?.();
+    if (!s) throw new Error('no rendered state on this client');
+    return { turn: s.turn, active: s.activePlayerIndex, hands: s.players.map((pl) => pl.hand.length), table: s.table.length };
+  })));
+  expect(boards[1]).toEqual(boards[0]);
+  return rev;
+}
+
+test('CH-01: a client whose frames arrive late still converges on the authoritative board', async ({ browser }) => {
+  // Every sync held back 800ms — well inside the 10s pending timeout, so this is pure lateness,
+  // not a dropped proposal. The player waits; the board is never wrong.
+  const { host, guest } = await chaosMatch(browser, (frame, _context, deliver) => {
+    setTimeout(() => deliver(frame), 800);
+  });
+  await takeTurns([host, guest], 4);
+  const rev = await expectConverged(host, guest);
+  expect(rev).toBeGreaterThan(1);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('CH-02: duplicated frames are applied idempotently, not twice', async ({ browser }) => {
+  // The same authoritative frame delivered three times is the same board three times: an equal-rev
+  // frame is re-applied on purpose (MULTIPLAYER.md §6), so what this proves is that re-applying
+  // changes nothing — no double-counted turn, no desync, no drifting hand counts.
+  const { host, guest } = await chaosMatch(browser, (frame, _context, deliver) => {
+    deliver(frame);
+    deliver(frame);
+    deliver(frame);
+  });
+  await takeTurns([host, guest], 4);
+  await expectConverged(host, guest);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('CH-03: a stale frame arriving after a newer one leaves the newest board standing', async ({ browser }) => {
+  // Every frame is delivered in order, and the *previous* one is then re-delivered behind it —
+  // the shape late delivery actually takes on one ordered socket: an old board turning up after
+  // the client has already moved past it. It must be ignored as stale, not applied as a rewind.
+  //
+  // Deliberately not "hold frame N until N+1 arrives": the client blocks on the answer to its own
+  // move, so withholding a frame stalls the match instead of reordering it. CH-04 covers the
+  // withheld-frame case, which needs a timeout rather than a later frame to recover.
+  const { host, guest } = await chaosMatch(browser, (() => {
+    let previous: string | null = null;
+    return (frame: string, _context: { index: number; sentOwnMove: boolean }, deliver: (f: string) => void): void => {
+      deliver(frame);
+      if (previous !== null) deliver(previous);
+      previous = frame;
+    };
+  })());
+  await takeTurns([host, guest], 5);
+  const rev = await expectConverged(host, guest);
+  expect(rev).toBeGreaterThan(4);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('CH-04: a dropped answer to the guest\'s own move recovers through the pending timeout', async ({ browser }) => {
+  // The answer to the guest's *own* move is thrown away — the one case nothing else recovers
+  // from, because the client is holding its input lock waiting for exactly that frame. The 10s
+  // pending timeout has to break it: it resyncs and the board comes back. This is the path
+  // GameScene.onOnlinePendingTimeout exists for. A frame lost while merely watching is a
+  // different case: the client is not waiting on it and catches up on its next action.
+  let dropped = false;
+  const { host, guest } = await chaosMatch(browser, (frame, context, deliver) => {
+    if (context.sentOwnMove && !dropped) {
+      dropped = true;
+      return;
+    }
+    deliver(frame);
+  });
+  // Two turns: the host's, then the guest's own — whose answer is the one dropped.
+  await takeTurns([host, guest], 2);
+  expect(dropped).toBe(true);
+  // Long enough for ONLINE_PENDING_TIMEOUT_MS (10s) plus the resync round trip.
+  await expectConverged(host, guest, 25_000);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('CH-05: a rejection that arrives after the board moved on is ignored, not replayed', async ({ browser }) => {
+  // The guest sends an illegal proposal and the server refuses it, but the refusal is held back
+  // until after the next authoritative frame has landed. By then it answers nothing: the board is
+  // already correct, and acting on it would sound the error and rebuild the editor under whatever
+  // the player has started since. The client must drop it.
+  const host = await newClient(browser);
+  const guest = await newClient(browser, WS_URL, async (page) => {
+    await page.routeWebSocket((url) => url.protocol === 'ws:', (ws) => {
+      const server = ws.connectToServer();
+      let held: string | null = null;
+      ws.onMessage((m) => server.send(m));
+      server.onMessage((m) => {
+        const frame = String(m);
+        // Hold the refusal; release it only once a later state_sync has been delivered.
+        if (frame.includes('"type":"proposal_rejected"') && held === null) {
+          held = frame;
+          return;
+        }
+        ws.send(frame);
+        if (held !== null && frame.includes('"type":"state_sync"')) {
+          const late = held;
+          held = null;
+          setTimeout(() => ws.send(late), 50);
+        }
+      });
+    });
+  });
+
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+  await guest.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Joao'), code);
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+  await readyAndStart(host, [host, guest]);
+
+  // Host plays first, so seat 1 is on the clock and its proposal is refused on its merits
+  // (an empty final table plays no card) rather than for being out of turn.
+  await takeTurns([host, guest], 1);
+  await guest.waitForFunction(
+    () => window.__MEXE__.state?.()?.activePlayerIndex === window.__MEXE__.online?.localSeat?.(),
+    undefined,
+    { timeout: 15_000 },
+  );
+  const revBefore = (await guest.evaluate(() => window.__MEXE__.online!.rev()))!;
+  await guest.evaluate((rev) => window.__MEXE__.online!.submitRaw(rev, []), revBefore);
+  // The refusal is now held. The guest's own legal move produces the frame that releases it.
+  await guest.evaluate(() => window.__MEXE__.online!.comprar());
+  await guest.waitForFunction((r) => (window.__MEXE__.online!.rev() ?? 0) > r, revBefore, { timeout: 15_000 });
+  await guest.waitForTimeout(500); // let the late refusal land
+
+  // Dropped, not replayed: the session never recorded it, and both seats still agree.
+  expect(await guest.evaluate(() => window.__MEXE__.online!.lastRejections())).toEqual([]);
+  await expectConverged(host, guest);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
   for (const p of [host, guest]) await p.context().close();
 });

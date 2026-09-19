@@ -778,6 +778,13 @@ this process did not start (it waits for that process's own `server_listening`
 line). The server itself logs `server_listen_failed` and exits 1 rather than
 throwing an unhandled `error` event.
 
+Adverse network conditions are exercised in the same suite rather than in a
+level of their own: `CH-01..CH-05` intercept one client's socket with
+`page.routeWebSocket` and delay, duplicate, re-deliver, drop or hold its
+incoming frames, with the other client as the clean control. Deterministic by
+construction — the mangler decides, not the network — and about 30s for all
+five. See [MULTIPLAYER.md](MULTIPLAYER.md) §11.
+
 `e2e-multiplayer/harness.ts` is also the single definition of a simulated
 player: `newClient`/`newPhoneClient` (own browser context, own storage, own
 socket), `trackConsoleErrors`/`consoleErrorsOf` and `shot`. The specs import

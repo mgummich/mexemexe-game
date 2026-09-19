@@ -3,10 +3,10 @@
   "updated": "2026-09-19",
   "current": {
     "wave": "7D",
-    "phase": "65 — Network Chaos Testing",
+    "phase": "66 — Multiplayer Soak Testing",
     "status": "NOT_STARTED"
   },
-  "head": "c78f2f5",
+  "head": "d716589",
   "phases": [
     {
       "phase": "46 — Strategic Planning",
@@ -573,6 +573,48 @@
       ],
       "notes": [
         "No roadmap/repo mismatch. The phase warned about matrix explosion; the response was one row per behavior family pointing at suites that already exist, rather than a per-case table or a fourth document."
+      ]
+    },
+    {
+      "phase": "65 — Network Chaos Testing",
+      "wave": "7D",
+      "status": "PASS_WITH_DEFERRED_RISKS",
+      "result": "Adverse delivery is now a real, reproducible condition rather than an argument. CH-01..CH-05 intercept one client's WebSocket with page.routeWebSocket (Playwright 1.63) and delay its incoming frames 800ms, triple them, re-deliver the previous frame behind the newer one, drop the answer to its own move once, or hold a proposal_rejected until a later state_sync has landed; the other client stays clean and is the control, and every test asserts both seats reach the same rev with desyncs()===0 and identical board projections. One product defect closed along the way — the P3 late-rejection risk Phase 62 deferred to this phase: NetClient now correlates proposal_rejected against the proposals actually in flight and drops one that answers a board already replaced.",
+      "acceptance": "selected adverse conditions reproducible (5 deterministic cases, ~30s total); authoritative state consistent (rev agreement + identical projections + zero desyncs in every case); recovery explicit (CH-04 pins the pending-timeout resync, CH-03 pins the stale-frame rule); failures diagnosable (Phase 63's attachClientContexts reports each client's seat, rev and last wire messages)",
+      "verification": [
+        "npm run verify (exit 0, tmp/agent-logs/verify-p65.log)",
+        "npm run verify:multiplayer:chromium (49/49, 6.5m, exit 0, tmp/agent-logs/verify-mp-p65b.log)",
+        "npx vitest run tests/net (81/81)",
+        "npx tsc --noEmit, npx eslint e2e-multiplayer (clean)"
+      ],
+      "evidence": {
+        "mutationProbes": "removing the applySync stale guard fails CH-03; disabling GameScene.onOnlinePendingTimeout fails CH-04; removing the reqId correlation fails CH-05 and 3 of the 5 correlation unit tests",
+        "rejectedApproach": "the first attempt guarded the scene instead (if (!this.onlinePending) return in onOnlineRejected). It broke the existing 'two clients ... illegal proposal' gate, because window.__MEXE__.online.submitRaw deliberately bypasses the scene's input lock, so a legitimate refusal was swallowed. The correlation was moved to the transport, where the reqId ledger already lives, and that gate passes again.",
+        "ch03Model": "the obvious reorder model — hold frame N until N+1 arrives — deadlocks, because a client blocks on the answer to its own move and no later frame is produced. CH-03 instead re-delivers the previous frame behind the current one, which is the shape late delivery actually takes on one ordered socket; CH-04 covers the withheld-frame case, which needs the timeout rather than a later frame."
+      },
+      "critic": {
+        "round": 2,
+        "result": "CRITIC PASS. Round 1 raised the single-in-flight assumption, a missing two-proposal test and connect() not clearing the ledger; all three were repaired (Set of outstanding ids, new test, clear on connect)."
+      },
+      "docs": [
+        "docs/MULTIPLAYER.md §6 (refusal correlation) and §11 (the chaos gate)",
+        "docs/TESTING.md (chaos as part of the multiplayer suite, not a new level)",
+        "docs/INVARIANTS.md SCN-41"
+      ],
+      "deferredRisks": [
+        {
+          "id": "P3-chaos-timing-under-load",
+          "note": "CH-01..CH-05 use wall-clock waits (800ms injected delay, 20s convergence, 25s for CH-04 against the product's 10s pending timeout). Generous, and the five together run ~30s, but they are not immune to a heavily contended CI runner.",
+          "owner": "Phase 84 — Flaky-Test Control"
+        },
+        {
+          "id": "P3-chaos-outbound-untouched",
+          "note": "Only server-to-client frames are mangled. Client-to-server loss/duplication is covered indirectly (the server's own rev/duplicate guards, Phase 62) rather than by an injected outbound fault.",
+          "owner": "Phase 66 — Multiplayer Soak Testing"
+        }
+      ],
+      "notes": [
+        "Disconnect and retry were already covered (forceDrop, context().setOffline, tests/net/reconnect.test.ts OR-*) and were not re-proven here."
       ]
     }
   ]
