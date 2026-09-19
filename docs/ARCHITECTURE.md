@@ -225,11 +225,19 @@ heuristic search** over three shapes (edge steal, run split, single inter-meld m
 SimpleAi's own play, capped at `MAX_CANDIDATES`/`EXPERT_MAX_CANDIDATES` kept and
 `SEARCH_BUDGET_TRIALS` attempted. Move classes outside those shapes are simply not generated.
 
-**Evaluation.** `src/ai/evaluate.ts` compares legal candidates on four features in strict
+**Evaluation.** `src/ai/evaluate.ts` compares legal candidates on five features in strict
 priority: immediate win, then hand cards shed, then fewer jokers left on the shared table, then
-the sorted played-card ids as a stable tie-break. Ordinal, not a weighted sum — no amount of joker
-thrift buys back a card. Neutral on purpose: personality lives in which candidates get generated
-(minimal play, joker holding, patience) and difficulty in the search tier, not in these features.
+fewer *stranded* cards left in hand, then the sorted played-card ids as a stable tie-break.
+Ordinal, not a weighted sum — no amount of joker thrift buys back a card. Neutral on purpose:
+personality lives in which candidates get generated (minimal play, joker holding, patience) and
+difficulty in the search tier, not in these features.
+
+**How far ahead it plans.** One ply, and that is a ceiling the rules impose rather than a shortcut.
+`strandedCards` is the only feature that scores the state a move *leaves behind* (cards with no
+possible partner left in hand), which is what separates two drafts that shed the same cards. Deeper
+search would have to predict the next draw or the opponents' replies, and INV-A2 denies the AI both
+the pile order and the other hands, so any such node would be invented rather than observed. The
+depth therefore goes into breadth — more candidate shapes within the turn — not into future turns.
 
 The actor differs between a human and an AI seat; the transition authority does not. UI intents
 (open settings, zoom the table, hover a card, play a sound) are *not* actions and never become

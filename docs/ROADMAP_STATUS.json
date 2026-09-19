@@ -1,0 +1,31 @@
+{
+  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
+  "updated": "2026-09-19",
+  "current": { "wave": "6B", "phase": "47 — Difficulty Model", "status": "AUDITING" },
+  "head": "5abd5da",
+  "phases": [
+    {
+      "phase": "46 — Strategic Planning",
+      "wave": "6B",
+      "status": "PASS",
+      "result": "Repo already satisfied bounded deterministic search, candidate sequencing, legal fallback and no-mutation. Gap closed: future-state evaluation (strandedCards) in src/ai/evaluate.ts.",
+      "acceptance": "determinism (INV-A5) unchanged; every candidate still via DraftEditor.canConfirm (INV-A1); O(m^2) per candidate inside existing trial budget; legal draw fallback unchanged",
+      "verification": [
+        "npx tsc --noEmit",
+        "npx vitest run tests/ai.test.ts tests/property/ai.property.test.ts (76/76)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p46c.log)"
+      ],
+      "evidence": {
+        "benchmark": "200 fixed seeds, RearrangerAi vs unchanged SimpleAi",
+        "before": { "wins": 193, "avgTurns": 133.5, "avgCardsLeft": 0.59, "ms": 16847 },
+        "after": { "wins": 195, "avgTurns": 130.3, "avgCardsLeft": 0.55, "ms": 17283 }
+      },
+      "critic": { "round": 1, "result": "CRITIC PASS with 1 risk + 1 nit, both repaired (joker guard + ace high/low partnering, boundary tests)" },
+      "deferredRisks": [
+        { "id": "P3-screenshot-churn", "note": "npm run screenshot rewrites ~60 PNGs with no visual change; reverted each run", "owner": "Phase 84 — Flaky-Test Control" },
+        { "id": "P3-suite-flake", "note": "tutorial 12-step e2e timed out once under full-suite load, passes in isolation and on rerun", "owner": "Phase 84 — Flaky-Test Control" }
+      ],
+      "roadmapMismatch": "Roadmap assumed Phase 46 would add lookahead/search; repo already had a bounded deterministic trial-budget search from Wave 6A. Multi-ply lookahead is impossible under INV-A2 (no pile order, no opponent hands) — documented in docs/ARCHITECTURE.md."
+    }
+  ]
+}

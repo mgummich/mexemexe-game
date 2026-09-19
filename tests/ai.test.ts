@@ -4,7 +4,7 @@ import { compareByBaseEvaluation, evaluateDraft, type CandidateFeatures } from '
 import { observeForAi } from '../src/ai/observation';
 import { t } from '../src/localization/i18n';
 import { applyConfirmedTurn, canConfirmTurn, drawAndEndTurn } from '../src/rules/rules';
-import type { Card, GameState, Meld, Suit } from '../src/rules/types';
+import type { Card, DraftState, GameState, Meld, Suit } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
 import { createNewGame } from '../src/rules/rules';
 import { j, n, withHand } from './helpers/cards';
@@ -896,6 +896,7 @@ describe('base evaluation', () => {
     winsNow: false,
     cardsPlayed: 1,
     jokersOnTable: 0,
+    strandedCards: 0,
     playedIds: ['a'],
     ...patch,
   });
@@ -917,6 +918,31 @@ describe('base evaluation', () => {
     expect(better(features({ cardsPlayed: 3, jokersOnTable: 2 }), features({ cardsPlayed: 2, jokersOnTable: 0 }))).toBe(true);
   });
 
+  it('prefers leaving a hand that can still combine, at equal hand reduction and joker cost', () => {
+    expect(better(features({ strandedCards: 0 }), features({ strandedCards: 2 }))).toBe(true);
+    // ...but never at the cost of a card shed: the hierarchy stays ordinal.
+    expect(better(features({ cardsPlayed: 3, strandedCards: 4 }), features({ cardsPlayed: 2, strandedCards: 0 }))).toBe(true);
+  });
+
+  it('counts a card as stranded only when nothing left in hand could ever join it', () => {
+    // Hand: 9s/9c/9d (a set) + hearts 4 + hearts 6 (a run-with-gap pair) + spades 2 (alone).
+    const state = base([n('spades', 9), n('clubs', 9), n('diamonds', 9), n('hearts', 4), n('hearts', 6), n('spades', 2)]);
+    const d = new SimpleAi().decide(observeForAi(state));
+    expect(d.kind).toBe('confirm');
+    // The three nines leave: hearts 4 + hearts 6 partner each other; spades 2 has nobody.
+    expect(evaluateDraft(state, (d as { draft: DraftState }).draft).strandedCards).toBe(1);
+  });
+
+  it('pairs an ace with its high end as well as its low one, and never strands a joker', () => {
+    // Nothing played: the feature is scored over the whole hand.
+    const stranded = (hand: Card[]) => evaluateDraft(base(hand), { melds: [], handCardsPlayed: [] }).strandedCards;
+    expect(stranded([n('spades', 1), n('spades', 13)])).toBe(0); // A high, under the king
+    expect(stranded([n('spades', 1), n('spades', 3)])).toBe(0); // A low, A-2-3 one gap away
+    expect(stranded([n('spades', 13), n('spades', 2)])).toBe(2); // K-A-2 is not a run
+    expect(stranded([j(1, 1), n('spades', 7)])).toBe(0); // a joker partners anything, itself included
+    expect(stranded([n('clubs', 7), n('clubs', 7, 1)])).toBe(2); // the second deck's twin is not a set
+  });
+
   it('resolves the remaining ties deterministically, whatever order the candidates arrived in', () => {
     const a = features({ playedIds: ['clubs-9-d0'] });
     const b = features({ playedIds: ['hearts-9-d0'] });
@@ -934,6 +960,7 @@ describe('base evaluation', () => {
       winsNow: true, // that group is the whole hand
       cardsPlayed: 3,
       jokersOnTable: 0,
+      strandedCards: 0, // nothing is left to strand
       playedIds: ['clubs-9-d0', 'hearts-9-d0', 'spades-9-d0'],
     });
   });
