@@ -763,6 +763,22 @@ describe('AI difficulty', () => {
     expect(fingerprint('smart', seed)).toBe(played[DIFFICULTIES.indexOf('smart')]);
   });
 
+  /**
+   * A tier must not flatten the cast more than it has to. Beginner caps everyone at one action per
+   * turn, which already erases `minimal` and `rearrange`; excluding patience on top of that left
+   * Zé, Cida and Bia playing the identical game at the tier a new player is most likely to meet.
+   * Patience is a temperament, not a skill, so it now applies at every tier. (Cida and Bia are
+   * still one player at beginner and at expert — structural, and documented on `createAi`.)
+   */
+  it('keeps the patient personality patient at the beginner tier too', () => {
+    const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] }];
+    const hand = [n('hearts', 7), n('spades', 2), n('clubs', 4), n('diamonds', 9), n('clubs', 11), n('spades', 13)];
+    const state = { ...base(hand, table), turn: 1 };
+    // Cida takes the small extension; Zé, who is holding six cards on turn 1, waits for more.
+    expect(createAi('cida', 'beginner').decide(observeForAi(state)).kind).toBe('confirm');
+    expect(createAi('ze', 'beginner').decide(observeForAi(state)).kind).toBe('draw');
+  });
+
   it('never proposes an illegal confirm, at any tier or personality', () => {
     const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), j(0, 1), n('hearts', 6), n('hearts', 7)];
     const table = [{ id: 'm1', cards: [n('diamonds', 9), n('diamonds', 10), n('diamonds', 11), n('diamonds', 12)] }];

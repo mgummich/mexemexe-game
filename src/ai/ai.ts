@@ -601,13 +601,19 @@ const PERSONALITY_TRAITS: Record<Personality, { holdJokers: boolean; minimal: bo
  * - casual: the personality's own lay-down policy, but never the rearrangement search
  * - smart (default): the personality's own engine
  * - expert: the rearrangement search for every personality, widened
- * Patience (ze) applies at every tier above beginner.
+ * Patience (ze) applies at every tier.
  *
  * The two dimensions are orthogonal by design, so a tier only bites where the personality leaves
  * it room: Cida is already minimal and never rearranges, so beginner/casual/smart are one engine
  * for her, and Bia already rearranges at smart, so expert only widens her candidate cap. The
  * setting applies to every AI seat at once, which is where the ladder is actually visible — see
  * the tier-ladder test in `tests/ai.test.ts`.
+ *
+ * The same orthogonality costs something at the two extreme tiers, where the tier overrides the
+ * traits that would otherwise separate two personalities: Cida and Bia differ only in `minimal`
+ * and `rearrange`, which beginner suppresses for everyone and expert grants to everyone, so those
+ * two play the identical game there. Everywhere else all four are distinct — the visibility test
+ * in `tests/ai.test.ts` pins that down.
  */
 export function createAi(personality: Personality, difficulty: Difficulty = 'smart'): AiPlayer {
   const traits = PERSONALITY_TRAITS[personality];
@@ -623,7 +629,11 @@ export function createAi(personality: Personality, difficulty: Difficulty = 'sma
         return new RearrangerAi(traits.holdJokers, true);
     }
   })();
-  const engine = traits.patient && difficulty !== 'beginner' ? new PatientAi(base) : base;
+  // Patience is a personality trait, not a skill: waiting for a bigger play is exactly the kind of
+  // thing a cautious beginner does. Excluding it from the beginner tier left Zé, Cida and Bia
+  // playing the identical game there — three of the four opponents a new player meets, all doing
+  // the same thing, because the tier had already suppressed everything else that separates them.
+  const engine = traits.patient ? new PatientAi(base) : base;
   return {
     decide: (state) => tagReason(personality, engine.decide(state)),
     ...(engine.decideSliced

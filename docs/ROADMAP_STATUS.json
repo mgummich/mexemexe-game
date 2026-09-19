@@ -3,7 +3,7 @@
   "updated": "2026-09-19",
   "current": {
     "wave": "6C",
-    "phase": "49 \u2014 Human-Like Behavior",
+    "phase": "50 \u2014 Adaptive AI",
     "status": "AUDITING"
   },
   "head": "5abd5da",
@@ -98,6 +98,43 @@
         "result": "CRITIC PASS, no issues"
       },
       "roadmapMismatch": "Roadmap lists 'evaluation weight modifiers' in scope. The repo deliberately keeps src/ai/evaluate.ts neutral and expresses personality as candidate-generation policy instead; the exit criteria are met without weights, and weights would move personality into the shared evaluator the architecture keeps neutral. Repo truth preserved."
+    },
+    {
+      "phase": "49 \u2014 Human-Like Behavior",
+      "wave": "6C",
+      "status": "PASS",
+      "result": "Fixed a measured defect: at the beginner tier the four personalities produced only 2 distinct play sequences over 8 seeded matches each (cida, bia and ze identical), because the tier caps everyone at one action per turn AND patience was excluded at beginner. Patience now applies at every tier.",
+      "acceptance": "beginner divergence 2/4 -> 3/4 personalities; tier ladder still monotone; PatientAi remains a pure wrapper (INV-A5); draw fallback always legal",
+      "verification": [
+        "npx vitest run tests/ai.test.ts (75/75)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p49.log)"
+      ],
+      "evidence": {
+        "avgTurnsAfter": {
+          "beginner": 128.1,
+          "casual": 123.3,
+          "smart": 105.1,
+          "expert": 93.7
+        },
+        "personalityDivergenceByTier": {
+          "beginner": "3/4",
+          "casual": "4/4",
+          "smart": "4/4",
+          "expert": "3/4"
+        }
+      },
+      "critic": {
+        "round": 1,
+        "result": "CRITIC PASS, all exit criteria met, no issues"
+      },
+      "deferredRisks": [
+        {
+          "id": "P2-cida-bia-identical",
+          "note": "cida and bia play identically at beginner and expert; they differ only in the minimal and rearrange traits those tiers override for everyone. Fixing it means either collapsing the tier ladder or a personality-specific comparator inside the neutral evaluator.",
+          "owner": "Phase 54 \u2014 AI Balance Metrics"
+        }
+      ],
+      "note": "Phase 49's other in-scope items are owned by the presentation layer and were verified, not re-built: per-personality cadence (GameScene.aiThinkDelay), pre-move tells, characterful lines and repeat-line suppression (GameScene.showEmote)."
     }
   ]
 }
