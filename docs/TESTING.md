@@ -251,6 +251,7 @@ as orders of magnitude, not deadlines — nothing in the repo asserts them.
 | `npx vitest run tests/<file>` | one suite, the iteration loop | < 1s |
 | `npm run test` | every unit/application/simulation/server test with coverage, the fast property budget and the golden replays | ~12s, ~1010 tests |
 | `npm run test:replay` | the five golden replays alone | < 1s |
+| `npm run simulate -- --seeds 1-200` | batch AI-vs-AI matches through the production dispatcher | ~11s |
 | `npm run lint` | ESLint over six trees + `tsc --noEmit` | ~4s |
 | `npm run test:property` | the same properties at the extended budget | ~9s, nightly |
 | `npm run screenshot` | build + the browser journey/perf suite | minutes |
@@ -881,6 +882,18 @@ start, ordered actions) and `null` online, where the local store is a projection
 rather than a match this client played. Save its JSON and run it with
 `npm run replay run <file>`; see
 [DEVELOPMENT.md](DEVELOPMENT.md#reproducing-a-bug-from-a-replay).
+
+**AI simulation harness.** `npm run simulate -- --seeds 1-200 --seats
+cida,juninho,bia,ze --difficulty smart` plays batches of AI-vs-AI matches for
+balance and regression work. It is not a test and asserts nothing; it reports.
+It runs the production path — `createNewGame`, `observeForAi`, the personality
+engines from `createAi` and `GameStore.dispatch` — so there is no simulation-only
+rule or shortcut that could make a result the game itself could not produce. The
+printed line is the whole input needed to reproduce a run (seats, difficulty,
+seed range); `--json <path>` writes per-game rows (winner, turns, draws, cards
+left per seat, peak trial spend) for tooling. A refused action would be a bug,
+since every AI draft has already passed `canConfirm`, so one dumps that game's
+replay to `tmp/` and exits non-zero with the `npm run replay run` command.
 
 The settings overlay also carries a **play-log export** (copies the in-memory
 session log to the clipboard) used during playtests. The log is session-only,

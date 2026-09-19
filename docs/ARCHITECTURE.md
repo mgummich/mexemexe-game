@@ -212,7 +212,7 @@ remote player is sent, which is why nothing here would need rewriting for a serv
 **Decision.** `AiPlayer.decide(observation)` (or `decideSliced`, the same search yielding between
 phases) returns gameplay intent — `confirm` with a draft, or `draw` — plus a `DecisionTrace`: what
 the search structurally did (rearranged the table, declined a play out of patience, how many legal
-candidates it weighed, the chosen draft's features). `createAi` reads that trace to attach an
+candidates it weighed, how many of its trial budget it spent, the chosen draft's features). `createAi` reads that trace to attach an
 `AiReason`, whose `key` is the `ai.why.*` line the player may be shown. It is observational
 (INV-A7): the engines never read it back, it holds nothing the seat could not see, and it exists
 because the reason used to be recovered by pattern-matching the prose the search wrote about
@@ -224,6 +224,16 @@ are lexicographic rather than random, so no RNG is threaded in at all.
 **Legality.** The AI owns none. Every candidate is a `DraftEditor` draft that `canConfirm`
 accepted before it was kept, and `applyGameAction` validates it again on the way in. If the two
 ever disagreed, `runAiTurn` draws instead of keeping the turn — a bug costs a card, not the match.
+
+**Work budgets.** All three are counts, not durations: `SEARCH_BUDGET_TRIALS` (120k candidate
+trials per decision), `MAX_CANDIDATES`/`EXPERT_MAX_CANDIDATES` (20/48 kept) and
+`INTER_MELD_TRIPLE_CAP`. One trial budget covers both tiers on purpose — the tiers only ever
+differed in how long they were allowed to run, and that difference only had an effect when the
+bound actually bound, which is precisely the regime where the move stops being a function of the
+state. The cap is a safety stop for pathological input, not a tuning knob: on the densest table
+this game can deal (eight long runs, a 20-card hand, the Expert cap) the search finishes on its own
+after ~23k trials in ~36 ms, and a fresh deal spends none at all. `DecisionTrace.trialsSpent`
+reports the spend so that headroom stays measurable rather than assumed.
 
 **Generation scope, honestly.** Nothing here is exhaustive. `SimpleAi` is **greedy**: hand melds in
 a fixed order, then single-card extensions, first fit wins. `RearrangerAi` is a **bounded

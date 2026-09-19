@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AI_SPEED_SCALE, createAi, DIFFICULTIES, RearrangerAi, SimpleAi } from '../src/ai/ai';
+import { AI_SPEED_SCALE, createAi, DIFFICULTIES, RearrangerAi, SEARCH_BUDGET_TRIALS, SimpleAi } from '../src/ai/ai';
 import { compareByBaseEvaluation, evaluateDraft, type CandidateFeatures } from '../src/ai/evaluate';
 import { observeForAi } from '../src/ai/observation';
 import { t } from '../src/localization/i18n';
@@ -121,7 +121,7 @@ describe('RearrangerAi', () => {
     expect(await ai.decideSliced(observeForAi(base([n('hearts', 2), n('spades', 7)])))).toEqual({
       kind: 'draw',
       explanation: 'no play even with rearrange — drawing',
-      trace: { rearranged: false, patient: false, candidatesWeighed: 0, features: null },
+      trace: { rearranged: false, patient: false, candidatesWeighed: 0, features: null, trialsSpent: 0 },
     });
   });
 
@@ -535,6 +535,29 @@ describe('AI hardening', () => {
     if (d.kind === 'confirm') {
       expect(canConfirmTurn(state, d.draft)).toEqual({ ok: true });
     }
+  });
+
+  /**
+   * The work bound is a trial count, not a deadline, so "fast enough" has to be shown as headroom
+   * rather than as a duration: on the worst table this game can deal, the search must finish on
+   * its own well inside the cap. If a real position ever spent the whole budget, the move played
+   * would be whatever the cap interrupted — which is exactly the CPU-speed dependence the trial
+   * count exists to remove.
+   */
+  it('the trial cap is a safety stop, not the thing choosing the move: a dense table finishes with headroom', () => {
+    const suits: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades'];
+    // Eight long runs — the shape that maximises both split points and edge steals — against a
+    // 20-card hand, at the widest (Expert) candidate cap.
+    const table: Meld[] = suits.flatMap((suit, i) => [
+      { id: `r${i}a`, cards: [1, 2, 3, 4, 5, 6, 7].map((rank) => n(suit, rank)) },
+      { id: `r${i}b`, cards: [8, 9, 10, 11, 12, 13].map((rank) => n(suit, rank, 1)) },
+    ]);
+    const hand: Card[] = suits.flatMap((suit) => [1, 5, 9, 13, 11].map((rank) => n(suit, rank, 1)));
+    expect(hand).toHaveLength(20);
+
+    const d = new RearrangerAi(false, true).decide(observeForAi(base(hand, table)));
+    expect(d.trace.trialsSpent).toBeLessThan(SEARCH_BUDGET_TRIALS);
+    expect(d.trace.candidatesWeighed).toBeLessThanOrEqual(48); // EXPERT_MAX_CANDIDATES
   });
 
   it('empty pile with no legal play: AI decides to draw (pass) without hanging', () => {

@@ -19,10 +19,10 @@ import { parseReplay, runReplay, serializeReplay } from '../src/game-state/repla
 import { createNewGame } from '../src/rules/rules';
 import { RulesError } from '../src/rules/types';
 
-/** `cida`/`juninho` run `SimpleAi`, which has no time budget, so recording twice from one seed
- * produces the same file. `bia`/`ze` rearrange under a wall-clock budget: their *recording* is
- * not reproducible, but the recorded actions replay deterministically like any other — which is
- * how a rearrangement-heavy fixture gets made. */
+/** Every personality records reproducibly: `cida`/`juninho` run `SimpleAi`, and `bia`/`ze`
+ * rearrange under a deterministic trial budget rather than the wall clock it used to be, so
+ * recording twice from one seed produces the same file either way. `bia`/`ze` are how a
+ * rearrangement-heavy fixture gets made. */
 type RecordPersonality = 'cida' | 'juninho' | 'bia' | 'ze';
 const DEFAULT_PERSONALITIES: RecordPersonality[] = ['cida', 'juninho'];
 const MAX_TURNS = 400;

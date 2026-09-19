@@ -31,6 +31,11 @@ export interface DecisionTrace {
   readonly candidatesWeighed: number;
   /** Base evaluation of the chosen draft, or null for a draw. */
   readonly features: CandidateFeatures | null;
+  /** Candidate trials the search actually spent out of `SEARCH_BUDGET_TRIALS` — the profiling
+   *  hook for the work bound. Headroom is what proves the cap is a safety stop and not a tuning
+   *  knob: if a real position ever spent the whole budget, the move would be the one the cap
+   *  produced rather than the one the search would have found. */
+  readonly trialsSpent: number;
 }
 
 /**
@@ -271,11 +276,11 @@ export class SimpleAi implements AiPlayer {
 }
 
 /** A draw weighs nothing and moves nothing. */
-const DREW: DecisionTrace = { rearranged: false, patient: false, candidatesWeighed: 0, features: null };
+const DREW: DecisionTrace = { rearranged: false, patient: false, candidatesWeighed: 0, features: null, trialsSpent: 0 };
 
 /** A greedy engine builds exactly one draft and never touches the committed table. */
 function greedyTrace(state: AiObservation, draft: DraftState): DecisionTrace {
-  return { rearranged: false, patient: false, candidatesWeighed: 1, features: evaluateDraft(state, draft) };
+  return { rearranged: false, patient: false, candidatesWeighed: 1, features: evaluateDraft(state, draft), trialsSpent: 0 };
 }
 
 interface Candidate {
@@ -315,12 +320,19 @@ const EXPERT_MAX_CANDIDATES = 48;
  * to run, and that difference only had an effect when the clock bound — i.e. exactly in the
  * nondeterministic regime. What actually separates Expert is `EXPERT_MAX_CANDIDATES`.
  */
-const SEARCH_BUDGET_TRIALS = 120_000;
+export const SEARCH_BUDGET_TRIALS = 120_000;
 const INTER_MELD_TRIPLE_CAP = 300;
 
 /** Mutable trial counter threaded through one `decide` call. Shared by all phases of that call. */
 class SearchBudget {
-  constructor(public left: number) {}
+  private readonly started: number;
+  constructor(public left: number) {
+    this.started = left;
+  }
+  /** Trials charged so far — reported on the decision's trace, never read by the search. */
+  get spentTrials(): number {
+    return this.started - this.left;
+  }
   /** Charge one candidate trial. */
   charge(): void {
     this.left--;
@@ -532,7 +544,7 @@ export class RearrangerAi implements AiPlayer {
       if (candidates.length >= cap || budget.spent) break;
       search(state, hand, candidates, budget, cap);
     }
-    return pickBest(candidates);
+    return pickBest(candidates, budget);
   }
 
   /** The same search, yielding: the event loop runs between phases, so frames render while the AI
@@ -550,15 +562,16 @@ export class RearrangerAi implements AiPlayer {
       await new Promise<void>((r) => setTimeout(r, 0));
       search(state, hand, candidates, budget, cap);
     }
-    return pickBest(candidates);
+    return pickBest(candidates, budget);
   }
 }
 
 const REARRANGE_SEARCHES = [searchEdgeSteal, searchRunSplit, searchInterMeldMove];
 
-function pickBest(candidates: Candidate[]): AiDecision {
+function pickBest(candidates: Candidate[], budget: SearchBudget): AiDecision {
+  const trialsSpent = budget.spentTrials;
   if (candidates.length === 0) {
-    return { kind: 'draw', explanation: 'no play even with rearrange — drawing', trace: DREW };
+    return { kind: 'draw', explanation: 'no play even with rearrange — drawing', trace: { ...DREW, trialsSpent } };
   }
   candidates.sort(compareCandidates);
   const best = candidates[0]!;
@@ -571,6 +584,7 @@ function pickBest(candidates: Candidate[]): AiDecision {
       patient: false,
       candidatesWeighed: candidates.length,
       features: best.features,
+      trialsSpent,
     },
   };
 }
