@@ -2,11 +2,11 @@
   "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
   "updated": "2026-09-19",
   "current": {
-    "wave": "7C",
-    "phase": "64 — Multiplayer Scenario Matrix",
+    "wave": "7D",
+    "phase": "65 — Network Chaos Testing",
     "status": "NOT_STARTED"
   },
-  "head": "47b8513",
+  "head": "c78f2f5",
   "phases": [
     {
       "phase": "46 — Strategic Planning",
@@ -539,6 +539,40 @@
       "notes": [
         "No roadmap/repo mismatch. The phase's in-scope items (independent clients/processes, deterministic room setup, synchronized actions, reconnect, rematch, multi-seat observation) were already built in Waves 5-7B; the value here was removing the second harness authority and giving failures their seat/revision context.",
         "The [firefox] and [webkit] multiplayer projects were not run: Firefox cannot launch on this macOS 27 host, so the chromium-only gate is the evidence. The lobby specs' own afterEach wiring is identical across all three projects, so the hook is not engine-specific."
+      ]
+    },
+    {
+      "phase": "64 — Multiplayer Scenario Matrix",
+      "wave": "7C",
+      "status": "PASS",
+      "result": "The matrix already existed and is owned by docs/INVARIANTS.md (the INV-N* register plus the Multiplayer canonical-scenario table), with docs/TESTING.md carrying product-level risk (GQA-*) and subsystem routing and docs/MULTIPLAYER.md §11 carrying per-suite prose — three complementary views, not three authorities. It was stale: the scenario table stopped at the pre-discovery feature set, so five shipped lifecycle families had suites but no row. Added SCN-36 (room discovery, private by default through a browser/invite-link join), SCN-37 (casual matchmaking: idempotent join/cancel, oldest-first groups, one seat each, cancel that lost to a committed match), SCN-38 (party session across matches: wins, rematch votes, bounded history and feed, cooldown-limited reactions), SCN-39 (absent seat through the missed-turn limit to the match ending and the room closing) and SCN-40 (budgets and the reaction cooldown under load), each mapped to its invariants and its existing owning suites, and cross-linked back from INV-N1/N2/N4/N6/N7. No new test, no new document.",
+      "acceptance": "every high-risk multiplayer behavior mapped to a level and an owning suite; matrix compact (5 rows added, one per behavior family, 40 scenarios total across the whole product); no important lifecycle path unowned",
+      "verification": [
+        "npx vitest run on all nine suites cited by the new rows (218/218)",
+        "path check: every file path named in the new rows exists; no SCN id referenced but undefined",
+        "protocol-message audit: all 17 client-to-server message types are exercised over a real socket in tests/server or tests/net; an unsupported PROTOCOL_VERSION frame is covered in tests/server/queue.integration.test.ts:243"
+      ],
+      "critic": {
+        "round": 2,
+        "result": "CRITIC PASS. Round 1 found one factual blocker — SCN-40 described reactions as budget-refused when server/index.ts drops them silently on a per-seat cooldown — which was corrected. The INV-N4/SCN-36 cross-link and the compactness were confirmed; no parallel authority with TESTING.md or MULTIPLAYER.md."
+      },
+      "docs": [
+        "docs/INVARIANTS.md: SCN-36..SCN-40 and the INV-N* cross-links"
+      ],
+      "deferredRisks": [
+        {
+          "id": "P3-retry-exhaustion-unowned",
+          "note": "e2e-multiplayer covers an unreachable server and a recoverable retry, but no test drives the bounded retry loop to exhaustion and back into a successful reconnect. Same gap Phase 60 recorded as P3-reconnect-coverage-gaps.",
+          "owner": "Phase 66 — Multiplayer Soak Testing"
+        },
+        {
+          "id": "P3-pwa-offline-x-online-room",
+          "note": "SCN-34 covers an offline reload of a local match only. What an online room does across a PWA offline transition is unmapped and untested.",
+          "owner": "Phase 69 — Offline-First Resilience"
+        }
+      ],
+      "notes": [
+        "No roadmap/repo mismatch. The phase warned about matrix explosion; the response was one row per behavior family pointing at suites that already exist, rather than a per-case table or a fourth document."
       ]
     }
   ]
