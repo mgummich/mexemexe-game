@@ -463,20 +463,25 @@ describe('decision reproducibility', () => {
     return base(hand, table);
   }
 
+  // These four run the heaviest search the game can produce, a dozen-plus times each, and what
+  // they assert is that the answer never changes — not how long it takes. On a contended CI
+  // runner they land just past vitest's 5s default (5.4s, 5.9s, 5.9s observed), so they carry
+  // their own deadline, as the AI soak already does. The search's time budget is asserted
+  // separately by 'terminates on the heaviest search, both tiers'.
   it('returns the identical move across repeated runs of the heaviest search', () => {
     const state = maximalRunTable();
     const first = new RearrangerAi().decide(observeForAi(state));
     for (let i = 0; i < 12; i++) {
       expect(new RearrangerAi().decide(observeForAi(state))).toEqual(first);
     }
-  });
+  }, 30_000);
 
   it('reuses one engine instance without carrying state between decisions', () => {
     const state = maximalRunTable();
     const ai = new RearrangerAi();
     const first = ai.decide(observeForAi(state));
     for (let i = 0; i < 12; i++) expect(ai.decide(observeForAi(state))).toEqual(first);
-  });
+  }, 30_000);
 
   it('holds for every shipped personality, on the same table', () => {
     const state = maximalRunTable();
@@ -484,7 +489,7 @@ describe('decision reproducibility', () => {
       const first = createAi(p).decide(observeForAi(state));
       for (let i = 0; i < 5; i++) expect(createAi(p).decide(observeForAi(state))).toEqual(first);
     }
-  });
+  }, 30_000);
 
   // The sliced path is what actually runs in a match (`playAiTurn` prefers it): it must be the
   // same search, not merely a usually-agreeing one. It yields to the event loop between phases,
@@ -493,7 +498,7 @@ describe('decision reproducibility', () => {
     const state = maximalRunTable();
     expect(await new RearrangerAi().decideSliced(observeForAi(state))).toEqual(new RearrangerAi().decide(observeForAi(state)));
     expect(await new RearrangerAi(false, true).decideSliced(observeForAi(state))).toEqual(new RearrangerAi(false, true).decide(observeForAi(state)));
-  });
+  }, 30_000);
 
   // The budget replaced the deadline, so it — not a clock — is what guarantees termination.
   it('terminates on the heaviest search, both tiers', () => {

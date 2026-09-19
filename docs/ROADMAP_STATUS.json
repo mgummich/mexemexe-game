@@ -647,6 +647,13 @@
       "trigger": "run 35466617437: CH-04 failed with expected true, received false at expect(dropped). The test counted two turns and assumed the second was the guest's; on a slower runner the guest was still rendering the previous frame when the helper sampled it, so the host took both turns and no frame was ever dropped.",
       "change": "CH-04 now waits for the guest to hold the clock, acts there, and polls the mangler's own flag — the shape CH-05 already used and which passed on CI.",
       "evidence": "CH-01..CH-05 5/5 locally after the change; CH-05 was green on CI with this shape"
+    },
+    {
+      "task": "AI determinism tests timed out on CI (pre-existing, blocking every run on this branch)",
+      "trigger": "runs 35427627357, 35466617437 and 35468141119: tests/ai.test.ts > decision reproducibility failed with 'Test timed out in 5000ms' at 5.37s, 5.86s and 5.85s. Not introduced by this branch's work — the same three tests failed on the run that predates it. They pass locally (1117/1117).",
+      "change": "The four heaviest tests in that describe carry an explicit 30s deadline, the same treatment commit 21eac38 already gave the AI soak. Nothing about the searches changed.",
+      "rationale": "What they assert is that the heaviest search returns the identical answer every time; the wall clock is incidental to that. The search's actual time budget stays asserted by 'terminates on the heaviest search, both tiers' (expectWithinMs 2000 per decide), so no timing coverage is lost.",
+      "evidence": "npm run lint exit 0; npm run test 1117/1117; tests/ai.test.ts 78/78 in 9.27s"
     }
   ]
 }
