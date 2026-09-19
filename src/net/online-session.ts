@@ -126,6 +126,14 @@ export class OnlineSession {
    * edits in flight" — the one thing the session cannot see, because the draft is the editor's.
    */
   applySync(view: GameView, hadDraft: boolean): SyncResult {
+    // Match identity first, because the revision comparison below is only sound inside one match:
+    // `rev` restarts at 1 on every deal, so a frame belonging to another match would read as
+    // either stale (silently dropped, board frozen) or fresh (another match's board applied as
+    // this one's). No delivery path is known to produce one — one socket per client, ordered, and
+    // the server never re-sends a finished match's frames — so this refuses rather than repairs.
+    if (view.matchId !== this.matchId) {
+      return { kind: 'invalid', rev: view.rev, problem: `frame from match ${view.matchId}, session is ${this.matchId}` };
+    }
     if (view.rev < this.lastRev) return { kind: 'stale' };
     // Checked before anything is written, so a frame this client cannot represent leaves the last
     // good state — and `lastRev` — untouched instead of half-applied.

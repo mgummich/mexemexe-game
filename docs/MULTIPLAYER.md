@@ -566,6 +566,15 @@ exists. The client only ignores a *frame* strictly older than the one it has
 restated — a duplicate delivery or the answer to a `resync` — so applying it
 again is idempotent and safer than second-guessing which copy was the real one.
 
+That comparison is only sound inside one match, because `rev` restarts at 1 on
+every deal. So the client checks match identity first: a `state_sync` whose
+`view.matchId` is not the session's is answered `invalid` — nothing applied,
+`lastRev` untouched — rather than being ordered against a revision counter that
+belongs to a different board. No delivery path is known to produce such a frame
+(one socket per client, ordered; the server never re-sends a finished match's
+frames, and it refuses to start the next match while a seat is disconnected),
+so this refuses the frame rather than trying to repair anything.
+
 All of those decisions are `OnlineSession.applySync`, which answers one of four
 things — `stale` (ignored), `invalid` (the frame failed §5a's projection check;
 **nothing was applied**, so the last good state and `lastRev` both stand),

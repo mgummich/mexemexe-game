@@ -490,6 +490,42 @@ describe('draw / end turn', () => {
     for (const state of [afterSubmit, afterDraw]) expectCardConservation(state);
   });
 
+  it('refuses a turn action retried into a finished match, and again into the rematch lobby', () => {
+    // The two late-delivery shapes the server must survive after a match ends: a retry of the
+    // action that ended it (room still holds the finished state) and one that lands after the
+    // room has been recycled for the rematch (no state at all). Both are refused, neither
+    // revives the board.
+    const { mgr, code } = startRoom(7);
+    let room = mgr.getRoom(code)!;
+    let rev = room.rev;
+    let gameOver = false;
+    for (let i = 0; i < 200 && !gameOver; i++) {
+      const result = mgr.drawEndTurn(code, room.state!.activePlayerIndex, rev);
+      expect(result.ok).toBe(true);
+      if (result.ok) gameOver = result.gameOver;
+      rev++;
+      room = mgr.getRoom(code)!;
+    }
+    expect(gameOver).toBe(true);
+    const finishedRev = room.rev;
+    const finishedState = room.state!;
+
+    // Retried at the rev it was sent with, and at the room's current one: a finished match has no
+    // active seat to be, so both are notYourTurn rather than a second ending.
+    for (const staleRev of [finishedRev - 1, finishedRev]) {
+      expect(mgr.drawEndTurn(code, 0, staleRev)).toEqual({ ok: false, reasons: ['reason.notYourTurn'] });
+      expect(mgr.submitTurn(code, 0, staleRev, [])).toEqual({ ok: false, reasons: ['reason.notYourTurn'] });
+    }
+    expect(mgr.getRoom(code)!.rev).toBe(finishedRev);
+    expect(mgr.getRoom(code)!.state).toBe(finishedState);
+
+    expect(mgr.recycleForRematch(code)).toBe(true);
+    expect(mgr.drawEndTurn(code, 0, finishedRev)).toEqual({ ok: false, reasons: ['reason.notYourTurn'] });
+    expect(mgr.submitTurn(code, 0, 0, [])).toEqual({ ok: false, reasons: ['reason.notYourTurn'] });
+    expect(mgr.getRoom(code)!.state).toBeNull();
+    expect(mgr.getRoom(code)!.rev).toBe(0);
+  });
+
   it('rejects draw_end_turn from the wrong player or a stale rev', () => {
     const { mgr, code } = startRoom(7);
     expect(mgr.drawEndTurn(code, 1, 1)).toEqual({ ok: false, reasons: ['reason.notYourTurn'] });

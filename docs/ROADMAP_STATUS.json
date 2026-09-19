@@ -3,10 +3,10 @@
   "updated": "2026-09-19",
   "current": {
     "wave": "7C",
-    "phase": "62 — Race / Duplicate / Ordering Protection",
+    "phase": "63 — Multi-Client Harness",
     "status": "NOT_STARTED"
   },
-  "head": "21eac38",
+  "head": "c9e2e96",
   "phases": [
     {
       "phase": "46 — Strategic Planning",
@@ -474,6 +474,43 @@
         "round": 1,
         "result": "CRITIC PASS, no issues. Confirmed listener order (game_over registered before room_state, FIFO per socket) makes the normal finish path unhijackable, the delayed handoff guard is correct, and rev=1 is now pinned."
       }
+    },
+    {
+      "phase": "62 — Race / Duplicate / Ordering Protection",
+      "wave": "7C",
+      "status": "PASS_WITH_DEFERRED_RISKS",
+      "result": "Most of the phase was already built and verified: claimTurn's active-seat + exact-rev + processing guards, idempotent ready / join_queue / cancel_queue / set_room_settings, a repeat mexe_started answered as a no-op, a second start_game refused with game_started, the cancel-vs-match race resolved one way, a reconnect burst leaving exactly one live transport, a budgeted resync, and a client that ignores strictly older frames while re-applying equal-rev ones. Two gaps closed: (1) OnlineSession.applySync ordered every frame against lastRev, but rev restarts at 1 on each deal, so a frame from another match would have been dropped as stale or applied as this match's board — it now refuses on matchId before the rev comparison (the item Phase 61 explicitly handed to this phase); (2) claimTurn's state.phase !== 'playing' guard was unpinned by any test — a turn action retried into a finished match or into a recycled rematch room is now a regression.",
+      "acceptance": "stale/duplicate actions refused deliberately with an explicit ReasonCode; nothing applied on a frame the session cannot order (lastRev and state untouched); no authoritative mutation from a late/duplicate action after a match ends or after recycleForRematch; focused race regressions exist at the cheapest level (pure session + server manager)",
+      "verification": [
+        "npx vitest run tests/online-session.test.ts (22/22)",
+        "npx vitest run tests/server/rooms.test.ts (71/71)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p62.log)",
+        "npm run verify:multiplayer:chromium (44/44 chromium, 5.8m, exit 0, tmp/agent-logs/verify-mp-p62.log)"
+      ],
+      "evidence": {
+        "redBeforeGreenAfter": "the cross-match frame test fails with the matchId guard disabled (1 failed | 21 passed) and passes with it",
+        "mutationProbe": "removing `state.phase !== 'playing'` from claimTurn fails only the new late-action test (1 failed | 70 passed), confirming it was the sole pin on that guard",
+        "producerAudit": "server/rooms.ts:900 is the only production caller of buildView, so every view reaching applySync carries a server-minted matchId; protocol.ts's matchId='' default is a test-fixture path only",
+        "firefox": "the [firefox] Playwright project cannot launch on macOS 27, so the chromium-only multiplayer gate was used (the iOS WebKit row is skipped by that script, as it reports)"
+      },
+      "critic": {
+        "round": 1,
+        "result": "CRITIC PASS, no blockers, no polish items"
+      },
+      "docs": [
+        "docs/MULTIPLAYER.md §6: match identity is checked before the revision comparison"
+      ],
+      "deferredRisks": [
+        {
+          "id": "P3-late-rejection-not-correlated",
+          "note": "proposal_rejected carries reqId but the client never correlates it. A rejection that arrives after its pending window was released (the 10s ONLINE_PENDING_TIMEOUT_MS path, or after a state_sync already landed) still plays the invalid sfx, shows a stale reason line and rebuilds the editor from the current state, which would discard a draft the player had just started. Input safety is unaffected: interactivity also requires !online.resyncing (GameScene.ts:2424), so a rejection cannot unlock a board that is mid-resync. Needs delayed delivery to reproduce, which this phase has no harness for.",
+          "owner": "Phase 65 — Network Chaos Testing"
+        }
+      ],
+      "notes": [
+        "No roadmap/repo mismatch. Phase 62's remaining in-scope items (duplicate intents, retries, reentrancy, concurrent actions, idempotence) were verified against code and existing tests rather than rebuilt; the phase's value here was the two unguarded/unpinned spots above.",
+        "room.processing stays a defensive re-entrancy guard only — the manager is synchronous between check and mutation, so real double-submit protection is the rev check (S8). Unchanged by this phase."
+      ]
     }
   ]
 }

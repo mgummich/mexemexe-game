@@ -18,12 +18,13 @@ interface ViewOpts {
   missedTurns?: number[];
   mexeBonusClaimed?: boolean;
   seats?: number[];
+  matchId?: string;
 }
 
 function view(s: GameState, opts: ViewOpts = {}): GameView {
   return buildView(
     s, opts.seat ?? 0, opts.rev ?? 1, opts.settings ?? DEFAULT_ROOM_SETTINGS, opts.turnMsLeft ?? null,
-    opts.missedTurns ?? [0, 0], opts.mexeBonusClaimed ?? false, 'm1', opts.seats ?? [0, 1],
+    opts.missedTurns ?? [0, 0], opts.mexeBonusClaimed ?? false, opts.matchId ?? 'm1', opts.seats ?? [0, 1],
   );
 }
 
@@ -69,6 +70,22 @@ describe('OnlineSession', () => {
     expect(duplicate).toMatchObject({ kind: 'applied' });
     expect(s.lastRev).toBe(6);
     expect(s.state().activePlayerIndex).toBe(1);
+  });
+
+  it('refuses a frame belonging to another match instead of reading its revision', () => {
+    // `rev` restarts at 1 every deal, so cross-match frames cannot be ordered against `lastRev`:
+    // a lower one would be dropped as stale (frozen board) and a higher one applied as this
+    // match's. Neither is representable here, so nothing is applied and the caller resyncs.
+    const s = session({ rev: 5 });
+    const other = s.applySync(view(state({ activePlayerIndex: 1, turn: 9 }), { rev: 1, matchId: 'm2' }), false);
+    expect(other).toMatchObject({ kind: 'invalid', rev: 1 });
+    expect(s.lastRev).toBe(5);
+    expect(s.state().activePlayerIndex).toBe(0); // untouched
+
+    const ahead = s.applySync(view(state({ activePlayerIndex: 1, turn: 9 }), { rev: 40, matchId: 'm2' }), false);
+    expect(ahead).toMatchObject({ kind: 'invalid', rev: 40 });
+    expect(s.lastRev).toBe(5);
+    expect(s.state().activePlayerIndex).toBe(0);
   });
 
   it('asks for a resync when the local reconstruction does not hash to the server digest', () => {
