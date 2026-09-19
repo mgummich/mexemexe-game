@@ -5,6 +5,7 @@
  *   npx tsx scripts/simulate.ts --seeds 1-50 --seats bia,ze --json tmp/sim.json
  *   npx tsx scripts/simulate.ts --seeds 1-200 --sweep difficulty   one row per tier
  *   npx tsx scripts/simulate.ts --seeds 1-200 --sweep matchups     one row per head-to-head pair
+ *   npx tsx scripts/simulate.ts --seeds 12 --explain                one line per decision
  *
  * It plays through the production path and nothing else: `createNewGame`, `observeForAi`, the
  * personality engines from `createAi`, and `GameStore.dispatch`, which is the same dispatcher a
@@ -30,7 +31,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { createAi, DIFFICULTIES, type Difficulty, type Personality } from '../src/ai/ai';
+import { createAi, DIFFICULTIES, type AiDecision, type Difficulty, type Personality } from '../src/ai/ai';
 import { observeForAi } from '../src/ai/observation';
 import { serializeReplay } from '../src/game-state/replay';
 import { GameStore } from '../src/game-state/store';
@@ -51,7 +52,22 @@ interface GameResult {
   readonly peakTrials: number;
 }
 
-function playGame(seed: number, seats: readonly Personality[], difficulty: Difficulty): GameResult {
+/**
+ * One line per decision: who moved, what reason class the personality gave it, and what the
+ * search spent getting there. The investigation workflow this replaces is "add a console.log to
+ * the engine and re-run the game", which is how a debug print ends up committed.
+ */
+function explainLine(turn: number, seat: number, personality: Personality, decision: AiDecision): string {
+  const t = decision.trace;
+  const played = decision.kind === 'confirm' ? decision.draft.handCardsPlayed.length : 0;
+  return (
+    `t${String(turn).padStart(3)} ${personality.padEnd(8)} seat${seat} ${decision.kind.padEnd(7)}` +
+    ` ${(decision.reason?.key ?? '-').padEnd(16)} played=${played} rearranged=${t.rearranged ? 'y' : 'n'}` +
+    ` candidates=${t.candidatesWeighed} trials=${t.trialsSpent}`
+  );
+}
+
+function playGame(seed: number, seats: readonly Personality[], difficulty: Difficulty, explain = false): GameResult {
   const store = new GameStore(createNewGame(seed, seats.map((p) => ({ name: p, isAi: true }))));
   const ais = seats.map((p) => createAi(p, difficulty));
   let turns = 0;
@@ -60,6 +76,7 @@ function playGame(seed: number, seats: readonly Personality[], difficulty: Diffi
   while (store.get().phase === 'playing' && turns < MAX_TURNS) {
     const actorIndex = store.get().activePlayerIndex;
     const decision = ais[actorIndex]!.decide(observeForAi(store.get()));
+    if (explain) console.log(explainLine(turns, actorIndex, seats[actorIndex]!, decision));
     peakTrials = Math.max(peakTrials, decision.trace.trialsSpent);
     if (decision.kind === 'draw') draws++;
     const outcome = store.dispatch(
@@ -126,6 +143,8 @@ const difficulty = arg('difficulty', 'smart') as Difficulty;
 const jsonOut = process.argv.indexOf('--json') === -1 ? null : arg('json', 'tmp/simulate.json');
 /** `difficulty` runs every tier over the same seeds; `matchups` runs every head-to-head pair. */
 const sweep = process.argv.indexOf('--sweep') === -1 ? null : arg('sweep', 'difficulty');
+/** Print every decision of every game played. Meant for one seed at a time. */
+const explain = process.argv.includes('--explain');
 if (sweep !== null && sweep !== 'difficulty' && sweep !== 'matchups') {
   throw new Error(`unknown --sweep: ${sweep} (expected difficulty or matchups)`);
 }
@@ -139,7 +158,7 @@ if (!DIFFICULTIES.includes(difficulty)) throw new Error(`unknown difficulty: ${d
  *  prints played the identical deals in the identical seat order. */
 function run(runSeats: readonly Personality[], runDifficulty: Difficulty): { games: GameResult[]; ms: number } {
   const started = Date.now();
-  const games = seeds.map((seed) => playGame(seed, runSeats, runDifficulty));
+  const games = seeds.map((seed) => playGame(seed, runSeats, runDifficulty, explain));
   return { games, ms: Date.now() - started };
 }
 

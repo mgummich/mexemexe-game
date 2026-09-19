@@ -305,7 +305,15 @@ helper logic live as pure modules under `src/table` and `src/ui`.
   conservation, table legality, turn rotation and termination after *every*
   turn, plus the draw-pile and undo/reset-abuse edge probes.
 - `tests/ai.test.ts` — legality, determinism, budgets, personalities and the
-  four difficulty tiers.
+  four difficulty tiers, plus one **strategy threshold**: Bia (rearranges) must
+  still beat Cida (never does) on at least 10 of 12 seeded matches *and* leave her
+  holding at least 5 cards on average. A search that quietly stops finding its
+  plays leaves every other AI test green — the moves stay legal, reproducible and
+  in character, they are simply worse — so the guard has to be an outcome, not a
+  recorded move. Twelve games of win/loss only catch a catastrophic break; the
+  margin is the continuous measurement that degrades smoothly with search quality,
+  which is what gives a sample this small any resolution. Widen it with
+  `npm run simulate`, not here: it costs ~2s of the suite as it stands.
 - `tests/tutorial.test.ts` — all 12 steps, the per-step allow-list, completion,
   and the **authority boundary**: the tutorial gate is pedagogical only, so it
   can refuse a legal action and can never let an illegal one past `src/rules`
@@ -900,6 +908,11 @@ replay to `tmp/` and exits non-zero with the `npm run replay run` command.
 move first — going first is worth real games in this format, and a one-sided run
 would measure the seat as much as the personality. Rows within a sweep are paired
 by construction: identical deals, identical seat order, one thing varied.
+
+`--explain` prints one line per decision — seat, personality, reason class, cards
+played, whether it rearranged, candidates weighed and trials spent — which is the
+"why did it do that?" workflow that otherwise ends with a `console.log` inside the
+engine. Use it on one seed at a time.
 
 **Reading the numbers.** No single one of them is the answer, and none of them is
 a pass/fail bar — the harness reports, it never asserts. A win count says who went

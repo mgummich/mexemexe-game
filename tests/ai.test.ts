@@ -925,6 +925,45 @@ describe('AI difficulty', () => {
  * given, and only `observeForAi` can build that object, so handing an engine authoritative state
  * does not type-check.
  */
+/**
+ * A strategy regression — the search stops finding the plays it used to — breaks nothing that the
+ * legality, determinism and personality tests can see: every move stays legal, reproducible and
+ * in character, the AI is just worse. The guard is an outcome threshold rather than a recorded
+ * move, so it survives any refactor that keeps the AI competent and fails the ones that do not.
+ *
+ * Bia (rearranges) against Cida (never does) sits at 197 of 200 games in the simulation harness
+ * (`npm run simulate -- --seeds 1-100 --sweep matchups`), and 12 of 12 on the first twelve seeds,
+ * which are taken in order rather than chosen. Twelve games is a cheap sample, so the win count
+ * alone only catches a catastrophic break — a coin-flip AI still clears 10 of 12 about 2% of the
+ * time, but a 10% loss of search quality would slip through more often than not. The margin
+ * assertion is what gives this its resolution: how many cards the loser is still holding is a
+ * continuous measurement, one per game rather than one bit per game, and it degrades smoothly as
+ * the search gets worse. Anything finer belongs in the harness, not in a 12-game unit test.
+ */
+describe('AI strategy regression threshold', () => {
+  it('the rearrangement search still earns its keep: Bia beats Cida, and not narrowly', () => {
+    let biaWins = 0;
+    let cidaCardsLeft = 0;
+    for (let seed = 1; seed <= 12; seed++) {
+      let state = createNewGame(seed, [
+        { name: 'bia', isAi: true },
+        { name: 'cida', isAi: true },
+      ]);
+      const ais = [createAi('bia'), createAi('cida')];
+      for (let turn = 0; turn < 400 && state.phase === 'playing'; turn++) {
+        const d = ais[state.activePlayerIndex]!.decide(observeForAi(state));
+        state = d.kind === 'confirm' ? applyConfirmedTurn(state, d.draft) : drawAndEndTurn(state);
+      }
+      if (state.winnerId === state.players[0]!.id) biaWins++;
+      cidaCardsLeft += state.players[1]!.hand.length;
+    }
+    expect(biaWins).toBeGreaterThanOrEqual(10);
+    // Cida ends these games holding 7.67 cards on average; a search that still wins but only just
+    // shows up here long before it shows up in the win column.
+    expect(cidaCardsLeft / 12).toBeGreaterThanOrEqual(5);
+  });
+});
+
 describe('AI observation', () => {
   it('keeps the own hand, the table and the public turn state', () => {
     const state = tableRearrangement();

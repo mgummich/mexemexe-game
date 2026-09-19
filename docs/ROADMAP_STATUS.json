@@ -2,8 +2,8 @@
   "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
   "updated": "2026-09-19",
   "current": {
-    "wave": "6E",
-    "phase": "55 \u2014 AI Content Tooling",
+    "wave": "7A",
+    "phase": "57 \u2014 Multiplayer Contract Audit",
     "status": "AUDITING"
   },
   "head": "5abd5da",
@@ -297,6 +297,45 @@
           "owner": "Phase 84 \u2014 Flaky-Test Control"
         }
       ]
+    },
+    {
+      "phase": "55 \u2014 AI Content Tooling",
+      "wave": "6E",
+      "status": "PASS",
+      "result": "Added --explain to the simulation harness: one line per decision (seat, personality, reason class, cards played, rearranged, candidates weighed, trials spent). Replaces the throwaway-script / console.log-in-the-engine investigation loop.",
+      "acceptance": "reproducible (seeded, deterministic trace); nothing in src/ imports scripts/; no configuration duplicated; output derived from the AiObservation so it cannot name a hidden card",
+      "verification": [
+        "npm run simulate -- --seeds 12 --explain",
+        "npx eslint scripts/simulate.ts",
+        "npm run verify (exit 0)"
+      ],
+      "critic": {
+        "round": 1,
+        "result": "CRITIC PASS, exit criteria met"
+      }
+    },
+    {
+      "phase": "56 \u2014 AI Regression & Robustness",
+      "wave": "6E",
+      "status": "PASS",
+      "result": "Added a strategy-regression threshold: Bia must beat Cida on >=10 of 12 seeded matches and leave her holding >=5 cards on average. Existing coverage (legality, determinism, budgets, redaction, property, probes, golden replays) protects everything except a search that silently gets worse while staying legal and in character.",
+      "acceptance": "outcome-based, so refactors keeping the AI competent pass; deterministic (no run-to-run randomness); ~2s of a ~9s suite",
+      "verification": [
+        "npx vitest run tests/ai.test.ts (78/78)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p56b.log)"
+      ],
+      "evidence": {
+        "baselineSeeds1to12": {
+          "biaWins": 12,
+          "cidaAvgCardsLeft": 7.67
+        },
+        "harness200Games": "bia 197 / cida 3"
+      },
+      "critic": {
+        "round": 2,
+        "result": "CRITIC PASS after repair. Round 1 called the win-count-only threshold under-powered for moderate regressions (~60% detection at a 10% quality loss); the margin assertion was added as a continuous measurement, one value per game instead of one bit."
+      },
+      "roadmapMismatch": "Phase 56 lists 'selective mutation' in scope. stryker.conf.json deliberately excludes src/ai (documented in docs/TESTING.md): mutating a heuristic search measures the heuristic, not a contract. Repo truth preserved."
     }
   ]
 }
