@@ -182,7 +182,15 @@ async function playToFinish(pages: Page[], stopAtDrawCount = 0): Promise<void> {
     const idx = await p.evaluate(() => window.__MEXE__.online?.localSeat?.());
     if (idx !== undefined) byIndex.set(idx, p);
   }
-  for (let i = 0; i < 600; i++) {
+  // Two budgets, because one draw is not one iteration. A seat the server is playing for (an
+  // absent client) only moves when its turn clock expires, and an iteration that finds nothing to
+  // draw costs ~20ms — so a pure iteration count is really a wall-clock budget whose length
+  // depends on how fast the engine answers, and it ran out before a 15s server turn on WebKit
+  // while passing on Chromium. Draws are capped; waiting is capped by how long nothing has
+  // happened, which is what "stuck" actually means.
+  const STALL_MS = 45_000;
+  let lastProgress = Date.now();
+  for (let draws = 0; draws < 600 && Date.now() - lastProgress < STALL_MS; ) {
     const active = await pages[0]!.evaluate((stopAt) => {
       if (window.__MEXE__.scene === 'win') return 'done' as const;
       const s = window.__MEXE__.state?.();
@@ -207,6 +215,8 @@ async function playToFinish(pages: Page[], stopAtDrawCount = 0): Promise<void> {
       await pages[0]!.waitForTimeout(20);
       continue;
     }
+    draws++;
+    lastProgress = Date.now();
     // Wait in the browser for the turn to actually move, instead of polling for it one CDP
     // round-trip at a time. The old fixed 20ms sleep meant a draw normally cost two iterations:
     // one that drew, then one that found the same active index still rendered and did nothing.
@@ -220,7 +230,9 @@ async function playToFinish(pages: Page[], stopAtDrawCount = 0): Promise<void> {
       { timeout: 15_000 },
     );
   }
-  throw new Error('match did not finish within draw-pile budget');
+  throw new Error(
+    `match did not finish within draw-pile budget (nothing moved for ${Math.round((Date.now() - lastProgress) / 1000)}s)`,
+  );
 }
 
 /** WinScene REMATCH for every seat — back into the same room, on the same code. */

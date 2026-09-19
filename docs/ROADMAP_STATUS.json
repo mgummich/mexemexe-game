@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "7D",
-  "phase": "67 \u2014 Cross-Browser & Device Validation",
+  "wave": "8A",
+  "phase": "68 \u2014 Persistence & Session Recovery",
   "status": "NOT_STARTED"
  },
- "head": "b24b6bf",
+ "head": "PENDING",
  "phases": [
   {
    "phase": "46 \u2014 Strategic Planning",
@@ -671,6 +671,49 @@
    "notes": [
     "No roadmap/repo mismatch. The phase warned about a soak that only burns time: every assertion here is a baseline or an exact counter, and the run frequency is split (2 cycles per PR, 8 nightly).",
     "Status file head was d716589 while HEAD was 5d913bf; the seven commits in between are the Phase 65 repairs already recorded in the Phase 65 entry, not unrecorded work."
+   ]
+  },
+  {
+   "phase": "67 \u2014 Cross-Browser & Device Validation",
+   "wave": "7D",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "The risk-based split already existed (Chromium runs the whole multiplayer suite, Firefox and WebKit run the lobby state machine, WebKit also runs the iPhone-viewport suite, e2e-cross covers 8 device/engine profiles), so the phase was audit plus two gaps. Gap 1: background/foreground was unowned at browser level \u2014 added LB-48 on WebKit/iPhone and made its evidence a gate in check-verify-multiplayer.mjs. Gap 2 (a defect this phase found): LB-47 failed on WebKit and passed on Chromium because playToFinish budgeted iterations, not draws \u2014 a seat the server plays for only moves when its 15s turn clock expires, and 600 fast iterations ran out first. The budget is now draws plus a stall deadline.",
+   "acceptance": "LB-48: a hide/show round trip opens no second socket and leaves seat, host, ready bit and roster identical (WebKit, 390x844); LB-47 passes on WebKit and Chromium; the whole WebKit project and the whole Chromium suite stay green; the cross-device profiles stay green",
+   "verification": [
+    "npx playwright test -c playwright.multiplayer.config.ts --project=webkit (26/26, 2.3m, tmp/agent-logs/webkit-p67c.log)",
+    "npx playwright test -c playwright.multiplayer.config.ts --project=chromium --grep-invert @chaos (44/44, 5.0m, tmp/agent-logs/chromium-p67.log)",
+    "npx playwright test -c playwright.cross.config.ts --project=chrome --project=safari --project='ios safari' --project=ipad (52 passed, 24 skipped, 30.3s)",
+    "npx eslint e2e-multiplayer scripts/check-verify-multiplayer.mjs (clean), npx tsc --noEmit (clean)"
+   ],
+   "evidence": {
+    "lb47Before": "[webkit] LB-47 failed at 20.7s with 'match did not finish within draw-pile budget', standalone and in the full project; [chromium] the same test passed in 30.3s (tmp/agent-logs/webkit-lb47.log, chromium-lb47.log)",
+    "lb47After": "[webkit] LB-47 passes in 25.4s; the failure message now names how long nothing moved",
+    "checkerProbe": "rewriting verify-lobby-ios-log.json with resume.socketsOpened=1 makes check-verify-multiplayer.mjs fail with 'a background/foreground round trip did not resume on the live session'; the log was restored afterwards",
+    "screenshot": "docs/screenshots/lb-ios-resume-resumed.png"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS with one honest limitation recorded: LB-48's socket-count assertion does not flip when OnlineScene's resume branch is mutated from requestResync() to connect(), because NetClient.connect() is a no-op while the socket is open. The test still owns what the unit level cannot: that the shipped bundle wires the lifecycle listeners at all, and that a resume does not duplicate the session. The branch that matters when the socket is gone is covered by tests/net/reconnect.test.ts, including the exhaustion-to-recovery case added in Phase 66."
+   },
+   "docs": [
+    "docs/INVARIANTS.md SCN-43 (background and back)",
+    "docs/TESTING.md: the verify:multiplayer gate description now names the background/foreground evidence"
+   ],
+   "deferredRisks": [
+    {
+     "id": "P2-firefox-unverifiable-locally",
+     "note": "Firefox cannot launch on this macOS 27 machine (browserType.launch: Failed to launch the browser process), so no Firefox evidence was produced for this phase or for the shared playToFinish change, which the Firefox lobby run also uses. The nightly multiplayer-all-engines job is the only Firefox gate available.",
+     "owner": "Phase 84 \u2014 Flaky-Test Control"
+    },
+    {
+     "id": "P3-lb48-weak-mutant",
+     "note": "LB-48 proves the wiring and the no-duplicate-session invariant, not which resume branch ran. See the critic note.",
+     "owner": "Phase 100 \u2014 final multiplayer QA"
+    }
+   ],
+   "notes": [
+    "Roadmap assumed the cross-browser split might need building; the repo already had it. The phase's value was the WebKit-only LB-47 defect and the background/foreground gap, both inside the roadmap's own 'platform-specific issues' bullet.",
+    "Engine logs are written per project, so running engines in separate commands leaves check-verify-multiplayer.mjs reporting 'no lobby evidence for webkit'. That is the split run, not a missing gate: the real verify:multiplayer runs all three engines in one pass."
    ]
   }
  ],

@@ -222,6 +222,10 @@ if (!ENGINES.includes('webkit')) {
     failed = true;
     console.error('verify:multiplayer: orientation change did not preserve the seat', ios.rotate);
   }
+  if (ios.resume?.socketsOpened !== 0 || ios.resume?.seat !== 1) {
+    failed = true;
+    console.error('verify:multiplayer: a background/foreground round trip did not resume on the live session', ios.resume);
+  }
   if (!ios.webkitMatch?.firstId || ios.webkitMatch.firstId === ios.webkitMatch.secondId) {
     failed = true;
     console.error('verify:multiplayer: WebKit rematch did not mint a fresh matchId', ios.webkitMatch);

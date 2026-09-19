@@ -829,7 +829,7 @@ not baseline-diffed.
 | Gate | What it adds |
 |---|---|
 | `npm run verify` | `test` + `lint` + `screenshot` + `scripts/check-verify.mjs`: no console/page errors, every expected screenshot present, no asset fell back to placeholder art, fps floors met (the fps floors are asserted inside the three `@perf` tests). |
-| `npm run verify:multiplayer` | Build + the multiplayer suite on Chromium, Firefox and WebKit + `scripts/check-verify-multiplayer.mjs`: no client console errors, no server stderr, no accepted illegal proposal, hand privacy held, state hashes agree, and per-engine lobby evidence (rendered seat gaps, a three-match endurance run, the iOS orientation/rematch gate). |
+| `npm run verify:multiplayer` | Build + the multiplayer suite on Chromium, Firefox and WebKit + `scripts/check-verify-multiplayer.mjs`: no client console errors, no server stderr, no accepted illegal proposal, hand privacy held, state hashes agree, and per-engine lobby evidence (rendered seat gaps, a three-match endurance run, the iOS orientation/rematch gate, and the background/foreground round trip that must resume on the live session rather than open a second one). |
 | `npm run verify:multiplayer:chromium` | The same, Chromium only, with the gate told not to demand the Firefox/WebKit lobby evidence (`--engines=chromium`). This is the PR-path variant. |
 | `npm run verify:cross` | Build + the cross-browser layout suite. |
 | `npm run verify:pwa` | Build + the offline/update suite. |
