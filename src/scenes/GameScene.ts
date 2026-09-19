@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { aiReasonKeySuffix, AI_SPEED_SCALE, PERSONALITY_STYLE, type EmoteKey, type Personality } from '../ai/ai';
+import { AI_SPEED_SCALE, PERSONALITY_STYLE, type EmoteKey, type Personality } from '../ai/ai';
 import { playSfx } from '../audio/sfx';
 import { setMusicContext } from '../audio/music';
 import { CARD_H, CARD_W } from '../assets/manifest';
@@ -1355,7 +1355,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       const { decision } = result;
       debugApi.lastAiThought = decision.explanation;
-      this.ui.lastAiReason = aiReasonKeySuffix(decision.explanation);
+      this.ui.lastAiReason = decision.reason?.key ?? 'draw';
       const style = PERSONALITY_STYLE[personality];
       if (decision.kind === 'confirm') {
         const played = decision.draft.handCardsPlayed.length;

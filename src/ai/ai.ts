@@ -7,9 +7,50 @@ import type { AiObservation } from './observation';
 export type { AiObservation } from './observation';
 export { observeForAi } from './observation';
 
-export type AiDecision =
-  | { kind: 'confirm'; draft: DraftState; explanation: string }
-  | { kind: 'draw'; explanation: string };
+export type AiDecision = ({ kind: 'confirm'; draft: DraftState } | { kind: 'draw' }) & {
+  /** Human-readable detail, for debugging and the debug API. Never parsed for meaning. */
+  explanation: string;
+  /** What the search structurally did. Set by the engine that decided; see `AiReason`. */
+  trace: DecisionTrace;
+  /** Why, as data. Attached by `createAi`, which is the only place a personality is known. */
+  reason?: AiReason;
+};
+
+/**
+ * What the engine structurally did to reach a decision — facts the search already has, recorded
+ * rather than inferred afterwards from the wording of `explanation`.
+ */
+export interface DecisionTrace {
+  /** The chosen draft moved cards that were already on the shared table. */
+  readonly rearranged: boolean;
+  /** A personality declined a legal play to wait for a bigger one (see `PatientAi`). */
+  readonly patient: boolean;
+  /** How many legal candidates the search weighed before choosing — 1 for a greedy engine, 0 for
+   *  a draw with nothing to weigh. The chosen-versus-alternatives count, not the alternatives
+   *  themselves: enough to tell a lucky single option from a considered pick, and bounded. */
+  readonly candidatesWeighed: number;
+  /** Base evaluation of the chosen draft, or null for a draw. */
+  readonly features: CandidateFeatures | null;
+}
+
+/**
+ * The localization key (`ai.why.<key>`) and the metadata behind it. Observational only: nothing in
+ * a decision path reads an `AiReason`, and dropping it would not change a single move.
+ *
+ * The trace is the AI's own bookkeeping and is meant to be read by debug and balance tooling; only
+ * `key` is ever shown to a player. It cannot leak: every field is derived from the seat's own
+ * `AiObservation`, which has no opponent hand and no pile order in it to begin with (INV-A2).
+ */
+export interface AiReason {
+  readonly key: AiReasonKey;
+  readonly personality: Personality;
+  readonly trace: DecisionTrace;
+}
+
+export type AiReasonKey =
+  | 'minimal-extend' | 'minimal-meld' | 'dump-all' | 'dump'
+  | 'rearrange-extend' | 'simple-best' | 'big-rearrange' | 'big-play'
+  | 'hold-for-bigger' | 'draw';
 
 /**
  * The AI boundary. The only inputs to a decision are the observation (the seat's player view —
@@ -202,9 +243,10 @@ export class SimpleAi implements AiPlayer {
 
     const check = ed.canConfirm();
     if (check.ok) {
-      return { kind: 'confirm', draft: ed.getDraft(), explanation: notes.join('; ') };
+      const draft = ed.getDraft();
+      return { kind: 'confirm', draft, explanation: notes.join('; '), trace: greedyTrace(state, draft) };
     }
-    return { kind: 'draw', explanation: 'no legal play — drawing' };
+    return { kind: 'draw', explanation: 'no legal play — drawing', trace: DREW };
   }
 
   private decideMinimalExtendOnly(state: AiObservation): AiDecision {
@@ -217,14 +259,23 @@ export class SimpleAi implements AiPlayer {
           ed.playHandCard(card.id, meld.id);
           const check = ed.canConfirm();
           if (check.ok) {
-            return { kind: 'confirm', draft: ed.getDraft(), explanation: `extended with ${card.id}` };
+            const draft = ed.getDraft();
+            return { kind: 'confirm', draft, explanation: `extended with ${card.id}`, trace: greedyTrace(state, draft) };
           }
           ed.undo(); // that extension doesn't stand on its own — don't carry it into the next try
         }
       }
     }
-    return { kind: 'draw', explanation: 'no legal play — drawing' };
+    return { kind: 'draw', explanation: 'no legal play — drawing', trace: DREW };
   }
+}
+
+/** A draw weighs nothing and moves nothing. */
+const DREW: DecisionTrace = { rearranged: false, patient: false, candidatesWeighed: 0, features: null };
+
+/** A greedy engine builds exactly one draft and never touches the committed table. */
+function greedyTrace(state: AiObservation, draft: DraftState): DecisionTrace {
+  return { rearranged: false, patient: false, candidatesWeighed: 1, features: evaluateDraft(state, draft) };
 }
 
 interface Candidate {
@@ -232,6 +283,9 @@ interface Candidate {
   explanation: string;
   /** Base evaluation of this draft — the only thing `compareCandidates` looks at. */
   features: CandidateFeatures;
+  /** This draft moved cards that were already on the table. Recorded here by whoever generated
+   *  it, so the decision's trace states it instead of guessing from the explanation's wording. */
+  rearranged: boolean;
 }
 
 const MAX_CANDIDATES = 20;
@@ -276,8 +330,14 @@ class SearchBudget {
   }
 }
 
-function addCandidate(candidates: Candidate[], state: GameState, draft: DraftState, explanation: string): void {
-  candidates.push({ draft, explanation, features: evaluateDraft(state, draft) });
+function addCandidate(
+  candidates: Candidate[],
+  state: GameState,
+  draft: DraftState,
+  explanation: string,
+  rearranged = true,
+): void {
+  candidates.push({ draft, explanation, features: evaluateDraft(state, draft), rearranged });
 }
 
 /** Steal an edge card (first/last) from a 4+ meld and form a brand-new meld with 2 or 3 hand cards. */
@@ -459,7 +519,7 @@ export class RearrangerAi implements AiPlayer {
   private seedFromSimplePlay(state: AiObservation): { candidates: Candidate[]; hand: Card[] } {
     const candidates: Candidate[] = [];
     const simple = this.simple.decide(state);
-    if (simple.kind === 'confirm') addCandidate(candidates, state, simple.draft, simple.explanation);
+    if (simple.kind === 'confirm') addCandidate(candidates, state, simple.draft, simple.explanation, false);
     return { candidates, hand: sortCards(state.players[state.activePlayerIndex]!.hand) };
   }
 
@@ -498,11 +558,21 @@ const REARRANGE_SEARCHES = [searchEdgeSteal, searchRunSplit, searchInterMeldMove
 
 function pickBest(candidates: Candidate[]): AiDecision {
   if (candidates.length === 0) {
-    return { kind: 'draw', explanation: 'no play even with rearrange — drawing' };
+    return { kind: 'draw', explanation: 'no play even with rearrange — drawing', trace: DREW };
   }
   candidates.sort(compareCandidates);
   const best = candidates[0]!;
-  return { kind: 'confirm', draft: best.draft, explanation: best.explanation };
+  return {
+    kind: 'confirm',
+    draft: best.draft,
+    explanation: best.explanation,
+    trace: {
+      rearranged: best.rearranged,
+      patient: false,
+      candidatesWeighed: candidates.length,
+      features: best.features,
+    },
+  };
 }
 
 export type EmoteKey = 'excited' | 'thinking' | 'annoyed' | 'happy' | 'sleepy' | 'confident';
@@ -533,45 +603,30 @@ export type AiSpeed = 'instant' | 'fast' | 'normal' | 'slow';
 export const AI_SPEED_SCALE: Record<AiSpeed, number> = { instant: 0, fast: 0.5, normal: 1, slow: 1.8 };
 
 /**
- * Strip the personality prefix off a tagged explanation (`bia:rearrange-extend: ...`) and return
- * just the reason class, which is the `ai.why.<suffix>` localization key. Returns `'draw'` for
- * anything unrecognized, so an untagged explanation degrades to the generic line rather than
- * rendering a raw key on screen.
+ * Why this personality made this move, as data. Reads the engine's own trace — what the search
+ * structurally did — instead of pattern-matching the prose it wrote about itself, which is what
+ * made a reworded explanation silently change the line shown to the player.
+ *
+ * Observational: `createAi` attaches the result to the decision it is already returning, and no
+ * engine, search or rule ever reads it back (INV-A7).
  */
-export function aiReasonKeySuffix(explanation: string): string {
-  const tag = explanation.split(':', 2)[1];
-  return tag !== undefined && AI_REASON_KEYS.includes(tag) ? tag : 'draw';
-}
-
-const AI_REASON_KEYS: readonly string[] = [
-  'minimal-extend', 'minimal-meld', 'dump-all', 'dump',
-  'rearrange-extend', 'simple-best', 'big-rearrange', 'big-play',
-  'hold-for-bigger', 'draw',
-];
-
-/** Classify *why* a personality made this move, for debug/e2e (`ai:reason` tag prepended to
- * `explanation`) — not used for any behavioural decision. */
-function classifyReason(personality: Personality, d: AiDecision): string {
-  if (d.kind === 'draw') {
-    if (personality === 'ze' && d.explanation.startsWith('patient:')) return 'ze:hold-for-bigger';
-    return `${personality}:draw`;
-  }
+function classifyReason(personality: Personality, d: AiDecision): AiReasonKey {
+  if (d.kind === 'draw') return personality === 'ze' && d.trace.patient ? 'hold-for-bigger' : 'draw';
   const played = d.draft.handCardsPlayed.length;
-  const rearranged = /rearranged|split|moved/.test(d.explanation);
   switch (personality) {
     case 'cida':
-      return d.explanation.startsWith('extended') ? 'cida:minimal-extend' : 'cida:minimal-meld';
+      return played === 1 ? 'minimal-extend' : 'minimal-meld';
     case 'juninho':
-      return played >= 3 ? 'juninho:dump-all' : 'juninho:dump';
+      return played >= 3 ? 'dump-all' : 'dump';
     case 'bia':
-      return rearranged ? 'bia:rearrange-extend' : 'bia:simple-best';
+      return d.trace.rearranged ? 'rearrange-extend' : 'simple-best';
     case 'ze':
-      return rearranged ? 'ze:big-rearrange' : 'ze:big-play';
+      return d.trace.rearranged ? 'big-rearrange' : 'big-play';
   }
 }
 
-function tagReason(personality: Personality, d: AiDecision): AiDecision {
-  return { ...d, explanation: `${classifyReason(personality, d)}: ${d.explanation}` } as AiDecision;
+function withReason(personality: Personality, d: AiDecision): AiDecision {
+  return { ...d, reason: { key: classifyReason(personality, d), personality, trace: d.trace } };
 }
 
 /** How hard the opponents play. Difficulty picks the *search tier*; personality picks the
@@ -635,9 +690,9 @@ export function createAi(personality: Personality, difficulty: Difficulty = 'sma
   // the same thing, because the tier had already suppressed everything else that separates them.
   const engine = traits.patient ? new PatientAi(base) : base;
   return {
-    decide: (state) => tagReason(personality, engine.decide(state)),
+    decide: (state) => withReason(personality, engine.decide(state)),
     ...(engine.decideSliced
-      ? { decideSliced: async (state: AiObservation) => tagReason(personality, await engine.decideSliced!(state)) }
+      ? { decideSliced: async (state: AiObservation) => withReason(personality, await engine.decideSliced!(state)) }
       : {}),
   };
 }
@@ -656,7 +711,11 @@ class PatientAi implements AiPlayer {
       const played = d.draft.handCardsPlayed.length;
       const hand = state.players[state.activePlayerIndex]!.hand.length;
       if (state.turn <= state.players.length * 2 && hand > 5 && played < 3) {
-        return { kind: 'draw', explanation: `patient: holding ${played}-card play for later` };
+        return {
+          kind: 'draw',
+          explanation: `holding ${played}-card play for later`,
+          trace: { ...d.trace, patient: true, features: null },
+        };
       }
     }
     return d;

@@ -210,7 +210,13 @@ does not compile. That is INV-A2 as a type rather than a habit, and it is the sa
 remote player is sent, which is why nothing here would need rewriting for a server-side AI.
 
 **Decision.** `AiPlayer.decide(observation)` (or `decideSliced`, the same search yielding between
-phases) returns gameplay intent — `confirm` with a draft, or `draw`. The inputs are the
+phases) returns gameplay intent — `confirm` with a draft, or `draw` — plus a `DecisionTrace`: what
+the search structurally did (rearranged the table, declined a play out of patience, how many legal
+candidates it weighed, the chosen draft's features). `createAi` reads that trace to attach an
+`AiReason`, whose `key` is the `ai.why.*` line the player may be shown. It is observational
+(INV-A7): the engines never read it back, it holds nothing the seat could not see, and it exists
+because the reason used to be recovered by pattern-matching the prose the search wrote about
+itself — so rewording an explanation could silently change what the game told the player. The inputs are the
 observation and the engine's construction-time configuration (personality policy, search tier,
 trial budget); there is no clock, no settings read, no scene and no unseeded randomness. Tie-breaks
 are lexicographic rather than random, so no RNG is threaded in at all.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aiReasonKeySuffix, AI_SPEED_SCALE, createAi, DIFFICULTIES, RearrangerAi, SimpleAi } from '../src/ai/ai';
+import { AI_SPEED_SCALE, createAi, DIFFICULTIES, RearrangerAi, SimpleAi } from '../src/ai/ai';
 import { compareByBaseEvaluation, evaluateDraft, type CandidateFeatures } from '../src/ai/evaluate';
 import { observeForAi } from '../src/ai/observation';
 import { t } from '../src/localization/i18n';
@@ -121,15 +121,16 @@ describe('RearrangerAi', () => {
     expect(await ai.decideSliced(observeForAi(base([n('hearts', 2), n('spades', 7)])))).toEqual({
       kind: 'draw',
       explanation: 'no play even with rearrange — drawing',
+      trace: { rearranged: false, patient: false, candidatesWeighed: 0, features: null },
     });
   });
 
-  it('createAi exposes decideSliced for rearranging personalities and tags its reason', async () => {
+  it('createAi exposes decideSliced for rearranging personalities and names its reason', async () => {
     const ai = createAi('bia');
     expect(ai.decideSliced).toBeDefined();
     const d = await ai.decideSliced!(observeForAi(base([n('hearts', 2), n('spades', 7)])));
     expect(d.kind).toBe('draw');
-    expect(d.explanation.startsWith('bia:')).toBe(true);
+    expect(d.reason).toEqual({ key: 'draw', personality: 'bia', trace: d.trace });
   });
 
   it('splits a 6+ run to reach an interior card when plain extension is impossible', () => {
@@ -658,7 +659,7 @@ describe('cida (conservative) plays exactly one action per turn', () => {
 describe('personality expression (Phase 9)', () => {
   const personalities = ['cida', 'juninho', 'bia', 'ze'] as const;
 
-  it('every personality tags its explanation with a personality:reason code', () => {
+  it('every personality names itself and a reason class on the decision it returns', () => {
     const hand = [
       n('hearts', 9), n('spades', 9), n('clubs', 9),
       n('hearts', 4), n('hearts', 5), n('hearts', 6),
@@ -666,7 +667,8 @@ describe('personality expression (Phase 9)', () => {
     const state = base(hand);
     for (const p of personalities) {
       const d = createAi(p).decide(observeForAi(state));
-      expect(d.explanation.startsWith(`${p}:`)).toBe(true);
+      expect(d.reason?.personality).toBe(p);
+      expect(d.reason?.key).toBeTruthy();
     }
   });
 
@@ -843,19 +845,47 @@ describe('AI difficulty', () => {
     expect(expert.kind).toBe('confirm');
   });
 
-  it('the reason suffix of every decision is a real ai.why.* key', () => {
+  it('the reason key of every decision is a real ai.why.* key', () => {
     const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), n('hearts', 6), n('hearts', 7)];
     for (const difficulty of DIFFICULTIES) {
       for (const p of personalities) {
-        const suffix = aiReasonKeySuffix(createAi(p, difficulty).decide(observeForAi(base(hand))).explanation);
-        expect(t(`ai.why.${suffix}`)).not.toBe(`ai.why.${suffix}`); // a missing key renders as the key
+        const key = createAi(p, difficulty).decide(observeForAi(base(hand))).reason!.key;
+        expect(t(`ai.why.${key}`)).not.toBe(`ai.why.${key}`); // a missing key renders as the key
       }
     }
   });
 
-  it('an untagged explanation degrades to the generic draw reason instead of a raw key', () => {
-    expect(aiReasonKeySuffix('something unexpected')).toBe('draw');
-    expect(aiReasonKeySuffix('bia:not-a-real-class: text')).toBe('draw');
+  it('reports what the search did, not what it wrote about itself', () => {
+    // A rearranging play must say `rearranged`, and the count must be the candidates weighed —
+    // the two facts Phase 53/54 tooling reads, and the ones the old prose-matching guessed at.
+    // Table hearts 3-4-5-6, hand spades-6 + clubs-6: the only play steals hearts-6 for a set.
+    const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] }];
+    const state = base([n('spades', 6), n('clubs', 6), n('diamonds', 12)], table);
+    const d = createAi('bia').decide(observeForAi(state));
+    expect(d.kind).toBe('confirm');
+    expect(d.trace.rearranged).toBe(true);
+    expect(d.trace.candidatesWeighed).toBeGreaterThan(0);
+    expect(d.trace.features).not.toBeNull();
+    expect(d.reason!.key).toBe('rearrange-extend');
+    // ...and a plain greedy play weighs exactly its own one draft.
+    const simple = createAi('juninho').decide(observeForAi(base([n('hearts', 9), n('spades', 9), n('clubs', 9)])));
+    expect(simple.trace).toMatchObject({ rearranged: false, candidatesWeighed: 1 });
+  });
+
+  /** INV-A7: the reason is something the decision carries, never something it consults. */
+  it('explainability is attached, not consulted: engines decide without one and the reason is a pure function of the decision', () => {
+    const table = [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5), n('hearts', 6)] }];
+    const state = observeForAi(base([n('spades', 6), n('clubs', 6), n('diamonds', 12)], table));
+    // The engine itself names no reason — only createAi, which is the only place a personality exists.
+    expect(new RearrangerAi().decide(state).reason).toBeUndefined();
+    // ...and attaching one changes nothing about the move that was chosen.
+    const bare = new RearrangerAi().decide(state);
+    const explained = createAi('bia').decide(state);
+    expect(bare.kind).toBe('confirm');
+    expect(explained.kind).toBe('confirm');
+    if (bare.kind !== 'confirm' || explained.kind !== 'confirm') return;
+    expect(explained.draft).toEqual(bare.draft);
+    expect(createAi('bia').decide(state).reason).toEqual(explained.reason);
   });
 
   it('the speed scale is presentation only and instant really is zero', () => {
