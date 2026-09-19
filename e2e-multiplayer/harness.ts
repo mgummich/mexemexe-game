@@ -204,6 +204,10 @@ async function clientContext(page: Page): Promise<Record<string, unknown>> {
 export async function attachClientContexts(testInfo: TestInfo): Promise<void> {
   const pages = openedClients.splice(0);
   if (testInfo.status === testInfo.expectedStatus) return;
+  // A timed-out test leaves its hooks whatever is left of the budget, which is nothing — so the
+  // one failure that most needs this context is the one that would silently lose it (CI run
+  // 35471194957 attached five screenshots and no context). Ask for our own.
+  testInfo.setTimeout(30_000);
   const clients = [];
   for (const [index, page] of pages.entries()) clients.push({ client: index, ...(await clientContext(page)) });
   await testInfo.attach('client-context', { body: JSON.stringify(clients, null, 2), contentType: 'application/json' });

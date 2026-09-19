@@ -662,7 +662,15 @@
       "cause": "peak concurrency. This suite is contention-bound and already dropped from three workers to two because these same two tests starved; five more tests each holding two browser contexts plus a Node-side frame proxy put it back over the edge.",
       "change": "CH-01..CH-05 are tagged @chaos and greped out of verify:multiplayer:chromium (the PR path). The nightly verify:multiplayer still runs them. Locally they are -g CH-0.",
       "evidence": "PR selection is back to 44 tests in 2 files; npm run verify:multiplayer:chromium exit 0 (tmp/agent-logs/verify-mp-chaos-split.log); the five @chaos tests pass 5/5 in 21.9s when selected",
-      "stillOpen": "OD-28/OD-29 also fails nightly on main, so it has a contention problem of its own that predates this branch. Owner: Phase 66."
+      "stillOpen": "OD-28/OD-29 also fails nightly on main, so it has a contention problem of its own that predates this branch. Owner: Phase 66.",
+      "followUp": "The chaos split fixed OD-28/OD-29 but not LB-19..LB-24, so the contention story was only half of it. The rest: that test measured 4.8m against its 420s budget on the last green CI run — 31% headroom for the heaviest test in the repo — and the suite has since gained LB-47 (c9e2e96, committed before this session but after that green run), another multi-context lobby test in the same parallel file. Budget raised to 600s (2x measured). The ratchet has now happened twice (300 -> 420 -> 600); the structural fix is to stop the two heaviest lobby tests from overlapping, which is left to Phase 66/84 rather than guessed at here."
+    },
+    {
+      "task": "attachClientContexts lost its context on exactly the failure it was built for",
+      "trigger": "CI run 35471194957: LB-19..LB-24 timed out and attached five screenshots and no client-context. A timed-out test leaves its hooks none of the budget, so the afterEach could not finish.",
+      "change": "attachClientContexts calls testInfo.setTimeout(30_000) before reading the clients.",
+      "evidence": "a deliberately timing-out probe spec (deleted after the run) attached ['screenshot', 'client-context', 'error-context'] with seat 0 and room code 68C54 readable in the context",
+      "note": "Phase 63 claimed 'failures identify client/seat/revision context' on the strength of an assertion failure. A timeout is the other failure mode and it did not hold there; this closes that gap."
     }
   ]
 }

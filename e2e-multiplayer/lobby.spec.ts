@@ -547,7 +547,13 @@ test('LB-19/LB-21/LB-22/LB-23/LB-24: three matches across departures, a replacem
   // 28.2s. This suite runs about 4x slower on a shared runner (4.6m local vs 18.1m on CI), which
   // put the old 300s budget ~20% above the projection — close enough that a slow runner tipped
   // it over, which is exactly what happened.
-  test.setTimeout(420_000);
+  //
+  // And then it happened again at 420s. Measured: 4.8m (288s) on the last green CI run, against
+  // a 420s budget — 31% of headroom for the heaviest test in the repo, on a suite that has since
+  // gained LB-47, another multi-context lobby test in this same parallel file. 600s is 2x the
+  // measured work. The ratchet itself is the smell: the structural fix is to stop the two
+  // heaviest lobby tests from overlapping at all, which is Phase 66/84 ground, not a number.
+  test.setTimeout(600_000);
   const pages = await clients(browser, 5);
   const [a, b, c, d, e] = pages as [Page, Page, Page, Page, Page];
   const code = await createRoom(a, 'Ana');
