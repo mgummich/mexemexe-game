@@ -51,6 +51,34 @@ const DUP_NINE_ID = 'hearts-9-d1';
 const DUP_TRIO_IDS = [DUP_NINE_ID, 'spades-9-d1', 'clubs-9-d1'];
 const JOKER_ID = 'joker-d0-1';
 
+/**
+ * The lesson, and only the lesson. Each step teaches one thing the player cannot play without,
+ * in the order it first matters — objective, then a turn, then the two meld shapes, then that the
+ * table is editable, then how a turn ends, then how the game ends. Strategy is not onboarding.
+ *
+ * | Step | Objective it teaches |
+ * |---|---|
+ * | `goal` | what winning is |
+ * | `set` | what a trinca is, and that cards move by dragging |
+ * | `trinca-limit` | melds have rules, breaking one is visible and recoverable |
+ * | `run` | the other meld shape |
+ * | `extend` | melds already on the table can be added to |
+ * | `joker` | jokers exist and have a cost (only where the fixture makes it unavoidable) |
+ * | `mexe-explain` + `rebuild` | the whole table is editable mid-turn — the game's one unusual idea |
+ * | `invalid` | temporary invalidity is normal, and Undo reverts one move |
+ * | `feito` | how a turn is confirmed, and that confirming is what makes it permanent |
+ * | `comprar` | what drawing does, and that it ends the turn |
+ * | `win` | how the game ends |
+ *
+ * Whose turn it is, and how to read the board, are taught by the board itself (the turn banner,
+ * the objective line, the `✗` badges) — the lesson points at them rather than restating them.
+ *
+ * Two boundaries hold for every step. Pedagogically, a step may *narrow* the legal moves
+ * (`allowed`) and nothing else; legality stays with `src/rules`, and every confirmed move here
+ * goes through the same action path a real match uses. Presentationally, copy names controls
+ * ("press FEITO"), never screen positions — the panel is a right-hand column in landscape and a
+ * top band in portrait, and it is translated.
+ */
 export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'goal',

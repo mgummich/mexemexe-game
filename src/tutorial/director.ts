@@ -26,6 +26,12 @@ export class TutorialDirector {
    * though the fresh draft no longer satisfies the draft-based steps before it.
    */
   private autoAdvanced: { index: number; turn: number }[] = [];
+  /**
+   * The player just tried something this step does not accept. Held until they do something it
+   * does accept, so the refusal can be *said* rather than only played as a sound — a rejection a
+   * muted player never perceives reads as a broken control (Phase 40 Part E / A11Y-007).
+   */
+  private blockedFlag = false;
 
   get step(): TutorialStep {
     return TUTORIAL_STEPS[this.index]!;
@@ -56,8 +62,25 @@ export class TutorialDirector {
     });
   }
 
+  /** True while the last interaction was refused by this step's script. */
+  get blocked(): boolean {
+    return this.blockedFlag;
+  }
+
+  /** Record a refused interaction. Pedagogical only: the rules already rejected nothing here —
+   * the action was legal, it just was not what this lesson step asks for. */
+  noteBlocked(): void {
+    this.blockedFlag = true;
+  }
+
+  /** The player did something the step accepts — drop the refusal notice. */
+  clearBlocked(): void {
+    this.blockedFlag = false;
+  }
+
   /** Manual advance for pure-explanation steps (NEXT button). */
   next(): void {
+    this.blockedFlag = false;
     if (this.index < TUTORIAL_STEPS.length - 1) this.index++;
     // An explicit NEXT locks in everything before it: some later steps deliberately ask the
     // player to undo an earlier step's goal (put the 9♣ back), which must not rewind the script.
@@ -69,6 +92,7 @@ export class TutorialDirector {
   checkComplete(state: GameState, draft: DraftState | null): boolean {
     this.rewindUndoneGoals(state, draft);
     if (!this.step.isComplete({ state, draft })) return false;
+    this.blockedFlag = false; // the goal was reached — whatever was refused before is history
     if (this.index < TUTORIAL_STEPS.length - 1) {
       this.autoAdvanced.push({ index: this.index, turn: state.turn });
       this.index++;
@@ -92,6 +116,7 @@ export class TutorialDirector {
   restart(): void {
     this.index = 0;
     this.finishedFlag = false;
+    this.blockedFlag = false;
     this.autoAdvanced = [];
   }
 }

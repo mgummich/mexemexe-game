@@ -10,6 +10,7 @@ import { view } from '../ui/viewport';
 import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 import type { GameSceneConfig } from './GameScene';
+import { ACTION, SURFACE, TEXT } from '../ui/tokens';
 
 type Personality = 'cida' | 'juninho' | 'bia' | 'ze';
 
@@ -20,6 +21,10 @@ const AI_LINEUP: { name: string; personality: Personality }[] = [
   { name: 'Seu Zé', personality: 'ze' },
 ];
 const CYCLE: Personality[] = ['cida', 'juninho', 'bia', 'ze'];
+
+/** The seating-preview table top. Content, not chrome: it is a picture of the table everyone is
+ * about to sit at, and it follows the board's felt rather than any panel surface. */
+const PREVIEW_TABLE = 0x4a3a26;
 
 /**
  * Next/previous personality that no other seat already holds, so two seats can never show the
@@ -83,10 +88,10 @@ export class SetupScene extends Phaser.Scene {
     this.tweens.killAll();
     this.children.removeAll(true);
     coverBackground(this, 'bg-menu');
-    this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.4);
+    this.add.rectangle(cx(), cy(), view().w, view().h, SURFACE.base, 0.4);
     woodPanel(this, cx(), vy(154), panelW(260), vy(220));
 
-    label(this, cx(), vy(50), t('setup.title'), 12, '#f7d23e');
+    label(this, cx(), vy(50), t('setup.title'), 12, TEXT.accent);
 
     [2, 3, 4].forEach((n, i) => {
       const btn = new PixelButton(this, cx() + (190 + i * 50 - 240), vy(70), String(n), () => {
@@ -96,7 +101,7 @@ export class SetupScene extends Phaser.Scene {
       btn.setSelected(n === this.seatCount);
     });
     // What the seat count actually changes about the match, instead of a bare numeral (SETUP-06).
-    label(this, cx(), vy(89), t(`setup.players.${this.seatCount}`), 8, '#c9bda6');
+    label(this, cx(), vy(89), t(`setup.players.${this.seatCount}`), 8, TEXT.muted);
 
     const rowY0 = 102;
     const rowGap = 24;
@@ -109,20 +114,20 @@ export class SetupScene extends Phaser.Scene {
       const textX = cx() + (168 - 240);
       if (seat === 0) {
         this.add.image(avatarX, y, 'avatar-player').setDisplaySize(20, 20);
-        label(this, textX, y, t('menu.you'), 8, '#f7d23e').setOrigin(0, 0.5);
+        label(this, textX, y, t('menu.you'), 8, TEXT.accent).setOrigin(0, 0.5);
       } else {
         const p = this.aiPersonalities[seat - 1]!;
         const entry = AI_LINEUP.find((a) => a.personality === p)!;
         this.add.image(avatarX, y, `avatar-${p}`).setName(`avatar-seat-${seat}`).setDisplaySize(20, 20);
-        label(this, textX, y - 5, entry.name, 8, '#f7f2e7').setOrigin(0, 0.5);
-        label(this, textX, y + 6, t(styleKey(p)), 8, '#b8ab94').setName(`style-seat-${seat}`).setOrigin(0, 0.5);
+        label(this, textX, y - 5, entry.name, 8, TEXT.primary).setOrigin(0, 0.5);
+        label(this, textX, y + 6, t(styleKey(p)), 8, TEXT.muted).setName(`style-seat-${seat}`).setOrigin(0, 0.5);
         // Visible prev/next per seat (SETUP-03) — the old affordance was an undiscoverable
         // one-way tap on the avatar.
         new PixelButton(this, cx() + (126 - 240), y, '◀', () => this.changeSeat(seat, -1), {
-          textureBase: 'btn-small', w: 14, h: 16, size: 8, color: 0x9a8d74,
+          textureBase: 'btn-small', w: 14, h: 16, size: 8, color: ACTION.stepper,
         });
         new PixelButton(this, cx() + (354 - 240), y, '▶', () => this.changeSeat(seat, 1), {
-          textureBase: 'btn-small', w: 14, h: 16, size: 8, color: 0x9a8d74,
+          textureBase: 'btn-small', w: 14, h: 16, size: 8, color: ACTION.stepper,
         });
       }
     }
@@ -131,7 +136,7 @@ export class SetupScene extends Phaser.Scene {
     // every tier except Craque, where the engine rearranges for everyone — so the tip is hidden
     // there rather than claiming something the AI stops doing (SETUP-08).
     if (settings.get().aiDifficulty !== 'expert') {
-      label(this, cx(), vy(belowSeats + 6), t('setup.beginnerTip'), 8, '#c9bda6');
+      label(this, cx(), vy(belowSeats + 6), t('setup.beginnerTip'), 8, TEXT.muted);
     }
 
     // Match summary — the settings that actually shape the match, which are otherwise invisible
@@ -145,7 +150,7 @@ export class SetupScene extends Phaser.Scene {
         pace: t(`settings.aiSpeed.${settings.get().aiSpeed}`),
       }),
       8,
-      '#f0e8d8',
+      TEXT.primary,
     );
 
     // Where the panel's free space starts — the seating preview fills whatever is left below.
@@ -158,10 +163,10 @@ export class SetupScene extends Phaser.Scene {
       new PixelButton(this, this.advancedOpen ? cx() - 80 : cx(), advY, this.advancedOpen ? t('setup.advancedHide') : t('setup.advanced'), () => {
         this.advancedOpen = !this.advancedOpen;
         this.rebuild();
-      }, { textureBase: 'btn-comprar', w: 90, h: 13, size: 6, color: 0x8a7f68 });
+      }, { textureBase: 'btn-comprar', w: 90, h: 13, size: 6, color: ACTION.secondary });
       if (this.advancedOpen) {
         new PixelButton(this, cx() + 40, advY, t('setup.lastSeed', { seed: lastSeed }), () => this.startGame(lastSeed), {
-          textureBase: 'btn-comprar', w: 140, h: 13, size: 6, color: 0x8a7f68,
+          textureBase: 'btn-comprar', w: 140, h: 13, size: 6, color: ACTION.secondary,
         });
       }
     }
@@ -178,7 +183,7 @@ export class SetupScene extends Phaser.Scene {
     // Same corner MenuScene uses — language/settings are reachable here too, without backing
     // out to the menu and losing the seat/personality picks made on this screen.
     new PixelButton(this, view().w - 18, 10, '⚙', () => openSettingsPanel(this, () => this.rebuild()), {
-      textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.settings'),
+      textureBase: 'btn-small', w: 16, h: 14, size: 8, color: ACTION.icon, tooltip: t('tooltip.settings'),
     });
   }
 
@@ -193,9 +198,9 @@ export class SetupScene extends Phaser.Scene {
     const y = vy(topY + 26);
     const [rx, ry] = [40, vy(12)];
     const g = this.add.graphics();
-    g.fillStyle(0x4a3a26, 0.95);
+    g.fillStyle(PREVIEW_TABLE, 0.95);
     g.fillEllipse(cx(), y, rx * 2, ry * 2);
-    g.lineStyle(1, 0xc0a878, 0.9);
+    g.lineStyle(1, SURFACE.panelBorder, 0.9);
     g.strokeEllipse(cx(), y, rx * 2, ry * 2);
     this.add.image(cx(), y, 'card-back-0').setDisplaySize(10, 14).setAngle(-8);
     seatAngles(this.seatCount).forEach((a, i) => {
@@ -225,9 +230,9 @@ export class SetupScene extends Phaser.Scene {
     // they play. Text swap rather than a tween, so reduced motion keeps the whole message.
     const style = this.children.getByName(`style-seat-${seat}`) as Phaser.GameObjects.Text | null;
     if (style) {
-      style.setText(`"${t(`ai.line.${next}.bigPlay`)}"`).setColor('#f7d23e');
+      style.setText(`"${t(`ai.line.${next}.bigPlay`)}"`).setColor(TEXT.accent);
       this.time.delayedCall(1600, () => {
-        if (style.active) style.setText(t(styleKey(next))).setColor('#b8ab94');
+        if (style.active) style.setText(t(styleKey(next))).setColor(TEXT.muted);
       });
     }
   }

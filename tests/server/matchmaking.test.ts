@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { MatchQueue } from '../../server/matchmaking';
-import { RoomManager } from '../../server/rooms';
+import { testManager } from './manager';
 import { TIMER_PRESETS, type QueueTarget } from '../../src/net/protocol';
 
 function testQueue(overrides: { timeoutMs?: number; maxEntries?: number } = {}) {
@@ -14,8 +14,7 @@ function testQueue(overrides: { timeoutMs?: number; maxEntries?: number } = {}) 
 }
 
 function testRooms() {
-  let codes = 0;
-  return new RoomManager({ genCode: () => `CODE${++codes}`, genSeed: () => 7 });
+  return testManager({ seed: 7 });
 }
 
 /** Queue `targets` in order, one millisecond apart, so "oldest first" is unambiguous. */
@@ -261,8 +260,7 @@ describe('queue -> room handoff', () => {
   });
 
   it('OM-30: an allocation that cannot get a room leaves no half-built one behind', () => {
-    let codes = 0;
-    const rooms = new RoomManager({ genCode: () => `CODE${++codes}`, genSeed: () => 7, maxRooms: 0 });
+    const rooms = testManager({ seed: 7, maxRooms: 0 });
     expect(rooms.createMatchRoom(players(2))).toEqual({ ok: false, error: 'room_limit' });
     expect(rooms.roomCount()).toBe(0);
   });

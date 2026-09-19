@@ -1,32 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { OnlineSession } from '../src/net/online-session';
 import { buildView, DEFAULT_ROOM_SETTINGS, type GameView, type RoomSettings } from '../src/net/protocol';
-import { DEFAULT_RULES, type GameState } from '../src/rules/types';
-import { n } from './helpers/cards';
+import type { GameState } from '../src/rules/types';
+import { gameState as state } from './helpers/scenarios';
 
 /**
  * The online client's application layer, driven by recorded server frames with no socket, no
  * Phaser and no clock (ARCH-002). Every question a scene used to answer inline — stale frame,
  * desync, dropped draft, seat gap, missed-turn limit — is asked of the session here.
  */
-
-function state(patch: Partial<GameState> = {}): GameState {
-  return {
-    seed: 1,
-    players: [
-      { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 2), n('spades', 9)] },
-      { id: 'p1', name: 'B', isAi: false, hand: [n('clubs', 4), n('diamonds', 7)] },
-    ],
-    activePlayerIndex: 0,
-    table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
-    drawPile: [n('spades', 1), n('spades', 2)],
-    turn: 3,
-    winnerId: null,
-    phase: 'playing',
-    config: DEFAULT_RULES,
-    ...patch,
-  };
-}
 
 interface ViewOpts {
   seat?: number;
@@ -84,6 +66,32 @@ describe('OnlineSession', () => {
     expect(result.kind).toBe('desync');
     expect(s.desyncs).toBe(1);
     expect(s.resyncing).toBe(true);
+  });
+
+  // The state digest cannot see this class of fault: both sides hash the same `activeSeat` field,
+  // so a seat pointing at no player agrees with itself and sails through the desync check. Without
+  // the projection check the session would hold a state whose active player is `undefined`.
+  it.each([
+    ['negative', -1],
+    ['one past the last seat', 2],
+    ['far out of range', 99],
+    ['not an integer', 0.5],
+  ])('refuses a frame whose activeSeat is %s, leaving the last good state applied', (_label, activeSeat) => {
+    const s = session();
+    const result = s.applySync({ ...view(state({ turn: 4 }), { rev: 2 }), activeSeat }, false);
+
+    expect(result).toEqual({ kind: 'invalid', rev: 2, problem: `activeSeat ${activeSeat} outside 0..1` });
+    expect(s.state().activePlayerIndex).toBe(0);
+    expect(s.state().turn).toBe(1); // the rejected frame's turn never landed
+    expect(s.lastRev).toBe(1); // nothing applied, so the next honest frame at rev 2 is not stale
+  });
+
+  it('accepts every in-range activeSeat', () => {
+    for (const activeSeat of [0, 1]) {
+      const s = session();
+      expect(s.applySync(view(state({ activePlayerIndex: activeSeat }), { rev: 2 }), false).kind).toBe('applied');
+      expect(s.state().activePlayerIndex).toBe(activeSeat);
+    }
   });
 
   it('takes the second mismatching snapshot rather than looping on resync requests', () => {

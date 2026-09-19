@@ -6,13 +6,14 @@ import { settings } from '../core/settings';
 import { getLocale, setLocale, t } from '../localization/i18n';
 import { debugApi } from '../verification/debug-api';
 import { panelW } from './menu-layout';
-import { buildOverlay, onEscape } from './overlay';
+import { buildOverlay, closeOnShutdown, onEscape } from './overlay';
 import {
   AccessRow, ACCESS_ROWS, AdvancedRow, ADVANCED_ROWS, AiRow, AI_ROWS, AudioRow, AUDIO_ROWS,
   cosmeticsPanelH, cosmeticsRowOffset, GameRow, GAME_ROWS, MAIN_ROWS,
   panelHForRows, rowOffset, SettingsRow,
 } from './settings-layout';
-import { DANGER_TINT, fontStyle, label, PixelButton } from './widgets';
+import { ACTION, DANGER_TINT, LAYER, SURFACE, TEXT, toInt } from './tokens';
+import { fontStyle, label, PixelButton } from './widgets';
 
 // Row y-coordinates (settingsRowY, cosmeticsRowY, SettingsRow, ...) live in ./settings-layout,
 // a Phaser-free module — this file imports Phaser at the top, which crashes if pulled into a
@@ -63,10 +64,12 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
   // Esc backs out one level: a sub-panel returns to the section menu, the section menu closes.
   let escBack: () => void = () => close();
   const offEsc = onEscape(scene, () => escBack());
+  const offShutdown = closeOnShutdown(scene, () => close());
   const close = (): void => {
     for (const o of objs) o.destroy();
     objs = [];
     offEsc();
+    offShutdown();
     onClosed();
   };
 
@@ -78,7 +81,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     const h = panelHForRows(rows);
     const base = buildOverlay(scene, panelW(200), h, close);
     objs.push(...base.objs);
-    objs.push(label(scene, base.cx, base.top + 10, title, 9, '#f7d23e').setDepth(510));
+    objs.push(label(scene, base.cx, base.top + 10, title, 9, TEXT.accent).setDepth(LAYER.panelContent));
     return { cx: base.cx, rowY: (i: number) => base.top + rowOffset(i) };
   };
 
@@ -94,7 +97,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       textureBase: 'btn-comprar', w: opts.w ?? 170, h: 16, size: opts.size ?? 6,
       ...(opts.color === undefined ? {} : { color: opts.color }),
       ...(opts.tooltip === undefined ? {} : { tooltip: opts.tooltip }),
-    }).setDepth(510);
+    }).setDepth(LAYER.panelContent);
     objs.push(btn);
     return btn;
   };
@@ -130,7 +133,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       muteBtn.setLabel(muteCaption());
     }, { w: 150, size: 7 });
 
-    rowBtn(cx, rowY(SettingsRow.Cosmetics), t('cosmetics.title'), showCosmetics, { w: 150, size: 7, color: 0xf7d23e });
+    rowBtn(cx, rowY(SettingsRow.Cosmetics), t('cosmetics.title'), showCosmetics, { w: 150, size: 7, color: SURFACE.accent });
     rowBtn(cx, rowY(SettingsRow.Game), t('settings.section.game'), showGame, { w: 150, size: 7 });
     rowBtn(cx, rowY(SettingsRow.Audio), t('settings.section.audio'), showAudio, { w: 150, size: 7 });
     rowBtn(cx, rowY(SettingsRow.Access), t('settings.section.access'), showAccess, { w: 150, size: 7 });
@@ -138,7 +141,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     // Replay seed, test-log export and the destructive reset all sit behind this one row: they
     // are testing affordances, and mixing them into the player-facing list made the whole screen
     // look like a debug menu.
-    rowBtn(cx, rowY(SettingsRow.Advanced), t('settings.advanced'), showAdvanced, { w: 150, size: 7, color: 0x8a7f68 });
+    rowBtn(cx, rowY(SettingsRow.Advanced), t('settings.advanced'), showAdvanced, { w: 150, size: 7, color: ACTION.secondary });
     rowBtn(cx, rowY(SettingsRow.Close), t('settings.close'), close, { w: 90, size: 7 });
   };
 
@@ -198,11 +201,11 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     const { cx, rowY } = openPanel(AUDIO_ROWS, t('settings.section.audio'));
 
     let y = rowY(AudioRow.Sfx);
-    objs.push(label(scene, cx - 84, y, t('settings.sfx'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
+    objs.push(label(scene, cx - 84, y, t('settings.sfx'), 9, TEXT.muted).setOrigin(0, 0.5).setDepth(LAYER.panelContent));
     objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().sfxVolume, (v) => settings.update({ sfxVolume: v })));
 
     y = rowY(AudioRow.Music);
-    objs.push(label(scene, cx - 84, y, t('settings.music'), 9, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
+    objs.push(label(scene, cx - 84, y, t('settings.music'), 9, TEXT.muted).setOrigin(0, 0.5).setDepth(LAYER.panelContent));
     objs.push(...makeSlider(scene, cx - 30, y, 100, settings.get().musicVolume, (v) => settings.update({ musicVolume: v })));
 
     toggleBtn(cx, rowY(AudioRow.MusicEnabled), 'settings.music',
@@ -255,7 +258,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       w: 150, size: 7, color: DANGER_TINT,
     });
 
-    objs.push(label(scene, cx, rowY(AdvancedRow.Version), `v${__APP_VERSION__}`, 7, '#8a7f68').setDepth(510));
+    objs.push(label(scene, cx, rowY(AdvancedRow.Version), `v${__APP_VERSION__}`, 7, TEXT.dim).setDepth(LAYER.panelContent));
 
     rowBtn(cx, rowY(AdvancedRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
   };
@@ -273,21 +276,21 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
 
     const txt = scene.add
       .text(cx, top + 14, t('settings.resetConfirm'), {
-        ...fontStyle(7, '#f0e8d8'), align: 'center', wordWrap: { width: w - 20 },
+        ...fontStyle(7, TEXT.primary), align: 'center', wordWrap: { width: w - 20 },
       })
       .setOrigin(0.5, 0)
-      .setDepth(510);
+      .setDepth(LAYER.panelContent);
     objs.push(txt);
 
     objs.push(
       new PixelButton(scene, cx - 40, top + h - 20, t('common.yes'), () => settings.resetData(), {
         textureBase: 'btn-comprar', w: 68, h: 18, size: 7, color: DANGER_TINT,
-      }).setDepth(510),
+      }).setDepth(LAYER.panelContent),
     );
     objs.push(
       new PixelButton(scene, cx + 40, top + h - 20, t('common.no'), showMain, {
         textureBase: 'btn-comprar', w: 68, h: 18, size: 7,
-      }).setDepth(510),
+      }).setDepth(LAYER.panelContent),
     );
   };
 
@@ -306,7 +309,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     objs.push(...base.objs);
     const { cx, top } = base;
 
-    objs.push(label(scene, cx, top + 12, t('cosmetics.title'), 9, '#f7d23e').setDepth(510));
+    objs.push(label(scene, cx, top + 12, t('cosmetics.title'), 9, TEXT.accent).setDepth(LAYER.panelContent));
 
     const row = (
       y: number,
@@ -317,14 +320,14 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       getId: () => string,
       setId: (id: string) => void,
     ): void => {
-      objs.push(label(scene, cx - 84, y, categoryLabel, 8, '#c0b8a8').setOrigin(0, 0.5).setDepth(510));
+      objs.push(label(scene, cx - 84, y, categoryLabel, 8, TEXT.muted).setOrigin(0, 0.5).setDepth(LAYER.panelContent));
       const previewKey = cosmeticTextureKey(list, getId(), defaultId, debugApi.missingAssets);
       // Left of the button, not under it: the widest preview (the 40-unit table swatch) used to
       // run beneath the button plate and read as a rendering glitch.
       const preview = scene.add
         .image(cx - 16, y, previewKey)
         .setDisplaySize(previewSize.w, previewSize.h)
-        .setDepth(510);
+        .setDepth(LAYER.panelContent);
       objs.push(preview);
       const current = list.find((o) => o.id === getId()) ?? list.find((o) => o.id === defaultId)!;
       const btn = new PixelButton(
@@ -338,7 +341,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
           showCosmetics(); // full rebuild — preview + label both need to change
         },
         { textureBase: 'btn-comprar', w: 80, h: 16, size: 6 },
-      ).setDepth(510);
+      ).setDepth(LAYER.panelContent);
       objs.push(btn);
     };
 
@@ -379,7 +382,7 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
     objs.push(
       new PixelButton(scene, cx, y, t('settings.close'), showMain, {
         textureBase: 'btn-comprar', w: 90, h: 16, size: 7,
-      }).setDepth(510),
+      }).setDepth(LAYER.panelContent),
     );
   };
 
@@ -398,8 +401,8 @@ function makeSlider(
 ): Phaser.GameObjects.GameObject[] {
   const h = 6;
   const track = scene.add
-    .rectangle(x, y, w, h, 0x4a4438)
-    .setStrokeStyle(1, 0x8a7f68)
+    .rectangle(x, y, w, h, SURFACE.track)
+    .setStrokeStyle(1, ACTION.secondary)
     .setOrigin(0, 0.5)
     .setDepth(502)
     // Visual track is only 6 units tall — the handle is the smallest control in the game, so its
@@ -407,10 +410,10 @@ function makeSlider(
     .setInteractive(new Phaser.Geom.Rectangle(0, -12, w, 24), Phaser.Geom.Rectangle.Contains);
   if (track.input) track.input.cursor = 'pointer';
   const fill = scene.add
-    .rectangle(x, y, Math.max(2, (value / 100) * w), h, 0xf7d23e)
+    .rectangle(x, y, Math.max(2, (value / 100) * w), h, SURFACE.accent)
     .setOrigin(0, 0.5)
     .setDepth(503);
-  const handle = scene.add.circle(x + (value / 100) * w, y, 4, 0xf7f2e7).setDepth(504);
+  const handle = scene.add.circle(x + (value / 100) * w, y, 4, toInt(TEXT.primary)).setDepth(504);
 
   const update = (px: number): void => {
     const local = Phaser.Math.Clamp((px - x) / w, 0, 1);

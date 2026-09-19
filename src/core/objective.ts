@@ -1,3 +1,5 @@
+import { pluralKey } from '../localization/i18n';
+
 /**
  * "What does the game want from me right now" — pure, testable so GameScene's render loop can
  * stay a thin caller. Meld-specific invalid reasons still show on hover over the offending meld
@@ -68,7 +70,7 @@ export function doneChecklist(
     // Counting what is left to resolve, rather than repeating "invalid", is the difference between
     // a checklist that reads as progress and one that reads as a verdict.
     invalidMeldCount > 0
-      ? { key: invalidMeldCount === 1 ? 'check.meldsUnresolved.one' : 'check.meldsUnresolved.many', ok: false, params: { n: invalidMeldCount } }
+      ? { key: pluralKey('check.meldsUnresolved', invalidMeldCount), ok: false, params: { n: invalidMeldCount } }
       : { key: 'check.meldsValid', ok: !reasons.includes('reason.notAMeld') },
     { key: 'check.noReturn', ok: !reasons.includes('reason.cardMissing') },
   ];

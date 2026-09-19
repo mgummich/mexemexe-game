@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { OUT_DIR, consoleErrorsOf, newPhoneClient, shot, startTestServer, type TestServer } from './harness';
+import { OUT_DIR, consoleErrorsOf, newPhoneClient, shot, startTestServer, freePort, type TestServer } from './harness';
 
 /**
  * LB-35..LB-40 — the lobby on iOS-shaped WebKit viewports.
@@ -13,7 +13,6 @@ import { OUT_DIR, consoleErrorsOf, newPhoneClient, shot, startTestServer, type T
  */
 
 const LOG_PATH = path.join(OUT_DIR, 'verify-lobby-ios-log.json');
-const PORT = 8776; // see lobby.spec.ts PORTS — never the server's DEFAULT_PORT
 
 const PORTRAIT = [
   { name: '390x844', width: 390, height: 844 },
@@ -30,7 +29,7 @@ const evidence: Record<string, unknown> = {};
 const screenshots: string[] = [];
 
 test.beforeAll(async () => {
-  server = await startTestServer(PORT);
+  server = await startTestServer(await freePort());
 });
 
 test.afterAll(async () => {

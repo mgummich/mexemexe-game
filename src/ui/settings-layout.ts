@@ -10,6 +10,7 @@
  * together — which read as a debug screen and left no room for the panel to grow.
  */
 import { settings } from '../core/settings';
+import { controlH } from './tokens';
 import { view } from './viewport';
 
 /** Vertical centre of the current world — same value menu-layout's `cy()` returns. Computed from
@@ -183,7 +184,7 @@ export const RULES_TAB_DX = 46;
 
 /** Button height in the rules panel — a real 24-unit tap target on a coarse pointer. */
 export function rulesBtnH(): number {
-  return view().touch ? 24 : 16;
+  return controlH('compact', view().touch);
 }
 
 /** Rules panel box; `hasSecondary` is the extra footer button (full-rules drill-down / back). */

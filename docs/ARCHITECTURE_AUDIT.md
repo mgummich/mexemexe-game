@@ -112,7 +112,8 @@ every resolved relative import). Both are erased at runtime.
 | Committed local `GameState` | `GameStore` (`src/game-state/store.ts`) | `GameStore.dispatch(action)` only | GameScene, WinScene, playlog, debugApi | one local match | `serializeGameState` (v2) | canonical | **yes, latent** — `get()` returns the live object (ARCH-005) |
 | Mexe draft | `DraftEditor` (`src/mexe-mode/draft.ts`) | GameScene input handlers via editor methods | GameScene render, `canConfirmTurn` | one turn | never | canonical | no — every accessor clones |
 | AI decision state | per-call inside `src/ai` | AI search | AI only | one decision | no | derived | no |
-| Scene UI state (selection, focus, zoom/pan, editor scroll, emotes, notices, timers) | `GameScene` fields (~45) | GameScene methods | GameScene | scene instance; reset in `resetForNewMatch` | no | canonical | **yes** — reset is manual (ARCH-018) |
+| Scene UI state (selection, focus, zoom/pan, editor scroll, announce latches) | `MatchViewState` (`src/scenes/GameScene.ts`) | GameScene methods | GameScene | one match; replaced wholesale in `resetForNewMatch` | no | canonical (presentation only) | no — a new holder per match (ARCH-018) |
+| Live Phaser resources (online clock ticker, reconnect ticker, emote timers, confirm guard, zoom/pan) | `GameScene` fields (6) | GameScene methods | GameScene | scene instance; stopped in `resetForNewMatch` + `shutdown` | no | canonical (presentation only) | no gameplay authority; stopping them is still by hand (ARCH-018 residual) |
 | Lobby state (phase, code, seat, players, settings, party, queue, browse, in-flight) | `OnlineScene` fields (~40) | OnlineScene handlers | OnlineScene render | scene instance | no | mirror of server truth | no, but implicit machine (ARCH-003) |
 | Settings + progress + cosmetics | `settings` singleton (`src/core/settings.ts`) over `persistence` | `settings.update*` only | everywhere | app | `mexe-save` envelope | canonical | no |
 | Play log | `playlog` singleton (`src/core/playlog.ts`) | bus subscriptions + direct `record()` calls | debugApi, WinScene | module load → page unload | export only | derived | no; but never torn down (ARCH-007) |
@@ -666,6 +667,13 @@ domain, platform adapters into a platform module, settings into application.
 classification in §2 is the deliverable; moving files before ARCH-001/003/004
 would churn every import for no behavioural gain.
 
+**Status (Wave 3C): still open, but frozen.** The reorganisation is untouched —
+`core` is still six roles in one folder. What changed is that its eleven measured
+upward imports are now an explicit list in `tests/boundaries.test.ts`: removing
+one is always fine, adding one fails the suite. The register's actual complaint
+was that "probably core" is why it keeps growing; it can no longer grow by
+default.
+
 ---
 
 ### ARCH-010 — `src/rules` depends on `src/core/rng`
@@ -735,6 +743,26 @@ works, and the online redaction guarantee is untouched — `state()` is still th
 projection with placeholder opponent cards. `tests/boundaries.test.ts` fails if a
 product module imports the adapters.
 
+**Coverage (Wave 3B):** `online-debug.ts` has no vitest coverage and is excluded
+from the coverage `include` for the same reason `src/scenes` and
+`net/client.ts` are. Every entry in both surfaces is one of: a getter on an owner
+(`session.code`, `lobby.phase`, `client.getStatus()`), a forward to a product
+action (`client.submitTurn`, `scene.join`), a constant `noop` for a surface the
+other screen owns, or one of three one-line mappings (the lobby's
+`phase -> queue.status`, the mid-match `party()` falling back to the client's
+latched `room_state`, and `recentRooms()` projecting `{code, host}`). No legality,
+authority, permission or redaction decision is made here — the redaction that
+matters happens upstream in `buildView` (test `OH-26`) and `viewToState`, and the
+reconnect token is unreachable: it lives behind a module-private `readToken()` in
+`net/client.ts` and is representable in neither `RecentRoom` nor the message
+`trace`, which records `{dir, type}` and no payload. The whole surface exists for
+`verify:multiplayer`, which is what exercises it; a unit test asserting that a
+getter delegates would restate the file, not catch a defect.
+
+**Update (Wave 3C):** one product write left the product: `core/pwa` no longer
+sets `debugApi.offline`; `installDebugApi` subscribes to the same
+`onConnectivityChange` the banner uses. That also closed half of ARCH-012.
+
 **Residual:** scenes still *write* observation values onto `debugApi`
 (`scene`, `seed`, `dealing`, `lastAiThought`, `renderedMeldStatus`, the `mexe`
 readbacks). Those are observations of facts the scene alone knows, and one of
@@ -758,6 +786,18 @@ the repository.
 **Why it matters:** they are symptoms of ARCH-009, not independent problems.
 
 **Earliest phase:** Phase 4, resolved as a side effect of ARCH-009.
+
+**Status (Wave 3C): resolved, ahead of ARCH-009 and without moving a folder.**
+Both edges were pointing the wrong way rather than needing a new layer.
+`AiSpeed` was declared in `core/persistence` and consumed by `ai/ai`; it is an AI
+concept the setting merely stores, so it now lives in `ai/ai` and `persistence`
+imports the type (an edge that already existed). `core/pwa` imported
+`verification/debug-api` for one line — `debugApi.offline = offline` inside the
+banner's render — so the verification surface now observes the same browser
+events itself in `installDebugApi`, which also removes one ARCH-011 residual
+write. `tests/boundaries.test.ts` walks the relative-import graph of `src` and
+fails on any cycle, type-only included; a deliberately reintroduced
+`core/pwa -> verification/debug-api` edge was confirmed to fail it.
 
 ---
 
@@ -808,6 +848,12 @@ code go elsewhere.
 
 **Earliest phase:** none scheduled. Re-evaluate if a second aggregate (accounts,
 persistence, spectators) appears.
+
+**Status (Wave 3C): watched mechanically.** "Watch its growth" was a note to
+reviewers, which is the class of guarantee ARCH-019 exists to replace.
+`tests/boundaries.test.ts` now holds `server/rooms.ts` to a 1050-line ceiling
+(970 today), so the next few hundred lines of room policy have to be a decision
+about where they belong rather than an accident of convenience.
 
 ---
 
@@ -898,6 +944,13 @@ draw from the state's stream for exact replay.
 no action. **Do NOT do yet:** routing presentation randomness through the
 gameplay RNG stream — that would change the deal for a given seed.
 
+**Status (Wave 3C): resolved.** `reactToPlayerMexe` draws from its own
+`createRng(state.seed + state.turn * 7919)` stream: a seed replays the same
+screen, and because the stream is created per call and never advances the state's
+own RNG, the deal for that seed is bit-identical. The two remaining
+`Math.random()` calls (`net/client` reconnect jitter, `audio/sfx` detune) are
+non-gameplay by nature and stay.
+
 ---
 
 ### ARCH-018 — Scene reset is a manual, unenforced checklist
@@ -920,7 +973,7 @@ separate fix.
 **Earliest phase:** Phase 3. **Do NOT do yet:** reflection-based or
 decorator-based auto-reset.
 
-**Status (Wave 2E): resolved.** Reset is now ownership, not a list.
+**Status (Wave 3B): narrowed.** Reset is now ownership, not a list.
 `GameScene.resetForNewMatch()` replaces one `MatchViewState` holding all ~30
 per-match screen values (selection, focus, editor scroll, zoom/pan, the announce
 latches, the presentation gates); `create()` builds a fresh `LocalMatch` or
@@ -929,6 +982,29 @@ remains in those methods is the handful of live Phaser resources that must be
 *stopped* rather than re-initialised. A new per-match value added to a holder is
 fresh by construction; a field added to a scene directly is now a deliberate
 statement that it survives a match. No reflection, no decorators.
+
+**What is closed (Wave 3B re-audit):** every field a match must not inherit was
+classified. Nothing gameplay-, AI-, lifecycle- or network-authoritative is reset
+by hand any more: committed state and the turn cycle belong to `LocalMatch` /
+`OnlineSession`, both built fresh in `create()`; the input lock has one setter
+(`setOnlinePending`) that owns its own timeout; `personalities`,
+`turnDeadlineAt`/`turnWarnMs` and the `DraftEditor` are assigned on every
+`create()`/turn start, so no branch can read a previous match's value; timer
+expiry online stays the server's (`advanceStalledTurns`), so the client clock
+carries no authority to leak.
+
+**What remains:** six live Phaser resources in `resetForNewMatch()` — the online
+clock ticker, the reconnect ticker, the emote timers, the confirm guard, and
+zoom/pan — are stopped by hand. They are presentation only: a stale one repaints
+or gates a visual, none of them can commit a turn, schedule AI or move the
+match. Two of the three timer handles used to be merely dropped (`= null`),
+which was correct only because `create()` always follows a `shutdown` that had
+already removed them; they are now removed first, so the reset no longer depends
+on that ordering. Full removal of the list belongs to the remaining ARCH-001
+presentation decomposition, not to a refactor done for testability. The reuse
+path itself is covered end to end by `second-match` in `e2e/screenshot.spec.ts`
+(quit -> second `create()` on the same instance -> AI turn completes -> pause
+overlay still opens).
 ---
 
 ### ARCH-019 — No mechanical enforcement of module boundaries
@@ -972,9 +1048,16 @@ domain-purity half mechanically — an allow-list of imports for `src/rules`,
 platform/clock/`Math.random` usage in those plus `src/table`, Phaser confined to
 the presentation layer, and the server's `src/` imports limited to
 rules/protocol/rng. One source-scanning test rather than an eslint zone *and* a
-test: it covers more (type-only imports included) for less configuration. Still
-unenforced: rules-as-sole-authority, single-writer ownership, and the `core`
-layering that ARCH-009 has not settled.
+test: it covers more (type-only imports included) for less configuration.
+
+**Update (Wave 3C):** three more rules became mechanical, in the same file: the
+`core` upward-import allow-list (ARCH-009), an acyclic check over the whole `src`
+import graph (ARCH-012), and `RoomManager`'s size ceiling (ARCH-014). Legality
+authority was already enforced here despite the note above — see "gameplay
+legality is decided in src/rules and nowhere else". Still unenforced:
+single-writer ownership, which needs the ownership work itself rather than a
+scan, since the writers are methods on the owners and no text pattern separates
+a write from a read.
 
 ---
 

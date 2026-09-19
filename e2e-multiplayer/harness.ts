@@ -1,6 +1,7 @@
 import { type Browser, type Page } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 
 /**
@@ -21,25 +22,63 @@ export interface TestServer {
   stop: () => void;
 }
 
+/**
+ * A port nothing else is listening on, handed over by the OS (`listen(0)`), then released.
+ *
+ * The probe binds **127.0.0.1**, which is the half that matters: the machine-specific version of
+ * this bug was a loopback-only squatter (a proxy on `127.0.0.1:8787`) sitting under a test server
+ * that had bound `0.0.0.0:8787` quite happily — the Node-side health check passed and the
+ * browser's `ws://127.0.0.1` reached the proxy instead, so the only symptom was a client that
+ * never reached status `open`. A port that is free on loopback cannot be taken that way.
+ *
+ * Fixed port blocks are what made a Firefox failure here unreadable: something else on the
+ * machine (a local proxy on 8787, or a server left behind by a killed run) already owned the
+ * port, our server died on EADDRINUSE, and the health probe then answered **from that other
+ * process** — so the suite ran happily against a stranger and reported a WebSocket failure as a
+ * lobby bug. There is a theoretical race between releasing this port and the server claiming it;
+ * it is far narrower than a shared fixed block, and `startTestServer` now fails loudly rather
+ * than silently attaching to whatever answers.
+ */
+export async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const addr = probe.address();
+      if (addr === null || typeof addr === 'string') {
+        probe.close(() => reject(new Error('could not allocate a port')));
+        return;
+      }
+      probe.close(() => resolve(addr.port));
+    });
+  });
+}
+
 async function waitForHealth(url: string, timeoutMs = 15_000): Promise<void> {
   const start = Date.now();
+  let last = '';
   while (Date.now() - start < timeoutMs) {
     try {
       const res = await fetch(url);
       if (res.ok) return;
-    } catch {
-      // server not up yet
+      last = `HTTP ${res.status}`;
+    } catch (err) {
+      last = String(err);
     }
     await new Promise((r) => setTimeout(r, 150));
   }
-  throw new Error(`server health check timed out: ${url}`);
+  throw new Error(`server health check timed out: ${url} (last: ${last})`);
 }
 
 /**
  * Run the local tsx binary directly (not via `npx`/`npm run`) — npm/npx write their own
  * "notice" lines to stderr, which would otherwise look like a server error to the gate.
  */
-export async function startTestServer(port: number, seed?: number): Promise<TestServer> {
+export async function startTestServer(
+  port: number,
+  seed?: number,
+  extraEnv: Record<string, string> = {},
+): Promise<TestServer> {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const proc: ChildProcessWithoutNullStreams = spawn(
@@ -55,12 +94,43 @@ export async function startTestServer(port: number, seed?: number): Promise<Test
         FORCE_COLOR: undefined,
         PORT: String(port),
         ...(seed === undefined ? {} : { MEXE_TEST_SEED: String(seed) }),
+        ...extraEnv,
       },
     },
   );
   proc.stdout.on('data', (d) => stdout.push(String(d)));
   proc.stderr.on('data', (d) => stderr.push(String(d)));
-  await waitForHealth(`http://127.0.0.1:${port}/health`);
+  // A server that cannot bind must fail the test *as a bind failure*. Before this, the child died
+  // on EADDRINUSE and the health probe was answered by whatever else held the port, so the suite
+  // ran against a foreign process and the first symptom was an unexplained WebSocket timeout in
+  // whichever engine happened to run next (Firefox, in the known 8787 case).
+  let exited: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  proc.on('exit', (code, signal) => { exited = { code, signal }; });
+  const detail = (): string => `port ${port}\n--- server stdout ---\n${stdout.join('')}\n--- server stderr ---\n${stderr.join('')}`;
+  try {
+    await Promise.race([
+      waitForHealth(`http://127.0.0.1:${port}/health`),
+      new Promise((_, reject) => {
+        proc.once('exit', (code, signal) => reject(
+          new Error(`test server exited before it was healthy (code=${String(code)} signal=${String(signal)}) on ${detail()}`),
+        ));
+      }),
+    ]);
+  } catch (err) {
+    proc.kill('SIGKILL');
+    throw new Error(`${String(err)}\n${detail()}`);
+  }
+  if (exited !== null) throw new Error(`test server exited during startup on ${detail()}`);
+  // The health probe proves *a* server answers; this proves it is ours. `server_listening` is
+  // logged by server/index.ts on this process's own stdout when its listen callback fires — it
+  // can land a tick after the first health response, so give it a moment before calling it a
+  // foreign server.
+  for (let i = 0; i < 20 && !stdout.join('').includes('server_listening'); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  if (!stdout.join('').includes('server_listening')) {
+    throw new Error(`health check answered but this process never logged server_listening — another server owns ${detail()}`);
+  }
   // 127.0.0.1, not `localhost`: the server binds IPv4 (0.0.0.0) and Firefox resolves `localhost`
   // to ::1 first, so a `ws://localhost` URL never opens there while Chromium's fallback hides it.
   return { url: `ws://127.0.0.1:${port}`, stdout, stderr, stop: () => proc.kill('SIGTERM') };

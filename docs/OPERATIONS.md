@@ -219,6 +219,12 @@ a matching `VITE_WS_URL=wss://your.host/path`. Confirm quickly by loading the ga
 browser's network. Either open it or proxy it; the client talks to the server directly, not
 through the web server.
 
+**`server_listen_failed` with `errno: "EADDRINUSE"` and immediate exit 1.** Something else
+already holds the port — a previous instance that has not finished shutting down, another
+container publishing the same port, or a local proxy. The process refuses to keep running in
+that state and says which port and host it tried, rather than dying on an unhandled error or
+appearing to start while a stranger answers the health check. Free the port or set `PORT`.
+
 **`invalid PORT: "..." must be a finite positive number` on startup.** Exactly what it
 says — the process refuses to start on a malformed value rather than booting on a default
 you did not intend. Same for the other numeric variables.

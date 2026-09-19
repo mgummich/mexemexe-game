@@ -13,6 +13,7 @@ import { OnlineScene } from './scenes/OnlineScene';
 import { SetupScene } from './scenes/SetupScene';
 import { TutorialScene } from './scenes/TutorialScene';
 import { WinScene } from './scenes/WinScene';
+import { DOM_LAYER, plateCss, SURFACE, toHex } from './ui/tokens';
 import { refreshProfile, view } from './ui/viewport';
 import { debugApi, installDebugApi } from './verification/debug-api';
 
@@ -38,7 +39,7 @@ const game = new Phaser.Game({
   height: view().h * RENDER_SCALE,
   pixelArt: true,
   roundPixels: true,
-  backgroundColor: '#1a0f0a',
+  backgroundColor: toHex(SURFACE.base),
   scale: {
     mode: Phaser.Scale.FIT,
     // No autoCenter: #game already centres the canvas with flexbox, and Phaser's margin-based
@@ -92,12 +93,16 @@ game.events.on('step', () => {
 const DENSE_TABLE_MELDS = 5;
 const portraitHint = document.createElement('div');
 portraitHint.id = 'portrait-hint'; // e2e selector — MOBILE-13's density gate is asserted against this
-portraitHint.style.cssText =
+// These plates are the only screen-reader-legible part of a canvas game's status: without a live
+// region the text appears silently, and nothing about the canvas announces it instead.
+portraitHint.setAttribute('role', 'status');
+portraitHint.style.cssText = plateCss({
   // top offset adds the safe-area inset: installed as a PWA the status bar is translucent
   // (apple-mobile-web-app-status-bar-style in index.html), so a bare 12px lands under the notch.
-  'position:fixed;left:50%;top:calc(12px + env(safe-area-inset-top));transform:translateX(-50%);display:none;' +
-  'background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:6px 12px;' +
-  'font:12px monospace;border-radius:4px;z-index:9998;opacity:0.95;pointer-events:none;';
+  anchor: 'top:calc(12px + env(safe-area-inset-top))',
+  z: DOM_LAYER.hint,
+  display: 'none',
+});
 document.body.appendChild(portraitHint);
 
 const portrait = window.matchMedia('(orientation: portrait) and (max-width: 820px)');
@@ -140,11 +145,14 @@ updatePortraitHint();
 // per 5s to avoid a start->throw->start loop, falls back to the menu scene.
 function showErrorToast(): void {
   const el = document.createElement('div');
+  el.setAttribute('role', 'alert'); // a recovered crash is an interruption, not a background notice
   el.textContent = t('errors.recoverable');
-  el.style.cssText =
-    'position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);' +
-    'background:#1a1410;color:#f7d23e;border:1px solid #f7d23e;padding:8px 14px;' +
-    'font:12px monospace;border-radius:4px;z-index:9999;opacity:0.95;pointer-events:none;';
+  el.style.cssText = plateCss({
+    anchor: 'bottom:calc(24px + env(safe-area-inset-bottom))',
+    z: DOM_LAYER.error,
+    display: 'block',
+    padding: '8px 14px',
+  });
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 4000);
 }

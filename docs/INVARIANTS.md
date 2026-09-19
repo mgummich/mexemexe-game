@@ -32,12 +32,12 @@ only — the regression risk during Phase 3/4 extraction).
 
 | ID | Invariant | Enforced by | Scenarios |
 |---|---|---|---|
-| INV-G1 | No card is lost, duplicated or invented. Hands + table + draw pile always hold the dealt id set exactly. | test — `expectCardConservation` (`tests/helpers/invariants.ts`), re-checked every turn over 40 seeds in `probes`, and `assertConservation` on the server after every accepted turn | SCN-01..08, SCN-12, SCN-20 |
+| INV-G1 | No card is lost, duplicated or invented. Hands + table + draw pile always hold the dealt id set exactly. | test — `expectCardConservation` (`tests/helpers/invariants.ts`), re-checked every turn over 40 seeds in `probes`, after every generated action in `tests/property/state.property.test.ts`, and `assertConservation` on the server after every accepted turn | SCN-01..08, SCN-12, SCN-20 |
 | INV-G2 | Committed table is always legal: every meld on it satisfies `analyzeMeld`. | test — `rules`, `probes` (after every turn) | SCN-01, SCN-09, SCN-12 |
 | INV-G3 | A confirmed turn adds ≥1 card from the active hand and removes no card that was on the committed table. | test — `canConfirmTurn` cases (`noHandCard`, `cardMissing`) in `tests/rules.test.ts` | SCN-03, SCN-10, SCN-11 |
 | INV-G4 | Jokers keep their physical identity. A joker's meld role is derived on demand; it is never written into the card, a save or the wire. | structure + test — assignments are returned by `analyzeMeld`, never stored; `tests/rules.test.ts` joker cases | SCN-06, SCN-35 |
-| INV-G5 | At most one joker per meld; a group is 3–4 cards with unique natural suits; a run never wraps K-A-2. | test — `tests/rules.test.ts`, `tests/ai.test.ts` (never proposes a two-joker meld across seeded games) | SCN-06, SCN-09 |
-| INV-G6 | The winner is deterministic: `checkWinner` (empty hand) or `fewestCardsWinner` on pile exhaustion. No other code decides it. | structure + test | SCN-07, SCN-08 |
+| INV-G5 | At most one joker per meld; a group is 3–4 cards with unique natural suits; a run never wraps K-A-2. | test — `tests/rules.test.ts`, `tests/ai.test.ts` (never proposes a two-joker meld across seeded games), `tests/property/rules.property.test.ts` (a second joker in *any* constructed meld is refused) | SCN-06, SCN-09 |
+| INV-G6 | The winner is deterministic: `checkWinner` (empty hand) or `fewestCardsWinner` on pile exhaustion. No other code decides it. | structure + test — plus three golden replays that end each way (`win-empty-hand`, `ai-match-finish`, `four-seat-pile-out`, the last on the seat-order tiebreak) | SCN-07, SCN-08 |
 | INV-G7 | Draw-pile exhaustion ends the match. No state can loop forever. | test — `probes` (every seed terminates), `tests/ai.test.ts` empty-pile cases | SCN-08, SCN-16 |
 | INV-G8 | The dealt card count is exactly `deckCount × (52 + jokersPerDeck)` and conservation is checked against that set, not a total. | test — `TOTAL_CARDS` in `tests/helpers/invariants.ts`, `createDeck` cases | SCN-01 |
 | INV-G9 | An illegal draft can never become committed state: `applyConfirmedTurn` re-runs `canConfirmTurn` and throws `RulesError('illegalConfirm')` rather than committing. | structure + test | SCN-03, SCN-10, SCN-11, SCN-21 |
@@ -53,14 +53,14 @@ only — the regression risk during Phase 3/4 extraction).
 | INV-S7 | Committed local state changes only through a validated application action. Every local actor — human, AI, tutorial opponent, `window.__MEXE__` — goes through `LocalMatch.dispatch` → `GameStore.dispatch`; nothing else calls a `src/rules` transition. A refused action leaves the state untouched and announces nothing. | test — `tests/actions.test.ts`, `tests/match.test.ts` | SCN-07, SCN-14 |
 | INV-S8 | Applying an action never requires a process-global event bus. `GameStore` imports none; a match announces its facts to listeners attached to that instance, so a finished match cannot reach the next one. | test — `tests/actions.test.ts` (no bus import), `tests/match.test.ts` (per-instance listeners) | SCN-07, SCN-14 |
 | INV-S5 | Turn ownership is explicit: locally `activePlayerIndex`; online the server's `activeSeat`, mapped through `matchSeats` so a lobby seat gap never shifts a player. | test — `tests/server/rooms.test.ts`, `lobby-soak` (seat/player-index mapping every step) | SCN-22, SCN-26 |
-| INV-S6 | Valid committed state round-trips through `serializeGameState`/`deserializeGameState` at `GAME_STATE_VERSION`. | test — `tests/rules.test.ts` | SCN-35 |
+| INV-S6 | Valid committed state round-trips through `serializeGameState`/`deserializeGameState` at `GAME_STATE_VERSION`. | test — `tests/rules.test.ts`, `tests/property/serialization.property.test.ts` (round-trip and named-corruption refusal over generated states) | SCN-35 |
 
 ### Randomness — owner: `src/rules/rng` + the state's seed
 
 | ID | Invariant | Enforced by | Scenarios |
 |---|---|---|---|
 | INV-R1 | All gameplay randomness comes from the state's seeded stream. No `Math.random`, `Date.now` or wall clock in `rules`, `mexe-mode`, `game-state`, `table` or the wire contract. | test — `tests/boundaries.test.ts` scans those folders | SCN-02 |
-| INV-R2 | Same initial state + same seed + same action sequence ⇒ identical result, including AI decisions. | test — `probes` determinism, `tests/ai.test.ts` determinism | SCN-02, SCN-16 |
+| INV-R2 | Same initial state + same seed + same action sequence ⇒ identical result, including AI decisions. | test — `probes` determinism, `tests/ai.test.ts` determinism, `tests/property/state.property.test.ts` (same state + action twice), the golden replay corpus | SCN-02, SCN-16 |
 | INV-R3 | Online, the server picks the deal seed (`RoomManager.genSeed`). No client input reaches it. | structure — the seed is generated inside `startGame`; no protocol message carries one | SCN-20 |
 | INV-R4 | Non-gameplay randomness (reconnect jitter, sfx detune, the cosmetic AI emote roll) never changes a game outcome. | convention — documented exception, see ARCH-017 | — |
 
@@ -69,9 +69,11 @@ only — the regression risk during Phase 3/4 extraction).
 | ID | Invariant | Enforced by | Scenarios |
 |---|---|---|---|
 | INV-A1 | The AI only ever proposes actions `src/rules` accepts. It owns no legality of its own. | test — `tests/ai.test.ts` ("never proposes illegal confirm"), `probes` (legal every turn, 40 seeds) | SCN-14, SCN-16 |
-| INV-A2 | The AI reads only the active player's hand and public state — never an opponent's cards. | convention — `src/ai/ai.ts` touches `state.players[state.activePlayerIndex].hand` and `players.length` only (gap: no test) | SCN-17 |
-| INV-A3 | An AI failure or timeout cannot corrupt committed state: the fallback is `drawAndEndTurn`, which is a legal move. | test — `tests/ai.test.ts` fallback + budget cases | SCN-15, SCN-16 |
+| INV-A2 | The AI reads only the active player's hand and public state — never an opponent's cards, the pile's order or the deal seed. Structural, not conventional: an engine is handed an `AiObservation` from `observeForAi`, the hidden halves are absent from that object, and only that function can build one, so passing authoritative state does not type-check. | type + test — `tests/ai.test.ts` observation cases (redaction, own hand kept, input untouched) and the hidden-information case: two states differing only in the opponent's hand yield the same decision | SCN-17 |
+| INV-A3 | An AI failure or timeout cannot corrupt committed state: the fallback is `drawAndEndTurn`, which is a legal move. A thrown engine, an exhausted budget and a confirm the rules refuse all end the turn that way rather than leaving the seat holding it. | test — `tests/ai.test.ts` fallback + budget cases, `tests/match.test.ts` refused-confirm fallback | SCN-15, SCN-16 |
 | INV-A4 | `decide`/`decideSliced` always return a decision within the search budget; a crowded table cannot hang a turn. | test — `tests/ai.test.ts` hardening (10+ melds, 20-card hand, <500 ms) | SCN-13, SCN-15 |
+| INV-A5 | An AI decision is a pure function of the state and the tier. The search spends a deterministic trial budget and reads no clock, so the same state always yields the same move — `decideSliced` included. | test — `tests/ai.test.ts` decision reproducibility (repeated runs of the densest legal table); `tests/boundaries.test.ts` keeps `src/ai` clock-free; `tests/property/ai.property.test.ts` over generated states | SCN-13, SCN-15 |
+| INV-A6 | Deciding never writes to the state it decides about: the observation is a frozen copy, and the draft an engine builds lives in a `DraftEditor` until `LocalMatch` dispatches it. | test — `tests/ai.test.ts` no-mutation cases, `tests/property/ai.property.test.ts` over generated states | SCN-14, SCN-16 |
 
 ### Multiplayer — owner: `server/rooms.ts` (`RoomManager`) + `src/net/protocol.ts`
 
@@ -84,7 +86,8 @@ only — the regression risk during Phase 3/4 extraction).
 | INV-N5 | Reconnect returns the token's own seat or fails (`invalid_token`). It can never take another player's seat. | test — `tests/server/reconnect.test.ts`, `tests/net/reconnect.test.ts`, LB reload/second-tab | SCN-24 |
 | INV-N6 | A rematch starts from clean per-match state: state, `rev`, `matchId`, `matchSeats`, timer fields, ready bits and the Mexe-bonus guard are all reset in `recycleForRematch`. | test — `tests/server/rooms.test.ts`, OS-01..OS-16/OS-35 | SCN-25 |
 | INV-N7 | The turn timer is server-owned. Clients render `turnMsLeft` and never decide expiry; the running clock is excluded from the state digest. | test — `tests/server/timer.test.ts` (fake clock), `tests/net/room-settings.test.ts` | SCN-26 |
-| INV-N8 | Client and server share one protocol module and one `PROTOCOL_VERSION`; every inbound frame is validated at the wire boundary before it reaches room logic. | type + test — `server/` imports `src/net/protocol`; `tests/server/hardening.test.ts`, `index.integration.test.ts` malformed/oversized frames | SCN-28 |
+| INV-N8 | Client and server share one protocol module and one `PROTOCOL_VERSION`; every inbound frame is validated at the wire boundary before it reaches room logic. | type + test — `server/` imports `src/net/protocol`; `tests/net/parse-client-message.test.ts` (each type's refusal and every wire limit from both sides), `tests/server/hardening.test.ts`, `index.integration.test.ts` malformed/oversized frames | SCN-28 |
+| INV-N9 | The boundary is checked in both directions: a `GameView` whose `activeSeat` resolves to no player is refused, never projected. `applySync` applies nothing and the client resyncs; the last good state stands. The state digest cannot catch this class — both sides hash the same field (MULTIPLAYER.md §5a). | test — `tests/viewToState.test.ts`, `tests/online-session.test.ts` out-of-range seat cases | SCN-21, SCN-23 |
 
 ### Lifecycle — owner: each scene, `NetClient`, `server/index.ts`
 
@@ -98,7 +101,7 @@ only — the regression risk during Phase 3/4 extraction).
 
 | ID | Invariant | Enforced by | Scenarios |
 |---|---|---|---|
-| INV-P1 | Corrupt, missing or wrongly-typed persisted data never becomes trusted state. It falls back per field to a documented default. | test — `tests/persistence.test.ts` | SCN-30, SCN-31 |
+| INV-P1 | Corrupt, missing or wrongly-typed persisted data never becomes trusted state. It falls back per field to a documented default. | test — `tests/persistence.test.ts`; for a game snapshot, `tests/property/serialization.property.test.ts` — which is how the unchecked `activePlayerIndex` was found | SCN-30, SCN-31 |
 | INV-P2 | An unsupported save version fails safe: the envelope version is checked and a non-match yields defaults, never a partial read. | test — `tests/persistence.test.ts`, `tests/rules.test.ts` (state envelope) | SCN-31 |
 | INV-P3 | Settings/progress/cosmetics live in the single `mexe-save` envelope; online identity (name, reconnect token, recent rooms) is `NetClient`'s own storage. Neither owns the other. | structure — the only two `localStorage` writers | SCN-30 |
 | INV-P4 | A storage failure (blocked site data, quota) degrades to defaults without crashing the boot path. | test — `tests/persistence.test.ts` (`getItem` throws), `tests/error-recovery.test.ts` | SCN-32 |
@@ -127,10 +130,18 @@ mechanized, and is recorded for a later testing phase — not a to-do for this
 wave.
 
 Fixture vocabulary: `n(suit, rank, deckId)` and `j(deckId, k)` from
-`tests/helpers/cards.ts`; `expectCardConservation` from
-`tests/helpers/invariants.ts`; `tests/server/harness.ts` for a `RoomManager`
-with injected clock, codes, tokens and seed; `e2e-multiplayer/harness.ts` for
-real browser clients.
+`tests/helpers/cards.ts`; the states themselves (`gameState`, `dealtMatch`,
+`tableRearrangement`, `oneCardFromWinning`, `finishedMatch`, `legalDraft`,
+`seedWithTriple`, `invalid.*`) from `tests/helpers/scenarios.ts`;
+`expectCardConservation` from `tests/helpers/invariants.ts`;
+`tests/server/manager.ts` for a `RoomManager` with injected clock, codes, tokens
+and seed, plus a started room; `tests/server/harness.ts` for the real server
+process on raw sockets; `e2e-multiplayer/harness.ts` for real browser clients.
+Where a scenario is a *family* rather than one state, `tests/helpers/generators.ts`
+and `tests/helpers/property.ts` generate it from a seed and the golden replays in
+`tests/fixtures/replays/` record whole matches of it.
+The layering and the rules that keep it cheap are
+[TESTING.md](TESTING.md#scenarios-and-fixtures).
 
 ### Local gameplay
 
@@ -163,7 +174,7 @@ real browser clients.
 | SCN-14 | Legal move available. Obvious group/run in hand → AI plays it; the proposal passes `canConfirmTurn`. | A1, S2 | `tests/ai.test.ts` SimpleAi |
 | SCN-15 | Multiple legal choices. Rearranging personality prefers the play using most hand cards; a thrown search still ends the turn legally by drawing. | A1, A3, A4, L2 | `tests/ai.test.ts` RearrangerAi + fallback |
 | SCN-16 | Full-match simulation. Seeded AI-vs-AI games to completion → legal every turn, conservation every turn, terminates. | A1, A3, G1, G7, R2 | `tests/probes.test.ts` (40 seeds), `tests/ai.test.ts` soak |
-| SCN-17 | Hidden information. AI decides on a state whose opponent hands differ but whose public state is identical → same decision. | A2 | **(gap)** — no test asserts this today |
+| SCN-17 | Hidden information. AI decides on a state whose opponent hands differ but whose public state is identical → same decision. | A2 | `tests/ai.test.ts` hidden-information case |
 | SCN-18 | Difficulty/personality-neutral baseline. One fixture state, all four difficulties and personalities → every decision legal; style differences are pacing and choice, never legality. | A1 | `tests/ai.test.ts` personalities + style regression |
 
 ### Multiplayer
@@ -199,7 +210,6 @@ defect today.
 
 | Invariant | Gap | Note |
 |---|---|---|
-| INV-A2 | SCN-17 has no test | The AI currently reads only the active hand; nothing stops a future search from reading `state.players[i].hand`. A fixture pair differing only in opponent hands would pin it. |
 | INV-S2 | Partly guarded | Committed `GameState` is readonly by type since Wave 2A (ARCH-005 resolved); ownership of everything else — scene fields, lobby mirror, connection state — is still convention. |
 | INV-L1, INV-L2 | SCN-29 is only covered end-to-end | Scene teardown has no unit-level proof; it becomes testable when orchestration leaves `GameScene` (ARCH-001). |
 | INV-U1 | Convention only | "No legality in the UI" holds because exactly one `analyzeMeld` exists, not because anything forbids a second. |

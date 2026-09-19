@@ -30,8 +30,12 @@ Nothing is mid-flight. The repository is at a released, green state.
   screens are unconfirmed rather than known good.
 - **Mobile usability polish** — quick-move helpers (send a card to its obvious
   destination), clearer drag affordances on crowded tables.
-- **Playtest hardening** — act on the two flaky specs on record
-  (`crowded-table-max` fps gate, `mobile-tap-move-valid` lost tap).
+- **Playtest hardening** — the two flaky specs on record are addressed: @perf
+  tests now measure fps over their own window instead of reading Phaser's
+  lifetime average (`measureFps` in `e2e/screenshot.spec.ts`), and a select tap
+  re-taps while nothing is selected (`selectCard`). The CI fps floors still hold
+  numbers measured under the old lifetime-average read, so they are floors with
+  slack until a CI run re-measures them.
 
 ## Deferred
 

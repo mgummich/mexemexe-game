@@ -1,17 +1,30 @@
 import { DraftEditor } from '../mexe-mode/draft';
 import { isValidMeld, isValidRun } from '../rules/rules';
-import type { AiSpeed } from '../core/persistence';
 import type { Card, DraftState, GameState } from '../rules/types';
+import { compareByBaseEvaluation, evaluateDraft, type CandidateFeatures } from './evaluate';
+import type { AiObservation } from './observation';
+
+export type { AiObservation } from './observation';
+export { observeForAi } from './observation';
 
 export type AiDecision =
   | { kind: 'confirm'; draft: DraftState; explanation: string }
   | { kind: 'draw'; explanation: string };
 
+/**
+ * The AI boundary. The only inputs to a decision are the observation (the seat's player view —
+ * see `observeForAi`), the engine's own configuration, fixed when the engine is constructed
+ * (personality policy, search tier, trial budget), and nothing else: no clock, no settings read,
+ * no scene, no unseeded randomness. Same observation + same engine ⇒ same decision (INV-A5).
+ *
+ * The result is gameplay intent, not presentation: `LocalMatch.runAiTurn` routes it to the same
+ * `confirmTurn` / `drawAndEndTurn` action a person's FEITO or COMPRAR takes (INV-S7).
+ */
 export interface AiPlayer {
-  decide(state: GameState): AiDecision;
+  decide(observation: AiObservation): AiDecision;
   /** Same decision, but computed in event-loop slices so a long search never blocks a whole
    * frame (see RearrangerAi). Absent on engines whose decide() is already cheap. */
-  decideSliced?(state: GameState): Promise<AiDecision>;
+  decideSliced?(observation: AiObservation): Promise<AiDecision>;
 }
 
 /** All personalities are deterministic: sorted iteration, first hit wins. */
@@ -152,7 +165,7 @@ export class SimpleAi implements AiPlayer {
     private readonly holdJokers = false,
   ) {}
 
-  decide(state: GameState): AiDecision {
+  decide(state: AiObservation): AiDecision {
     const ed = new DraftEditor(state);
     const notes: string[] = [];
     const hand = state.players[state.activePlayerIndex]!.hand;
@@ -194,7 +207,7 @@ export class SimpleAi implements AiPlayer {
     return { kind: 'draw', explanation: 'no legal play — drawing' };
   }
 
-  private decideMinimalExtendOnly(state: GameState): AiDecision {
+  private decideMinimalExtendOnly(state: AiObservation): AiDecision {
     const ed = new DraftEditor(state);
     const hand = sortCards(state.players[state.activePlayerIndex]!.hand);
     for (const card of hand) {
@@ -217,30 +230,54 @@ export class SimpleAi implements AiPlayer {
 interface Candidate {
   draft: DraftState;
   explanation: string;
-  played: string[];
-  /** jokers left on the table by this draft — tiebreak only, fewer wins at equal card count. */
-  jokers: number;
+  /** Base evaluation of this draft — the only thing `compareCandidates` looks at. */
+  features: CandidateFeatures;
 }
 
 const MAX_CANDIDATES = 20;
-/** Expert widens the same deterministic search: more candidates kept, longer wall-clock budget.
+/** Expert widens the same deterministic search: more candidates kept and weighed.
  * It never unlocks a move a lower tier could not also make legally — only how many it weighs. */
 const EXPERT_MAX_CANDIDATES = 48;
-const SEARCH_BUDGET_MS = 400;
-const EXPERT_SEARCH_BUDGET_MS = 900;
+/**
+ * How many candidate trials a rearrange search may attempt before it stops and plays the best it
+ * has found. One trial is one confirmable-draft attempt (a `DraftEditor` built and checked).
+ *
+ * This used to be a wall clock — `performance.now() + 400ms` (900ms for Expert) — checked inside
+ * the search loops, which made the *chosen move* depend on how fast the machine happened to be: a
+ * loaded machine cut the search short, kept fewer candidates and could return a different move for
+ * the identical state. That is why replay, property tests and AI simulation could not reproduce an
+ * AI decision. A trial count is the same bound expressed in work the search actually does, so the
+ * move is a function of state and tier and nothing else.
+ *
+ * Sized as a genuine safety stop rather than a tuning knob: the densest table this game can ever
+ * deal — a full two-deck shoe laid out as eight 13-card runs, the shape that maximises both split
+ * points and edge steals, against a 20-card hand — runs the search to natural completion in 42.7k
+ * trials (~136ms here). At 120k this never binds on a legal position, so every real decision is
+ * the one the old deadline produced on a machine fast enough never to hit it; what remains is a
+ * bound on pathological input. No wall clock is needed alongside it: a trial costs a bounded
+ * amount of work over a bounded deck, so capping trials caps the runtime.
+ *
+ * One number for both tiers on purpose. The tiers only ever differed in how long they were allowed
+ * to run, and that difference only had an effect when the clock bound — i.e. exactly in the
+ * nondeterministic regime. What actually separates Expert is `EXPERT_MAX_CANDIDATES`.
+ */
+const SEARCH_BUDGET_TRIALS = 120_000;
 const INTER_MELD_TRIPLE_CAP = 300;
 
-function timeUp(deadline: number): boolean {
-  return performance.now() >= deadline;
+/** Mutable trial counter threaded through one `decide` call. Shared by all phases of that call. */
+class SearchBudget {
+  constructor(public left: number) {}
+  /** Charge one candidate trial. */
+  charge(): void {
+    this.left--;
+  }
+  get spent(): boolean {
+    return this.left <= 0;
+  }
 }
 
-function sortedPlayed(draft: DraftState): string[] {
-  return [...draft.handCardsPlayed].sort();
-}
-
-function addCandidate(candidates: Candidate[], draft: DraftState, explanation: string): void {
-  const jokers = draft.melds.flatMap((m) => m.cards).filter((c) => c.isJoker).length;
-  candidates.push({ draft, explanation, played: sortedPlayed(draft), jokers });
+function addCandidate(candidates: Candidate[], state: GameState, draft: DraftState, explanation: string): void {
+  candidates.push({ draft, explanation, features: evaluateDraft(state, draft) });
 }
 
 /** Steal an edge card (first/last) from a 4+ meld and form a brand-new meld with 2 or 3 hand cards. */
@@ -250,7 +287,9 @@ function tryStealForm(
   sourceLabel: string,
   handCards: Card[],
   candidates: Candidate[],
+  budget: SearchBudget,
 ): void {
+  budget.charge();
   const combo = [steal, ...handCards];
   if (!isValidMeld(combo)) return;
   const ed = new DraftEditor(state);
@@ -262,6 +301,7 @@ function tryStealForm(
   if (check.ok) {
     addCandidate(
       candidates,
+      state,
       ed.getDraft(),
       `rearranged: took ${steal.id} from ${sourceLabel}, formed meld with ${handCards.map((c) => c.id).join('+')}`,
     );
@@ -269,26 +309,26 @@ function tryStealForm(
 }
 
 /** 1a. Steal an edge card from any 4+ meld, forming a new meld with 2 or 3 hand cards. */
-function searchEdgeSteal(state: GameState, hand: Card[], candidates: Candidate[], deadline: number, cap: number): void {
+function searchEdgeSteal(state: GameState, hand: Card[], candidates: Candidate[], budget: SearchBudget, cap: number): void {
   for (const meld of state.table) {
-    if (candidates.length >= cap || timeUp(deadline)) return;
+    if (candidates.length >= cap || budget.spent) return;
     if (meld.cards.length < 4) continue;
     for (const steal of [meld.cards[0]!, meld.cards.at(-1)!]) {
       for (let i = 0; i < hand.length; i++) {
         for (let j = i + 1; j < hand.length; j++) {
-          tryStealForm(state, steal, meld.id, [hand[i]!, hand[j]!], candidates);
-          if (candidates.length >= cap) return;
+          tryStealForm(state, steal, meld.id, [hand[i]!, hand[j]!], candidates, budget);
+          if (candidates.length >= cap || budget.spent) return;
         }
       }
       for (let i = 0; i < hand.length; i++) {
         for (let j = i + 1; j < hand.length; j++) {
           for (let k = j + 1; k < hand.length; k++) {
-            tryStealForm(state, steal, meld.id, [hand[i]!, hand[j]!, hand[k]!], candidates);
-            if (candidates.length >= cap) return;
+            tryStealForm(state, steal, meld.id, [hand[i]!, hand[j]!, hand[k]!], candidates, budget);
+            if (candidates.length >= cap || budget.spent) return;
           }
         }
       }
-      if (timeUp(deadline)) return;
+      if (budget.spent) return;
     }
   }
 }
@@ -296,12 +336,13 @@ function searchEdgeSteal(state: GameState, hand: Card[], candidates: Candidate[]
 /** 1b. Split a 6+ run at each valid midpoint, then either extend a part directly or
  *  steal the newly-exposed interior boundary card (if its side stays 3+) to form a
  *  new meld with 2 hand cards. */
-function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[], deadline: number, cap: number): void {
+function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[], budget: SearchBudget, cap: number): void {
   for (const meld of state.table) {
-    if (candidates.length >= cap || timeUp(deadline)) return;
+    if (candidates.length >= cap || budget.spent) return;
     if (meld.cards.length < 6 || !isValidRun(meld.cards)) continue;
     for (let splitIdx = 3; splitIdx <= meld.cards.length - 3; splitIdx++) {
-      if (candidates.length >= cap || timeUp(deadline)) return;
+      if (candidates.length >= cap || budget.spent) return;
+      budget.charge();
       const partA = meld.cards.slice(0, splitIdx);
       const partB = meld.cards.slice(splitIdx);
 
@@ -309,10 +350,10 @@ function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[],
       if (ed.splitMeld(meld.id, splitIdx)) {
         const played = tryExtend(ed);
         if (played.length && ed.canConfirm().ok) {
-          addCandidate(candidates, ed.getDraft(), `split ${meld.id} at ${splitIdx}, extended with ${played.join(',')}`);
+          addCandidate(candidates, state, ed.getDraft(), `split ${meld.id} at ${splitIdx}, extended with ${played.join(',')}`);
         }
       }
-      if (candidates.length >= cap || timeUp(deadline)) return;
+      if (candidates.length >= cap || budget.spent) return;
 
       const boundarySteals: Card[] = [];
       if (partA.length >= 4) boundarySteals.push(partA[partA.length - 1]!);
@@ -320,6 +361,8 @@ function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[],
       for (const steal of boundarySteals) {
         for (let i = 0; i < hand.length; i++) {
           for (let j = i + 1; j < hand.length; j++) {
+            if (candidates.length >= cap || budget.spent) return;
+            budget.charge();
             const combo = [steal, hand[i]!, hand[j]!];
             if (!isValidMeld(combo)) continue;
             const ed2 = new DraftEditor(state);
@@ -332,6 +375,7 @@ function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[],
             if (ed2.canConfirm().ok) {
               addCandidate(
                 candidates,
+                state,
                 ed2.getDraft(),
                 `split ${meld.id} at ${splitIdx}, took ${steal.id}, formed meld with ${hand[i]!.id}+${hand[j]!.id}`,
               );
@@ -346,16 +390,17 @@ function searchRunSplit(state: GameState, hand: Card[], candidates: Candidate[],
 
 /** 1c. Move one edge card from a 4+ meld onto another meld (run extension or 4th set card),
  *  then try to play a hand card into whatever the move opened up. */
-function searchInterMeldMove(state: GameState, hand: Card[], candidates: Candidate[], deadline: number, cap: number): void {
+function searchInterMeldMove(state: GameState, hand: Card[], candidates: Candidate[], budget: SearchBudget, cap: number): void {
   const melds = state.table;
   let tripleCount = 0;
   for (const source of melds) {
-    if (candidates.length >= cap || timeUp(deadline)) return;
+    if (candidates.length >= cap || budget.spent) return;
     if (source.cards.length < 4) continue;
     for (const steal of [source.cards[0]!, source.cards.at(-1)!]) {
       for (const target of melds) {
         if (target.id === source.id) continue;
-        if (++tripleCount > INTER_MELD_TRIPLE_CAP || candidates.length >= cap || timeUp(deadline)) return;
+        if (++tripleCount > INTER_MELD_TRIPLE_CAP || candidates.length >= cap || budget.spent) return;
+        budget.charge();
 
         const back = [...target.cards, steal];
         const front = [steal, ...target.cards];
@@ -370,6 +415,7 @@ function searchInterMeldMove(state: GameState, hand: Card[], candidates: Candida
         if (played.length && ed.canConfirm().ok) {
           addCandidate(
             candidates,
+            state,
             ed.getDraft(),
             `moved ${steal.id} from ${source.id} to ${target.id}, then played ${played.join(',')}`,
           );
@@ -380,15 +426,7 @@ function searchInterMeldMove(state: GameState, hand: Card[], candidates: Candida
 }
 
 function compareCandidates(a: Candidate, b: Candidate): number {
-  if (a.played.length !== b.played.length) return b.played.length - a.played.length;
-  // equal-size plays: prefer the one that spends fewer jokers (save them for the final move)
-  if (a.jokers !== b.jokers) return a.jokers - b.jokers;
-  for (let i = 0; i < a.played.length; i++) {
-    const x = a.played[i]!;
-    const y = b.played[i]!;
-    if (x !== y) return x < y ? -1 : 1;
-  }
-  return 0;
+  return compareByBaseEvaluation(a.features, b.features);
 }
 
 /**
@@ -397,56 +435,60 @@ function compareCandidates(a: Candidate, b: Candidate): number {
  * (2 or 3 hand cards), run splits (direct extend or interior-card steal), and
  * single-card inter-meld moves — then picks the one that plays the most hand
  * cards (ties broken lexicographically by sorted played-card ids). Bounded by a
- * wall-clock deadline; returns the best candidate found so far if it runs out.
+ * deterministic trial budget (`SEARCH_BUDGET_TRIALS`); returns the best candidate found so far if
+ * it runs out. The same state and tier always produce the same move — the search reads no clock.
  */
 export class RearrangerAi implements AiPlayer {
   private simple: SimpleAi;
   private readonly cap: number;
-  private readonly budgetMs: number;
 
-  /** `wide` is the Expert tier: the same searches, more candidates kept and a longer budget. */
+  /** `wide` is the Expert tier: the same searches, more candidates kept. `budgetTrials` is the
+   * deterministic work bound, an explicit decision input rather than a hidden constant — the
+   * default is the shipped one and only tests ask for a smaller search. */
   constructor(
     private readonly holdJokers = false,
     wide = false,
+    private readonly budgetTrials = SEARCH_BUDGET_TRIALS,
   ) {
     this.simple = new SimpleAi(false, holdJokers);
     this.cap = wide ? EXPERT_MAX_CANDIDATES : MAX_CANDIDATES;
-    this.budgetMs = wide ? EXPERT_SEARCH_BUDGET_MS : SEARCH_BUDGET_MS;
   }
 
   /** Both search paths start from the same place: the plain play SimpleAi would have made (if
    * any) as the first candidate, plus the sorted hand every rearrange search works from. */
-  private seedFromSimplePlay(state: GameState): { candidates: Candidate[]; hand: Card[] } {
+  private seedFromSimplePlay(state: AiObservation): { candidates: Candidate[]; hand: Card[] } {
     const candidates: Candidate[] = [];
     const simple = this.simple.decide(state);
-    if (simple.kind === 'confirm') addCandidate(candidates, simple.draft, simple.explanation);
+    if (simple.kind === 'confirm') addCandidate(candidates, state, simple.draft, simple.explanation);
     return { candidates, hand: sortCards(state.players[state.activePlayerIndex]!.hand) };
   }
 
-  decide(state: GameState): AiDecision {
+  decide(state: AiObservation): AiDecision {
     const cap = this.cap;
-    const deadline = performance.now() + this.budgetMs;
+    const budget = new SearchBudget(this.budgetTrials);
     const { candidates, hand } = this.seedFromSimplePlay(state);
 
     for (const search of REARRANGE_SEARCHES) {
-      if (candidates.length >= cap || timeUp(deadline)) break;
-      search(state, hand, candidates, deadline, cap);
+      if (candidates.length >= cap || budget.spent) break;
+      search(state, hand, candidates, budget, cap);
     }
     return pickBest(candidates);
   }
 
-  /** The same search, sliced: each phase gets its own bounded slice of the budget and the
-   * event loop runs between phases, so frames render while the AI "thinks" (#8). Total
-   * search budget stays the tier's budget, split across the phases — Expert searches deeper
-   * without ever holding the main thread for more than one slice. */
-  async decideSliced(state: GameState, sliceMs = this.budgetMs / REARRANGE_SEARCHES.length): Promise<AiDecision> {
+  /** The same search, yielding: the event loop runs between phases, so frames render while the AI
+   * "thinks" (#8). It spends the identical budget in the identical order as `decide`, so the two
+   * paths do not merely tend to agree — they compute the same thing, and the frame yields are the
+   * only difference. (They used to split the budget into per-phase wall-clock slices, which is
+   * what made them two searches instead of one.) */
+  async decideSliced(state: AiObservation): Promise<AiDecision> {
     const cap = this.cap;
+    const budget = new SearchBudget(this.budgetTrials);
     const { candidates, hand } = this.seedFromSimplePlay(state);
 
     for (const search of REARRANGE_SEARCHES) {
-      if (candidates.length >= cap) break;
+      if (candidates.length >= cap || budget.spent) break;
       await new Promise<void>((r) => setTimeout(r, 0));
-      search(state, hand, candidates, performance.now() + sliceMs, cap);
+      search(state, hand, candidates, budget, cap);
     }
     return pickBest(candidates);
   }
@@ -480,6 +522,11 @@ export const PERSONALITY_STYLE: Record<
   bia: { thinkMs: 600, emoteBig: 'happy', emoteSmall: 'excited', emoteDraw: 'thinking', thinkEmote: 'confident' },
   ze: { thinkMs: 700, emoteBig: 'confident', emoteSmall: 'happy', emoteDraw: 'sleepy', thinkEmote: 'sleepy' },
 };
+
+/** Presentation-only pace of an AI's "thinking" pause. Never changes what the AI decides. Declared
+ * here rather than next to the setting that stores it: `settings` reads it, the AI owns it, and
+ * the other direction was the type-only import cycle in ARCH-012. */
+export type AiSpeed = 'instant' | 'fast' | 'normal' | 'slow';
 
 /** Presentation-only multiplier on an AI's pre-move "thinking" pause. Never touches the search
  * budget: a faster pace shows the same decision sooner, it does not make the AI weaker. */
@@ -574,21 +621,21 @@ export function createAi(personality: Personality, difficulty: Difficulty = 'sma
   return {
     decide: (state) => tagReason(personality, engine.decide(state)),
     ...(engine.decideSliced
-      ? { decideSliced: async (state: GameState) => tagReason(personality, await engine.decideSliced!(state)) }
+      ? { decideSliced: async (state: AiObservation) => tagReason(personality, await engine.decideSliced!(state)) }
       : {}),
   };
 }
 
 class PatientAi implements AiPlayer {
   constructor(private readonly inner: AiPlayer) {}
-  decide(state: GameState): AiDecision {
+  decide(state: AiObservation): AiDecision {
     return this.applyPatience(state, this.inner.decide(state));
   }
-  async decideSliced(state: GameState): Promise<AiDecision> {
+  async decideSliced(state: AiObservation): Promise<AiDecision> {
     const d = this.inner.decideSliced ? await this.inner.decideSliced(state) : this.inner.decide(state);
     return this.applyPatience(state, d);
   }
-  private applyPatience(state: GameState, d: AiDecision): AiDecision {
+  private applyPatience(state: AiObservation, d: AiDecision): AiDecision {
     if (d.kind === 'confirm') {
       const played = d.draft.handCardsPlayed.length;
       const hand = state.players[state.activePlayerIndex]!.hand.length;

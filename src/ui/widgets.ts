@@ -2,10 +2,15 @@ import Phaser from 'phaser';
 import { playSfx } from '../audio/sfx';
 import { PIXEL_FONT } from '../assets/compose-cards';
 import { settings } from '../core/settings';
+import { ACTION, CHROME_GOLD, fitTextScale, LAYER, SURFACE, TEXT, TOUCH_TARGET } from './tokens';
 import { view } from './viewport';
 
 /** Nothing user-facing renders below this (logical px, pre large-text scale) — small pixel-font glyphs turn to mush once upscaled to 720p/1080p. */
 const MIN_FONT_SIZE = 8;
+
+/** Edge of the flat rectangle a PixelButton falls back to when its wood texture is missing. Not a
+ * token: nothing else draws this shape, and it only ever appears when art failed to load. */
+const PLATE_EDGE = 0x1a1a22;
 
 /**
  * Cap-height of the pixel font as a fraction of its font size (measured from font.ttf:
@@ -14,7 +19,7 @@ const MIN_FONT_SIZE = 8;
 const CAP_RATIO = 0.5;
 
 /** Single choke point for text sizing — every label/button/panel routes through this, so the "large text" setting scales the whole UI at once. */
-export function fontStyle(size: number, color = '#f7f2e7'): Phaser.Types.GameObjects.Text.TextStyle {
+export function fontStyle(size: number, color: string = TEXT.primary): Phaser.Types.GameObjects.Text.TextStyle {
   const px = Math.round(Math.max(size, MIN_FONT_SIZE) * settings.fontScale());
   // Explicit metrics instead of Phaser's browser measurement: Chrome, Firefox and Safari each
   // report different ascent/descent for the same font, which shifted every centred label by a
@@ -37,7 +42,7 @@ export function label(
   y: number,
   text: string,
   size = 8,
-  color = '#f7f2e7',
+  color: string = TEXT.primary,
 ): Phaser.GameObjects.Text {
   return scene.add.text(x, y, text, fontStyle(size, color)).setOrigin(0.5);
 }
@@ -61,8 +66,9 @@ interface PixelButtonOpts {
   size?: number;
   /**
    * Palette color. For the texture-missing rect fallback this is the fill color (default green
-   * wood 0x2e9e50). For a real wooden button texture this is a multiply-tint applied on top of
-   * the art (default 0xffffff = the texture's native color, e.g. feito/comprar's green wood) —
+   * wood `ACTION.primary`). For a real wooden button texture this is a multiply-tint applied on
+   * top of the art (default `ACTION.native` = the texture's own color, e.g. feito/comprar's
+   * green wood) —
    * pass a tan tone for secondary buttons or a red tone for danger buttons.
    */
   color?: number;
@@ -87,18 +93,6 @@ function shade(hex: number, factor: number): number {
   const clamp = (v: number) => Phaser.Math.Clamp(Math.round(v * factor), 0, 255);
   return Phaser.Display.Color.GetColor(clamp(c.red), clamp(c.green), clamp(c.blue));
 }
-
-/** Red multiply-tint for danger buttons (e.g. APAGAR DADOS / reset) applied over the neutral wood texture. */
-export const DANGER_TINT = 0xff7a68;
-
-/** Brand/chrome gold — selection rings, banners, titles, the "you're active" cues — for text and
- * strokes alike. Deliberately distinct from `STATUS_COLOR.incomplete` (src/table/snap.ts,
- * #f7d23e/#f0c040): that hex used to double as this one too, so a meld's "incomplete, not really
- * wrong" gold and a purely decorative title/selection gold read as the same signal. C3 already
- * split the two for graphics-only chrome (GameScene's own `GOLD` constant); this is the matching
- * split for text and widget strokes, so a status colour is never reused as a brand colour. */
-export const CHROME_GOLD = 0xd4af37;
-export const CHROME_GOLD_TEXT = '#d4af37';
 
 const STATE_SHADE: Record<'normal' | 'hover' | 'pressed' | 'disabled', number> = {
   normal: 1,
@@ -177,21 +171,22 @@ export class PixelButton extends Phaser.GameObjects.Container {
     this.visualW = w;
     this.visualH = h;
     this.base = opts.textureBase;
-    this.paletteColor = opts.color ?? 0xffffff;
+    this.paletteColor = opts.color ?? ACTION.native;
     if (this.base && scene.textures.exists(`${this.base}-normal`)) {
       const key = `${this.base}-normal`;
       this.bgImage = scene.add.image(0, 0, key, inkFrame(scene, key)).setDisplaySize(w, h);
       this.add(this.bgImage);
     } else {
-      this.bgRect = scene.add.rectangle(0, 0, w, h, opts.color ?? 0x2e9e50).setStrokeStyle(1, 0x1a1a22);
+      this.bgRect = scene.add.rectangle(0, 0, w, h, opts.color ?? ACTION.primary).setStrokeStyle(1, PLATE_EDGE);
       this.add(this.bgRect);
     }
     this.txt = label(scene, 0, 0, text, opts.size ?? 8);
+    this.fitLabel();
     this.add(this.txt);
     // Coarse pointer: grow the hit box past the artwork so a touch target never shrinks below a
     // usable size — the art itself (visualW/visualH) stays exactly w x h either way.
     const touch = view().touch;
-    this.setSize(touch ? Math.max(w, 34) : w, touch ? Math.max(h, 31) : h);
+    this.setSize(touch ? Math.max(w, TOUCH_TARGET.w) : w, touch ? Math.max(h, TOUCH_TARGET.h) : h);
     this.setInteractive({ useHandCursor: true });
     this.setBtnTexture('normal'); // apply palette tint immediately, not just on first hover
 
@@ -290,7 +285,14 @@ export class PixelButton extends Phaser.GameObjects.Container {
 
   setLabel(text: string): this {
     this.txt.setText(text);
+    this.fitLabel();
     return this;
+  }
+
+  /** Re-apply the fit rule after the caption changed — a label set later (FEITO becoming BATER,
+   * a re-rendered lobby row) is just as translatable as the one passed to the constructor. */
+  private fitLabel(): void {
+    this.txt.setScale(fitTextScale(this.txt.width, this.visualW));
   }
 
   /** The text on the button, for a caller that needs to say *which* button it means — the
@@ -331,7 +333,7 @@ export class PixelButton extends Phaser.GameObjects.Container {
     const scene = this.scene;
     const boxAt = (side: 'above' | 'below'): number => (side === 'below' ? this.y + h / 2 + 8 : this.y - h / 2 - 8);
     // Measure first (text width decides box width), same as GameScene.showGhostPreview's clamp.
-    const probe = label(scene, this.x, 0, text, 6, '#f7f2e7');
+    const probe = label(scene, this.x, 0, text, 6, TEXT.primary);
     const boxW = probe.width + 6;
     const boxH = probe.height + 3;
     probe.destroy();
@@ -346,8 +348,8 @@ export class PixelButton extends Phaser.GameObjects.Container {
     const { w: worldW, h: worldH } = view();
     const tx = Phaser.Math.Clamp(this.x, boxW / 2 + 2, worldW - boxW / 2 - 2);
     const tyClamped = Phaser.Math.Clamp(ty, boxH / 2 + 2, worldH - boxH / 2 - 2);
-    const txt = label(scene, tx, tyClamped, text, 6, '#f7f2e7').setDepth(1000);
-    const bg = scene.add.rectangle(tx, tyClamped, boxW, boxH, 0x1a1410, 0.9).setDepth(999);
+    const txt = label(scene, tx, tyClamped, text, 6, TEXT.primary).setDepth(LAYER.tooltipText);
+    const bg = scene.add.rectangle(tx, tyClamped, boxW, boxH, SURFACE.overlay, 0.9).setDepth(LAYER.tooltip);
     this.tooltipGfx = [bg, txt];
   }
 

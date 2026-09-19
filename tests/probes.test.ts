@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RearrangerAi, SimpleAi } from '../src/ai/ai';
+import { observeForAi } from '../src/ai/observation';
 import { applyConfirmedTurn, drawAndEndTurn, validateTable } from '../src/rules/rules';
 import type { GameState, Meld } from '../src/rules/types';
 import { DEFAULT_RULES } from '../src/rules/types';
@@ -39,7 +40,7 @@ function playSeededGame(seed: number): { turns: number; state: GameState } {
     const prevActive = state.activePlayerIndex;
     const activeHandBefore = state.players[prevActive]!.hand.length;
     const ai = ais[prevActive]!;
-    const decision = ai.decide(state);
+    const decision = ai.decide(observeForAi(state));
     if (decision.kind === 'confirm') {
       expect(decision.draft.handCardsPlayed.length).toBeGreaterThanOrEqual(1);
       state = applyConfirmedTurn(state, decision.draft);
@@ -118,7 +119,7 @@ describe('edge probes', () => {
     }
     expect(validateTable(table)).toBe(true);
     const state: GameState = { ...fixtureState(), table };
-    expect(() => new RearrangerAi().decide(state)).not.toThrow();
+    expect(() => new RearrangerAi().decide(observeForAi(state))).not.toThrow();
   });
 
   it('undo/reset abuse: 100+ DraftEditor ops then reset() restores exact turn-start state, card conservation holds', () => {

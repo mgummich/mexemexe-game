@@ -2,7 +2,7 @@ import { readRecentRooms, type NetClient } from '../net/client';
 import type { LobbyMachine } from '../net/lobby';
 import type { OnlineSession } from '../net/online-session';
 import { DEFAULT_QUEUE_TARGET, DEFAULT_ROOM_VISIBILITY, EMPTY_PARTY, type QueueTarget } from '../net/protocol';
-import type { MexeOnlineDebugApi, RenderedSeatRow } from './debug-api';
+import type { LobbyBox, MexeOnlineDebugApi, RenderedSeatRow } from './debug-api';
 
 /**
  * The `window.__MEXE__.online` surface, built *here* from the objects the product already owns
@@ -45,6 +45,8 @@ export interface LobbyDebugView {
   focus: () => { index: number; count: number; label: string };
   /** The seat rows the lobby actually PAINTED on the last rebuild, in row order. */
   lobbySeats: () => RenderedSeatRow[];
+  /** The lobby's painted vertical blocks, top to bottom. */
+  lobbyBoxes: () => LobbyBox[];
 }
 
 /** The surface for a running online match: the session is the state, the client is the transport. */
@@ -158,6 +160,7 @@ export function lobbyDebugSurface(
     leaveRoom: () => client.leaveRoom(),
     recentRooms: () => readRecentRooms().map((r) => ({ code: r.code, host: r.host })),
     lobbySeats: scene.lobbySeats,
+    lobbyBoxes: scene.lobbyBoxes,
     lobbyNotice: () => lobby.lobbyNotice,
     comprar: noop,
     submitRaw: noop,

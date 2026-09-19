@@ -61,6 +61,7 @@ so a capture does not have to click through the settings panel.
 | `npm run server` | WebSocket server for online rooms |
 | `npm run replay run <file>` / `record <seed>` | Reproduce or capture a deterministic match — see below |
 | `npm run test` / `test:watch` / `test:server` | Vitest — see [TESTING.md](TESTING.md) |
+| `npm run test:property` / `test:replay` / `test:mutation` | Extended fuzz budget, the golden replays alone, mutation testing — see [TESTING.md](TESTING.md) |
 | `npm run lint` | ESLint + `tsc --noEmit` |
 | `npm run screenshot` | Build + Playwright screenshot/perf suite |
 | `npm run verify` / `verify:multiplayer` / `verify:multiplayer:chromium` / `verify:cross` / `verify:pwa` / `verify:preview` | Verification gates — see [TESTING.md](TESTING.md) |
@@ -108,9 +109,11 @@ corrupt replay: action 31 (confirmTurn) refused: reason.runGap
 
 The hash is a digest of the full final state; a `finalHash` recorded with the
 replay is checked on every run, so a rules change that moves the outcome fails
-as `replayDiverged` rather than silently producing a different match. Committed
-examples live in `tests/fixtures/replays/` and are replayed by
-`tests/replay.test.ts`.
+as `replayDiverged` rather than silently producing a different match. The five
+committed examples in `tests/fixtures/replays/` are the golden corpus, replayed
+by `tests/replay.test.ts` on every `npm run test`; they are behaviour
+expectations, not samples, so regenerating one is a reviewed act —
+[TESTING.md](TESTING.md#golden-update-policy).
 
 Attach the replay JSON to a bug report. It carries no names or tokens — seats
 are `p0`/`p1` and cards are ids — but it does reveal the whole deal, which is

@@ -1,8 +1,8 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { freePort, startTestServer, type TestServer } from './harness';
 
 /**
  * Phase 5 multiplayer verification: launches the real WS server and drives two browser
@@ -19,38 +19,19 @@ const OUT_DIR = 'docs/screenshots';
 const PARTS_DIR = path.join(OUT_DIR, 'verify-multiplayer-log-parts');
 const PART_PATH = path.join(PARTS_DIR, `${randomUUID()}.json`);
 // This file runs parallel (see the describe.configure below), so every worker spawns its own
-// server and needs its own port. parallelIndex, not workerIndex: it is bounded by the worker
-// count, so the ports stay in a known small range instead of climbing with every restart.
-//
-// Port blocks across this directory, one slot per parallel worker: 8799-8809 this file's server,
-// 8810-8819 its room-creation-budget server, 8820+ the lobby spec (see lobby.spec.ts), 8776 the
-// iOS lobby spec. None of them is the server's own DEFAULT_PORT (8787).
-const PARALLEL_INDEX = Number(process.env.TEST_PARALLEL_INDEX ?? 0);
-const WS_PORT = 8799 + PARALLEL_INDEX;
-const WS_URL = `ws://localhost:${WS_PORT}`;
+// server. The port comes from the OS (`freePort`), not from a per-worker block: a fixed block is
+// shared with everything else on the machine, and when something already owned it the server died
+// on EADDRINUSE while the health probe was answered by that other process — the suite then ran
+// against a stranger and reported the fallout as a lobby bug. `startTestServer` also fails loudly
+// now if the child dies or the answer comes from a foreign server (see harness.ts).
+let WS_URL = '';
 // Fixed so the deal is deterministic: seat 0's hand contains a ready-made legal run
 // (diamonds J-Q-K), and the draw pile always holds 108 - 2*7 = 94 cards (used below to
 // run the match to a real, server-decided stalemate game_over).
 const TEST_SEED = 2;
 const LEGAL_MELD_CARDS = ['diamonds-11-d0', 'diamonds-12-d0', 'diamonds-13-d0'];
 
-let serverProc: ChildProcessWithoutNullStreams;
-const serverStdout: string[] = [];
-const serverStderr: string[] = [];
-
-async function waitForHealth(url: string, timeoutMs = 15_000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch {
-      // server not up yet
-    }
-    await new Promise((r) => setTimeout(r, 150));
-  }
-  throw new Error(`server health check timed out: ${url}`);
-}
+let server: TestServer;
 
 // Every test here builds its own rooms from scratch against its worker's own server, so nothing
 // in this file is ordered — running it parallel is what takes the CI job off the critical path
@@ -59,24 +40,15 @@ async function waitForHealth(url: string, timeoutMs = 15_000): Promise<void> {
 test.describe.configure({ mode: 'parallel' });
 
 test.beforeAll(async () => {
-  // Run the local tsx binary directly (not via `npx`/`npm run`) — npm/npx write their own
-  // "notice" lines to stderr, which would otherwise look like a server error to the gate.
-  serverProc = spawn(path.join(process.cwd(), 'node_modules', '.bin', 'tsx'), ['server/index.ts'], {
-    cwd: process.cwd(),
-    // Playwright sets NO_COLOR while its parent may carry FORCE_COLOR; Node emits that conflict
-    // on server stderr and our multiplayer gate correctly treats server stderr as a failure.
-    env: { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined, PORT: String(WS_PORT), MEXE_TEST_SEED: String(TEST_SEED) },
-  });
-  serverProc.stdout.on('data', (d) => serverStdout.push(String(d)));
-  serverProc.stderr.on('data', (d) => serverStderr.push(String(d)));
-  await waitForHealth(`http://localhost:${WS_PORT}/health`);
+  server = await startTestServer(await freePort(), TEST_SEED);
+  WS_URL = server.url;
 });
 
 test.afterAll(async () => {
-  serverProc.kill('SIGTERM');
+  server.stop();
   // Per worker, not per suite: each worker runs its own server, and a crash in any of them has
   // to reach the gate. The gate concatenates every shard's server output.
-  appendLog({ server: { stdout: serverStdout, stderr: serverStderr } });
+  appendLog({ server: { stdout: server.stdout, stderr: server.stderr } });
 });
 
 const SCALE = 1280 / 480; // logical 480x270 canvas fills the 1280x720 viewport (Scale.FIT)
@@ -1043,28 +1015,14 @@ test('room-creation budget: the refusal reads as plain copy on desktop and on a 
   browser,
 }) => {
   const screenshots: string[] = [];
-  // Its own server on its own port, with a budget of one room per minute: the shared server runs
-  // the default of 20 and every other test in this file would have to work around a tighter one.
-  // Per worker, like every port in this file — 8800 was worker 1's own server once this spec went
-  // parallel, and this test then spent its budget against a server with the default budget and
-  // waited 10s for a refusal that was never coming.
-  const BUDGET_PORT = 8810 + PARALLEL_INDEX;
-  const budgetProc = spawn(path.join(process.cwd(), 'node_modules', '.bin', 'tsx'), ['server/index.ts'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      NO_COLOR: undefined,
-      FORCE_COLOR: undefined,
-      PORT: String(BUDGET_PORT),
-      MEXE_TEST_SEED: String(TEST_SEED),
-      MEXE_MAX_ROOM_CREATES_PER_IP: '1',
-    },
-  });
-  budgetProc.stdout.on('data', (d) => serverStdout.push(String(d)));
-  budgetProc.stderr.on('data', (d) => serverStderr.push(String(d)));
+  // Its own server, with a budget of one room per minute: the shared server runs the default of
+  // 20 and every other test in this file would have to work around a tighter one. Its port comes
+  // from the OS for the same reason the suite's does — a fixed 8810+worker block once collided
+  // with another worker's own server, and this test then spent its budget against a server with
+  // the default budget and waited 10s for a refusal that was never coming.
+  const budget = await startTestServer(await freePort(), TEST_SEED, { MEXE_MAX_ROOM_CREATES_PER_IP: '1' });
   try {
-    await waitForHealth(`http://localhost:${BUDGET_PORT}/health`);
-    const budgetUrl = `ws://localhost:${BUDGET_PORT}`;
+    const budgetUrl = budget.url;
 
     // One room spends the whole budget for this address; every client after it is refused.
     const first = await newClient(browser, budgetUrl);
@@ -1100,7 +1058,8 @@ test('room-creation budget: the refusal reads as plain copy on desktop and on a 
     appendLog({ screenshots });
     for (const page of [first, desktop, portrait]) await page.context().close();
   } finally {
-    budgetProc.kill('SIGTERM');
+    budget.stop();
+    appendLog({ server: { stdout: budget.stdout, stderr: budget.stderr } });
   }
 });
 

@@ -1,4 +1,5 @@
 import type { DraftState, GameState } from '../rules/types';
+import { isOffline, onConnectivityChange } from '../core/pwa';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { Replay } from '../game-state/replay';
@@ -21,6 +22,21 @@ export interface RenderedSeatRow {
   host: boolean;
   status: 'empty' | 'waiting' | 'ready' | 'offline';
   wins: number;
+}
+
+/**
+ * One painted block of the lobby's vertical stack, in world units, recorded by
+ * `OnlineScene.renderLobby` as it lays out. The lobby is a flow, not a set of fixed
+ * y-coordinates, so "nothing overlaps and nothing leaves the screen" is a property a test can
+ * only check against what was actually painted — at the text scale and in the locale it ran in.
+ */
+export interface LobbyBox {
+  /** Stable name of the block: 'code', 'actions', 'summary', 'seat0'…, 'notice', 'reactions',
+   * 'ready', 'start', 'startReason'. */
+  id: string;
+  /** Top edge and height in world units; the stack is vertical, so x/width are not tracked. */
+  top: number;
+  h: number;
 }
 
 /**
@@ -101,6 +117,9 @@ export interface MexeOnlineDebugApi {
    * lobby screen. Asserting on this (not on `players()`) is what makes a vanished occupied seat
    * visible to a test. */
   lobbySeats?: () => RenderedSeatRow[];
+  /** Verification-only: the lobby's painted vertical blocks, top to bottom. Empty off the lobby
+   * screen. See `LobbyBox`. */
+  lobbyBoxes?: () => LobbyBox[];
   /** Verification-only: the lobby's in-place refusal line (not ready / not host / already
    * started), or null when nothing is being explained. */
   lobbyNotice?: () => string | null;
@@ -182,9 +201,13 @@ interface MexeDebugApi {
   tutorialStep: number | null;
   /** Explanation text of the most recent AI decision, written by GameScene.runAiTurn. Null before any AI turn. */
   lastAiThought: string | null;
-  /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
-  a11y: { invalidBadges: number };
-  /** Verification-only (Phase 15 PWA): current offline state, kept in sync by src/core/pwa.ts. */
+  /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge,
+   * and whether the tutorial panel is currently *writing out* a refused interaction rather than
+   * only playing the rejection sound (A11Y-007). */
+  a11y: { invalidBadges: number; tutorialRefusalShown: boolean };
+  /** Verification-only (Phase 15 PWA): current offline state. Observed here, from the same
+   * browser events the offline banner reacts to — the banner used to write it, which made the
+   * product module import this one (ARCH-011) and closed a type-only import cycle (ARCH-012). */
   offline: boolean;
   /** Verification-only (Phase 14 perf fix): running count of DraftEditor.analyze() calls this
    * session — used to prove a table pan / editor scroll never re-triggers a legality analysis
@@ -321,7 +344,7 @@ export const debugApi: MexeDebugApi = {
   dealing: false,
   tutorialStep: null,
   lastAiThought: null,
-  a11y: { invalidBadges: 0 },
+  a11y: { invalidBadges: 0, tutorialRefusalShown: false },
   offline: false,
   analyzeCount: 0,
   invalidMeldReasons: () => [],
@@ -344,6 +367,10 @@ export const debugApi: MexeDebugApi = {
 
 export function installDebugApi(): void {
   window.__MEXE__ = debugApi;
+  debugApi.offline = isOffline();
+  onConnectivityChange((offline) => {
+    debugApi.offline = offline;
+  });
   window.addEventListener('error', (e) => {
     debugApi.errors.push(String(e.message));
   });

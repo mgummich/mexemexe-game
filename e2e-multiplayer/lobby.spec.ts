@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  OUT_DIR, consoleErrorsOf, newClient, shot, startTestServer, toScreen, type TestServer,
+  OUT_DIR, consoleErrorsOf, freePort, newClient, newPhoneClient, shot, startTestServer, toScreen, type TestServer,
 } from './harness';
 
 /**
@@ -19,13 +19,12 @@ import {
 // shared file cannot survive parallel workers: two read-modify-write cycles interleave and one
 // worker's evidence disappears. Same shape as multiplayer.spec.ts's shards.
 const PARTS_DIR = path.join(OUT_DIR, 'verify-lobby-log-parts');
-// One port block per engine, one slot per parallel worker, so neither the three projects nor the
-// workers within one project ever race each other's server. None of them is the server's own
-// DEFAULT_PORT (8787) — a dev server (or anything else) already on that port answers the health
-// check and the WebSocket never reaches the room manager under test. See multiplayer.spec.ts for
-// the blocks below 8820.
-const PORTS: Record<string, number> = { chromium: 8820, firefox: 8830, webkit: 8840 };
-const PARALLEL_INDEX = Number(process.env.TEST_PARALLEL_INDEX ?? 0);
+// The port comes from the OS, not from a per-engine block. A fixed port is shared with everything
+// else on the machine, and this suite is where that bit hardest: with a dev server (or anything
+// else, e.g. a proxy on the server's own DEFAULT_PORT 8787) already listening, our server died on
+// EADDRINUSE while the health probe was answered by that other process, so the WebSocket never
+// reached the room manager under test — and Firefox, which runs only this file, reported it as a
+// lobby failure. `startTestServer` now also refuses to attach to a server it did not start.
 
 // Each test builds its own room from scratch against its worker's own server — nothing here is
 // ordered, and serial was the whole cost of this suite on CI.
@@ -35,8 +34,8 @@ let server: TestServer;
 const evidence: Record<string, unknown> = {};
 const screenshots: string[] = [];
 
-test.beforeAll(async ({}, testInfo) => {
-  server = await startTestServer((PORTS[testInfo.project.name] ?? 8850) + PARALLEL_INDEX);
+test.beforeAll(async () => {
+  server = await startTestServer(await freePort());
 });
 
 test.afterAll(async ({}, testInfo) => {
@@ -730,3 +729,65 @@ test('LB-29: switching rooms leaves the old one behind entirely', async ({ brows
   await assertClean([a, b, c]);
   await closeAll(pages);
 });
+
+// ---------- LB-46: the lobby's vertical flow, at both text scales and on both worlds ----------
+
+interface LobbyBoxRow { id: string; top: number; h: number }
+
+/** The blocks the lobby painted, top to bottom. */
+const boxes = (p: Page): Promise<LobbyBoxRow[]> =>
+  p.evaluate(() => (window.__MEXE__.online!.lobbyBoxes!() as LobbyBoxRow[]).slice().sort((a, b) => a.top - b.top));
+
+/**
+ * LB-46 — every lobby block fits the world and no block lands on the one below it.
+ *
+ * The lobby used to be pinned to fixed y-coordinates (seats at `vy(132 + seat * 13)`, the notice
+ * at `vy(180)`, reactions at `vy(194)`), which only held at one text scale in one locale: a
+ * wrapped room summary or a longer hint pushed a block straight into the next one, and the fix of
+ * the day was to hide something. It is a flow now, so this asserts the property that replaces
+ * those coordinates — and it runs on every engine this file runs on, because "does it overlap"
+ * depends on the engine's own text metrics, which is exactly what a Chromium-only pass cannot
+ * answer.
+ */
+const LOBBY_VIEWPORTS = [
+  { name: 'portrait', viewport: { width: 390, height: 844 }, query: '' },
+  { name: 'portrait-large-text', viewport: { width: 390, height: 844 }, query: '&textscale=125' },
+  { name: 'narrow-large-text', viewport: { width: 360, height: 800 }, query: '&textscale=125' },
+  // en-US strings are the longer of the two locales on this screen ("waiting for players" vs
+  // "esperando"), so the English run is the representative long-locale case.
+  { name: 'landscape-large-text-en', viewport: { width: 844, height: 390 }, query: '&textscale=125&lang=en' },
+];
+
+for (const c of LOBBY_VIEWPORTS) {
+  test(`LB-46 ${c.name}: every lobby block fits the world and nothing overlaps`, async ({ browser }) => {
+    const host = await newPhoneClient(browser, server.url, c.viewport, c.query);
+    const guest = await newPhoneClient(browser, server.url, c.viewport, c.query);
+    const code = await createRoom(host, 'Anfitriã');
+    await joinRoom(guest, code, 'Convidado', 1);
+    await waitForSeats([host, guest], [0, 1]);
+    // The host's screen is the busiest one: it carries the terms line, its tap hint, AJUSTAR, and
+    // the START button with its "who are we waiting for" reason under it.
+    const world = await host.evaluate(() => window.__MEXE__.viewport());
+    const painted = await boxes(host);
+
+    expect(painted.length).toBeGreaterThan(5); // code, actions, summary, seats, reactions, ready…
+    for (const b of painted) {
+      expect(b.h, `${b.id} has no height`).toBeGreaterThan(0);
+      expect(b.top, `${b.id} starts above the world`).toBeGreaterThanOrEqual(0);
+      expect(b.top + b.h, `${b.id} runs past the bottom of the ${world.w}x${world.h} world`)
+        .toBeLessThanOrEqual(world.h);
+    }
+    for (let i = 1; i < painted.length; i++) {
+      const above = painted[i - 1]!;
+      const below = painted[i]!;
+      // 1 unit of slack for sub-unit rounding between a measured text height and a button box.
+      expect(above.top + above.h, `${above.id} overlaps ${below.id}`).toBeLessThanOrEqual(below.top + 1);
+    }
+    // The hint the layout used to drop when it ran out of room is still on screen.
+    expect(painted.map((b) => b.id)).toContain('summary');
+
+    await shot({ [`lobby-flow-${c.name}`]: host }, `lobby-flow-${c.name}`, screenshots);
+    await assertClean([host, guest]);
+    await closeAll([host, guest]);
+  });
+}

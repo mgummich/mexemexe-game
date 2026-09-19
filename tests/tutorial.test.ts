@@ -249,3 +249,49 @@ describe('tutorial authority boundary', () => {
     expect(director.isAllowed({ type: 'returnToHand' })).toBe(false);
   });
 });
+
+/**
+ * A refused interaction has to be *perceivable*. Before this, an off-script drag/tap/press played
+ * the rejection sound and nothing else: muted, it was indistinguishable from a broken control.
+ * The flag below is what GameScene renders as a text line in the step panel (A11Y-007) — so it
+ * has to survive until the player does something the step accepts, and never outlive that.
+ */
+describe('tutorial refusal is recoverable state, not a one-off sound', () => {
+  it('holds a refusal until the step accepts something, and clears on progress', () => {
+    const director = new TutorialDirector();
+    expect(director.blocked).toBe(false);
+
+    director.noteBlocked();
+    expect(director.blocked).toBe(true);
+
+    // Retrying is free: refusing changed no step and no draft.
+    expect(director.stepIndex).toBe(0);
+
+    director.next(); // the player did what step 1 asks
+    expect(director.blocked).toBe(false);
+  });
+
+  it('clears a refusal when a step goal is reached', () => {
+    const state = buildTutorialState();
+    const editor = new DraftEditor(state);
+    const director = new TutorialDirector();
+    director.next(); // step 2: lay the three nines
+    director.noteBlocked();
+
+    const meldId = editor.playHandCard('hearts-9-d0', null) ? editor.getDraft().melds[0]!.id : null;
+    editor.playHandCard('spades-9-d0', meldId);
+    editor.playHandCard('clubs-9-d0', meldId);
+    director.checkComplete(state, editor.getDraft());
+
+    expect(director.stepIndex).toBe(2);
+    expect(director.blocked).toBe(false);
+  });
+
+  it('a restart leaves no refusal behind', () => {
+    const director = new TutorialDirector();
+    director.noteBlocked();
+    director.restart();
+    expect(director.blocked).toBe(false);
+    expect(director.stepIndex).toBe(0);
+  });
+});
