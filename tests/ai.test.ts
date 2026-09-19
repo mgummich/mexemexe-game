@@ -732,6 +732,37 @@ describe('AI difficulty', () => {
     }
   });
 
+  /**
+   * The ladder has to be visible in the configuration the game actually ships: one difficulty
+   * setting applied to every AI seat at once. Per personality the tiers overlap on purpose —
+   * difficulty and personality are orthogonal, so a tier only bites where the policy leaves room
+   * (Cida is minimal and never rearranges at any tier below expert) — but no tier step may be a
+   * no-op for the *match*, which is what a player changing the setting is promised.
+   */
+  it('every tier step changes the match a player sees, in the shipped four-seat configuration', () => {
+    const fingerprint = (difficulty: (typeof DIFFICULTIES)[number], seed: number): string => {
+      let state = createNewGame(seed, personalities.map((p) => ({ name: p, isAi: true })));
+      const ais = personalities.map((p) => createAi(p, difficulty));
+      const moves: string[] = [];
+      for (let turn = 0; turn < 120 && state.phase === 'playing'; turn++) {
+        const d = ais[state.activePlayerIndex]!.decide(observeForAi(state));
+        if (d.kind === 'confirm') {
+          moves.push(`c${d.draft.handCardsPlayed.length}`);
+          state = applyConfirmedTurn(state, d.draft);
+        } else {
+          moves.push('d');
+          state = drawAndEndTurn(state);
+        }
+      }
+      return moves.join('');
+    };
+    const seed = 1;
+    const played = DIFFICULTIES.map((d) => fingerprint(d, seed));
+    expect(new Set(played).size).toBe(DIFFICULTIES.length);
+    // ...and deterministically so: the same tier replays to the same match.
+    expect(fingerprint('smart', seed)).toBe(played[DIFFICULTIES.indexOf('smart')]);
+  });
+
   it('never proposes an illegal confirm, at any tier or personality', () => {
     const hand = [n('hearts', 5), n('spades', 5), n('clubs', 5), j(0, 1), n('hearts', 6), n('hearts', 7)];
     const table = [{ id: 'm1', cards: [n('diamonds', 9), n('diamonds', 10), n('diamonds', 11), n('diamonds', 12)] }];

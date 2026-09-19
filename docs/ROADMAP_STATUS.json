@@ -1,11 +1,15 @@
 {
   "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
   "updated": "2026-09-19",
-  "current": { "wave": "6B", "phase": "47 — Difficulty Model", "status": "AUDITING" },
+  "current": {
+    "wave": "6C",
+    "phase": "49 \u2014 Human-Like Behavior",
+    "status": "AUDITING"
+  },
   "head": "5abd5da",
   "phases": [
     {
-      "phase": "46 — Strategic Planning",
+      "phase": "46 \u2014 Strategic Planning",
       "wave": "6B",
       "status": "PASS",
       "result": "Repo already satisfied bounded deterministic search, candidate sequencing, legal fallback and no-mutation. Gap closed: future-state evaluation (strandedCards) in src/ai/evaluate.ts.",
@@ -17,15 +21,83 @@
       ],
       "evidence": {
         "benchmark": "200 fixed seeds, RearrangerAi vs unchanged SimpleAi",
-        "before": { "wins": 193, "avgTurns": 133.5, "avgCardsLeft": 0.59, "ms": 16847 },
-        "after": { "wins": 195, "avgTurns": 130.3, "avgCardsLeft": 0.55, "ms": 17283 }
+        "before": {
+          "wins": 193,
+          "avgTurns": 133.5,
+          "avgCardsLeft": 0.59,
+          "ms": 16847
+        },
+        "after": {
+          "wins": 195,
+          "avgTurns": 130.3,
+          "avgCardsLeft": 0.55,
+          "ms": 17283
+        }
       },
-      "critic": { "round": 1, "result": "CRITIC PASS with 1 risk + 1 nit, both repaired (joker guard + ace high/low partnering, boundary tests)" },
+      "critic": {
+        "round": 1,
+        "result": "CRITIC PASS with 1 risk + 1 nit, both repaired (joker guard + ace high/low partnering, boundary tests)"
+      },
       "deferredRisks": [
-        { "id": "P3-screenshot-churn", "note": "npm run screenshot rewrites ~60 PNGs with no visual change; reverted each run", "owner": "Phase 84 — Flaky-Test Control" },
-        { "id": "P3-suite-flake", "note": "tutorial 12-step e2e timed out once under full-suite load, passes in isolation and on rerun", "owner": "Phase 84 — Flaky-Test Control" }
+        {
+          "id": "P3-screenshot-churn",
+          "note": "npm run screenshot rewrites ~60 PNGs with no visual change; reverted each run",
+          "owner": "Phase 84 \u2014 Flaky-Test Control"
+        },
+        {
+          "id": "P3-suite-flake",
+          "note": "tutorial 12-step e2e timed out once under full-suite load, passes in isolation and on rerun",
+          "owner": "Phase 84 \u2014 Flaky-Test Control"
+        }
       ],
-      "roadmapMismatch": "Roadmap assumed Phase 46 would add lookahead/search; repo already had a bounded deterministic trial-budget search from Wave 6A. Multi-ply lookahead is impossible under INV-A2 (no pile order, no opponent hands) — documented in docs/ARCHITECTURE.md."
+      "roadmapMismatch": "Roadmap assumed Phase 46 would add lookahead/search; repo already had a bounded deterministic trial-budget search from Wave 6A. Multi-ply lookahead is impossible under INV-A2 (no pile order, no opponent hands) \u2014 documented in docs/ARCHITECTURE.md."
+    },
+    {
+      "phase": "47 \u2014 Difficulty Model",
+      "wave": "6B",
+      "status": "NO_CHANGE_REQUIRED",
+      "result": "Four tiers already exist as configuration over the shared SimpleAi/RearrangerAi engines, settings-persisted, localized and UI-cycled. Fixed a false docstring claim (casual is not 'full lay-down' for a minimal personality) and added the missing tier-ladder regression test.",
+      "acceptance": "legality unchanged at every tier (existing test); deterministic per tier (existing test); tiers distinguishable in the shipped four-seat configuration (new test); bounded by SEARCH_BUDGET_TRIALS",
+      "verification": [
+        "npx vitest run tests/ai.test.ts (74/74)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p47.log)"
+      ],
+      "evidence": {
+        "benchmark": "40 seeds, one tier applied to all four AI seats",
+        "avgTurns": {
+          "beginner": 129.4,
+          "casual": 123.3,
+          "smart": 105.1,
+          "expert": 93.7
+        }
+      },
+      "critic": {
+        "round": 1,
+        "result": "CRITIC PASS, no issues"
+      },
+      "deferredRisks": [
+        {
+          "id": "P2-tier-overlap",
+          "note": "Per personality the tiers overlap: cida identical at beginner/casual/smart, juninho at casual/smart, bia/ze at smart/expert. Inherent to personality and difficulty being orthogonal; the match-level ladder is intact.",
+          "owner": "Phase 54 \u2014 AI Balance Metrics"
+        }
+      ]
+    },
+    {
+      "phase": "48 \u2014 Personality Framework",
+      "wave": "6B",
+      "status": "NO_CHANGE_REQUIRED",
+      "result": "PERSONALITY_TRAITS is configuration (holdJokers, minimal, rearrange, patient) over the shared engines; createAi composes it with the difficulty tier; no personality owns planning or legality code.",
+      "acceptance": "personalities observably diverge on one seed (existing tests); legality holds for every personality (existing tests); personality and difficulty independent (existing tests)",
+      "verification": [
+        "npx vitest run tests/ai.test.ts (74/74)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p47.log)"
+      ],
+      "critic": {
+        "round": 1,
+        "result": "CRITIC PASS, no issues"
+      },
+      "roadmapMismatch": "Roadmap lists 'evaluation weight modifiers' in scope. The repo deliberately keeps src/ai/evaluate.ts neutral and expresses personality as candidate-generation policy instead; the exit criteria are met without weights, and weights would move personality into the shared evaluator the architecture keeps neutral. Repo truth preserved."
     }
   ]
 }

@@ -597,11 +597,17 @@ const PERSONALITY_TRAITS: Record<Personality, { holdJokers: boolean; minimal: bo
  * while hand > 5 early game unless it can dump 3+ cards.
  *
  * `difficulty` scales the search only:
- * - beginner: one action per turn, jokers held — plays legally but misses combinations
- * - casual: full lay-down + extensions, never rearranges the shared table
+ * - beginner: one action per turn whatever the personality would do, jokers held per trait
+ * - casual: the personality's own lay-down policy, but never the rearrangement search
  * - smart (default): the personality's own engine
  * - expert: the rearrangement search for every personality, widened
  * Patience (ze) applies at every tier above beginner.
+ *
+ * The two dimensions are orthogonal by design, so a tier only bites where the personality leaves
+ * it room: Cida is already minimal and never rearranges, so beginner/casual/smart are one engine
+ * for her, and Bia already rearranges at smart, so expert only widens her candidate cap. The
+ * setting applies to every AI seat at once, which is where the ladder is actually visible — see
+ * the tier-ladder test in `tests/ai.test.ts`.
  */
 export function createAi(personality: Personality, difficulty: Difficulty = 'smart'): AiPlayer {
   const traits = PERSONALITY_TRAITS[personality];
