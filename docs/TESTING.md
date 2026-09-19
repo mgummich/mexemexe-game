@@ -895,6 +895,22 @@ left per seat, peak trial spend) for tooling. A refused action would be a bug,
 since every AI draft has already passed `canConfirm`, so one dumps that game's
 replay to `tmp/` and exits non-zero with the `npm run replay run` command.
 
+`--sweep difficulty` plays the same seeds at all four tiers, one row each;
+`--sweep matchups` plays every head-to-head pair, each pair twice so both sides
+move first — going first is worth real games in this format, and a one-sided run
+would measure the seat as much as the personality. Rows within a sweep are paired
+by construction: identical deals, identical seat order, one thing varied.
+
+**Reading the numbers.** No single one of them is the answer, and none of them is
+a pass/fail bar — the harness reports, it never asserts. A win count says who went
+out first but not by how much; `avgCardsLeft` says how close the rest were;
+`avgTurns` says whether the table moved at all; `drawRate` separates a seat that
+had nothing to play from one that chose to wait. The `±` on a win count is the 95%
+confidence half-width for that share, and the `±` on `avgTurns` is a standard
+deviation: a gap narrower than the two intervals together is sample size, not a
+difference. Numbers measured this way belong in the change that measured them, not
+copied into this document, where they would rot.
+
 The settings overlay also carries a **play-log export** (copies the in-memory
 session log to the clipboard) used during playtests. The log is session-only,
 never written to disk and never sent anywhere; names and reconnect tokens are

@@ -3,6 +3,8 @@
  *
  *   npx tsx scripts/simulate.ts --seeds 1-200 --seats cida,juninho,bia,ze --difficulty smart
  *   npx tsx scripts/simulate.ts --seeds 1-50 --seats bia,ze --json tmp/sim.json
+ *   npx tsx scripts/simulate.ts --seeds 1-200 --sweep difficulty   one row per tier
+ *   npx tsx scripts/simulate.ts --seeds 1-200 --sweep matchups     one row per head-to-head pair
  *
  * It plays through the production path and nothing else: `createNewGame`, `observeForAi`, the
  * personality engines from `createAi`, and `GameStore.dispatch`, which is the same dispatcher a
@@ -15,8 +17,16 @@
  * `npm run replay run <file>`.
  *
  * Output follows WORKFLOW.md §1: one summary line on success, the failing seed and its replay
- * path on failure. `--json` additionally writes the machine-readable per-game rows that Phase 54
- * balance metrics read.
+ * path on failure. `--json` additionally writes the machine-readable per-game rows that balance
+ * work reads.
+ *
+ * Reading the numbers: no single one of them is the answer. A win count says who went out first
+ * but not by how much; `avgCardsLeft` says how close the others were; `avgTurns` says whether the
+ * table moved at all; `drawRate` separates a seat that had nothing to play from one that chose to
+ * wait. `±` on a win count is the 95% confidence half-width for that share over this many games —
+ * a gap smaller than the two intervals put together is not a difference, it is the sample size.
+ * Every seat plays the same dealt seeds in the same seat order, so a comparison is paired: the
+ * only difference between two rows is the thing being compared.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -81,10 +91,16 @@ function playGame(seed: number, seats: readonly Personality[], difficulty: Diffi
   };
 }
 
+/** `12` is one seed; `1-200` is a range. Anything else is a typo, and a typo that silently
+ *  becomes a different sample is worse than a crash. */
 function parseSeeds(spec: string): number[] {
-  const [from, to] = spec.split('-').map(Number);
-  if (!Number.isFinite(from!)) throw new Error(`bad --seeds: ${spec}`);
-  const last = Number.isFinite(to!) ? to! : from!;
+  const parts = spec.split('-').map(Number);
+  const [from, to] = parts;
+  if (parts.length > 2 || !Number.isFinite(from) || (parts.length === 2 && !Number.isFinite(to))) {
+    throw new Error(`bad --seeds: ${spec} (expected N or N-M)`);
+  }
+  const last = parts.length === 2 ? to! : from!;
+  if (last < from!) throw new Error(`bad --seeds: ${spec} (range runs backwards)`);
   return Array.from({ length: last - from! + 1 }, (_, i) => from! + i);
 }
 
@@ -93,45 +109,116 @@ function arg(name: string, fallback: string): string {
   return i === -1 ? fallback : (process.argv[i + 1] ?? fallback);
 }
 
+/** 95% confidence half-width for a win share over `n` games (normal approximation). */
+function ci95(wins: number, n: number): number {
+  const p = wins / n;
+  return +(1.96 * Math.sqrt((p * (1 - p)) / n) * n).toFixed(1);
+}
+
+function stdDev(values: readonly number[]): number {
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  return +Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length).toFixed(1);
+}
+
 const seeds = parseSeeds(arg('seeds', '1-50'));
 const seats = arg('seats', 'cida,juninho,bia,ze').split(',') as Personality[];
 const difficulty = arg('difficulty', 'smart') as Difficulty;
 const jsonOut = process.argv.indexOf('--json') === -1 ? null : arg('json', 'tmp/simulate.json');
+/** `difficulty` runs every tier over the same seeds; `matchups` runs every head-to-head pair. */
+const sweep = process.argv.indexOf('--sweep') === -1 ? null : arg('sweep', 'difficulty');
+if (sweep !== null && sweep !== 'difficulty' && sweep !== 'matchups') {
+  throw new Error(`unknown --sweep: ${sweep} (expected difficulty or matchups)`);
+}
 
 for (const seat of seats) {
   if (!PERSONALITIES.includes(seat)) throw new Error(`unknown personality: ${seat}`);
 }
 if (!DIFFICULTIES.includes(difficulty)) throw new Error(`unknown difficulty: ${difficulty}`);
 
-const started = Date.now();
-const games: GameResult[] = [];
-for (const seed of seeds) {
-  games.push(playGame(seed, seats, difficulty));
+/** One batch: the same seeds, one configuration. Paired by construction — every row a sweep
+ *  prints played the identical deals in the identical seat order. */
+function run(runSeats: readonly Personality[], runDifficulty: Difficulty): { games: GameResult[]; ms: number } {
+  const started = Date.now();
+  const games = seeds.map((seed) => playGame(seed, runSeats, runDifficulty));
+  return { games, ms: Date.now() - started };
 }
-const ms = Date.now() - started;
 
-const wins = seats.map((_, seat) => games.filter((g) => g.winner === seat).length);
-const stalemates = games.filter((g) => g.winner === null).length;
-const summary = {
-  config: { seeds: arg('seeds', '1-50'), seats, difficulty },
-  games: games.length,
-  wins: Object.fromEntries(seats.map((p, i) => [p, wins[i]!])),
-  stalemates,
-  avgTurns: +(games.reduce((n, g) => n + g.turns, 0) / games.length).toFixed(1),
-  drawRate: +(games.reduce((n, g) => n + g.draws, 0) / games.reduce((n, g) => n + g.turns, 0)).toFixed(3),
-  avgCardsLeft: seats.map((_, seat) => +(games.reduce((n, g) => n + g.cardsLeft[seat]!, 0) / games.length).toFixed(2)),
-  peakTrials: Math.max(...games.map((g) => g.peakTrials)),
-  ms,
-};
+function summarize(runSeats: readonly Personality[], runDifficulty: Difficulty, games: GameResult[], ms: number) {
+  const wins = runSeats.map((_, seat) => games.filter((g) => g.winner === seat).length);
+  return {
+    config: { seeds: arg('seeds', '1-50'), seats: [...runSeats], difficulty: runDifficulty },
+    games: games.length,
+    wins: Object.fromEntries(runSeats.map((p, i) => [p, wins[i]!])),
+    winsCi95: Object.fromEntries(runSeats.map((p, i) => [p, ci95(wins[i]!, games.length)])),
+    stalemates: games.filter((g) => g.winner === null).length,
+    avgTurns: +(games.reduce((n, g) => n + g.turns, 0) / games.length).toFixed(1),
+    turnsStdDev: stdDev(games.map((g) => g.turns)),
+    drawRate: +(games.reduce((n, g) => n + g.draws, 0) / games.reduce((n, g) => n + g.turns, 0)).toFixed(3),
+    avgCardsLeft: Object.fromEntries(
+      runSeats.map((p, seat) => [p, +(games.reduce((n, g) => n + g.cardsLeft[seat]!, 0) / games.length).toFixed(2)]),
+    ),
+    peakTrials: Math.max(...games.map((g) => g.peakTrials)),
+    ms,
+  };
+}
+
+type Summary = ReturnType<typeof summarize>;
+
+function line(label: string, s: Summary): string {
+  const wins = Object.entries(s.wins)
+    .map(([p, w]) => `${p}=${w}±${s.winsCi95[p]}`)
+    .join(' ');
+  return (
+    `${label} ${wins} stalemates=${s.stalemates} avgTurns=${s.avgTurns}±${s.turnsStdDev}` +
+    ` drawRate=${s.drawRate} peakTrials=${s.peakTrials} ${(s.ms / 1000).toFixed(1)}s`
+  );
+}
+
+const summaries: Summary[] = [];
+if (sweep === 'difficulty') {
+  for (const tier of DIFFICULTIES) {
+    const { games, ms } = run(seats, tier);
+    const s = summarize(seats, tier, games, ms);
+    summaries.push(s);
+    console.log(line(`PASS simulate ${s.games} games ${tier.padEnd(8)}`, s));
+  }
+} else if (sweep === 'matchups') {
+  for (let i = 0; i < PERSONALITIES.length; i++) {
+    for (let k = i + 1; k < PERSONALITIES.length; k++) {
+      const pair = [PERSONALITIES[i]!, PERSONALITIES[k]!];
+      // Each pair plays the seed set twice, once from each side. Moving first is worth real
+      // games in this deal-heavy format, so a one-sided run would measure the seat as much as
+      // the personality.
+      const forward = run(pair, difficulty);
+      const reverse = run([pair[1]!, pair[0]!], difficulty);
+      const s = summarize(pair, difficulty, forward.games, forward.ms + reverse.ms);
+      const swapped = summarize([pair[1]!, pair[0]!], difficulty, reverse.games, reverse.ms);
+      const both: Summary = {
+        ...s,
+        games: s.games + swapped.games,
+        wins: Object.fromEntries(pair.map((p) => [p, s.wins[p]! + swapped.wins[p]!])),
+        winsCi95: Object.fromEntries(pair.map((p) => [p, ci95(s.wins[p]! + swapped.wins[p]!, s.games + swapped.games)])),
+        stalemates: s.stalemates + swapped.stalemates,
+        avgTurns: +((s.avgTurns + swapped.avgTurns) / 2).toFixed(1),
+        turnsStdDev: stdDev([...forward.games, ...reverse.games].map((g) => g.turns)),
+        drawRate: +((s.drawRate + swapped.drawRate) / 2).toFixed(3),
+        avgCardsLeft: Object.fromEntries(
+          pair.map((p) => [p, +((s.avgCardsLeft[p]! + swapped.avgCardsLeft[p]!) / 2).toFixed(2)]),
+        ),
+        peakTrials: Math.max(s.peakTrials, swapped.peakTrials),
+      };
+      summaries.push(both);
+      console.log(line(`PASS simulate ${both.games} games ${pair.join(' vs ').padEnd(18)}`, both));
+    }
+  }
+} else {
+  const { games, ms } = run(seats, difficulty);
+  const s = summarize(seats, difficulty, games, ms);
+  summaries.push(s);
+  console.log(line(`PASS simulate ${s.games} games ${difficulty}`, s) + (jsonOut ? ` json=${jsonOut}` : ''));
+}
 
 if (jsonOut) {
   fs.mkdirSync(path.dirname(jsonOut), { recursive: true });
-  fs.writeFileSync(jsonOut, `${JSON.stringify({ ...summary, games }, null, 2)}\n`);
+  fs.writeFileSync(jsonOut, `${JSON.stringify(summaries.length === 1 ? summaries[0] : summaries, null, 2)}\n`);
 }
-
-const winLine = seats.map((p, i) => `${p}=${wins[i]}`).join(' ');
-console.log(
-  `PASS simulate ${games.length} games ${difficulty} ${winLine} stalemates=${stalemates}` +
-    ` avgTurns=${summary.avgTurns} peakTrials=${summary.peakTrials} ${(ms / 1000).toFixed(1)}s` +
-    (jsonOut ? ` json=${jsonOut}` : ''),
-);

@@ -2,9 +2,9 @@
   "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
   "updated": "2026-09-19",
   "current": {
-    "wave": "6D",
-    "phase": "54 \u2014 AI Balance Metrics",
-    "status": "IMPLEMENTING"
+    "wave": "6E",
+    "phase": "55 \u2014 AI Content Tooling",
+    "status": "AUDITING"
   },
   "head": "5abd5da",
   "phases": [
@@ -221,13 +221,82 @@
         "npm run verify (exit 0, tmp/agent-logs/verify-p53.log)"
       ],
       "critic": {
-        "round": 0,
-        "result": "pending \u2014 reviewed together with Phase 54"
+        "round": 2,
+        "result": "CRITIC PASS \u2014 round 1 found one real bug in the matchup aggregation and two input-validation gaps; all repaired and re-reviewed"
       },
       "docs": [
         "docs/TESTING.md developer tools + runtime budget row"
       ],
       "note": "Also corrected scripts/replay.ts, whose header still claimed bia/ze record non-reproducibly under a wall-clock budget."
+    },
+    {
+      "phase": "54 \u2014 AI Balance Metrics",
+      "wave": "6D",
+      "status": "PASS",
+      "result": "Extended the harness with --sweep difficulty and --sweep matchups, 95% confidence half-widths on win counts and a standard deviation on game length. Matchup pairs play each seed set from both sides, because moving first is worth real games in this format.",
+      "acceptance": "difficulty separation and personality differentiation both measurable; methodology documented; every number reproducible from the printed config; several metrics reported and none treated as the answer",
+      "verification": [
+        "npm run simulate -- --seeds 1-200 --sweep difficulty",
+        "npm run simulate -- --seeds 1-100 --sweep matchups",
+        "npx eslint scripts/simulate.ts",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p54d.log)"
+      ],
+      "evidence": {
+        "difficultySweep200Seeds": {
+          "beginner": {
+            "cida": 49,
+            "juninho": 88,
+            "bia": 31,
+            "ze": 32,
+            "avgTurns": 126.9,
+            "drawRate": 0.631,
+            "peakTrials": 0
+          },
+          "casual": {
+            "cida": 55,
+            "juninho": 83,
+            "bia": 32,
+            "ze": 30,
+            "avgTurns": 121.6,
+            "drawRate": 0.661,
+            "peakTrials": 0
+          },
+          "smart": {
+            "cida": 4,
+            "juninho": 4,
+            "bia": 96,
+            "ze": 96,
+            "avgTurns": 103.9,
+            "drawRate": 0.564,
+            "peakTrials": 5952
+          },
+          "expert": {
+            "cida": 33,
+            "juninho": 53,
+            "bia": 55,
+            "ze": 59,
+            "avgTurns": 89.7,
+            "drawRate": 0.551,
+            "peakTrials": 4520
+          }
+        },
+        "matchups200GamesPerPair": "bia/ze beat cida/juninho 194-197 to 3-6; bia vs ze 98 vs 102 +/-13.9 (a tie at this sample size)",
+        "reading": "juninho wins the two tiers where nobody rearranges; the rearrangers take over the moment the search switches on; expert levels the field because every personality then rearranges"
+      },
+      "critic": {
+        "round": 2,
+        "result": "CRITIC PASS \u2014 round 1 raised one bug (avgCardsLeft not aggregated across the reversed matchup run) and two silent-degradation input gaps; all repaired"
+      },
+      "docs": [
+        "docs/TESTING.md simulation harness methodology and how to read the numbers"
+      ],
+      "deferredRisks": [
+        {
+          "id": "P2-perf-spec-floors-under-suite-load",
+          "note": "Three @perf failures this session inside the full suite, all passing in isolation: crowded-table-max 24.8 and 39.0 fps against a local floor of 45, stress-table 43.9 against 50. The local floors look unachievable under full-suite load rather than randomly flaky; raising them needs CI measurement, not a guess.",
+          "owner": "Phase 84 \u2014 Flaky-Test Control"
+        }
+      ]
     }
   ]
 }
