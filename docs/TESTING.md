@@ -35,7 +35,7 @@ magnitude a developer waits for the whole category on this repo — see
 | Property / generative | ms | Invariants that hold across *every* generated deal, meld and legal action sequence — conservation, round-trips, determinism, refusal | The specific answers this game gives (that is a unit test's job), anything impure | `tests/property/` |
 | Golden replay | ms | Whole-match outcomes: the endings, the rotations, a recorded rearrangement | Any rule a unit test can prove; anything presentational | `tests/replay.test.ts` + `tests/fixtures/replays/` |
 | Application / integration | ms | Action orchestration (`LocalMatch`), online state adaptation (`OnlineSession`), lobby transitions (`LobbyMachine`), persistence and lifecycle coordination | Wire framing, rendering, engine behaviour | `tests/match`, `online-session`, `lobby`, `persistence`, `lifecycle`, `net/` |
-| Simulation | seconds | Emergent behaviour over many seeded states — AI, full matches, lobby random walks | Single rule cases, which are cheaper as unit tests | `tests/probes`, `soak`, `server/lobby-soak` |
+| Simulation | seconds | Emergent behaviour over many seeded states — AI, full matches, lobby random walks | Single rule cases, which are cheaper as unit tests | `tests/probes`, `soak`, `server/lobby-soak`, `server/session-soak.integration` |
 | Server integration | seconds | Room ownership, authoritative validation, revisions, reconnect, rematch, hidden information, the wire boundary | UI, engine parity | `tests/server/` |
 | Browser E2E | minutes | Real input, Phaser interaction, scene transitions, the service worker, several real clients against the real server | Rule legality, or anything a pure function already proves | `e2e/`, `e2e-multiplayer/`, `e2e-pwa/` |
 | Cross-browser / device | minutes | Behaviour that genuinely differs per engine or form factor: pointer/touch, viewport, orientation, iOS lifecycle | A second copy of a journey already proven on Chromium | `e2e-cross/`, the `firefox`/`webkit` multiplayer projects |
@@ -254,6 +254,7 @@ as orders of magnitude, not deadlines — nothing in the repo asserts them.
 | `npm run simulate -- --seeds 1-200` | batch AI-vs-AI matches through the production dispatcher | ~11s |
 | `npm run lint` | ESLint over six trees + `tsc --noEmit` | ~4s |
 | `npm run test:property` | the same properties at the extended budget | ~9s, nightly |
+| `MEXE_SOAK=1 npx vitest run tests/server/session-soak.integration.test.ts` | the session soak at the long budget (8 room lifecycles instead of 2) | ~45s, nightly |
 | `npm run screenshot` | build + the browser journey/perf suite | minutes |
 | `npm run verify:multiplayer:chromium` | build + two-plus real clients | minutes |
 | `npm run verify:multiplayer` | the same on three engines | ~18 min — nightly, not per PR |
@@ -863,9 +864,11 @@ next thinks of it.
 race-hunting work — WebKit touch flake detection (`--repeat-each=5`,
 `--retries=0`), the screenshot suite traced and retry-free, the full
 cross-browser matrix, repeated untraced fps sampling for drift, the multiplayer
-suite on all three engines, and the multiplayer suite under tracing (tracing
+suite on all three engines, the multiplayer suite under tracing (tracing
 slows frame processing enough to lose races a fast machine always wins — that is
-how the double-click `create_room` duplicate was found).
+how the double-click `create_room` duplicate was found), and the session soak at
+its long budget (`MEXE_SOAK=1`), where eight room lifecycles on one process cost
+~45s instead of the ~11s two cycles cost on every PR.
 
 **Release gate:** `verify`, `verify:preview`, `verify:multiplayer` and
 `verify:pwa`, all green, with zero console errors and zero server stderr lines.

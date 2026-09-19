@@ -143,6 +143,33 @@ describe('OR-20/OR-21 a dropped session reconnects itself', () => {
     expect(opened.length).toBe(1 + attempts);
   });
 
+  it('OR-20 an exhausted loop still reconnects when the player asks, and gets the whole budget back', () => {
+    // The gap this closes: every other case here ends either in recovery or in the terminal
+    // status. Nothing drove the schedule to exhaustion and then back into a live session — which
+    // is exactly what a phone that was in a tunnel past the last attempt does when its owner
+    // taps reconnect (or reloads) inside the server's seat-hold window.
+    const client = droppedClient();
+    while (client.getStatus() === 'reconnecting') {
+      const before = opened.length;
+      runNextAttempt();
+      if (opened.length === before) break;
+      opened[opened.length - 1]!.fail();
+    }
+    expect(client.getStatus()).toBe('closed');
+    const afterGivingUp = opened.length;
+
+    client.connect();
+    expect(opened.length).toBe(afterGivingUp + 1);
+    const manual = opened[opened.length - 1]!;
+    manual.accept();
+
+    expect(client.getStatus()).toBe('open');
+    // The token survived the exhausted loop, so the seat is reclaimed rather than re-joined.
+    expect(JSON.parse(manual.sent[0]!)).toMatchObject({ type: 'reconnect', token: 'TOKEN1' });
+    // And the next drop gets a full schedule, not the remains of the exhausted one.
+    expect(client.reconnectAttemptsLeft()).toBe(7);
+  });
+
   it('re-sends the session token on the socket that comes back, and resets the budget', () => {
     const client = droppedClient();
     runNextAttempt();

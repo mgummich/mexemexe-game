@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   specialized-tests:
-    name: Extended fuzz & golden replays
+    name: Extended fuzz, golden replays & session soak
     runs-on: ubuntu-latest
     # `npm run test` already runs these properties at the fast budget on every PR; this is the
     # same properties at the extended iteration count (MEXE_FUZZ=extended), which is the part that
@@ -31,6 +31,10 @@ jobs:
       # No browser install: both suites are pure node.
       - run: npm run test:property
       - run: npm run test:replay
+      # Same soak the PR path runs at two room lifecycles, here at eight (~45s): long-session
+      # drift in the socket/seat bookkeeping needs the repeats, and the repeats need the wall
+      # clock this job has and a PR does not.
+      - run: MEXE_SOAK=1 npx vitest run tests/server/session-soak.integration.test.ts
 
   flake-detection:
     name: WebKit touch flake detection
