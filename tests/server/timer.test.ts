@@ -174,6 +174,25 @@ describe('server-authoritative turn timer', () => {
     expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBe(45_000);
   });
 
+  it('LB-14: the active chair in a gapped room can claim the bonus, and an idle chair still cannot', () => {
+    // Seats 0 and 2 with the gap at 1: chair 2 is player index 1, so a server comparing the chair
+    // number against the active player index would refuse the claim its own timer is offering.
+    const clock = { t: 1000 };
+    const mgr = testManager({ clock, code: 'GAP', seed: 7 });
+    mgr.createRoom('Host');
+    mgr.joinRoom('GAP', 'Bob');
+    mgr.joinRoom('GAP', 'Carol');
+    mgr.leaveRoom('GAP', 1);
+    mgr.setRoomSettings('GAP', 0, TIMER_PRESETS.fast);
+    mgr.setReady('GAP', 0, true);
+    mgr.setReady('GAP', 2, true);
+    expect(mgr.startGame('GAP', 0)).toMatchObject({ ok: true });
+    mgr.drawEndTurn('GAP', 0, mgr.getRoom('GAP')!.rev); // hand the turn to chair 2
+    expect(mgr.getRoom('GAP')!.state!.activePlayerIndex).toBe(1);
+    expect(mgr.claimMexeBonus('GAP', 0).ok).toBe(false); // chair 0 is not on the clock
+    expect(mgr.claimMexeBonus('GAP', 2).ok).toBe(true);
+  });
+
   it('the bonus is available again on the next turn, not carried over', () => {
     const clock = { t: 1000 };
     const mgr = startedRoom(clock, TIMER_PRESETS.fast);

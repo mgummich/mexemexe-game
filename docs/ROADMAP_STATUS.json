@@ -2,8 +2,8 @@
   "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
   "updated": "2026-09-19",
   "current": {
-    "wave": "7A",
-    "phase": "58 \u2014 Authoritative Multiplayer State Flow",
+    "wave": "7B",
+    "phase": "59 \u2014 Lobby State Machine",
     "status": "AUDITING"
   },
   "head": "5abd5da",
@@ -367,6 +367,33 @@
           "id": "P3-matchseats-identity-fallback",
           "note": "room.seats[room.matchSeats[i] ?? i] silently falls back to identity mapping when matchSeats has no entry, inventing a seat rather than failing on a violated invariant (AGENTS.md says fail).",
           "owner": "Phase 58 \u2014 Authoritative Multiplayer State Flow"
+        }
+      ]
+    },
+    {
+      "phase": "58 \u2014 Authoritative Multiplayer State Flow",
+      "wave": "7A",
+      "status": "PASS",
+      "result": "Authority model already satisfied and verified against code (server-only transitions, per-seat redaction, revision checks, viewProjectionProblem rejecting unrepresentable frames before anything is written, applySync testable with no socket/Phaser/clock). Two changes: removed the identity-mapping fallbacks carried over from Phase 57, and fixed a pre-existing seat/player-index confusion in claimMexeBonus found by the critic.",
+      "acceptance": "claimMexeBonus translates chair to player index like claimTurn; no path invents a seat when matchSeats has no entry; authority, projection and resync criteria evidenced at file:line",
+      "verification": [
+        "npx vitest run tests/server (306 tests)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p58c.log)",
+        "npm run verify:multiplayer:chromium (exit 0, tmp/agent-logs/verify-mp-p58c.log)"
+      ],
+      "evidence": {
+        "regressionTest": "tests/server/timer.test.ts LB-14 gapped-room bonus test verified red with the fix stashed",
+        "defect": "in a room with a seat gap every chair after the gap was refused the Mexe timer extension; denial only, never escalation, since the seat comes from the socket rather than the payload"
+      },
+      "critic": {
+        "round": 2,
+        "result": "CRITIC PASS. Round 1 found the claimMexeBonus defect (pre-existing, not in the diff under review) and questioned the ?? -1 skip; round 2 verified the fix and confirmed matchSeats and state are written and cleared together, so the skip is unreachable and correct."
+      },
+      "deferredRisks": [
+        {
+          "id": "P2-suite-green-only-when-quiet",
+          "note": "Five in-suite-only failures this session across three files: @perf fps floors x3 (crowded-table-max 24.8 and 39.0 vs 45, stress-table 43.9 vs 50), tests/server/discovery.test.ts 4 socket tests timing out with 'got error' in one run, and the tutorial 12-step e2e once. All pass in isolation. The suite appears to be green only on an unloaded machine.",
+          "owner": "Phase 84 \u2014 Flaky-Test Control"
         }
       ]
     }

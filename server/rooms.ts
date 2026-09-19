@@ -577,7 +577,12 @@ export class RoomManager {
    */
   claimMexeBonus(code: string, seat: number): { ok: boolean; msLeft: number | null } {
     const room = this.rooms.get(code);
-    if (!room || !room.state || room.state.activePlayerIndex !== seat) return { ok: false, msLeft: null };
+    // Seat number, not player index: in a room with a seat gap the two differ, and comparing them
+    // directly refused the bonus to every chair after the gap (the same translation `claimTurn`
+    // does).
+    if (!room || !room.state || room.state.activePlayerIndex !== this.playerIndex(room, seat)) {
+      return { ok: false, msLeft: null };
+    }
     if (room.turnStartedAt === null || room.mexeBonusClaimed || room.settings.mexeBonusMs <= 0) {
       return { ok: false, msLeft: this.msLeft(room) };
     }
@@ -674,7 +679,10 @@ export class RoomManager {
     after.players.forEach((p, i) => {
       if (p.hand.length !== 1) return;
       if ((before?.players[i]?.hand.length ?? 1) === 1) return;
-      const seat = room.seats[room.matchSeats[i] ?? i];
+      // No `?? i` fallback: `matchSeats` is built from the same seat list the match was dealt
+      // from, so a missing entry is a broken invariant, and guessing that the player index is
+      // also the chair number would announce the wrong player's last card.
+      const seat = room.seats[room.matchSeats[i] ?? -1];
       if (seat) this.note(room, 'last_card', seat);
     });
   }
@@ -750,7 +758,9 @@ export class RoomManager {
     for (const [code, room] of this.rooms) {
       const state = room.state;
       if (!state || state.phase !== 'playing') continue;
-      const active = room.seats[room.matchSeats[state.activePlayerIndex] ?? state.activePlayerIndex];
+      // Same rule as `noteCardCounts`: a missing mapping skips this room rather than timing out
+      // whichever chair happens to share the active player's index.
+      const active = room.seats[room.matchSeats[state.activePlayerIndex] ?? -1];
       if (!active) continue;
       if (!room.seats.some((s) => s !== null && s.connected)) continue;
 
