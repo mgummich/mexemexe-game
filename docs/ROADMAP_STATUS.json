@@ -617,5 +617,27 @@
         "Disconnect and retry were already covered (forceDrop, context().setOffline, tests/net/reconnect.test.ts OR-*) and were not re-proven here."
       ]
     }
+  ],
+  "riskClosures": [
+    {
+      "task": "@perf fps floors red on CI (pulled forward from Phase 84 — Flaky-Test Control)",
+      "closes": [
+        "P3-perf-spec-flake",
+        "P2-perf-spec-floors-under-suite-load",
+        "P3-suite-flake (perf half)"
+      ],
+      "trigger": "CI run 35427627357 on this branch failed the Playwright e2e job on two @perf floors — stress-table 23.61 against 25 and crowded-table-max 14.73 against 15 — while the nightly fps-drift job, which runs the same three specs with --repeat-each=5, passed. A single-sample gate on a shared runner, not a rendering regression.",
+      "change": "measureFps now returns the best of three 2s windows instead of one. Floors are unchanged (CI 25/15, dev 50/45).",
+      "evidence": {
+        "reproduction": "under six busy loops on a 10-core machine (load 13-15), the single-window version failed exactly as CI did — stress-table 37.9 against the dev floor of 50, crowded-table-max 44.9 against 45",
+        "fix": "best-of-three passed all three specs under the same, heavier load (load 13.29)",
+        "doesNotMask": "a sustained slowdown still fails: with Emulation.setCPUThrottlingRate at 20x, best-of-three read 21.8 against the dev floor of 50. At 6x it passed, which is the honest limit of this metric — it counts main-thread frame cadence, so it catches saturation rather than per-frame JS cost",
+        "gate": "npm run verify exit 0 (tmp/agent-logs/verify-perf-fix.log)"
+      },
+      "notes": [
+        "Deliberately not lowered again: the floors have already been rebased once for CI, and ratcheting a quality bar down to meet runner noise is how a perf gate stops meaning anything.",
+        "Deliberately not given --retries: a retry hides which of the two causes fired, while re-measuring inside the test keeps the failure meaningful."
+      ]
+    }
   ]
 }
