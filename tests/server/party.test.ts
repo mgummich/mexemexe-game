@@ -153,7 +153,7 @@ describe('party session (OS-01..OS-19)', () => {
     expect(mgr.getWinningMove(code)).toBeNull();
   });
 
-  it('OS-02 a rematch mints a fresh matchId', () => {
+  it('OS-02 a rematch mints a fresh matchId and restarts the revision count', () => {
     const { seed, triple } = seedWithTriple();
     const clock = { t: 0 };
     const { mgr, code } = startedRoom(clock, seed);
@@ -161,12 +161,17 @@ describe('party session (OS-01..OS-19)', () => {
     expect(first).not.toBe('');
 
     winWithTriple(mgr, code, triple);
+    const playedRev = mgr.getRoom(code)!.rev;
+    expect(playedRev).toBeGreaterThan(1);
     mgr.recycleForRematch(code);
     voteAndStart(mgr, code, [0, 1]);
 
-    const second = mgr.getView(code, 0)!.matchId;
-    expect(second).not.toBe('');
-    expect(second).not.toBe(first);
+    const second = mgr.getView(code, 0)!;
+    expect(second.matchId).not.toBe('');
+    expect(second.matchId).not.toBe(first);
+    // A new match is revision 1, never a continuation of the last one's count: the client rebuilds
+    // its session from this frame, so the first frame of a rematch has to be the lowest one.
+    expect(second.rev).toBe(1);
   });
 
   it('OS-06/07 the winner gains exactly one session win, and a duplicate finish adds none', () => {

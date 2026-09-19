@@ -7,7 +7,7 @@ import {
 } from './harness';
 
 /**
- * LB-01..LB-45 — the lobby as a distributed state machine.
+ * LB-01..LB-47 — the lobby as a distributed state machine.
  *
  * Every test here runs real browser contexts (one storage, one socket each) against the real
  * server. Assertions are on `lobbySeats()` — the rows the lobby actually PAINTED — not only on
@@ -161,8 +161,10 @@ async function startMatch(host: Page, pages: Page[]): Promise<string> {
   return (await host.evaluate(() => window.__MEXE__.online!.matchId()))!;
 }
 
-/** Drain the draw pile to a server-decided finish; nobody fakes game_over. */
-async function playToFinish(pages: Page[]): Promise<void> {
+/** Drain the draw pile to a server-decided finish; nobody fakes game_over. `stopAtDrawCount`
+ * stops early with that many cards still in the pile, for a test that needs the endgame to
+ * happen under different conditions than the rest of the match. */
+async function playToFinish(pages: Page[], stopAtDrawCount = 0): Promise<void> {
   // Resolve player index -> page once. It is fixed for the length of a match, and asking every
   // page "is it your turn?" on every draw was this helper's whole cost: one CDP round-trip per
   // client per iteration, on top of the draw itself. That is why the cost scaled with seats
@@ -176,11 +178,13 @@ async function playToFinish(pages: Page[]): Promise<void> {
     if (idx !== undefined) byIndex.set(idx, p);
   }
   for (let i = 0; i < 600; i++) {
-    const active = await pages[0]!.evaluate(() => {
+    const active = await pages[0]!.evaluate((stopAt) => {
       if (window.__MEXE__.scene === 'win') return 'done' as const;
       const s = window.__MEXE__.state?.();
+      // An empty pile is not a finish: the match ends on the *next* draw, so 0 means "play on".
+      if (stopAt > 0 && s && s.drawPile.length <= stopAt) return 'done' as const;
       return s && s.winnerId === null ? s.activePlayerIndex : null;
-    });
+    }, stopAtDrawCount);
     if (active === 'done') return;
     const turn = active === null ? undefined : byIndex.get(active);
     // The candidate still checks its *own* state before drawing, exactly as before: pages[0]'s
@@ -607,6 +611,59 @@ test('LB-19/LB-21/LB-22/LB-23/LB-24: three matches across departures, a replacem
   await shot({ endurance: e }, 'lb-endurance-match3', screenshots);
 
   await assertClean([d, e]);
+  await closeAll(pages);
+});
+
+// ---------- LB-47: a match that ends while a seat is offline ----------
+
+test('LB-47: a seat that was offline when the match ended lands in the rematch lobby, not on a dead board', async ({ browser }) => {
+  // The endgame is the window this covers: the seat drops, the server draws and passes for it, the
+  // other seat's draw empties the pile and ends the match. That client never sees `game_over`, so
+  // without a lifecycle path back it sits on a finished board it believes is live — and, being
+  // stuck in the match scene, it can never cast the ready bit the room's next match needs.
+  test.setTimeout(240_000);
+  const pages = await clients(browser, 2);
+  const [a, b] = pages as [Page, Page];
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await waitForSeats(pages, [0, 1]);
+
+  // The shortest turn the server allows, a missed-turn limit that will not close the room while
+  // the seat is away, and a grace window well past the time it stays away for.
+  await a.evaluate(() => window.__MEXE__.online!.setRoomSettings({
+    timerMode: 'custom', turnMs: 15_000, mexeBonusMs: 0, warnMs: 5_000, missedTurnLimit: 10, reconnectGraceMs: 300_000,
+  }));
+  for (const p of pages) {
+    await p.waitForFunction(() => window.__MEXE__.online!.roomSettings()?.turnMs === 15_000, undefined, { timeout: 10_000 });
+  }
+
+  await startMatch(a, pages);
+  // Both clients draw down to the last two cards, then seat 1 loses the network for the finish.
+  await playToFinish(pages, 2);
+  await b.context().setOffline(true);
+  await b.evaluate(() => window.__MEXE__.online!.forceDrop());
+  await a.waitForFunction(() => window.__MEXE__.online!.notice().length > 0, undefined, { timeout: 20_000 });
+
+  // Seat 0 finishes it alone: its own draws, plus the server's draw-and-pass for the absent seat.
+  await playToFinish([a]);
+  await a.waitForFunction(() => window.__MEXE__.scene === 'win', undefined, { timeout: 30_000 });
+
+  // Seat 1 comes back inside its grace window to a room that is already a lobby again.
+  await b.context().setOffline(false);
+  await b.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 60_000 });
+  await b.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 30_000 });
+  expect(await b.evaluate(() => window.__MEXE__.online!.code())).toBe(code);
+  // ...and it can actually cast the vote the room's next match needs.
+  await waitForSeats([b], [0, 1]);
+  await b.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await b.waitForFunction(
+    () => window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === 1)?.status === 'ready',
+    undefined,
+    { timeout: 10_000 },
+  );
+  evidence.offlineFinish = { code, seats: (await occupiedRows(b)).map((r) => ({ seat: r.seat, status: r.status })) };
+
+  await assertClean(pages);
   await closeAll(pages);
 });
 

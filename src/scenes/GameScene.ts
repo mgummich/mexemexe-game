@@ -658,6 +658,12 @@ export class GameScene extends Phaser.Scene {
       client.on('state_sync', (msg) => this.onOnlineStateSync(msg.view)),
       client.on('proposal_rejected', (msg) => this.onOnlineRejected(msg.reasons)),
       client.on('game_over', (msg) => this.onOnlineGameOver(msg)),
+      // A room frame is the only thing a client that was disconnected over the finish ever gets:
+      // the server answers its reconnect with the room, not with a match (`game_over` went out
+      // while the socket was down). The session decides whether that means the match is over.
+      client.on('room_state', (msg) => {
+        if (this.online!.roomState(msg.locked).missedFinish) this.onOnlineMissedFinish();
+      }),
       // Room seats on the wire, player indices in this scene — translated once, here.
       client.on('turn_timeout', (msg) => this.onOnlineTurnTimeout(msg.seat)),
       client.on('player_disconnected', (msg) => this.onOnlineOpponentEvent(this.online!.playerIndexOf(msg.seat), true)),
@@ -802,6 +808,21 @@ export class GameScene extends Phaser.Scene {
         winningMoveText,
         finalTable: state.table,
       });
+    });
+  }
+
+  /** The match ended while this client was away, so there is no result screen to show for it —
+   * only the lobby the room recycled into. Say what happened, then hand back to that lobby on the
+   * live socket, the same re-entry WinScene's REMATCH uses. Without this the board the drop froze
+   * stays on screen as if it were live, and this seat can never cast the ready bit the room's next
+   * match needs. The party score and history are on the server, so the lobby shows the result. */
+  private onOnlineMissedFinish(): void {
+    this.setOnlineNotice(t('online.matchEndedAway'));
+    const client = this.net!;
+    const { code, seat } = this.online!;
+    this.time.delayedCall(2500, () => {
+      if (!this.online) return;
+      gotoScene(this, 'online', { client, code, seat });
     });
   }
 

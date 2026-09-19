@@ -642,6 +642,20 @@ with no view at all, so no stale playing state can survive a rematch. Pinned in
 `tests/server/reconnect.test.ts` (OR-01/02/06/07/08/09/16/25/26/27/28/29, at 2,
 3 and 4 seats).
 
+**A drop over the finish.** A seat can be disconnected at the moment the match
+ends — the server draws and passes for it, the other seat's play finishes the
+game, and the `game_over` broadcast goes out while that socket is down. Its
+reconnect is therefore answered with a room, not a match, and no `game_over` is
+ever re-sent. The client decides what that means in `OnlineSession.roomState`:
+an unlocked room (`locked: false`, i.e. no match running) that this session
+never saw finish is the finish it missed, so `GameScene` says so and hands back
+to the lobby the room recycled into, on the live socket. Without that path the
+board the drop froze stays on screen as if it were live, and the seat can never
+cast the ready bit the room's next match needs — it is stuck in the match scene.
+Reported once per session, because the reconnect answer broadcasts room state
+more than once. Covered by LB-47 (`e2e-multiplayer/lobby.spec.ts`) end to end and
+by `tests/online-session.test.ts` for the policy.
+
 Seat presence changes — a disconnect, a reconnect, a hop — always re-broadcast
 `room_state` alongside the `player_disconnected`/`player_reconnected` event,
 because the lobby renders presence from `room_state` and would otherwise keep

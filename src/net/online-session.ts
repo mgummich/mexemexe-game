@@ -91,6 +91,10 @@ export class OnlineSession {
   localSeat: number;
   private store: GameStore;
   private mexeBonusClaimed: boolean;
+  /** True once this session has accounted for its match ending — either by the final frame or by
+   * discovering, after a drop, that it already ended. What stops a second room frame from
+   * reporting the same missed finish twice. */
+  private finished = false;
 
   constructor(start: { view: GameView; seat: number; code: string }) {
     this.seat = start.seat;
@@ -160,8 +164,22 @@ export class OnlineSession {
 
   /** The final frame of the match. Replaces the projection so the results can be read off it. */
   applyGameOver(view: GameView): GameState {
+    this.finished = true;
     this.store = new GameStore(viewToState(view));
     return this.store.get();
+  }
+
+  /**
+   * A `room_state` frame arrived while this session is the one being rendered. `locked` is false
+   * only for a room with no match running, so an unlocked room this session never saw finish means
+   * the match ended while this client's socket was down (a drop over the finish, inside the
+   * reconnect grace): the room is already a rematch lobby and this board is dead. Reported once —
+   * the reconnect answer broadcasts room state more than once, and one handoff is enough.
+   */
+  roomState(locked: boolean): { missedFinish: boolean } {
+    const missedFinish = !locked && !this.finished;
+    if (missedFinish) this.finished = true;
+    return { missedFinish };
   }
 
   /** The server refused this client's proposal. */

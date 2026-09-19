@@ -169,4 +169,23 @@ describe('OnlineSession', () => {
     const finished = state({ phase: 'finished', winnerId: 'p1', turn: 9 });
     expect(s.applyGameOver(view(finished, { rev: 9 })).winnerId).toBe('p1');
   });
+
+  describe('a match that ended while this client was away (LB-47)', () => {
+    it('reads an unlocked room as the finish it never saw, once', () => {
+      const s = session();
+      // A running match keeps broadcasting room frames; none of them ends anything.
+      expect(s.roomState(true)).toEqual({ missedFinish: false });
+      expect(s.roomState(false)).toEqual({ missedFinish: true });
+      // The reconnect answer broadcasts the room more than once — one handoff is enough.
+      expect(s.roomState(false)).toEqual({ missedFinish: false });
+    });
+
+    it('stays quiet when the match ended in front of this client', () => {
+      const s = session();
+      s.applyGameOver(view(state({ phase: 'finished', winnerId: 'p1' }), { rev: 9 }));
+      // The room recycles into a lobby in the same server tick as game_over: that frame must not
+      // hijack the result screen this client is already on its way to.
+      expect(s.roomState(false)).toEqual({ missedFinish: false });
+    });
+  });
 });

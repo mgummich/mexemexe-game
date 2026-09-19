@@ -2,14 +2,14 @@
   "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
   "updated": "2026-09-19",
   "current": {
-    "wave": "7B",
-    "phase": "61 \u2014 Rematch Lifecycle",
-    "status": "AUDITING"
+    "wave": "7C",
+    "phase": "62 — Race / Duplicate / Ordering Protection",
+    "status": "NOT_STARTED"
   },
-  "head": "5abd5da",
+  "head": "21eac38",
   "phases": [
     {
-      "phase": "46 \u2014 Strategic Planning",
+      "phase": "46 — Strategic Planning",
       "wave": "6B",
       "status": "PASS",
       "result": "Repo already satisfied bounded deterministic search, candidate sequencing, legal fallback and no-mutation. Gap closed: future-state evaluation (strandedCards) in src/ai/evaluate.ts.",
@@ -42,18 +42,18 @@
         {
           "id": "P3-screenshot-churn",
           "note": "npm run screenshot rewrites ~60 PNGs with no visual change; reverted each run",
-          "owner": "Phase 84 \u2014 Flaky-Test Control"
+          "owner": "Phase 84 — Flaky-Test Control"
         },
         {
           "id": "P3-suite-flake",
           "note": "tutorial 12-step e2e timed out once under full-suite load, passes in isolation and on rerun",
-          "owner": "Phase 84 \u2014 Flaky-Test Control"
+          "owner": "Phase 84 — Flaky-Test Control"
         }
       ],
-      "roadmapMismatch": "Roadmap assumed Phase 46 would add lookahead/search; repo already had a bounded deterministic trial-budget search from Wave 6A. Multi-ply lookahead is impossible under INV-A2 (no pile order, no opponent hands) \u2014 documented in docs/ARCHITECTURE.md."
+      "roadmapMismatch": "Roadmap assumed Phase 46 would add lookahead/search; repo already had a bounded deterministic trial-budget search from Wave 6A. Multi-ply lookahead is impossible under INV-A2 (no pile order, no opponent hands) — documented in docs/ARCHITECTURE.md."
     },
     {
-      "phase": "47 \u2014 Difficulty Model",
+      "phase": "47 — Difficulty Model",
       "wave": "6B",
       "status": "NO_CHANGE_REQUIRED",
       "result": "Four tiers already exist as configuration over the shared SimpleAi/RearrangerAi engines, settings-persisted, localized and UI-cycled. Fixed a false docstring claim (casual is not 'full lay-down' for a minimal personality) and added the missing tier-ladder regression test.",
@@ -79,12 +79,12 @@
         {
           "id": "P2-tier-overlap",
           "note": "Per personality the tiers overlap: cida identical at beginner/casual/smart, juninho at casual/smart, bia/ze at smart/expert. Inherent to personality and difficulty being orthogonal; the match-level ladder is intact.",
-          "owner": "Phase 54 \u2014 AI Balance Metrics"
+          "owner": "Phase 54 — AI Balance Metrics"
         }
       ]
     },
     {
-      "phase": "48 \u2014 Personality Framework",
+      "phase": "48 — Personality Framework",
       "wave": "6B",
       "status": "NO_CHANGE_REQUIRED",
       "result": "PERSONALITY_TRAITS is configuration (holdJokers, minimal, rearrange, patient) over the shared engines; createAi composes it with the difficulty tier; no personality owns planning or legality code.",
@@ -100,7 +100,7 @@
       "roadmapMismatch": "Roadmap lists 'evaluation weight modifiers' in scope. The repo deliberately keeps src/ai/evaluate.ts neutral and expresses personality as candidate-generation policy instead; the exit criteria are met without weights, and weights would move personality into the shared evaluator the architecture keeps neutral. Repo truth preserved."
     },
     {
-      "phase": "49 \u2014 Human-Like Behavior",
+      "phase": "49 — Human-Like Behavior",
       "wave": "6C",
       "status": "PASS",
       "result": "Fixed a measured defect: at the beginner tier the four personalities produced only 2 distinct play sequences over 8 seeded matches each (cida, bia and ze identical), because the tier caps everyone at one action per turn AND patience was excluded at beginner. Patience now applies at every tier.",
@@ -131,25 +131,25 @@
         {
           "id": "P2-cida-bia-identical",
           "note": "cida and bia play identically at beginner and expert; they differ only in the minimal and rearrange traits those tiers override for everyone. Fixing it means either collapsing the tier ladder or a personality-specific comparator inside the neutral evaluator.",
-          "owner": "Phase 54 \u2014 AI Balance Metrics"
+          "owner": "Phase 54 — AI Balance Metrics"
         }
       ],
       "note": "Phase 49's other in-scope items are owned by the presentation layer and were verified, not re-built: per-personality cadence (GameScene.aiThinkDelay), pre-move tells, characterful lines and repeat-line suppression (GameScene.showEmote)."
     },
     {
-      "phase": "50 \u2014 Adaptive AI",
+      "phase": "50 — Adaptive AI",
       "wave": "6C",
       "status": "BLOCKED",
-      "result": "Not built. Nothing adaptive exists in the repo. Building it means player-pattern tracking, bounded policy adjustment, reset/persistence semantics and a privacy section \u2014 new gameplay machinery that AGENTS.md's product guardrails say needs an explicit request, and that works against the difficulty the player chose. The phase goal itself says 'optional'.",
+      "result": "Not built. Nothing adaptive exists in the repo. Building it means player-pattern tracking, bounded policy adjustment, reset/persistence semantics and a privacy section — new gameplay machinery that AGENTS.md's product guardrails say needs an explicit request, and that works against the difficulty the player chose. The phase goal itself says 'optional'.",
       "blockedOn": "product decision by the repository owner: build bounded adaptation, or close the phase as deliberately not-wanted",
-      "impactOnLaterPhases": "none found \u2014 Phase 51 completed without it; Phase 54 measures whatever exists; Phase 72 has less to review",
+      "impactOnLaterPhases": "none found — Phase 51 completed without it; Phase 54 measures whatever exists; Phase 72 has less to review",
       "critic": {
         "round": 0,
-        "result": "n/a \u2014 nothing implemented"
+        "result": "n/a — nothing implemented"
       }
     },
     {
-      "phase": "51 \u2014 AI Explainability",
+      "phase": "51 — AI Explainability",
       "wave": "6C",
       "status": "PASS",
       "result": "Replaced prose-parsed explainability with structured data. Engines record a DecisionTrace (rearranged, patient, candidatesWeighed, features); createAi attaches AiReason {key, personality, trace}. Deleted aiReasonKeySuffix and the personality:reason string round-trip, including the regexes (/rearranged|split|moved/, startsWith('extended')) that decided the player-facing line by pattern-matching the search's own prose.",
@@ -171,12 +171,12 @@
         {
           "id": "P3-perf-spec-flake",
           "note": "stress-table @perf measured 43.9 fps against a local floor of 50 in one full-suite run; passes alone and on rerun. Already one of the two flaky specs docs/ROADMAP.md records.",
-          "owner": "Phase 84 \u2014 Flaky-Test Control"
+          "owner": "Phase 84 — Flaky-Test Control"
         }
       ]
     },
     {
-      "phase": "52 \u2014 AI Performance Budgets",
+      "phase": "52 — AI Performance Budgets",
       "wave": "6D",
       "status": "PASS_WITH_DEFERRED_RISKS",
       "result": "Budgets were already counts rather than durations (SEARCH_BUDGET_TRIALS 120k, MAX_CANDIDATES 20 / EXPERT_MAX_CANDIDATES 48, INTER_MELD_TRIPLE_CAP 300) and src/ai is clock-free. Added the missing profiling hook: DecisionTrace.trialsSpent, so budget headroom is measurable instead of asserted.",
@@ -204,15 +204,15 @@
         {
           "id": "P2-no-low-end-device-runtime-evidence",
           "note": "Runtime evidence is a developer machine plus the emulated-viewport e2e perf specs. No CPU-throttled or real low-end device measurement of AI decision time exists. The trial budget makes the decision device-independent, but the wall time it takes on weak hardware is unmeasured.",
-          "owner": "Phase 67 \u2014 Cross-Browser & Device Validation / Phase 75 \u2014 Performance Budgets"
+          "owner": "Phase 67 — Cross-Browser & Device Validation / Phase 75 — Performance Budgets"
         }
       ]
     },
     {
-      "phase": "53 \u2014 AI Simulation Harness",
+      "phase": "53 — AI Simulation Harness",
       "wave": "6D",
       "status": "PASS",
-      "result": "Added scripts/simulate.ts (npm run simulate): batch AI-vs-AI matches over a seed range through the production path only \u2014 createNewGame, observeForAi, createAi, GameStore.dispatch. Machine-readable per-game rows via --json. A refused action dumps the game's replay and exits non-zero.",
+      "result": "Added scripts/simulate.ts (npm run simulate): batch AI-vs-AI matches over a seed range through the production path only — createNewGame, observeForAi, createAi, GameStore.dispatch. Machine-readable per-game rows via --json. A refused action dumps the game's replay and exits non-zero.",
       "acceptance": "production rules/contracts (no separate turn loop or legality path); every run reproducible from the printed seats/difficulty/seed range; 20 games in 1.1s, 200 in ~11s; --json output consumed by Phase 54",
       "verification": [
         "npm run simulate -- --seeds 1-20 --json tmp/sim-test.json (PASS)",
@@ -222,7 +222,7 @@
       ],
       "critic": {
         "round": 2,
-        "result": "CRITIC PASS \u2014 round 1 found one real bug in the matchup aggregation and two input-validation gaps; all repaired and re-reviewed"
+        "result": "CRITIC PASS — round 1 found one real bug in the matchup aggregation and two input-validation gaps; all repaired and re-reviewed"
       },
       "docs": [
         "docs/TESTING.md developer tools + runtime budget row"
@@ -230,7 +230,7 @@
       "note": "Also corrected scripts/replay.ts, whose header still claimed bia/ze record non-reproducibly under a wall-clock budget."
     },
     {
-      "phase": "54 \u2014 AI Balance Metrics",
+      "phase": "54 — AI Balance Metrics",
       "wave": "6D",
       "status": "PASS",
       "result": "Extended the harness with --sweep difficulty and --sweep matchups, 95% confidence half-widths on win counts and a standard deviation on game length. Matchup pairs play each seed set from both sides, because moving first is worth real games in this format.",
@@ -285,7 +285,7 @@
       },
       "critic": {
         "round": 2,
-        "result": "CRITIC PASS \u2014 round 1 raised one bug (avgCardsLeft not aggregated across the reversed matchup run) and two silent-degradation input gaps; all repaired"
+        "result": "CRITIC PASS — round 1 raised one bug (avgCardsLeft not aggregated across the reversed matchup run) and two silent-degradation input gaps; all repaired"
       },
       "docs": [
         "docs/TESTING.md simulation harness methodology and how to read the numbers"
@@ -294,12 +294,12 @@
         {
           "id": "P2-perf-spec-floors-under-suite-load",
           "note": "Three @perf failures this session inside the full suite, all passing in isolation: crowded-table-max 24.8 and 39.0 fps against a local floor of 45, stress-table 43.9 against 50. The local floors look unachievable under full-suite load rather than randomly flaky; raising them needs CI measurement, not a guess.",
-          "owner": "Phase 84 \u2014 Flaky-Test Control"
+          "owner": "Phase 84 — Flaky-Test Control"
         }
       ]
     },
     {
-      "phase": "55 \u2014 AI Content Tooling",
+      "phase": "55 — AI Content Tooling",
       "wave": "6E",
       "status": "PASS",
       "result": "Added --explain to the simulation harness: one line per decision (seat, personality, reason class, cards played, rearranged, candidates weighed, trials spent). Replaces the throwaway-script / console.log-in-the-engine investigation loop.",
@@ -315,7 +315,7 @@
       }
     },
     {
-      "phase": "56 \u2014 AI Regression & Robustness",
+      "phase": "56 — AI Regression & Robustness",
       "wave": "6E",
       "status": "PASS",
       "result": "Added a strategy-regression threshold: Bia must beat Cida on >=10 of 12 seeded matches and leave her holding >=5 cards on average. Existing coverage (legality, determinism, budgets, redaction, property, probes, golden replays) protects everything except a search that silently gets worse while staying legal and in character.",
@@ -338,7 +338,7 @@
       "roadmapMismatch": "Phase 56 lists 'selective mutation' in scope. stryker.conf.json deliberately excludes src/ai (documented in docs/TESTING.md): mutating a heuristic search measures the heuristic, not a contract. Repo truth preserved."
     },
     {
-      "phase": "57 \u2014 Multiplayer Contract Audit",
+      "phase": "57 — Multiplayer Contract Audit",
       "wave": "7A",
       "status": "PASS",
       "result": "Three read-only audits (protocol drift, redaction, revision/reconnect identity). One P1 defect found and fixed: RoomManager.sweep() reaped rooms at the deployment default grace (30s) while the stalled-turn path used the room's own reconnectGraceMs (60s for every matchmade room and the casual/off presets, up to 300s custom), so a room could be closed while its players were inside the window it promised. Plus protocol doc drift and an undocumented, untested revision asymmetry.",
@@ -366,12 +366,12 @@
         {
           "id": "P3-matchseats-identity-fallback",
           "note": "room.seats[room.matchSeats[i] ?? i] silently falls back to identity mapping when matchSeats has no entry, inventing a seat rather than failing on a violated invariant (AGENTS.md says fail).",
-          "owner": "Phase 58 \u2014 Authoritative Multiplayer State Flow"
+          "owner": "Phase 58 — Authoritative Multiplayer State Flow"
         }
       ]
     },
     {
-      "phase": "58 \u2014 Authoritative Multiplayer State Flow",
+      "phase": "58 — Authoritative Multiplayer State Flow",
       "wave": "7A",
       "status": "PASS",
       "result": "Authority model already satisfied and verified against code (server-only transitions, per-seat redaction, revision checks, viewProjectionProblem rejecting unrepresentable frames before anything is written, applySync testable with no socket/Phaser/clock). Two changes: removed the identity-mapping fallbacks carried over from Phase 57, and fixed a pre-existing seat/player-index confusion in claimMexeBonus found by the critic.",
@@ -393,12 +393,12 @@
         {
           "id": "P2-suite-green-only-when-quiet",
           "note": "Corrected after investigation. Genuine: the @perf fps floors fail under full-suite load (crowded-table-max 24.8 and 39.0 vs a floor of 45, stress-table 43.9 vs 50; all pass in isolation) and tests/server/discovery.test.ts timed out on 4 socket tests in one run. Not genuine: three e2e-multiplayer failures were self-inflicted (overlapping gates, 22.4m for a normally ~5m run), and one vitest timeout was a test of mine with vitest's 5s default, since fixed with an explicit 30s deadline.",
-          "owner": "Phase 84 \u2014 Flaky-Test Control"
+          "owner": "Phase 84 — Flaky-Test Control"
         }
       ]
     },
     {
-      "phase": "59 \u2014 Lobby State Machine",
+      "phase": "59 — Lobby State Machine",
       "wave": "7B",
       "status": "PASS",
       "result": "LobbyMachine already satisfied the structural criteria (one LobbyPhase union instead of boolean combinations, every transition a named method returning effects, no Phaser/socket/DOM/clock, fresh machine per scene create, unsubs released on shutdown). Fixed three fields that leaked from one room into the next within a single machine instance.",
@@ -419,7 +419,7 @@
       "note": "Also fixed a comment in OnlineScene.fireOnce that contradicted the room_joined handler about which response releases an in-flight guard, and gave the Phase 56 strategy-threshold test an explicit 30s deadline after it hit vitest's 5s default under full-suite load."
     },
     {
-      "phase": "60 \u2014 Disconnect & Reconnect",
+      "phase": "60 — Disconnect & Reconnect",
       "wave": "7B",
       "status": "NO_CHANGE_REQUIRED",
       "result": "Every exit criterion already had test evidence: token-only seat ownership (name is not auth), reconnect through the same per-seat projection as a broadcast, restoration into a lobby / mid-match / after the turn moved on / after a rematch recycle, a reaped room refusing to resurrect, and idempotent repeated reconnect. Stale-connection replacement is covered by OH-24. Two additions: a doc correction and one missing assertion.",
@@ -440,9 +440,40 @@
         {
           "id": "P3-reconnect-coverage-gaps",
           "note": "No test drives an exhausted client retry loop through a reload into a successful reconnect (client-side retention verified by inspection), and none combines a repeated reconnect with a turn taken in between.",
-          "owner": "Phase 66 \u2014 Multiplayer Soak Testing"
+          "owner": "Phase 66 — Multiplayer Soak Testing"
         }
       ]
+    },
+    {
+      "phase": "61 — Rematch Lifecycle",
+      "wave": "7B",
+      "status": "PASS",
+      "result": "Server-side rematch lifecycle already satisfied the phase (recycleForRematch is the one owner of match-scoped reset: state, rev, matchId, matchSeats, winningMove, clocks, Mexe bonus, missed-turn streaks, ready bits; party state deliberately survives). One P1 client defect found and fixed: a seat whose socket was down when the match ended never received game_over, so its client stayed in GameScene on a frozen board and — being stuck in the match scene — could never cast the ready bit the room's next match needs.",
+      "acceptance": "a client that reconnects into a room its match already finished in is handed back to the rematch lobby and can vote there; the normal finish path still routes through WinScene (game_over and the recycle room_state arrive in the same server tick); a rematch is revision 1 with a fresh matchId",
+      "verification": [
+        "npx vitest run tests/online-session.test.ts tests/i18n.test.ts (30)",
+        "npx vitest run tests/server tests/online-session.test.ts (327)",
+        "npx tsc --noEmit",
+        "npx eslint (changed files)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p61.log)",
+        "npm run verify:multiplayer:chromium (exit 0, 44 passed, 5.4m, tmp/agent-logs/verify-mp-p61.log)"
+      ],
+      "evidence": {
+        "regressionTest": "LB-47 (e2e-multiplayer/lobby.spec.ts) verified red before the fix: the returning client reached status open but stayed in scene \"game\" (tmp/agent-logs/lb47-red.log, screenshot in test-results/); green after (30.5s, tmp/agent-logs/lb47-green.log)",
+        "reproduction": "2 clients, custom terms (turnMs 15s, missedTurnLimit 10, grace 300s); both draw the pile down to 2, seat 1 goes offline (context offline + forceDrop), seat 0 finishes alone while the server draws and passes for the absent seat, seat 1 comes back",
+        "repeatedRematches": "existing LB-19..LB-24 (three matches, departures, replacement, host transfer, between-match reconnect) and LB-16..LB-20 at 2/3/4 seats"
+      },
+      "docs": [
+        "docs/MULTIPLAYER.md §6: \"A drop over the finish\""
+      ],
+      "notes": [
+        "OnlineSession.applySync deliberately still ignores matchId: a frame from the previous match cannot reach a new session (one WebSocket per client, ordered, and the server never re-sends an old match's frames), so a matchId guard would be a code path with no reachable defect. Ordering/duplicate protection is Phase 62's scope — recorded there rather than pre-built here.",
+        "Duplicate listeners across a rematch are not separately instrumented: every scene drops its NetClient subscriptions in its own shutdown, and a leaked handler acting on a dead scene would surface in window.__MEXE__.errors / console errors, which assertClean already fails on in every rematch e2e."
+      ],
+      "critic": {
+        "round": 1,
+        "result": "CRITIC PASS, no issues. Confirmed listener order (game_over registered before room_state, FIFO per socket) makes the normal finish path unhijackable, the delayed handoff guard is correct, and rev=1 is now pinned."
+      }
     }
   ]
 }
