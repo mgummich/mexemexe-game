@@ -3,10 +3,10 @@
   "updated": "2026-09-19",
   "current": {
     "wave": "7C",
-    "phase": "63 — Multi-Client Harness",
+    "phase": "64 — Multiplayer Scenario Matrix",
     "status": "NOT_STARTED"
   },
-  "head": "c9e2e96",
+  "head": "47b8513",
   "phases": [
     {
       "phase": "46 — Strategic Planning",
@@ -510,6 +510,35 @@
       "notes": [
         "No roadmap/repo mismatch. Phase 62's remaining in-scope items (duplicate intents, retries, reentrancy, concurrent actions, idempotence) were verified against code and existing tests rather than rebuilt; the phase's value here was the two unguarded/unpinned spots above.",
         "room.processing stays a defensive re-entrancy guard only — the manager is synchronous between check and mutation, so real double-submit protection is the rev check (S8). Unchanged by this phase."
+      ]
+    },
+    {
+      "phase": "63 — Multi-Client Harness",
+      "wave": "7C",
+      "status": "PASS",
+      "result": "Exit criteria 1-3 were already met and were verified rather than rebuilt: one browser context per simulated player (own storage, own sessionStorage, own socket), one real server process per spec file on an OS-assigned port, a fixed MEXE_TEST_SEED for a deterministic deal, and reproducible 2/3/4-seat, reconnect, rematch and endurance scenarios across multiplayer.spec.ts, lobby.spec.ts and ios-lobby.spec.ts. Two gaps closed: (1) multiplayer.spec.ts re-declared its own newClient / trackConsoleErrors / shot / SCALE / toScreen / OUT_DIR, a second definition of 'what a client is' that contradicted docs/TESTING.md's statement that browser-only setup lives in e2e-multiplayer/harness.ts — deleted, the spec now imports the harness and keeps only its worker's WS URL and the mp- screenshot prefix; (2) a failing test reported only the assertion that noticed, so harness.ts gained attachClientContexts(testInfo), called from each spec's afterEach, which on failure attaches one record per client this test opened.",
+      "acceptance": "independent stateful clients (unchanged, verified); key multi-client scenarios reproducible (44/44 chromium); orchestration stable (OS-assigned ports, loud bind failures, 2 workers, 5.8m); failures name client, seat and revision",
+      "verification": [
+        "npx tsc --noEmit (clean)",
+        "npx eslint e2e-multiplayer (clean)",
+        "npm run verify:multiplayer:chromium (44/44, 5.8m, exit 0, tmp/agent-logs/verify-mp-p63.log)"
+      ],
+      "evidence": {
+        "failureContext": "a temporary deliberately-failing spec (deleted after the run) produced the attachment in the Playwright report; mid-match it carried per client: seat 0/1, localSeat 0/1, rev 1, matchId 0000bb8d-…, phase match, code ZCPKY, status open, last 8 and 7 wire messages (tmp/agent-logs/p63-context-proof2.json)",
+        "lobbyContext": "the same helper in a lobby-phase failure carried seat 0/1, code PM42Y, phase lobby; rev/matchId are null there because no match exists yet",
+        "dedupeSafety": "the harness trackConsoleErrors also captures pageerror, which the deleted spec-local copy did not; the full suite passes with the stricter capture, so no spec assertion became fragile and an unhandled page error can no longer pass this suite silently"
+      },
+      "critic": {
+        "round": 2,
+        "result": "CRITIC PASS. Round 1 raised one blocker and two risks; all three were answered with evidence and withdrawn (pageerror capture is deliberate and proven green; a Playwright worker runs one test at a time and the drain is unconditional, so openedClients cannot leak across tests or projects). The one doc-clarity finding was repaired."
+      },
+      "docs": [
+        "docs/TESTING.md: harness owns the definition of a simulated player; attachClientContexts reports and drains only"
+      ],
+      "deferredRisks": [],
+      "notes": [
+        "No roadmap/repo mismatch. The phase's in-scope items (independent clients/processes, deterministic room setup, synchronized actions, reconnect, rematch, multi-seat observation) were already built in Waves 5-7B; the value here was removing the second harness authority and giving failures their seat/revision context.",
+        "The [firefox] and [webkit] multiplayer projects were not run: Firefox cannot launch on this macOS 27 host, so the chromium-only gate is the evidence. The lobby specs' own afterEach wiring is identical across all three projects, so the hook is not engine-specific."
       ]
     }
   ]

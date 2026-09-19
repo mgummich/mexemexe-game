@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   OUT_DIR, consoleErrorsOf, freePort, newClient, newPhoneClient, shot, startTestServer, toScreen, type TestServer,
+  attachClientContexts,
 } from './harness';
 
 /**
@@ -37,6 +38,10 @@ const screenshots: string[] = [];
 test.beforeAll(async () => {
   server = await startTestServer(await freePort());
 });
+
+// A failed test reports where every client it opened actually was — seat, revision, match, last
+// rejections and its final messages — instead of only the assertion that noticed.
+test.afterEach(async ({}, testInfo) => { await attachClientContexts(testInfo); });
 
 test.afterAll(async ({}, testInfo) => {
   server.stop();

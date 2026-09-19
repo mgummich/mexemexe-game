@@ -1,7 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { OUT_DIR, consoleErrorsOf, newPhoneClient, shot, startTestServer, freePort, type TestServer } from './harness';
+import {
+  OUT_DIR, attachClientContexts, consoleErrorsOf, freePort, newPhoneClient, shot, startTestServer, type TestServer,
+} from './harness';
 
 /**
  * LB-35..LB-40 — the lobby on iOS-shaped WebKit viewports.
@@ -31,6 +33,10 @@ const screenshots: string[] = [];
 test.beforeAll(async () => {
   server = await startTestServer(await freePort());
 });
+
+// A failed test reports where every client it opened actually was — seat, revision, match, last
+// rejections and its final messages — instead of only the assertion that noticed.
+test.afterEach(async ({}, testInfo) => { await attachClientContexts(testInfo); });
 
 test.afterAll(async () => {
   server.stop();

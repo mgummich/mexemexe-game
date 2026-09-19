@@ -1,4 +1,4 @@
-import { type Browser, type Page } from '@playwright/test';
+import { type Browser, type Page, type TestInfo } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -157,11 +157,64 @@ export function consoleErrorsOf(page: Page): string[] {
   return consoleErrorsByPage.get(page) ?? [];
 }
 
+/** Clients this worker opened since the last `attachClientContexts`, in creation order — the
+ * list a failing test is reported against.
+ *
+ * A plain module-level array is enough because a worker process runs one test at a time (parallel
+ * mode distributes tests across workers, it does not interleave them inside one), and the drain
+ * below is unconditional — pass or fail — so no entry can outlive the test that opened it, or
+ * cross into the next project this worker runs the file for. */
+const openedClients: Page[] = [];
+
+/** Where one client actually was, as its own debug surface answers: seat, revision, match and
+ * the last messages it exchanged. Tolerant by design — a context closed by the test, or a page
+ * that never reached the app, must not replace the real failure with an error from this helper. */
+async function clientContext(page: Page): Promise<Record<string, unknown>> {
+  if (page.isClosed()) return { closed: true };
+  return page
+    .evaluate(() => {
+      const api = window.__MEXE__ as (typeof window.__MEXE__ | undefined);
+      const online = api?.online ?? null;
+      return {
+        scene: api?.scene ?? null,
+        status: online?.status() ?? null,
+        code: online?.code() ?? null,
+        seat: online?.seat() ?? null,
+        localSeat: online?.localSeat?.() ?? null,
+        rev: online?.rev() ?? null,
+        matchId: online?.matchId() ?? null,
+        phase: online?.phase() ?? null,
+        notice: online?.notice() ?? null,
+        lastRejections: online?.lastRejections() ?? [],
+        desyncs: online?.desyncs() ?? null,
+        appErrors: api?.errors ?? [],
+        trace: (online?.trace() ?? []).slice(-12),
+      };
+    })
+    .catch((err: unknown) => ({ unavailable: String(err) }));
+}
+
+/**
+ * Call from a spec's `afterEach`. On a failure it attaches one record per client this test
+ * opened, so the report names the client, its seat and its revision — the context a canvas
+ * screenshot and a timed-out `waitForFunction` cannot give. On a pass it only drains the list.
+ *
+ * Reporting only: it never closes a context. Each test still owns the clients it opened.
+ */
+export async function attachClientContexts(testInfo: TestInfo): Promise<void> {
+  const pages = openedClients.splice(0);
+  if (testInfo.status === testInfo.expectedStatus) return;
+  const clients = [];
+  for (const [index, page] of pages.entries()) clients.push({ client: index, ...(await clientContext(page)) });
+  await testInfo.attach('client-context', { body: JSON.stringify(clients, null, 2), contentType: 'application/json' });
+}
+
 /** A desktop player: own context, own storage, own socket. */
 export async function newClient(browser: Browser, wsUrl: string): Promise<Page> {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   trackConsoleErrors(page);
+  openedClients.push(page);
   await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu`);
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   // MenuScene ONLINE button, logical (240, 254) — see MenuScene's onlineBtn.
@@ -183,6 +236,7 @@ export async function newPhoneClient(
   const ctx = await browser.newContext({ viewport, hasTouch: true, isMobile: false });
   const page = await ctx.newPage();
   trackConsoleErrors(page);
+  openedClients.push(page);
   await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu${extraQuery}`);
   await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
   const point = await page.evaluate(() => {

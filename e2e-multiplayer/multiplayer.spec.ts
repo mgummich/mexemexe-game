@@ -2,7 +2,10 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { freePort, startTestServer, type TestServer } from './harness';
+import {
+  OUT_DIR, attachClientContexts, consoleErrorsOf, freePort, newClient as openClient, shot as saveShots,
+  startTestServer, toScreen, trackConsoleErrors, type TestServer,
+} from './harness';
 
 /**
  * Phase 5 multiplayer verification: launches the real WS server and drives two browser
@@ -11,7 +14,6 @@ import { freePort, startTestServer, type TestServer } from './harness';
  * See docs/MULTIPLAYER.md §11.
  */
 
-const OUT_DIR = 'docs/screenshots';
 // One evidence shard per worker process, merged back into verify-multiplayer-log.json by
 // scripts/check-verify-multiplayer.mjs — the shape e2e/screenshot.spec.ts already uses. The old
 // single shared file cannot survive parallel workers: two read-modify-write cycles interleave and
@@ -51,45 +53,16 @@ test.afterAll(async () => {
   appendLog({ server: { stdout: server.stdout, stderr: server.stderr } });
 });
 
-const SCALE = 1280 / 480; // logical 480x270 canvas fills the 1280x720 viewport (Scale.FIT)
-const toScreen = (lx: number, ly: number): [number, number] => [lx * SCALE, ly * SCALE];
+// The browser-side client/screenshot helpers live in ./harness, shared with the lobby specs
+// (docs/TESTING.md): one definition of what a simulated player is. Only the two things that are
+// this file's own stay here — its worker's server URL, and the `mp-` screenshot prefix.
+const newClient = (browser: Browser, wsUrl = WS_URL): Promise<Page> => openClient(browser, wsUrl);
+const shot = (pages: Record<string, Page>, name: string, screenshots: string[]): Promise<void> =>
+  saveShots(pages, `mp-${name}`, screenshots);
 
-const consoleErrorsByPage = new WeakMap<Page, string[]>();
-function trackConsoleErrors(page: Page): string[] {
-  let errs = consoleErrorsByPage.get(page);
-  if (!errs) {
-    errs = [];
-    consoleErrorsByPage.set(page, errs);
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') errs!.push(msg.text());
-    });
-  }
-  return errs;
-}
-
-async function newClient(browser: Browser, wsUrl = WS_URL): Promise<Page> {
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  trackConsoleErrors(page);
-  await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu`);
-  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  // MenuScene ONLINE button, logical (240, 254) — see MenuScene's onlineBtn.
-  const [ox, oy] = toScreen(240, 254);
-  await page.mouse.click(ox, oy);
-  await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
-  await page.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 10_000 });
-  return page;
-}
-
-async function shot(pages: Record<string, Page>, name: string, screenshots: string[]): Promise<void> {
-  fs.mkdirSync(OUT_DIR, { recursive: true });
-  for (const [key, page] of Object.entries(pages)) {
-    await page.waitForTimeout(200); // let tweens settle
-    const file = path.join(OUT_DIR, `mp-${name}-${key}.png`);
-    await page.screenshot({ path: file });
-    screenshots.push(file);
-  }
-}
+// A failed test reports where every client it opened actually was — seat, revision, match, last
+// rejections and its final messages — instead of only the assertion that noticed.
+test.afterEach(async ({}, testInfo) => { await attachClientContexts(testInfo); });
 
 test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/resync', async ({
   browser,
@@ -272,11 +245,11 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
   const illegalProposalAccepted = revB2 !== revB1;
 
   const errorsA = [
-    ...(consoleErrorsByPage.get(pageA) ?? []),
+    ...consoleErrorsOf(pageA),
     ...(await pageA.evaluate(() => window.__MEXE__.errors)),
   ];
   const errorsB = [
-    ...(consoleErrorsByPage.get(pageB) ?? []),
+    ...consoleErrorsOf(pageB),
     ...(await pageB.evaluate(() => window.__MEXE__.errors)),
   ];
   expect(errorsA).toEqual([]);
@@ -294,8 +267,8 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
     seed: TEST_SEED,
     revisionsObserved,
     clients: {
-      a: { consoleErrors: consoleErrorsByPage.get(pageA) ?? [], pageErrors: errorsA },
-      b: { consoleErrors: consoleErrorsByPage.get(pageB) ?? [], pageErrors: errorsB },
+      a: { consoleErrors: consoleErrorsOf(pageA), pageErrors: errorsA },
+      b: { consoleErrors: consoleErrorsOf(pageB), pageErrors: errorsB },
     },
     trace: { a: traceA, b: traceB },
     illegalProposal: { reasons: rejectionReasons, accepted: illegalProposalAccepted },
@@ -394,8 +367,8 @@ test('room timer: the host sets it in the lobby, it locks at start, and the serv
   // The next seat's clock started fresh rather than inheriting the expired one.
   expect(after.left!).toBeGreaterThan(10_000);
 
-  expect(consoleErrorsByPage.get(pageA) ?? []).toEqual([]);
-  expect(consoleErrorsByPage.get(pageB) ?? []).toEqual([]);
+  expect(consoleErrorsOf(pageA)).toEqual([]);
+  expect(consoleErrorsOf(pageB)).toEqual([]);
   expect(screenshots.length).toBeGreaterThan(0);
 
   await pageA.context().close();
@@ -505,8 +478,8 @@ test('in-canvas join code, hand privacy, and an explicit resync round-trip', asy
   expect(desyncs).toEqual({ host: 0, guest: 0 });
 
   const errors = [
-    ...(consoleErrorsByPage.get(host) ?? []),
-    ...(consoleErrorsByPage.get(guest) ?? []),
+    ...consoleErrorsOf(host),
+    ...consoleErrorsOf(guest),
     ...(await host.evaluate(() => window.__MEXE__.errors)),
     ...(await guest.evaluate(() => window.__MEXE__.errors)),
   ];

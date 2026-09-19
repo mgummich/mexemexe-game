@@ -777,6 +777,22 @@ stderr if it exits during startup, or if the healthy answer came from a server
 this process did not start (it waits for that process's own `server_listening`
 line). The server itself logs `server_listen_failed` and exits 1 rather than
 throwing an unhandled `error` event.
+
+`e2e-multiplayer/harness.ts` is also the single definition of a simulated
+player: `newClient`/`newPhoneClient` (own browser context, own storage, own
+socket), `trackConsoleErrors`/`consoleErrorsOf` and `shot`. The specs import
+them rather than re-declaring their own — `multiplayer.spec.ts` keeps only its
+worker's server URL and its `mp-` screenshot prefix — so "what a client is"
+cannot drift between the multiplayer and lobby suites.
+
+Because the harness opens every client, it can also say where each one was when
+a test failed: each spec's `afterEach` calls `attachClientContexts(testInfo)`,
+which on a failure attaches one record per client — scene, socket status, room
+code, seat, dense player index, `rev`, `matchId`, notice, last rejections,
+desyncs, app errors and the last twelve wire messages. A canvas screenshot and a
+timed-out `waitForFunction` cannot name a seat or a revision; this does. It
+reports and drains its list, and never closes a context: each test still owns
+the clients it opened.
 | PWA / offline | `playwright.pwa.config.ts` (`e2e-pwa/`) | `npm run verify:pwa` | Service worker registers, offline reload boots to the menu, offline local/AI/tutorial play, online disabled offline, the update handover |
 
 All four serve the production build via `npm run preview` — the service worker
