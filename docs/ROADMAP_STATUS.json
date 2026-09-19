@@ -3,7 +3,7 @@
   "updated": "2026-09-19",
   "current": {
     "wave": "7B",
-    "phase": "60 \u2014 Disconnect & Reconnect",
+    "phase": "61 \u2014 Rematch Lifecycle",
     "status": "AUDITING"
   },
   "head": "5abd5da",
@@ -417,6 +417,32 @@
         "result": "CRITIC PASS. Round 1 found two further leaks (rematch, lastReaction) the first fix missed; both now cleared on the serverError branch that means the seat is gone. Round 2 verified the branch is reached only there, confirmed against server/index.ts that reconnect is answered with room_joined (so rematch must survive it), and swept the remaining fields."
       },
       "note": "Also fixed a comment in OnlineScene.fireOnce that contradicted the room_joined handler about which response releases an in-flight guard, and gave the Phase 56 strategy-threshold test an explicit 30s deadline after it hit vitest's 5s default under full-suite load."
+    },
+    {
+      "phase": "60 \u2014 Disconnect & Reconnect",
+      "wave": "7B",
+      "status": "NO_CHANGE_REQUIRED",
+      "result": "Every exit criterion already had test evidence: token-only seat ownership (name is not auth), reconnect through the same per-seat projection as a broadcast, restoration into a lobby / mid-match / after the turn moved on / after a rematch recycle, a reaped room refusing to resurrect, and idempotent repeated reconnect. Stale-connection replacement is covered by OH-24. Two additions: a doc correction and one missing assertion.",
+      "acceptance": "seat ownership, restoration, safe failure, repeated reconnect and redaction all evidenced at file:line by existing tests",
+      "verification": [
+        "npx vitest run tests/server/reconnect.test.ts tests/net/reconnect.test.ts (25)",
+        "npx vitest run tests/server/index.integration.test.ts (19)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p60.log)"
+      ],
+      "critic": {
+        "round": 1,
+        "result": "CRITIC PASS, no bugs. Raised three coverage gaps; the one worth closing (OH-24 never asserted the evicted socket receives invalid_token, which is the code the client relies on to drop its token) is now asserted."
+      },
+      "docs": [
+        "docs/MULTIPLAYER.md section 0: the retry loop spans the presets' 60s window, not a custom grace of up to 300s; exhausting it does not drop the token, so the seat is still reclaimable"
+      ],
+      "deferredRisks": [
+        {
+          "id": "P3-reconnect-coverage-gaps",
+          "note": "No test drives an exhausted client retry loop through a reload into a successful reconnect (client-side retention verified by inspection), and none combines a repeated reconnect with a turn taken in between.",
+          "owner": "Phase 66 \u2014 Multiplayer Soak Testing"
+        }
+      ]
     }
   ]
 }

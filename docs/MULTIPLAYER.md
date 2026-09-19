@@ -49,8 +49,12 @@ accounts, ranking, chat, or cosmetics sync. The game labels the entry point
   bounds the server clamps to, and send one proposal on APPLY rather than one
   per field.
 - **Reconnect is a bounded retry loop**, not a persistent one: seven jittered
-  attempts spanning roughly the 60s seat-hold window, then the client returns
-  you to the local menu with a message. It never retries forever.
+  attempts spanning roughly the 60s seat-hold window of the presets, then the
+  client returns you to the local menu with a message. It never retries forever.
+  A room on a longer custom grace (up to 300s, §7b) outlives the loop; the seat is
+  not lost with it, because exhausting the attempts does not drop the token —
+  only `invalid_token` or `room_closed` does — so re-entering the online screen
+  still reclaims the seat while the room holds it.
 
 ## 1. Responsibilities
 
