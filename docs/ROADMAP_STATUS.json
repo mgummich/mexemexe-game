@@ -3,7 +3,7 @@
   "updated": "2026-09-19",
   "current": {
     "wave": "7B",
-    "phase": "59 \u2014 Lobby State Machine",
+    "phase": "60 \u2014 Disconnect & Reconnect",
     "status": "AUDITING"
   },
   "head": "5abd5da",
@@ -392,10 +392,31 @@
       "deferredRisks": [
         {
           "id": "P2-suite-green-only-when-quiet",
-          "note": "Five in-suite-only failures this session across three files: @perf fps floors x3 (crowded-table-max 24.8 and 39.0 vs 45, stress-table 43.9 vs 50), tests/server/discovery.test.ts 4 socket tests timing out with 'got error' in one run, and the tutorial 12-step e2e once. All pass in isolation. The suite appears to be green only on an unloaded machine.",
+          "note": "Corrected after investigation. Genuine: the @perf fps floors fail under full-suite load (crowded-table-max 24.8 and 39.0 vs a floor of 45, stress-table 43.9 vs 50; all pass in isolation) and tests/server/discovery.test.ts timed out on 4 socket tests in one run. Not genuine: three e2e-multiplayer failures were self-inflicted (overlapping gates, 22.4m for a normally ~5m run), and one vitest timeout was a test of mine with vitest's 5s default, since fixed with an explicit 30s deadline.",
           "owner": "Phase 84 \u2014 Flaky-Test Control"
         }
       ]
+    },
+    {
+      "phase": "59 \u2014 Lobby State Machine",
+      "wave": "7B",
+      "status": "PASS",
+      "result": "LobbyMachine already satisfied the structural criteria (one LobbyPhase union instead of boolean combinations, every transition a named method returning effects, no Phaser/socket/DOM/clock, fresh machine per scene create, unsubs released on shutdown). Fixed three fields that leaked from one room into the next within a single machine instance.",
+      "acceptance": "a second room in the same session starts with open terms and none of the first room's notices, reaction or rematch framing; a resumed room keeps its rematch framing when the reconnect is answered with room_joined",
+      "verification": [
+        "npx vitest run tests/lobby.test.ts (27)",
+        "npm run verify (exit 0, tmp/agent-logs/verify-p59d.log)",
+        "npm run verify:multiplayer:chromium (exit 0, 77 screenshots, tmp/agent-logs/verify-mp-p59d.log)"
+      ],
+      "evidence": {
+        "defect": "settingsLocked was written only by roomState, so after room A's match started, an error screen and RETRY, the host of a brand-new room B could not open their own terms screen (openCustom checks the flag)",
+        "test": "tests/lobby.test.ts second-room test verified red before the fix"
+      },
+      "critic": {
+        "round": 2,
+        "result": "CRITIC PASS. Round 1 found two further leaks (rematch, lastReaction) the first fix missed; both now cleared on the serverError branch that means the seat is gone. Round 2 verified the branch is reached only there, confirmed against server/index.ts that reconnect is answered with room_joined (so rematch must survive it), and swept the remaining fields."
+      },
+      "note": "Also fixed a comment in OnlineScene.fireOnce that contradicted the room_joined handler about which response releases an in-flight guard, and gave the Phase 56 strategy-threshold test an explicit 30s deadline after it hit vitest's 5s default under full-suite load."
     }
   ]
 }

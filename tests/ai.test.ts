@@ -961,7 +961,10 @@ describe('AI strategy regression threshold', () => {
     // Cida ends these games holding 7.67 cards on average; a search that still wins but only just
     // shows up here long before it shows up in the win column.
     expect(cidaCardsLeft / 12).toBeGreaterThanOrEqual(5);
-  });
+    // Twelve full matches of the widest search is ~2s on a quiet machine and several times that
+    // on a loaded one. The deadline is not part of what this test asserts — Phase 52's budget
+    // test owns the work bound — so it gets room rather than failing on how busy the box is.
+  }, 30_000);
 });
 
 describe('AI observation', () => {

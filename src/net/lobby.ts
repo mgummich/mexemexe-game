@@ -156,6 +156,12 @@ export class LobbyMachine {
     this.hostSeat = msg.hostSeat;
     this.party = msg.party;
     this.visibility = msg.visibility;
+    // A room you have just joined cannot have a match running — the server refuses a join to one
+    // (`game_started`) — so its terms are open. Carrying the previous room's frozen flag in left
+    // the host of a brand-new room unable to open their own terms screen, after an error screen
+    // and a retry put a second room in the same machine.
+    this.settingsLocked = false;
+    this.settingsChangedNotice = false;
     if (this.phase !== 'matched') this.phase = 'lobby';
     this.pendingJoinCode = null;
     return [{ type: 'rememberRoom', code: msg.code, host: msg.players.find((p) => p.seat === msg.hostSeat)?.name ?? '' }];
@@ -266,6 +272,12 @@ export class LobbyMachine {
     // Player sees a translated, actionable sentence — never the raw dev-facing message or code.
     this.errorMsg = errorMessage(msg.code);
     this.phase = 'error';
+    // Reaching here means the seat itself is gone, so nothing about that room is true any more.
+    // The machine outlives it — RETRY leads back to a second room in the same instance — and a
+    // line about the old room, or its rematch framing, would be rendered over the new one.
+    this.lobbyNotice = null;
+    this.lastReaction = null;
+    this.rematch = false;
     return effects;
   }
 

@@ -645,8 +645,10 @@ export class OnlineScene extends Phaser.Scene {
     this.focusLabel = this.focusIndex >= 0 ? this.focusables[this.focusIndex]?.labelText() ?? null : null;
   }
 
-  /** Runs `fn` unless `key` is already in flight, then disables it for `cooldownMs` (cleared
-   * earlier by a matching server response, e.g. room_joined/error above). */
+  /** Runs `fn` unless `key` is already in flight, then disables it for `cooldownMs` (released
+   * earlier by a server response that ends the attempt — a rejection clears every guard, and
+   * `room_state`/`queue_state` clear their own. `room_joined` deliberately does not: see the
+   * handler above). */
   private fireOnce(key: string, cooldownMs: number, fn: () => void): void {
     if (this.inFlight.has(key)) return;
     this.inFlight.add(key);
