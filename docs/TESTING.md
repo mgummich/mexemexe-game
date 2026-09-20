@@ -1018,6 +1018,28 @@ race:
   overhead ate into the fps budget) and on nightly instead.
 - Never raise a timeout to make a race pass. Wait on observable state.
 
+**What is not flake, and must not be treated as one** (measured in Phase 84):
+
+- **A dirty `docs/screenshots/` after `npm run screenshot`.** The suite writes its
+  captures there, and ~64 of the committed PNGs differ from what this build
+  renders. That is *staleness*, not nondeterminism: two consecutive full runs
+  produced byte-identical files (md5 lists compared, zero differences), and
+  `game.png` — the one the README and docs site actually embed — regenerates
+  byte-for-byte. So a `git status` full of modified PNGs after a verify run is
+  expected, is usually reverted, and is not evidence of a visual change. The
+  useful consequence: because captures *are* byte-stable on one machine, a
+  before/after comparison on that machine is a valid visual check. What the
+  committed set should be is Phase 33's (visual regression baseline) decision, not
+  a flake question.
+- **An `@perf` fps floor failing while another suite is running.** The floors are
+  measured on an otherwise-idle machine and `measureFpsSamples` already takes the
+  best of three 2-second windows; a second Playwright suite on the same machine
+  still beats it (33.4 fps against a floor of 45, reproduced once, then six
+  isolated passes at the floor). Failures now print every window, because
+  interference moves one window and a rendering regression moves all of them —
+  which is the first question asked when one of these fails. Do not run two
+  browser suites concurrently and then read the fps result.
+
 A test that flakes is a defect report, not noise. In order: **diagnose** (run it
 traced and un-retried; a race that only appears under tracing is still a race),
 **fix**, and only if neither is possible today, **quarantine** — skipped with

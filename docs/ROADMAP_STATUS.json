@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "10A",
-  "phase": "84 — Flaky-Test Control",
+  "phase": "85 — Risk-Based Quality Gates",
   "status": "NOT_STARTED"
  },
- "head": "4b07ec0",
+ "head": "46f29c3",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1202,6 +1202,55 @@
      "id": "P3-suite-flake",
      "from": "Phase 46",
      "note": "Partly addressed: the wall-clock assertion that failed under parallel load is gone. Browser-suite flake is Phase 84's."
+    }
+   ]
+  },
+  {
+   "phase": "84 — Flaky-Test Control",
+   "wave": "10A",
+   "status": "PASS",
+   "result": "The policy half already existed (bounded justified retries, @perf at retries=0, nightly no-retry twins, quarantine rules with an owner and a removal condition). The missing half was diagnosis: two long-standing 'flakes' were measured and neither is nondeterminism.",
+   "findings": [
+    {
+     "id": "P3-screenshot-churn",
+     "result": "Not flake — staleness. Two consecutive full screenshot runs produced byte-identical PNGs (md5 lists diffed, 0 differences), and game.png (the only embedded one) regenerates byte-for-byte; 64 committed files simply differ from what this build renders. Disposition handed to Phase 33, which owns what the committed set means."
+    },
+    {
+     "id": "tutorial-12-step-timeout",
+     "result": "Not reproducible: 5/5 isolated passes. The test already waits on observable state and retries a click swallowed by a panel rebuild."
+    },
+    {
+     "id": "crowded-table-max-fps",
+     "result": "Machine contention, reproduced once while a second Playwright suite ran (33.4 best-of-three against a floor of 45), then 6/6 isolated passes. Made diagnosable rather than patched."
+    }
+   ],
+   "changed": [
+    "e2e/screenshot.spec.ts — measureFpsSamples returns every window and expectFps puts the spread in the failure message, so interference (one slow window) is distinguishable from a regression (all windows slow)",
+    "docs/TESTING.md §Flake policy — a 'what is not flake' section with both measurements, including the useful consequence that byte-stable captures make a same-machine before/after visual comparison valid"
+   ],
+   "acceptance": "known flaky tests have root-cause handling (both diagnosed, neither patched blindly); retries bounded and justified (unchanged policy, re-read and still accurate); deterministic failures reproducible (fps failures now carry their samples); flake signal materially reduced (Phase 83 removed the load-sensitive wall clock; no remaining unexplained flake)",
+   "verification": [
+    "npm run screenshot twice: run1 exit 0, run2's @perf stage failed under contention; md5 comparison of the two generated sets shows zero differences",
+    "crowded-table-max 6/6 isolated passes after the contended failure",
+    "tutorial 12-step 5/5 isolated passes",
+    "playwright --grep @perf --retries=0 (3/3 passed) after the measurement change",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p84-shot1.log",
+     "tmp/agent-logs/p84-shot2.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no floor was lowered and no retry added to make a red run green; the change is to the failure message, which is what was actually missing"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-stale-committed-screenshots",
+     "note": "64 committed PNGs do not match what the current build renders. Byte-stable per machine, so refreshing them is a decision about what the committed set is for.",
+     "owner": "Phase 33 — Visual Regression Baseline"
     }
    ]
   }

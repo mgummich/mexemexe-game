@@ -1066,10 +1066,10 @@ test('stress-table: many melds on the table still hold fps >= 50 @perf', async (
       const hand = window.__MEXE__.state!()!.players[0]!.hand.map((c) => c.id);
       for (const cardId of hand) mexe.playHandCard(cardId, null);
     });
-    // Measured over its own window (see measureFps) after the board settles, so this reads the
+    // Measured over its own window (see measureFpsSamples) after the board settles, so this reads the
     // crowded board rather than the one-off opening deal.
     await waitForSettledBoard(p);
-    const fps = await measureFps(p);
+    const fps = await measureFpsSamples(p);
     // CI gets its own floor, from measurement, not aspiration. The 35 floor here was set from a
     // 42/57 measurement taken under the *old* 1s settle window; b03fce5 widened the window to
     // waitForSettledBoard()+3s for a truer steady-state read (see comment above) without
@@ -1090,7 +1090,7 @@ test('stress-table: many melds on the table still hold fps >= 50 @perf', async (
     // same machine, same probe). 20 sits below both CI readings with headroom for a runner that
     // is having a worse day, and still fails a catastrophic regression (a 20x CPU throttle reads
     // 21.8 on the dev machine). The dev floor of 50 is untouched and remains the real bar.
-    expect(fps).toBeGreaterThanOrEqual(process.env.CI ? 20 : 50);
+    expectFps(fps, process.env.CI ? 20 : 50, 'stress-table');
   });
 });
 
@@ -1133,9 +1133,9 @@ test('crowded-table-max: highest reachable committed table (44) plus a full hand
     });
     expect(total).toBeGreaterThanOrEqual(80);
 
-    // Settle first, then measure a window of its own (see measureFps).
+    // Settle first, then measure a window of its own (see measureFpsSamples).
     await waitForSettledBoard(p);
-    const fps = await measureFps(p);
+    const fps = await measureFpsSamples(p);
     // Floor set from measurement, not aspiration: 49 fps measured on the dev machine 2026-09-10
     // at a combined visible total of 107 cards (see comment above), consistent across repeat runs.
     //
@@ -1151,7 +1151,7 @@ test('crowded-table-max: highest reachable committed table (44) plus a full hand
     // floor still only guards against a catastrophic regression.
     // As in stress-table: these numbers were measured as lifetime averages, before fps was read
     // over its own window. Keep them as floors with slack until a CI run re-measures them.
-    expect(fps).toBeGreaterThanOrEqual(process.env.CI ? 15 : 45);
+    expectFps(fps, process.env.CI ? 15 : 45, 'crowded-table-max');
   });
 });
 
@@ -1366,7 +1366,14 @@ async function waitForSettledBoard(p: Page): Promise<void> {
  * so the best of three still falls through the floor — what it drops is interference, not quality.
  * The floors themselves are unchanged.
  */
-async function measureFps(p: Page, ms = 2_000, samples = 3): Promise<number> {
+/**
+ * Returns every window it measured, not only the best. A floor that fails prints only the best number,
+ * which cannot distinguish "this machine was busy" from "rendering got slower" — and that is the
+ * first question asked every time one of these fails. The spread answers it: interference moves one
+ * window, a regression moves all of them. `expectFps` puts it in the failure message.
+ */
+async function measureFpsSamples(p: Page, ms = 2_000, samples = 3): Promise<{ best: number; all: number[] }> {
+  const all: number[] = [];
   let best = 0;
   for (let i = 0; i < samples; i++) {
     const fps = await p.evaluate((window_ms) => new Promise<number>((resolve) => {
@@ -1380,9 +1387,15 @@ async function measureFps(p: Page, ms = 2_000, samples = 3): Promise<number> {
       };
       requestAnimationFrame(tick);
     }), ms);
+    all.push(Math.round(fps * 10) / 10);
     best = Math.max(best, fps);
   }
-  return best;
+  return { best, all };
+}
+
+/** `expect(fps).toBeGreaterThanOrEqual(floor)` with the spread in the message. */
+function expectFps({ best, all }: { best: number; all: number[] }, floor: number, what: string): void {
+  expect(best, `${what}: best ${best.toFixed(1)} fps of ${all.join(' / ')} against a floor of ${floor}`).toBeGreaterThanOrEqual(floor);
 }
 
 async function tapCard(p: Page, cardId: string): Promise<void> {
@@ -2967,7 +2980,7 @@ test('table-zoomed: a crowded table zoomed in holds fps, and panning the empty t
     const draftAfter = await p.evaluate(() => window.__MEXE__.mexe!.getDraft());
     expect(draftAfter).toEqual(draftBefore);
 
-    const fps = await measureFps(p);
+    const fps = await measureFpsSamples(p);
     // Floor set from measurement, not aspiration. Zooming draws the same ~57 cards at card scale
     // 1.0 instead of stress-table's ~0.45 — roughly 5x the pixels each — so this path is fill-rate
     // bound. A GPU absorbs that (52 fps on the dev machine); the GPU-less CI container rasterizes
@@ -2983,7 +2996,7 @@ test('table-zoomed: a crowded table zoomed in holds fps, and panning the empty t
     // 2026-09-11) rather than at the dev-machine bar (55 local) — the >=20 floor sat inside that
     // noise band and failed on a clean run. 12 guards against a catastrophic regression only; the
     // local 20 is the real quality bar.
-    expect(fps).toBeGreaterThanOrEqual(process.env.CI ? 12 : 20);
+    expectFps(fps, process.env.CI ? 12 : 20, 'table-zoomed');
   });
 });
 
