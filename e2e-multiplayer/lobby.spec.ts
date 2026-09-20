@@ -189,6 +189,19 @@ async function playToFinish(pages: Page[], stopAtDrawCount = 0): Promise<void> {
   // while passing on Chromium. Draws are capped; waiting is capped by how long nothing has
   // happened, which is what "stuck" actually means.
   const STALL_MS = 45_000;
+  // The server closes a connection that sends more than 30 messages in a second (hitFlood in
+  // server/connections.ts, the S5 flood guard) — and a 1008 close mid-drain looks exactly like
+  // this helper hanging: the client keeps believing it is on turn, every comprar() is dropped,
+  // and nothing moves until the 10s onlinePending timeout resyncs it, by which point the
+  // waitForFunction below has already thrown. One draw is one inbound message, so the drain has
+  // to pace itself. 50ms is 20 messages a second, two thirds of the budget, and the budget is
+  // per connection — so it has to hold for `playToFinish([a])`, where a single client sends
+  // every draw itself, not just for the alternating multi-seat case.
+  //
+  // This is what made the Firefox lobby replay red from 2026-09-16: the rewrite that replaced
+  // the per-iteration sleep with the waitForFunction below left the loop running as fast as the
+  // engine answered. Chromium happened to sit just under 30/s and Firefox just over it.
+  const DRAW_PACE_MS = 50;
   let lastProgress = Date.now();
   for (let draws = 0; draws < 600 && Date.now() - lastProgress < STALL_MS; ) {
     const active = await pages[0]!.evaluate((stopAt) => {
@@ -217,6 +230,7 @@ async function playToFinish(pages: Page[], stopAtDrawCount = 0): Promise<void> {
     }
     draws++;
     lastProgress = Date.now();
+    await turn.waitForTimeout(DRAW_PACE_MS);
     // Wait in the browser for the turn to actually move, instead of polling for it one CDP
     // round-trip at a time. The old fixed 20ms sleep meant a draw normally cost two iterations:
     // one that drew, then one that found the same active index still rendered and did nothing.

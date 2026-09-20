@@ -8,6 +8,21 @@ and those remain readable in git history.
 
 ### Fixed
 
+- **The lobby drain out-ran the server's flood guard, and Firefox paid for it.**
+  `playToFinish` in `e2e-multiplayer/lobby.spec.ts` lost its per-iteration sleep
+  when it was rewritten to wait in the browser for the turn to move, so it drew
+  as fast as the engine answered. The server closes a connection that sends more
+  than 30 messages a second (`hitFlood`, `server/connections.ts`), and one draw
+  is one message: Chromium happened to sit just under the limit and Firefox just
+  over it. A 1008 close mid-drain is invisible to the helper — the client keeps
+  believing it is on turn, every `comprar()` is dropped, and nothing moves until
+  the 10s `onlinePending` timeout resyncs, by which point the 15s
+  `waitForFunction` has thrown. That is the `[firefox] LB-16`/`LB-47` failure
+  that kept the nightly red from 2026-09-16. The drain now paces itself at 20
+  messages a second, two thirds of the server's budget, measured per connection
+  so it holds for the single-client drain too. No product code changed; the
+  flood guard was doing its job.
+
 - **`AGENTS.md` was one 9292-byte line.** A compression pass collapsed the
   84-line rules file into a single line with no newlines, so every heading,
   table and code fence rendered as one wall of abbreviated text — the first
