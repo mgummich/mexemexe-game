@@ -31,12 +31,12 @@ free-drawing all 52 would scramble rank glyphs); see the note at the end.
 | Asset | Prompt (short) | Size | Path | Status |
 |---|---|---|---|---|
 | Pixel font | warm cream chunky playful arcade font, Bold, 8px | ttf | /public/assets/ui/font.ttf | ✅ done |
-| Card blank face | blank playing card face, cream paper, brown border | 48×64 | /public/assets/cards/blank.png | ✅ done |
-| 52 card faces | composed: blank + suit pip + font rank | 48×64 | runtime textures | ✅ composed |
-| Card back 0 (blue) | deep blue + gold lattice | 48×64 | /public/assets/cards/back-0.png | ✅ done |
-| Card back 1 (junina) | golden yellow, bunting flags + viola | 48×64 | /public/assets/cards/back-1.png | ✅ done |
-| Card back 2 (monstera) | tropical green monstera damask | 48×64 | /public/assets/cards/back-2.png | ✅ done |
-| Card back 3 (terracotta) | terracotta red, cream waves | 48×64 | /public/assets/cards/back-3.png | ✅ done |
+| Card blank face | blank playing card face, cream paper, brown border | 72×96 | /public/assets/cards/blank.png | ✅ done |
+| 52 card faces | composed: blank + suit pip + font rank | 72×96 | runtime textures | ✅ composed |
+| Card back 0 (blue) | deep blue + gold lattice | 72×96 | /public/assets/cards/back-0.png | ✅ done |
+| Card back 1 (junina) | golden yellow, bunting flags + viola | 72×96 | /public/assets/cards/back-1.png | ✅ done |
+| Card back 2 (monstera) | tropical green monstera damask | 72×96 | /public/assets/cards/back-2.png | ✅ done |
+| Card back 3 (terracotta) | terracotta red, cream waves | 72×96 | /public/assets/cards/back-3.png | ✅ done |
 | Suit: hearts | red heart pip | 32×32 | /public/assets/ui/suit-hearts.png | ✅ done |
 | Suit: diamonds | orange diamond pip | 32×32 | /public/assets/ui/suit-diamonds.png | ✅ done |
 | Suit: clubs | charcoal clover pip | 32×32 | /public/assets/ui/suit-clubs.png | ✅ done |
@@ -63,6 +63,56 @@ free-drawing all 52 would scramble rank glyphs); see the note at the end.
 Button hover/pressed/disabled states derive from `-normal` via runtime tint
 (see PixelButton) — fewer assets, i18n-safe (text drawn by engine).
 
+## Producing or regenerating an asset
+
+One workflow, whether the asset is new or a replacement. The steps exist because
+generated art has no build step to catch a mistake: the file *is* the source.
+
+**1. Decide which kind it is.**
+
+| Kind | Made with | Reproducible? |
+|---|---|---|
+| Illustrated art — characters, tables, cards, props, banners | PixelLab (Pro unless a row says otherwise) | **No.** The same prompt gives a different image. The file in `public/assets/` is the master |
+| Geometric / procedural — table felts, card backs, emote glyphs, PWA icons, every SFX | `scripts/gen-cosmetics.mjs`, `gen-icons.mjs`, `gen-sfx.mjs` | **Yes, byte-identically.** Re-running and seeing a clean `git status` is the check |
+
+**2. Generate it at the family's source size** — the table in
+[ART_DIRECTION.md](ART_DIRECTION.md) §Resolution policy. Sprites are native at
+`RENDER_SCALE` (3× their world units); the ten backgrounds are the one exception,
+decided there.
+
+**3. Name it for its family, not for its content.**
+`assets/<family>/<name>.png`, lowercase, hyphenated. A portrait variant of a
+background is `<name>-portrait.png`. Button states are **not** files — hover,
+pressed and disabled are runtime tints of `-normal` (`PixelButton`), which is why
+three button files cover twelve states.
+
+**4. Wire it once.** A new asset needs a `def(...)` line in
+`src/assets/manifest.ts` with its world-unit size. Nothing else: `BootScene`
+probes, loads and falls back automatically, and a missing file shows up in
+`window.__MEXE__.missingAssets` rather than crashing.
+
+**5. Record it in the same change.** A row in this file: asset, the **full
+prompt** (the later sections below are the standard to follow — not a summary,
+the prompt you actually sent), size, path, status. A PixelLab asset with no
+recorded prompt cannot be re-attempted, which is the whole of its provenance.
+
+**6. Review it in place, not on its own.** Capture the golden frames
+([ART_DIRECTION.md](ART_DIRECTION.md) §Accepting an asset) before and after, on
+the same machine — captures are byte-stable there, so the comparison is real —
+and walk the eight acceptance checks. `npm run verify` must stay green: it fails
+on a non-empty `missingAssets` and on the fps floors, which is how an asset that
+is too large to draw gets caught.
+
+**7. Bump the version.** Anything under `public/assets/` changing means the
+service-worker cache key must change, or players who already have the game keep
+the old file — `npm run release` does it, and
+[OPERATIONS.md](OPERATIONS.md) §Releasing explains why.
+
+**Versioning of the art itself is the file's history.** There is no `-v2` suffix
+and no parallel directory of old attempts: a replacement overwrites its path, the
+row in this file is updated, and git holds what it was. A second copy under a new
+name is how two assets end up shipped for one purpose.
+
 ## Visual debt (Phase 24 audit)
 
 Measured, not eyeballed: every file under `public/assets/` was cross-checked
@@ -72,10 +122,13 @@ device pixels per world unit so sprites land on their native texture size).
 
 | Family | File size | Drawn at | Source ÷ drawn | Verdict |
 |---|---|---|---|---|
-| Table and menu backgrounds (10 files) | 480×270 landscape, 224×400 portrait | 1440×810 / 672×1200 | **0.33×** | **P2 — the only real debt.** Upscaled 3×, so the background's pixel grid is three device pixels wide while a card's is one and a half. Visible as a coarser block size behind a crisp foreground |
-| Cards (blank, 5 backs) | 48×64 | 72×96 | 0.5× | accepted — chunky by intent, and the rank/suit readability pillar holds at 1080p |
-| Avatars (9), emotes (6), bubble, buttons, banner, logo, sparkle, dominoes prop | native | native | **1.0×** | no debt, and no headroom: a higher `RENDER_SCALE` would put every one of these below native |
-| Suit pips (4) | 32×32 | 24×24 | 1.33× | no debt |
+| Table and menu backgrounds (10 files) | 480×270 landscape, 224×400 portrait | 1440×810 / 672×1200 | **0.33×** | **P2 — the only debt.** Upscaled 3×, so the background's pixel grid is three device pixels wide while every sprite in front of it is one. Visible as a coarser block size behind a crisp foreground |
+| Cards (blank, 5 backs), avatars (9), emotes (6), bubble, buttons, banner, logo, dominoes prop — 27 files | native | native | **1.0×** | no debt, and no headroom: a higher `RENDER_SCALE` would put every one of these below native |
+| Suit pips (4), sparkle | 32×32 | 24×24 | 1.33× | no debt |
+
+(Measured from the PNG headers against `manifest.ts` × `RENDER_SCALE`, not from
+this file's own size column — two rows of which were stale, and are now corrected:
+the card files are 72×96, not the 48×64 they were first generated at.)
 
 Everything else the audit looked for is clean:
 
@@ -115,7 +168,7 @@ PixelLab regeneration remains a possible future upgrade once credits are back.
 |---|---|---|---|---|
 | BG quintal table | sunny backyard patio, tiled floor border, wood centre | 480×270 | /public/assets/tables/quintal.png | ✅ done — procedural |
 | BG feira table | street-market stall, striped awning + crate borders, worn wood centre | 480×270 | /public/assets/tables/feira.png | ✅ done — procedural |
-| Card back 4 (azulejo) | blue-and-white tile lattice | 72×96 | /public/assets/cards/back-4.png | ✅ done — procedural (matches actual back-0..3 canvas size, 72×96, not the 48×64 listed above for those) |
+| Card back 4 (azulejo) | blue-and-white tile lattice | 72×96 | /public/assets/cards/back-4.png | ✅ done — procedural (72×96, the same canvas as back-0..3) |
 | Emote: sleepy | teal "Zzz" | 36×36 | /public/assets/ui/emote-sleepy.png | ✅ done — procedural |
 | Emote: confident | gold star | 36×36 | /public/assets/ui/emote-confident.png | ✅ done — procedural |
 

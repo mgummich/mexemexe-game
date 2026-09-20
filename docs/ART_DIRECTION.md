@@ -29,8 +29,8 @@ which is where a re-point of the interface happens; see
 - The canvas itself renders at **`RENDER_SCALE = 3`** — 1440×810 — and every camera is zoomed
   by the same factor, so scene code keeps writing plain world-unit coordinates while sprites
   land near their native texture size (`src/main.ts`).
-- Cards are **24×32 world units** from 48×64 files. Rank glyph top-left ~8px, large suit pip
-  bottom-right.
+- Cards are **24×32 world units** from 72×96 files — native at `RENDER_SCALE`. Rank glyph
+  top-left ~8px, large suit pip bottom-right.
 - No texture smoothing, no anti-aliased blur. Crisp 1px outlines, limited palettes per sprite.
 
 ### Resolution policy (Phase 26)
@@ -40,17 +40,16 @@ family it joins; that is check 1 in *Accepting an asset* below.
 
 | Family | Source | World units | Why this size |
 |---|---|---|---|
-| Sprites: avatars, emotes, UI buttons, banner, logo, sparkle, props | **3× world units** (native at `RENDER_SCALE`) | as drawn | crisp at every target; this is the default for anything new |
-| Cards | **2× world units** (48×64) | 24×32 | deliberately chunkier — the rank and pip are readable at 1080p and the card is the one sprite drawn dozens of times per frame |
+| Sprites: cards, avatars, emotes, UI buttons, banner, logo, props (27 files) | **3× world units** (native at `RENDER_SCALE`) | as drawn | crisp at every target; this is the default, and what every new asset matches |
 | Backgrounds | **1× world units** (480×270 / 224×400) | full frame | see the decision below |
-| Suit pips | 32×32 for 8×8 units | 8×8 | inherited, harmless (a 1.33× source) |
+| Suit pips, sparkle | 32×32 for 8×8 units | 8×8 | inherited, harmless (a 1.33× source) |
 
 **Backgrounds stay at 480×270, deliberately.** Regenerating the ten background
 files at `RENDER_SCALE` would raise them from 175 kB total to roughly 1.5–2 MB —
 against a measured first-load budget of 1.5 MB for the whole game excluding music
 ([PERFORMANCE.md](PERFORMANCE.md)), and every one of them is precached for offline
-play. The visible cost of keeping them is a background pixel grid twice the size
-of a card's; the visible cost of changing them is a first load three to four times
+play. The visible cost of keeping them is a background pixel grid three times the
+size of a card's; the visible cost of changing them is a first load three to four times
 heavier on the phone this game is mostly played on. The coarser grid also reads as
 depth — a soft, blocky table behind crisp cards — which is why this is a decision
 and not a deferral. Revisit only if the download budget changes or a device target
@@ -91,7 +90,8 @@ pleasant-looking file from quietly breaking the screen it lands on.
    wasted bytes and a mismatched pixel grid. The measured state of every family
    is in [ASSETS.md](ASSETS.md) §Visual debt.
 2. **One pixel grid with its neighbours.** Art that sits next to the cards shares
-   their block size. This is the rule the backgrounds currently bend.
+   their block size — every sprite family is native at `RENDER_SCALE`. The ten
+   backgrounds are the one deliberate exception, decided with numbers below.
 3. **Readable at a glance, on the smallest target.** Check it at 390×844
    portrait, not only at 1280×720. A rank, a suit, an avatar's silhouette and a
    button's label must survive the small screen; contrast beats decoration.

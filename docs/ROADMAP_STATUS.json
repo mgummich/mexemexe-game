@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "4B",
-  "phase": "27 — PixelLab Production System",
+  "phase": "28 — Asset Families & Golden References",
   "status": "NOT_STARTED"
  },
- "head": "a4ac650",
+ "head": "ae1c1f1",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1692,6 +1692,26 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — the decision is reversible on a stated condition (a changed download budget, or a target where the grid mismatch costs readability) rather than being a permanent excuse, and the stale canvas description it sat on was corrected in the same pass"
+   }
+  },
+  {
+   "phase": "27 — PixelLab Production System",
+   "wave": "4B (deferred)",
+   "status": "PASS",
+   "result": "Provenance already existed per asset (the later sections record the full prompt sent). What was missing was the workflow around it — and a measurement error of my own from Phase 24, found while writing it: the card files are 72×96, native at RENDER_SCALE, not the 48×64 that ASSETS.md had claimed since they were first generated.",
+   "changed": [
+    "docs/ASSETS.md — §Producing or regenerating an asset: seven steps covering which kind of asset it is (PixelLab is not reproducible, the scripts are byte-identically), source size, naming, the single manifest line, recording the full prompt, reviewing in the golden frames, and bumping the version so the cache key moves",
+    "docs/ASSETS.md — the stale 48×64 card rows corrected to the measured 72×96, and the Phase 24 debt table corrected with it (27 files are native, not 21 plus a chunkier card family)",
+    "docs/ART_DIRECTION.md — the resolution table and the pixel-grid check corrected to match"
+   ],
+   "acceptance": "assets can be regenerated intentionally (the two kinds are separated, and the reproducible one has a check: re-run and expect a clean git status); prompt and source metadata preserved (a full prompt in the row is a step, with the existing sections named as the standard); naming and version rules clear (family directory, -portrait, no -v2 suffixes, package bump for the cache key)",
+   "verification": [
+    "PNG headers read for every file under public/assets: 27 sprites at ratio 1.0, 10 backgrounds at 0.33, 5 pips/sparkle at 1.33",
+    "npx vitest run tests/docs-drift.test.ts (4/4)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — and a correction rather than a defence: the Phase 24 table was wrong about the card family because it trusted this document's own stale size column instead of the file headers, which is exactly the drift the measurement was supposed to catch"
    }
   }
  ],
