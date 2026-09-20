@@ -146,7 +146,7 @@ jobs:
         run: docker rm -f mexe-server || true
 
   multiplayer:
-    name: Multiplayer verification
+    name: Multiplayer verification (shard ${{ matrix.shard }}/6)
     needs: scope
     if: needs.scope.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
@@ -155,7 +155,30 @@ jobs:
     # runs in the nightly `multiplayer-all-engines` job instead. Engine parity is therefore a
     # nightly guarantee, not a per-PR one — a WebSocket/storage/orientation regression that only
     # shows on Firefox or WebKit is caught within a day rather than at review time.
-    timeout-minutes: 25
+    #
+    # Six shards, ONE worker each. 44 tests / 43.8 worker-minutes on one runner was 22m of the
+    # PR's 23m wall clock, and raising `workers` inside one job was already measured worse (see
+    # playwright.multiplayer.config.ts: every test drives 2-4 browser contexts plus a server
+    # against 4 shared cores), so the parallelism has to come from more runners.
+    #
+    # --workers=1 rather than the config's 2, and six shards rather than three, because the first
+    # sharded run failed exactly where that contention lives. Playwright shards by test count, not
+    # duration, so shard 3/3 drew eight tests that were nearly all heavy ones and both workers held
+    # a multi-context test for the whole job: every test on it ran about twice its unsharded time
+    # (OP-16 46.2s -> 1.6m, OD-28/OD-29 2.4m -> 3.1m), which tipped OD-28/OD-29 past its 180s
+    # budget and OM-07's scene wait past 15s. Unsharded, fast tests diluted that mix. One test per
+    # runner gives it 4 cores instead of 2 and removes the contention rather than redistributing
+    # it; raising the timeouts instead would have hidden it, which is the same call the config
+    # makes. The config keeps workers: 2 for local and the unsharded nightly runs.
+    #
+    # Each shard writes its own evidence shards and the `multiplayer-gate` job below merges them:
+    # check-verify-multiplayer.mjs already merged per-worker shards, so per-runner shards need no
+    # new merge logic, only the artifact round trip.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -164,18 +187,74 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      # Spawns the real WS server and gates on server stderr, client console errors, accepted
-      # illegal proposals and missing screenshots (scripts/check-verify-multiplayer.mjs). The
-      # --engines=chromium the script gets from this npm script is what keeps it from demanding
-      # the Firefox/WebKit lobby evidence this run no longer produces.
-      - run: npm run verify:multiplayer:chromium
+      # Spawns the real WS server. `--grep-invert "@chaos|@endurance"` comes from the npm script:
+      # @chaos is nightly-only for the frame-ordering stress, and LB-19..LB-24 (@endurance, three
+      # full matches across departures, a replacement and a host transfer) was 7.3m of a 21.9m
+      # suite on its own. The nightly `multiplayer-all-engines` job runs `verify:multiplayer` with
+      # no invert, so both still run daily on all three engines.
+      - run: npm run test:multiplayer:chromium -- --shard=${{ matrix.shard }}/6 --workers=1
+      # The gate runs once, after every shard, so the evidence has to survive the runner. Staged
+      # into one directory first: upload-artifact roots the artifact at the common prefix of the
+      # files it finds, and a shard that happened to produce only one of the two parts directories
+      # would otherwise upload it at a different depth than a shard that produced both.
+      - name: Stage this shard's evidence
+        if: always()
+        run: |
+          mkdir -p evidence
+          for d in verify-multiplayer-log-parts verify-lobby-log-parts; do
+            if [ -d "docs/screenshots/$d" ]; then cp -r "docs/screenshots/$d" evidence/; fi
+          done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: multiplayer-evidence-${{ matrix.shard }}
+          path: evidence
+          # warn, not error: a shard that failed before the suite ran has nothing to stage, and
+          # that is already reported by the shard's own failure. A shard that ran and still staged
+          # nothing is caught by the gate, which fails on the missing parts directory.
+          if-no-files-found: warn
+          retention-days: 1
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: multiplayer-artifacts
+          name: multiplayer-artifacts-${{ matrix.shard }}
           path: |
             test-results/
             docs/screenshots/verify-multiplayer-log.json
+          retention-days: 7
+
+  multiplayer-gate:
+    # Deliberately named what the single job used to be called: this is the check that says the
+    # multiplayer suite passed, so branch protection keeps pointing at the same name.
+    name: Multiplayer verification
+    needs: [scope, multiplayer]
+    # `needs` alone would leave this *skipped* when a shard fails, and a skipped required check is
+    # not a failed one. Run always and fail on the shards' result instead — but still skip for a
+    # documentation-only change, where the shards themselves never ran.
+    if: always() && needs.scope.outputs.docs_only == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Every shard must have passed
+        if: needs.multiplayer.result != 'success'
+        run: |
+          echo "multiplayer shards: ${{ needs.multiplayer.result }}"
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: multiplayer-evidence-*
+          merge-multiple: true
+          path: docs/screenshots
+      # No npm ci: the gate is pure node stdlib. It merges every shard's evidence, then fails on a
+      # client console error, a non-empty server stderr, a missing screenshot or an accepted
+      # illegal proposal. --skip-endurance matches the @endurance grep above.
+      - run: node scripts/check-verify-multiplayer.mjs --engines=chromium --skip-endurance
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: multiplayer-gate-evidence
+          path: docs/screenshots/verify-multiplayer-log.json
           retention-days: 7
 
   pwa:

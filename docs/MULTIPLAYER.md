@@ -992,7 +992,8 @@ inherited; ready as server truth, simultaneous ready, a settings change clearing
 it and a refused start; host transfer including across a gap and across a
 temporary disconnect; real 2/3/4-player matches played to a server-decided
 finish and rematched on the same code; a three-match endurance run across
-departures, a replacement and a host transfer; lobby reload, between-match
+departures, a replacement and a host transfer (tagged `@endurance`, nightly
+rather than per PR — it was a third of the suite's wall clock on its own); lobby reload, between-match
 reconnect, a second tab taking a seat over, and room-switch isolation.
 `e2e-multiplayer/ios-lobby.spec.ts` is the WebKit iOS gate: the five
 representative portrait/landscape viewports, an orientation change that must
