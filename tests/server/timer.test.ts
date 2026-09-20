@@ -50,7 +50,7 @@ describe('room settings lifecycle', () => {
     const mgr = testManager({ clock, code: 'ROOM', seed: 7 });
     mgr.createRoom('Host');
     mgr.setRoomSettings('ROOM', 0, normalizeRoomSettings({ timerMode: 'custom', turnMs: 1 }));
-    expect(mgr.getRoomInfo('ROOM')!.settings.turnMs).toBe(15_000);
+    expect(mgr.getRoomInfo('ROOM')!.settings.turnMs).toBe(5_000);
   });
 
   it('fairness settings lock the moment the match starts', () => {

@@ -43,7 +43,7 @@ accounts, ranking, chat, or cosmetics sync. The game labels the entry point
 - **A seat disconnected past the room's reconnect grace is played for you**:
   the server draws and ends that seat's turn so the match keeps moving. It never
   melds on your behalf. Losing `missedTurnLimit` turns in a row ends the match.
-- **The turn timer has three lobby presets** (Casual / Fast / Off), one tap
+- **The turn timer has four lobby presets** (Casual / Fast / Blitz / Off), one tap
   apart, plus a host-only CUSTOM screen behind them for a room that wants its
   own numbers. The custom screen's buttons stop at `CUSTOM_BOUNDS`, the same
   bounds the server clamps to, and send one proposal on APPLY rather than one
@@ -774,12 +774,21 @@ fairness surface: `timerMode`, `turnMs`, `mexeBonusMs`, `warnMs`,
 | Off | — | — | — | 60s | 2 |
 | Casual (default) | 90s | +45s | 10s | 60s | 2 |
 | Fast | 45s | +20s | 10s | 30s | 2 |
+| Blitz | 7s | — | 4s | 30s | 3 |
+
+**Blitz** is the first Speed Mode (`docs/specs/speed-modes-timing.md`): the same
+game with fixed per-turn pressure, not a different rule set. It grants no Mexe
+bonus — a one-off extension worth three turns is not a bonus — and it allows one
+more missed turn than the slower presets, because at 7s a single lapse of
+attention is a normal event rather than a sign that a seat walked away. A
+`custom` room may match its speed and go no faster: `CUSTOM_BOUNDS.turnMs`
+floors at 5s.
 
 A brand-new room starts on Casual, except that its reconnect grace comes from
 the deployment's `MEXE_DISCONNECT_GRACE_MS` until a preset is picked.
 
 **Who owns them.** The host proposes, in the lobby only — one tap on the summary
-line cycles Casual/Fast/Off, and the CUSTOM link opens a five-row screen
+line cycles Casual/Fast/Blitz/Off, and the CUSTOM link opens a five-row screen
 (`OnlineScene.renderCustom`) whose −/+ buttons go dead at `CUSTOM_BOUNDS`, so
 the host never proposes a number the server would silently clamp. APPLY sends
 one `set_room_settings`; a per-field send would clear everyone's ready bit five

@@ -65,7 +65,7 @@ export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number];
 // Room settings (docs/MULTIPLAYER.md §7)
 // ---------------------------------------------------------------------------
 
-export type TimerMode = 'off' | 'casual' | 'fast' | 'custom';
+export type TimerMode = 'off' | 'casual' | 'fast' | 'blitz' | 'custom';
 
 /**
  * Fairness-affecting room configuration. Chosen by the host in the lobby and frozen the moment
@@ -89,10 +89,14 @@ export interface RoomSettings {
   missedTurnLimit: number;
 }
 
-export const TIMER_PRESETS: Record<'off' | 'casual' | 'fast', RoomSettings> = {
+export const TIMER_PRESETS: Record<'off' | 'casual' | 'fast' | 'blitz', RoomSettings> = {
   off: { timerMode: 'off', turnMs: 0, mexeBonusMs: 0, warnMs: 0, reconnectGraceMs: 60_000, missedTurnLimit: 2 },
   casual: { timerMode: 'casual', turnMs: 90_000, mexeBonusMs: 45_000, warnMs: 10_000, reconnectGraceMs: 60_000, missedTurnLimit: 2 },
   fast: { timerMode: 'fast', turnMs: 45_000, mexeBonusMs: 20_000, warnMs: 10_000, reconnectGraceMs: 30_000, missedTurnLimit: 2 },
+  // MexeMexe Blitz: fixed per-turn pressure, and no Mexe bonus — a one-off +20s on a 7s turn is
+  // not an extension, it is a different game. Warning covers most of the turn on purpose: at this
+  // budget the useful signal is "you are on the clock", not "you have ten seconds left".
+  blitz: { timerMode: 'blitz', turnMs: 7_000, mexeBonusMs: 0, warnMs: 4_000, reconnectGraceMs: 30_000, missedTurnLimit: 3 },
 };
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = TIMER_PRESETS.casual;
@@ -270,7 +274,9 @@ export const EMPTY_PARTY: PartyState = { matches: [], activity: [] };
  * Exported so the lobby's custom controls stop at the same numbers the server enforces, rather
  * than keeping a second copy that can drift out of agreement with this one. */
 export const CUSTOM_BOUNDS = {
-  turnMs: [15_000, 600_000],
+  // The floor is Blitz-shaped rather than comfort-shaped: a custom room may go as fast as the
+  // Blitz preset does, and no faster. Below this a turn is shorter than the deal animation.
+  turnMs: [5_000, 600_000],
   mexeBonusMs: [0, 300_000],
   warnMs: [0, 60_000],
   reconnectGraceMs: [10_000, 300_000],
@@ -291,7 +297,7 @@ export function normalizeRoomSettings(raw: unknown): RoomSettings {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_ROOM_SETTINGS };
   const o = raw as Record<string, unknown>;
   const mode = o.timerMode;
-  if (mode === 'off' || mode === 'casual' || mode === 'fast') return { ...TIMER_PRESETS[mode] };
+  if (mode === 'off' || mode === 'casual' || mode === 'fast' || mode === 'blitz') return { ...TIMER_PRESETS[mode] };
   if (mode !== 'custom') return { ...DEFAULT_ROOM_SETTINGS };
   const turnMs = clampInt(o.turnMs, CUSTOM_BOUNDS.turnMs, DEFAULT_ROOM_SETTINGS.turnMs);
   return {

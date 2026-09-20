@@ -861,12 +861,15 @@ test('custom timing: readable on a portrait phone, and its bounds are the server
   // The screen cannot propose a value the server would clamp: an out-of-range proposal sent
   // directly still comes back inside the same bounds the buttons stop at.
   await host.evaluate(() => window.__MEXE__.online!.setRoomSettings({
-    timerMode: 'custom', turnMs: 5_000, mexeBonusMs: -1, warnMs: 999_000,
+    timerMode: 'custom', turnMs: 1, mexeBonusMs: -1, warnMs: 999_000,
     reconnectGraceMs: 1, missedTurnLimit: 99,
   }));
   await host.waitForFunction(() => window.__MEXE__.online!.roomSettings()?.timerMode === 'custom', undefined, { timeout: 10_000 });
+  // The floor is Blitz speed (5s), not comfort speed, and the warning is capped by the turn it
+  // warns about — so a 999s warning on a 5s turn comes back as 5s, not as a turn that is red from
+  // its first frame.
   expect(await host.evaluate(() => window.__MEXE__.online!.roomSettings())).toMatchObject({
-    timerMode: 'custom', turnMs: 15_000, mexeBonusMs: 0, warnMs: 15_000,
+    timerMode: 'custom', turnMs: 5_000, mexeBonusMs: 0, warnMs: 5_000,
     reconnectGraceMs: 10_000, missedTurnLimit: 10,
   });
 
