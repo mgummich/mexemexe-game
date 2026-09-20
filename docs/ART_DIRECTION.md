@@ -57,6 +57,9 @@ appears where the mismatch costs readability rather than style.
 
 **Device coverage.** 1280×720 renders the 1440×810 canvas slightly down (0.89×);
 1920×1080 renders it up (1.33×); a 390×844 phone at DPR 2–3 lands between the two.
+Both ends are gated: `npm run verify:cross` includes a 2560×1440 desktop and a
+412×915 phone at DPR 3, captured per project under
+`docs/screenshots/cross-browser/` for eyeballing.
 Nearest-neighbour sampling throughout, so every one of those is a sharp scale of
 the same pixels rather than a blur — and `roundPixels` keeps a sprite from
 straddling half a device pixel. Large screens letterbox rather than reveal more

@@ -779,7 +779,7 @@ ESLint over `src tests e2e e2e-cross e2e-multiplayer e2e-pwa server`, then
 | Suite | Config | Command | Covers |
 |---|---|---|---|
 | Screenshots + perf | `playwright.config.ts` (`e2e/`) | `npm run screenshot` | Boots the built game, drives real journeys (Mexe, pause/help/Esc navigation, setup → match, mobile tap play, helper modes, tutorial) through the debug API, captures `docs/screenshots/*.png`, records fps and console errors into `verify-log.json` |
-| Cross-browser layout | `playwright.cross.config.ts` (`e2e-cross/`) | `npm run verify:cross` | Canvas fits, centres and keeps 16:9 on Chrome, Firefox, Safari, Pixel 7, iPhone 14 (both orientations) and iPad; rotation (including a panel left open across the flip) and mobile tap gameplay |
+| Cross-browser layout | `playwright.cross.config.ts` (`e2e-cross/`) | `npm run verify:cross` | Canvas fits, centres and keeps the live world's aspect on Chrome, Firefox, Safari, Pixel 7, iPhone 14 (both orientations), iPad, a 2560×1440 desktop and a 412×915 phone at DPR 3; rotation (including a panel left open across the flip) and mobile tap gameplay |
 | Multiplayer | `playwright.multiplayer.config.ts` (`e2e-multiplayer/`) | `npm run verify:multiplayer` | Two-plus real clients against the real server: legal turns, illegal-proposal rejection, hand privacy, 3P/4P rotation, reconnect/resync, and LB-46's lobby flow at both text scales. Three projects: `chromium` runs everything, `firefox` and `webkit` run the `LB-*` lobby state-machine suite, `webkit` also the iOS-viewport one |
 
 Every spec here starts its own server on an **OS-assigned** port (`freePort()`

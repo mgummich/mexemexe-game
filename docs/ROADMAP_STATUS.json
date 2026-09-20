@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "4D",
-  "phase": "34 — Large-Screen & Responsive Visual QA",
+  "phase": "35 — Asset Performance & Loading",
   "status": "NOT_STARTED"
  },
- "head": "95e1b54",
+ "head": "680b24d",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1842,6 +1842,26 @@
      "note": "Answered, not by refreshing the 64 stale PNGs but by deciding what a baseline is: six reviewed, per-platform frames gate; docs/screenshots stays a human-read artifact set."
     }
    ]
+  },
+  {
+   "phase": "34 — Large-Screen & Responsive Visual QA",
+   "wave": "4D (deferred)",
+   "status": "PASS",
+   "result": "The device matrix covered eight profiles and missed exactly the two ends this phase is about: nothing above 1080p, and nothing above DPR 2. Added both, and looked at what they render.",
+   "changed": [
+    "playwright.cross.config.ts — 'desktop 1440p' (2560×1440) and 'high-dpi phone' (412×915 at DPR 3) projects",
+    "docs/TESTING.md, docs/ART_DIRECTION.md — the covered set now says so"
+   ],
+   "acceptance": "representative displays look intentional (1440p letterboxes the fixed world rather than revealing board; the DPR-3 phone is a clean nearest-neighbour upscale with no blur); critical UI readable (hand, rank/suit, both action buttons and the reason line, read at both ends); no major scaling issue found — the existing fit/centre/aspect assertions pass unchanged on both new profiles",
+   "verification": [
+    "npx playwright test -c playwright.cross.config.ts --project='desktop 1440p' --project='high-dpi phone' (14/14)",
+    "the wider re-run across chrome, safari, ipad and both new profiles (47/47)",
+    "read docs/screenshots/cross-browser/desktop-1440p/game.png and high-dpi-phone/game.png directly: crisp pixels, no clipping, intentional letterboxing"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — two profiles added, not a matrix; the phase's out-of-scope line is 'exhaustive device matrix' and the two chosen are the ones the existing eight could not speak for"
+   }
   }
  ],
  "riskClosures": [
