@@ -4,6 +4,20 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
+## Unreleased
+
+### Fixed
+
+- **The traced nightly run had no budget of its own.** `MEXE_TRACE=1` exists to
+  slow frame processing until races a fast machine always wins start losing —
+  but `multiplayer-traced` ran against the untraced suite's 180s per-test
+  timeout, so `LB-17`, `LB-18` and `OD-28/OD-29` went red at 3.0-3.1m for being
+  correct but slow, and `LB-13` blew an explicit 15s wait on server-side
+  disconnect detection. The job now runs with `--timeout=540000`, and
+  `tracedMs()` stretches the one inner wait that tracing actually broke. Applied
+  only where the traced run has failed, not to all ~210 explicit timeouts in
+  that directory.
+
 ## 1.11.1 — 2026-09-20
 
 ### Phase 0 baseline
