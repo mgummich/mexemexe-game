@@ -44,6 +44,11 @@ export interface Settings {
    * Off by default — a clock a player did not ask for is a different game, not a nicer one.
    */
   blitz: boolean;
+  /** Blitz assistance, each independently disableable (never bundled into one "assists" switch):
+   * the Panic Button's emergency extension, and the Last Breath window a turn gets when its clock
+   * runs out. */
+  blitzPanic: boolean;
+  blitzLastBreath: boolean;
 }
 
 export interface Progress {
@@ -78,7 +83,7 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitz: false };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitz: false, blitzPanic: true, blitzLastBreath: true };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
 export const AI_DIFFICULTIES: readonly Difficulty[] = ['beginner', 'casual', 'smart', 'expert'];
 export const AI_SPEEDS: readonly AiSpeed[] = ['instant', 'fast', 'normal', 'slow'];
@@ -116,6 +121,8 @@ function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
     timerTickSound: typeof merged.timerTickSound === 'boolean' ? merged.timerTickSound : DEFAULT_SETTINGS.timerTickSound,
     haptics: typeof merged.haptics === 'boolean' ? merged.haptics : DEFAULT_SETTINGS.haptics,
     blitz: typeof merged.blitz === 'boolean' ? merged.blitz : DEFAULT_SETTINGS.blitz,
+    blitzPanic: typeof merged.blitzPanic === 'boolean' ? merged.blitzPanic : DEFAULT_SETTINGS.blitzPanic,
+    blitzLastBreath: typeof merged.blitzLastBreath === 'boolean' ? merged.blitzLastBreath : DEFAULT_SETTINGS.blitzLastBreath,
   };
 }
 

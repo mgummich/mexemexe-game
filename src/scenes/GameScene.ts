@@ -20,7 +20,10 @@ import { plural, t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
 import { TIMER_PRESETS } from '../net/protocol';
-import { NO_RHYTHM, noteTurnTaken, startTurn, type Rhythm } from '../game-state/timing';
+import {
+  assistStateFor, enterLastBreath, NO_ASSISTS, NO_RHYTHM, noteTurnTaken, startTurn, usePanic,
+  type AssistState, type Assists, type Rhythm, type TurnClock,
+} from '../game-state/timing';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
 import { OnlineSession } from '../net/online-session';
 import { createRng } from '../rules/rng';
@@ -137,6 +140,13 @@ const HESITATION_MS = 18_000;
 const RESET_CONFIRM_EDITS = 4;
 /** How long a confirm-armed Reset stays armed before it quietly disarms again. */
 const RESET_ARM_MS = 3000;
+
+/** Blitz assistance, in the one place both the config and the HUD read it from. A panic worth
+ * most of a turn again, once a match; a breath long enough to finish a move already in your
+ * hands, not long enough to start a new plan. Phase 8's difficulty presets vary these. */
+const PANIC_MS = 5_000;
+const PANIC_USES = 1;
+const LAST_BREATH_MS = 3_000;
 
 /** What each joker in a resolved meld is standing in for, keyed by card id, for the hint badge. */
 function jokerLabelsOf(assignments: readonly JokerAssignment[]): Map<string, string> {
@@ -364,6 +374,12 @@ export class GameScene extends Phaser.Scene {
   /** Perfect Rhythm for the local seat. Native to a timed match, never a setting, and it changes
    * nothing about what a move is worth — see src/game-state/timing.ts. */
   private rhythm: Rhythm = NO_RHYTHM;
+  /** Blitz assistance this match was started with, and what is left of it. Both parts are off
+   * (zeroed) unless the player asked for them. */
+  private assists: Assists = NO_ASSISTS;
+  private assistState: AssistState = assistStateFor(NO_ASSISTS);
+  /** Whether this turn already took its Last Breath. Per turn: cleared by onTurnStart. */
+  private lastBreathTaken = false;
   /** Repaints the reconnect notice once a second while the socket is down. One ticker for the
    * whole scene: a per-component timer is exactly the leak this phase is meant to avoid. */
   private reconnectTicker: Phaser.Time.TimerEvent | null = null;
@@ -471,6 +487,8 @@ export class GameScene extends Phaser.Scene {
     this.turnWarnMs = 0;
     this.turnDeadlineAt = null;
     this.rhythm = NO_RHYTHM;
+    this.assists = NO_ASSISTS;
+    this.assistState = assistStateFor(NO_ASSISTS);
   }
 
 
@@ -537,6 +555,12 @@ export class GameScene extends Phaser.Scene {
         this.blitzMs = TIMER_PRESETS.blitz.turnMs;
         this.turnBudgetMs = TIMER_PRESETS.blitz.turnMs;
         this.turnWarnMs = TIMER_PRESETS.blitz.warnMs;
+        this.assists = {
+          panicMs: settings.get().blitzPanic ? PANIC_MS : 0,
+          panicUses: settings.get().blitzPanic ? PANIC_USES : 0,
+          lastBreathMs: settings.get().blitzLastBreath ? LAST_BREATH_MS : 0,
+        };
+        this.assistState = assistStateFor(this.assists);
       }
       // The play log listens for this match only, and stops when it ends — see the shutdown
       // handler below. A finished match can never record into the next one (ARCH-007).
@@ -1052,6 +1076,10 @@ export class GameScene extends Phaser.Scene {
     // (aiThinkDelay), and timing it out would just be the scene racing itself.
     if (this.blitzMs > 0) {
       this.turnDeadlineAt = isMyTurn ? Date.now() + this.blitzMs : null;
+      // Budget and breath are per turn: a turn that was extended must not hand the extension, or
+      // its spent breath, to the next one.
+      this.turnBudgetMs = this.blitzMs;
+      this.lastBreathTaken = false;
       this.ui.lastTickSecond = -1;
     }
 
@@ -1628,6 +1656,14 @@ export class GameScene extends Phaser.Scene {
         .setDepth(600)
         .setVisible(false);
       this.staticUi.push(this.onlineTimerText);
+      // The clock face is the Panic Button offline: one more button on a HUD this tight buys a
+      // collision, and the thing a panicking player is already looking at is the clock. The hit
+      // area is a coarse-pointer target (34px) rather than the glyphs' own box.
+      if (!this.online) {
+        this.onlineTimerText
+          .setInteractive(new Phaser.Geom.Rectangle(-10, -17, 80, 34), Phaser.Geom.Rectangle.Contains)
+          .on('pointerdown', () => this.onPanic());
+      }
       // 250 ms, not a per-frame update: the readout has one-second resolution, and a timer event
       // stops with the scene instead of outliving it the way a bare setInterval would.
       // D6: buildStaticUi() re-runs on every viewport:changed (relayout) — without removing the
@@ -1712,6 +1748,18 @@ export class GameScene extends Phaser.Scene {
     // outcome the server gives an online seat (MULTIPLAYER.md §7b): draw one card, pass. Any draft
     // in progress is dropped with the turn, exactly as it is online.
     if (this.blitzMs > 0 && clock.visible && clock.secs === 0 && this.state().phase === 'playing') {
+      // Last Breath first: one extra window per turn, granted by the clock itself rather than by
+      // anything the player has to press. Once per turn by construction (the flag rides on the
+      // clock), so it cannot chain into a turn that never ends.
+      const breath = enterLastBreath(this.localClock(), this.assists);
+      if (breath.entered) {
+        this.turnDeadlineAt = Date.now() + LAST_BREATH_MS;
+        this.lastBreathTaken = true;
+        this.setOnlineNotice(t('speed.lastBreath'));
+        this.time.delayedCall(2000, () => this.setOnlineNotice(''));
+        haptic('bump');
+        return;
+      }
       // Fold the timeout in before clearing the deadline: a turn the clock took is exactly the
       // turn that breaks the streak, and a cleared deadline would make the fold a no-op.
       this.noteRhythm();
@@ -1726,7 +1774,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.onlineTimerText
       .setVisible(true)
-      .setText(t('online.turnTimeLeft', { secs: clock.secs }) + this.rhythmMarker())
+      .setText(t('online.turnTimeLeft', { secs: clock.secs }) + this.panicMarker() + this.rhythmMarker())
       .setColor(clock.tone === 'critical' ? TEXT.error : clock.tone === 'warning' ? TEXT.warning : TEXT.muted)
       .setScale(clock.scale);
     if (clock.tone !== 'muted' && clock.secs !== this.ui.lastTickSecond && clock.secs > 0) {
@@ -1746,6 +1794,39 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * The local clock as the timing domain sees it. The scene tracks a deadline rather than a start
+   * instant (that is what the readout needs), so this rebuilds the domain's view of it for the
+   * one place that needs the whole clock rather than the time left.
+   */
+  private localClock(): TurnClock {
+    return {
+      startedAt: this.turnDeadlineAt === null ? null : 0,
+      budgetMs: this.turnBudgetMs,
+      bonusClaimed: false,
+      lastBreathUsed: this.lastBreathTaken,
+    };
+  }
+
+  /**
+   * The Panic Button: one emergency extension, spent by tapping the clock. Refused by the domain
+   * when it is disabled, already spent, or pressed with no turn on the clock, so a double tap
+   * cannot buy two — and the refusal is silent by design, because the button is a clock face.
+   */
+  private onPanic(): void {
+    if (this.turnDeadlineAt === null || this.state().activePlayerIndex !== this.localSeat) return;
+    const result = usePanic(this.localClock(), this.assistState, this.assists);
+    if (!result.granted) return;
+    this.assistState = result.state;
+    this.turnDeadlineAt += this.assists.panicMs;
+    this.turnBudgetMs += this.assists.panicMs;
+    playSfx(this, 'sfx-feito', 0.4);
+    haptic('bump');
+    this.setOnlineNotice(t('speed.panicUsed', { s: Math.round(this.assists.panicMs / 1000) }));
+    this.time.delayedCall(2000, () => this.setOnlineNotice(''));
+    this.updateTurnTimer();
+  }
+
+  /**
    * One decision, folded into Perfect Rhythm. Reads the clock this scene is already rendering, so
    * an untimed match (no deadline) simply leaves the streak alone. A timeout goes through here too
    * and breaks the streak, which is the point: the clock ran out.
@@ -1758,6 +1839,13 @@ export class GameScene extends Phaser.Scene {
 
   /** The streak as a quiet run of pips beside the clock — never a number, never a colour of its
    * own, and nothing at all below two in a row, so it reads as a rhythm rather than a score. */
+  /** The Panic Button as text on the clock face: `+5s` while one is available, nothing once it is
+   * spent or switched off. A word, not a colour, so it survives every colour-vision setting. */
+  private panicMarker(): string {
+    if (this.online || this.assistState.panicLeft <= 0 || this.turnDeadlineAt === null) return '';
+    return ` +${Math.round(this.assists.panicMs / 1000)}s`;
+  }
+
   private rhythmMarker(): string {
     if (this.rhythm.streak < 2) return '';
     return ' ' + '\u25aa'.repeat(Math.min(5, this.rhythm.streak));

@@ -194,3 +194,20 @@ Accessibility: the escalation is a size change and a volume change, not motion, 
 loses no information; with sound off the size still escalates, and with the screen unread the
 haptic still fires. No channel is load-bearing alone. Reconnect-safe by construction — it is
 derived from the deadline in the frame, holding no state of its own.
+
+## Panic Button and Last Breath (Phase 7)
+
+Both live in `src/game-state/timing.ts` as pure transitions, both are off at zero, and both are
+disableable on their own — `blitzPanic` and `blitzLastBreath` are two settings, never one "assists"
+switch.
+
+- **Panic Button** (`usePanic`): one emergency extension per match (+5s of a 7s turn). Offline the
+  clock face *is* the button — tapping it spends the panic, and the face shows `+5s` while one is
+  available. Refused by the domain when it is off, spent, or pressed with no turn running, so a
+  double tap cannot buy two.
+- **Last Breath** (`enterLastBreath`): +3s granted automatically when the clock reaches zero, once
+  per turn. The used flag rides on the `TurnClock`, and `startTurn` replaces the clock wholesale,
+  so it cannot chain into a turn that never ends.
+
+Tested in all four ON/OFF combinations. Online rulesets do not carry either yet — that is Phase 27
+(lobby and ruleset policy), where they need a wire field and server ownership.

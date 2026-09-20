@@ -15,15 +15,17 @@ export interface TurnClock {
   readonly budgetMs: number;
   /** Whether this turn's one-off extension has been used. Resets with the turn, not the match. */
   readonly bonusClaimed: boolean;
+  /** Whether this turn already spent its Last Breath. Per turn, which is what stops it chaining. */
+  readonly lastBreathUsed: boolean;
 }
 
 /** No turn is being timed: an untimed room, a lobby, or a match that has finished. */
-export const IDLE_CLOCK: TurnClock = { startedAt: null, budgetMs: 0, bonusClaimed: false };
+export const IDLE_CLOCK: TurnClock = { startedAt: null, budgetMs: 0, bonusClaimed: false, lastBreathUsed: false };
 
 /** Put a turn on the clock. A budget of zero or less is untimed, not an instant timeout. */
 export function startTurn(now: number, budgetMs: number): TurnClock {
   if (budgetMs <= 0) return IDLE_CLOCK;
-  return { startedAt: now, budgetMs, bonusClaimed: false };
+  return { startedAt: now, budgetMs, bonusClaimed: false, lastBreathUsed: false };
 }
 
 /** ms left, or null when nothing is being timed. Never negative: a spent clock reads 0. */
@@ -80,4 +82,61 @@ export function noteTurnTaken(rhythm: Rhythm, clock: TurnClock, msLeftAtAction: 
   if (msLeftAtAction < clock.budgetMs * RHYTHM_FRACTION) return { streak: 0, best: rhythm.best };
   const streak = rhythm.streak + 1;
   return { streak, best: Math.max(streak, rhythm.best) };
+}
+
+/**
+ * Optional assistance for a Speed turn. Both are off at zero, and both are always individually
+ * disableable — that is the rule the modes are built around, not a preference a preset may
+ * override (docs/specs/speed-modes-timing.md).
+ */
+export interface Assists {
+  /** Emergency extension, in ms. 0 disables the Panic Button outright. */
+  readonly panicMs: number;
+  /** How many times a match may panic. 0 disables it just as surely as a 0 duration. */
+  readonly panicUses: number;
+  /** A last window granted once per turn when the clock runs out. 0 disables Last Breath. */
+  readonly lastBreathMs: number;
+}
+
+export const NO_ASSISTS: Assists = { panicMs: 0, panicUses: 0, lastBreathMs: 0 };
+
+/** What the match has left of its assistance. Panic is a match-long budget; Last Breath is per
+ * turn and lives on the clock, so a new turn cannot inherit a spent one. */
+export interface AssistState {
+  readonly panicLeft: number;
+}
+
+export function assistStateFor(assists: Assists): AssistState {
+  return { panicLeft: assists.panicMs > 0 ? assists.panicUses : 0 };
+}
+
+/**
+ * Spend one Panic Button. Refused with nothing changed when the feature is off, when the budget is
+ * spent, or when no turn is on the clock — so a double tap, a replayed message or a press on
+ * someone else's turn can only ever grant one extension.
+ */
+export function usePanic(
+  clock: TurnClock,
+  state: AssistState,
+  assists: Assists,
+): { clock: TurnClock; state: AssistState; granted: boolean } {
+  if (clock.startedAt === null || assists.panicMs <= 0 || state.panicLeft <= 0) {
+    return { clock, state, granted: false };
+  }
+  return {
+    clock: { ...clock, budgetMs: clock.budgetMs + assists.panicMs },
+    state: { panicLeft: state.panicLeft - 1 },
+    granted: true,
+  };
+}
+
+/**
+ * The clock just ran out. Returns the extended clock if this turn still has its Last Breath, and
+ * `entered: false` when the turn is simply over. Once per turn by construction: the flag rides on
+ * the clock, and a clock is replaced wholesale by `startTurn`, so a granted breath cannot chain
+ * into another one.
+ */
+export function enterLastBreath(clock: TurnClock, assists: Assists): { clock: TurnClock; entered: boolean } {
+  if (clock.startedAt === null || assists.lastBreathMs <= 0 || clock.lastBreathUsed) return { clock, entered: false };
+  return { clock: { ...clock, budgetMs: clock.budgetMs + assists.lastBreathMs, lastBreathUsed: true }, entered: true };
 }

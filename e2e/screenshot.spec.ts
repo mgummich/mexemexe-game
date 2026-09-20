@@ -3228,7 +3228,9 @@ test.afterAll(() => {
 // a local match (it used to be an online-only widget) and that reaching zero actually spends the
 // turn — the scene owns the deadline here, because there is no server to own it.
 test('blitz-clock: a local Blitz turn shows the clock and times itself out', async ({ page }) => {
-  await capture(page, '/?seed=77&showcase=mexe&blitz=1', 'blitz-clock', async (p) => {
+  // Assists off: this is evidence about the clock itself, so the turn ends at the budget rather
+  // than at the budget plus a Last Breath. Their own coverage is tests/timing.test.ts.
+  await capture(page, '/?seed=77&showcase=mexe&blitz=1&panic=0&breath=0', 'blitz-clock', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
     const before = await p.evaluate(() => window.__MEXE__.state!()!.turn);
     // 7s budget plus the deal it waits for, plus slack for a loaded runner.

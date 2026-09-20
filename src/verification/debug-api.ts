@@ -435,6 +435,12 @@ export function installDebugApi(): void {
   // e2e hook — ?blitz=1|0 picks the local Blitz clock without clicking through the setup screen.
   const blitz = params.get('blitz');
   if (blitz === '1' || blitz === '0') settings.update({ blitz: blitz === '1' });
+  // Each Blitz assist is disableable on its own, and each combination has to be reachable from a
+  // test without clicking through a settings screen.
+  const panic = params.get('panic');
+  if (panic === '1' || panic === '0') settings.update({ blitzPanic: panic === '1' });
+  const breath = params.get('breath');
+  if (breath === '1' || breath === '0') settings.update({ blitzLastBreath: breath === '1' });
 }
 
 export function urlSeed(): number {

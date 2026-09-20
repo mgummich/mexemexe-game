@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { IDLE_CLOCK, NO_RHYTHM, expired, grantBonus, msLeft, noteTurnTaken, startTurn } from '../src/game-state/timing';
+import {
+  assistStateFor,
+  enterLastBreath,
+  expired,
+  grantBonus,
+  IDLE_CLOCK,
+  msLeft,
+  NO_ASSISTS,
+  NO_RHYTHM,
+  noteTurnTaken,
+  startTurn,
+  usePanic,
+  type Assists,
+} from '../src/game-state/timing';
 
 describe('shared turn clock', () => {
   it('an untimed budget puts nothing on the clock', () => {
@@ -72,5 +85,57 @@ describe('Perfect Rhythm', () => {
     // 4s left is in rhythm on a 7s turn and long gone on a 90s one.
     expect(noteTurnTaken(NO_RHYTHM, blitz, 4_000).streak).toBe(1);
     expect(noteTurnTaken(NO_RHYTHM, casual, 4_000).streak).toBe(0);
+  });
+});
+
+describe('Panic Button and Last Breath', () => {
+  const both: Assists = { panicMs: 5_000, panicUses: 1, lastBreathMs: 3_000 };
+  const panicOnly: Assists = { ...both, lastBreathMs: 0 };
+  const breathOnly: Assists = { ...both, panicMs: 0, panicUses: 0 };
+
+  it('ON/ON: each grants once, and Last Breath cannot chain', () => {
+    const clock = startTurn(0, 7_000);
+    const panicked = usePanic(clock, assistStateFor(both), both);
+    expect(panicked.granted).toBe(true);
+    expect(msLeft(panicked.clock, 0)).toBe(12_000);
+    expect(usePanic(panicked.clock, panicked.state, both).granted).toBe(false);
+
+    const breath = enterLastBreath(panicked.clock, both);
+    expect(breath.entered).toBe(true);
+    expect(msLeft(breath.clock, 0)).toBe(15_000);
+    expect(enterLastBreath(breath.clock, both).entered).toBe(false);
+  });
+
+  it('ON/OFF: panic works, the turn simply ends when the clock runs out', () => {
+    const clock = startTurn(0, 7_000);
+    expect(usePanic(clock, assistStateFor(panicOnly), panicOnly).granted).toBe(true);
+    expect(enterLastBreath(clock, panicOnly).entered).toBe(false);
+  });
+
+  it('OFF/ON: no panic to spend, one breath to take', () => {
+    const clock = startTurn(0, 7_000);
+    const state = assistStateFor(breathOnly);
+    expect(state.panicLeft).toBe(0);
+    expect(usePanic(clock, state, breathOnly).granted).toBe(false);
+    expect(enterLastBreath(clock, breathOnly).entered).toBe(true);
+  });
+
+  it('OFF/OFF: the clock is the whole of it', () => {
+    const clock = startTurn(0, 7_000);
+    expect(usePanic(clock, assistStateFor(NO_ASSISTS), NO_ASSISTS).granted).toBe(false);
+    expect(enterLastBreath(clock, NO_ASSISTS).entered).toBe(false);
+  });
+
+  it('refuses either one when no turn is on the clock', () => {
+    expect(usePanic(IDLE_CLOCK, assistStateFor(both), both).granted).toBe(false);
+    expect(enterLastBreath(IDLE_CLOCK, both).entered).toBe(false);
+  });
+
+  it('a new turn restores the breath but not the panic budget', () => {
+    const spent = enterLastBreath(startTurn(0, 7_000), both);
+    const panicked = usePanic(spent.clock, assistStateFor(both), both);
+    const next = startTurn(20_000, 7_000);
+    expect(next.lastBreathUsed).toBe(false);
+    expect(usePanic(next, panicked.state, both).granted).toBe(false);
   });
 });

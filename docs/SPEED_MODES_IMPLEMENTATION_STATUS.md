@@ -28,7 +28,7 @@ DEFERRED
 | 4 — MexeMexe Blitz Core | COMPLETE | Online: fourth timer preset (7s, no Mexe bonus). Local: setup toggle + scene-owned clock, `?blitz=1` e2e hook, `blitz-clock` screenshot evidence. |
 | 5 — Blitz Perfect Rhythm | COMPLETE | `Rhythm` in the timing domain (4 tests); pip run beside the clock; no toggle. Local Speed clock moved to its own HUD slot (`regions.speedClock`). |
 | 6 — Blitz Adrenaline | COMPLETE | `adrenaline` ramp in `turn-clock.ts` (3 tests) driving readout growth and cue volume; budget-aware critical window. Stateless, so reconnect-safe. |
-| 7 — Blitz Panic Button and Last Breath | NOT_STARTED | |
+| 7 — Blitz Panic Button and Last Breath | PARTIAL | Domain + local Blitz: `usePanic`/`enterLastBreath`, four-combination tests, `?panic=`/`?breath=` hooks. Online rulesets carry neither yet — deferred to Phase 27. |
 | 8 — Blitz Difficulty Presets | NOT_STARTED | |
 | 9 — MexeMexe Time Attack Core | NOT_STARTED | |
 | 10 — Time Attack Perfect Rhythm | NOT_STARTED | |
