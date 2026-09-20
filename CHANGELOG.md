@@ -4,7 +4,9 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased — Phase 0 baseline
+## 1.11.1 — 2026-09-20
+
+### Phase 0 baseline
 
 ### Fixed
 
@@ -81,7 +83,7 @@ and those remain readable in git history.
   lint, tests and the build; `ASSETS.md` and `MULTIPLAYER.md` drop pointers to
   audit files deleted in an earlier cleanup.
 
-## Unreleased — Gaming QA audit
+### Gaming QA audit
 
 ### Fixed
 
