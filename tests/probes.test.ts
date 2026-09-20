@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { RearrangerAi, SimpleAi } from '../src/ai/ai';
 import { observeForAi } from '../src/ai/observation';
 import { applyConfirmedTurn, drawAndEndTurn, validateTable } from '../src/rules/rules';
@@ -61,6 +61,20 @@ describe('seeded gameplay probes', () => {
     const { state } = playSeededGame(seed);
     expect(state.winnerId).not.toBeNull();
     expect(state.players.some((p) => p.id === state.winnerId)).toBe(true);
+  });
+
+  /**
+   * Absorbed from the deleted `tests/soak.test.ts`, which played seeds 1..20 of this same harness
+   * to assert termination — a strict subset of the 40 seeds above. What was worth keeping is the
+   * heap tripwire, and it rides the runs that already happened rather than replaying them: 40 full
+   * matches through the pure rules must not leave 150 MB behind. The old wall-clock assertion was
+   * dropped on purpose — it measured the runner, not the code, and failed under parallel suite load
+   * rather than on a defect. AI cost is bounded in trials, not milliseconds (INV-A5), and frame
+   * cost has its own fps gates.
+   */
+  afterAll(() => {
+    const heapMb = process.memoryUsage().heapUsed / (1024 * 1024);
+    expect(heapMb, `heap after ${SEEDS.length} full matches: ${heapMb.toFixed(0)} MB`).toBeLessThan(150);
   });
 
   it('determinism: same seed run twice yields an identical final state and turn count', () => {

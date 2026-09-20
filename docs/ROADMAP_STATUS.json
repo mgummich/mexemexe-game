@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "10A",
-  "phase": "83 — Regression Suite Optimization",
+  "phase": "84 — Flaky-Test Control",
   "status": "NOT_STARTED"
  },
- "head": "08fe727",
+ "head": "4b07ec0",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1169,6 +1169,41 @@
     "round": 1,
     "result": "CRITIC PASS — the gate added is the one that was missing (publish after green, not beside it); no staging environment was invented for a single-process alpha that does not have one"
    }
+  },
+  {
+   "phase": "83 — Regression Suite Optimization",
+   "wave": "10A",
+   "status": "PASS",
+   "result": "Measured every suite before touching anything. The unit suite is 1128 tests in ~13s and the browser suites are ~1.2s (screenshot) and ~7s (multiplayer) per test, so there was no runtime problem to solve. One genuine redundancy found: tests/soak.test.ts replayed seeds 1..20 of the same harness probes.test.ts already runs over seeds 1..40, and its only non-duplicated assertions were a wall clock and a heap sample.",
+   "changed": [
+    "tests/soak.test.ts — deleted; its termination coverage was a strict subset of tests/probes.test.ts",
+    "tests/probes.test.ts — heap tripwire as an afterAll over the 40 matches that already run (no seed replayed); the wall-clock assertion deliberately not carried over",
+    "docs/TESTING.md — simulation-level table, suite list and the CPU-contention note updated"
+   ],
+   "acceptance": "each contract has an owning level (TESTING.md §Test levels and the GQA matrix already assign them; no contract lost an owner); redundant coverage reduced (one duplicated 20-seed simulation removed); critical behaviour still protected (probes covers a superset of seeds with per-turn invariants, plus the heap bound)",
+   "verification": [
+    "per-file timings captured with vitest --reporter=json before the change (session-soak 11.0s, ai 7.7s, hardening 5.2s, probes 3.5s, soak 1.5s)",
+    "MEXE_OUTPUT=ai npm run test (1128/1128, exit 0, 12.85s)",
+    "npx vitest run tests/probes.test.ts (45/45, 3.35s — unchanged after absorbing the tripwire)",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p83-json.json",
+     "tmp/agent-logs/p83-test2.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS after one repair: the first attempt added a second 40-match loop for the heap check, which re-introduced the duplication the phase exists to remove. Reworked into an afterAll over the existing runs — probes is 3.35s either way."
+   },
+   "resolvedRisks": [
+    {
+     "id": "P3-suite-flake",
+     "from": "Phase 46",
+     "note": "Partly addressed: the wall-clock assertion that failed under parallel load is gone. Browser-suite flake is Phase 84's."
+    }
+   ]
   }
  ],
  "riskClosures": [

@@ -35,7 +35,7 @@ magnitude a developer waits for the whole category on this repo — see
 | Property / generative | ms | Invariants that hold across *every* generated deal, meld and legal action sequence — conservation, round-trips, determinism, refusal | The specific answers this game gives (that is a unit test's job), anything impure | `tests/property/` |
 | Golden replay | ms | Whole-match outcomes: the endings, the rotations, a recorded rearrangement | Any rule a unit test can prove; anything presentational | `tests/replay.test.ts` + `tests/fixtures/replays/` |
 | Application / integration | ms | Action orchestration (`LocalMatch`), online state adaptation (`OnlineSession`), lobby transitions (`LobbyMachine`), persistence and lifecycle coordination | Wire framing, rendering, engine behaviour | `tests/match`, `online-session`, `lobby`, `persistence`, `lifecycle`, `net/` |
-| Simulation | seconds | Emergent behaviour over many seeded states — AI, full matches, lobby random walks | Single rule cases, which are cheaper as unit tests | `tests/probes`, `soak`, `server/lobby-soak`, `server/session-soak.integration` |
+| Simulation | seconds | Emergent behaviour over many seeded states — AI, full matches, lobby random walks | Single rule cases, which are cheaper as unit tests | `tests/probes`, `server/lobby-soak`, `server/session-soak.integration` |
 | Server integration | seconds | Room ownership, authoritative validation, revisions, reconnect, rematch, hidden information, the wire boundary | UI, engine parity | `tests/server/` |
 | Browser E2E | minutes | Real input, Phaser interaction, scene transitions, the service worker, several real clients against the real server | Rule legality, or anything a pure function already proves | `e2e/`, `e2e-multiplayer/`, `e2e-pwa/` |
 | Cross-browser / device | minutes | Behaviour that genuinely differs per engine or form factor: pointer/touch, viewport, orientation, iOS lifecycle | A second copy of a journey already proven on Chromium | `e2e-cross/`, the `firefox`/`webkit` multiplayer projects |
@@ -370,7 +370,6 @@ helper logic live as pure modules under `src/table` and `src/ui`.
   importing the verification adapters, plus the play log importing nothing outside
   `core` (bar the match-event type) and reading no browser API. See
   [ARCHITECTURE.md](ARCHITECTURE.md#enforcement-status).
-- `tests/soak.test.ts` — long-running game loop, used as a perf/stability soak.
 
 `npm run test:watch` for the watch loop.
 
@@ -727,6 +726,15 @@ concurrent vitest sandboxes could starve `RearrangerAi`'s wall-clock search
 deadline and fail the AI soak for lack of CPU rather than for a defect. That
 deadline is gone (the search spends a deterministic trial budget, INV-A5), and
 with it the whole class of CPU-contention flake.
+
+Phase 83 removed the last of that class from the unit suite: `tests/soak.test.ts`
+played seeds 1..20 of the same harness `probes.test.ts` runs over seeds 1..40, so
+its termination coverage was a strict subset, and its two remaining assertions
+were a wall clock and a heap sample. The heap tripwire moved into `probes` as an
+`afterAll` over the runs that already happen (no seed is replayed for it); the
+wall clock did not — it measured
+the runner rather than the code and failed under parallel suite load instead of on
+a defect.
 
 ## Server tests — `npm run test:server`
 
