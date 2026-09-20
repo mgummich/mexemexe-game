@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "8A",
-  "phase": "69 — Offline-First Resilience",
+  "phase": "70 — Save & Protocol Compatibility Policy",
   "status": "NOT_STARTED"
  },
- "head": "3c7c29e",
+ "head": "0481c34",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -740,6 +740,31 @@
     "result": "CRITIC PASS — the only functional risk (a future phase writing match state to storage, re-creating a second authority) is now a failing test rather than a review rule"
    },
    "roadmapMismatch": "Roadmap assumed local-session restoration might need building. Repo truth: local mid-match resume is a deliberate documented limitation (INVARIANTS SCN-34); only the docs disagreed with it, and they were corrected rather than the behaviour."
+  },
+  {
+   "phase": "69 — Offline-First Resilience",
+   "wave": "8A",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Every in-scope item already exists and is gated: app shell + runtime cache-first (public/sw.js), version-keyed cache with eviction on activate, offline banner and disabled online entry, reconnect-on-restore, player-asked update handover. docs/PWA_OFFLINE.md already documents cache/update lifecycle and the known limitations.",
+   "acceptance": "offline-supported features work predictably (offline reload, local/AI/tutorial play, en-US and mobile viewports); unsupported online actions fail clearly (rooms disabled offline, not a mid-connect failure); recovery after network restoration works ('back online restores the online lobby'); cache/update behaviour documented (PWA_OFFLINE.md §Cache versioning, §Update handover)",
+   "verification": [
+    "npm run verify:pwa (13/13, exit 0)"
+   ],
+   "evidence": {
+    "log": "tmp/agent-logs/p69-verify-pwa.log",
+    "note": "Chromium only — documented limitation in PWA_OFFLINE.md §Known limitations, not a new risk"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no second authority added, no stale doc found; Phase 68's recovery table and this doc agree on the offline reload case"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-sw-single-engine",
+     "note": "Service-worker lifecycle is verified on Chromium only; other engines are covered for layout only.",
+     "owner": "Phase 100 — Final Multiplayer QA / Phase 97 — Final Product QA"
+    }
+   ]
   }
  ],
  "riskClosures": [
