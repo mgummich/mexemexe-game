@@ -8,6 +8,17 @@ and those remain readable in git history.
 
 ### Fixed
 
+- **LB-15 was racing an 820ms window.** `offline` is a transient render, not a
+  resting state: the dropped client reconnects on `RECONNECT_DELAYS_MS[0]`
+  (800ms plus jitter), so the seat shows offline for about that long and then
+  goes back to waiting — measured `waiting@0ms -> offline@245ms ->
+  waiting@1066ms`. The test polled for it from the test process, three clients
+  one after another, inside that single window; an unloaded runner won, a traced
+  one lost and then waited out its whole budget for a state that could never
+  come back. That was the `Timeout 45000ms exceeded` failure, and no budget
+  would have fixed it. Each client now records the transition itself from a
+  timer installed before the drop, so the flag outlives the window.
+
 - **The traced nightly run had no budget of its own.** `MEXE_TRACE=1` exists to
   slow frame processing until races a fast machine always wins start losing —
   but `multiplayer-traced` ran against the untraced suite's 180s per-test

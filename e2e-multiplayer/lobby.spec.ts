@@ -7,6 +7,14 @@ import {
   attachClientContexts, tracedMs,
 } from './harness';
 
+declare global {
+  interface Window {
+    /** LB-15 only: set by the in-page recorder below when seat 0 is first rendered `offline`. */
+    __seat0WentOffline?: boolean;
+    __seat0Watch?: number;
+  }
+}
+
 /**
  * LB-01..LB-47 — the lobby as a distributed state machine.
  *
@@ -482,15 +490,27 @@ test('LB-13/LB-14/LB-15 @race: host transfer is deterministic, gap-safe, and a d
   await waitForSeats(pages, [0, 1, 2, 3]);
 
   // LB-15: a dropped socket is a held seat, not a departure — host authority does not move.
+  //
+  // `offline` is a *transient* render, not a resting state: the dropped client reconnects on
+  // RECONNECT_DELAYS_MS[0] (800ms + jitter), so the seat shows offline for about 820ms and then
+  // goes back to waiting. Measured: waiting@0ms -> offline@245ms -> waiting@1066ms. Polling for
+  // it from the test process — three clients checked one after another, inside that one window —
+  // is a race that a traced or loaded runner loses, and then waits out its whole budget for a
+  // state that can never come back. So each client records the transition itself, from a timer
+  // installed before the drop; the recorded flag outlives the window and the loop below can take
+  // its time.
+  await Promise.all([b, c, d].map((p) => p.evaluate(() => {
+    window.__seat0WentOffline = false;
+    window.__seat0Watch = window.setInterval(() => {
+      if (window.__MEXE__.online?.lobbySeats?.().find((r) => r.seat === 0)?.status === 'offline') {
+        window.__seat0WentOffline = true;
+      }
+    }, 25);
+  })));
   await a.evaluate(() => window.__MEXE__.online!.forceDrop());
   for (const p of [b, c, d]) {
-    await p.waitForFunction(
-      () => window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === 0)?.status === 'offline',
-      undefined,
-      // Server-side disconnect detection plus the client rendering the broadcast: comfortably
-      // under 15s untraced, over it under tracing.
-      { timeout: tracedMs(15_000) },
-    );
+    await p.waitForFunction(() => window.__seat0WentOffline === true, undefined, { timeout: tracedMs(15_000) });
+    await p.evaluate(() => window.clearInterval(window.__seat0Watch));
     expect((await rows(p)).find((r) => r.host && r.status !== 'empty')?.seat).toBe(0);
   }
   await a.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 30_000 });
