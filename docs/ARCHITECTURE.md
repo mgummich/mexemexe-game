@@ -563,13 +563,32 @@ key and a different shape, so it cannot be confused with history. No hidden
 opponent information is persisted anywhere — see
 [OBSERVABILITY_PRIVACY.md](OBSERVABILITY_PRIVACY.md).
 
+### Supported recovery paths
+
+What survives an interruption, and from which authority. A path not listed here
+is not supported — it is not a bug report, it is this table.
+
+| Interruption | Restored | From | Not restored |
+|---|---|---|---|
+| reload / crash / installed-app relaunch | settings, progress, cosmetics, display name, recent room codes | `mexe-save` + the `mexe.online.*` keys | the local match in progress — a reload of local play returns to the menu (SCN-34) |
+| online reload / crash, same tab | the seat, and then the whole board | `reconnect(token)` from `sessionStorage`, then the server's snapshot | nothing local: the client replaces its state wholesale (INV-L3) |
+| online reload in a new tab, or after the tab closed | nothing — the seat is reclaimed by the grace timer or lost | — | the token is deliberately tab-scoped |
+| background / sleep / bfcache restore | the live session on the socket it already holds | `src/core/lifecycle.ts` → existing socket, resync on wake | no second socket and no second membership (SCN-43) |
+| corrupt or unsupported stored data | per-field defaults; a refused snapshot throws `RulesError` and the boot path falls back | `parseSave` / `deserializeGameState` | the corrupt values — nothing partially trusted is kept (SCN-31) |
+| blocked or full storage | everything, in memory, for this page | defaults + `NULL_STORAGE` | persistence itself; nothing crashes (INV-P4) |
+
+The table has one rule behind it: local recovery restores *preferences*, online
+recovery restores *a seat* and lets the server restore the state. Neither
+restores gameplay from disk, which is why persistence never becomes the second
+authority.
+
 ## Replay and reproduction
 
 Three artifacts, three jobs. They share serialization helpers; they are not the
 same format and must not merge:
 
 ```text
-SAVE     serializeGameState        restore the match the player left
+SAVE     serializeGameState        one whole state as one versioned envelope
 REPLAY   src/game-state/replay.ts  reproduce how a match reached a state
 PLAYLOG  src/core/playlog.ts       human/debug timeline and session statistics
 ```

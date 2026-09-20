@@ -3,13 +3,13 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "8A",
-  "phase": "68 \u2014 Persistence & Session Recovery",
+  "phase": "69 — Offline-First Resilience",
   "status": "NOT_STARTED"
  },
  "head": "3c7c29e",
  "phases": [
   {
-   "phase": "46 \u2014 Strategic Planning",
+   "phase": "46 — Strategic Planning",
    "wave": "6B",
    "status": "PASS",
    "result": "Repo already satisfied bounded deterministic search, candidate sequencing, legal fallback and no-mutation. Gap closed: future-state evaluation (strandedCards) in src/ai/evaluate.ts.",
@@ -42,18 +42,18 @@
     {
      "id": "P3-screenshot-churn",
      "note": "npm run screenshot rewrites ~60 PNGs with no visual change; reverted each run",
-     "owner": "Phase 84 \u2014 Flaky-Test Control"
+     "owner": "Phase 84 — Flaky-Test Control"
     },
     {
      "id": "P3-suite-flake",
      "note": "tutorial 12-step e2e timed out once under full-suite load, passes in isolation and on rerun",
-     "owner": "Phase 84 \u2014 Flaky-Test Control"
+     "owner": "Phase 84 — Flaky-Test Control"
     }
    ],
-   "roadmapMismatch": "Roadmap assumed Phase 46 would add lookahead/search; repo already had a bounded deterministic trial-budget search from Wave 6A. Multi-ply lookahead is impossible under INV-A2 (no pile order, no opponent hands) \u2014 documented in docs/ARCHITECTURE.md."
+   "roadmapMismatch": "Roadmap assumed Phase 46 would add lookahead/search; repo already had a bounded deterministic trial-budget search from Wave 6A. Multi-ply lookahead is impossible under INV-A2 (no pile order, no opponent hands) — documented in docs/ARCHITECTURE.md."
   },
   {
-   "phase": "47 \u2014 Difficulty Model",
+   "phase": "47 — Difficulty Model",
    "wave": "6B",
    "status": "NO_CHANGE_REQUIRED",
    "result": "Four tiers already exist as configuration over the shared SimpleAi/RearrangerAi engines, settings-persisted, localized and UI-cycled. Fixed a false docstring claim (casual is not 'full lay-down' for a minimal personality) and added the missing tier-ladder regression test.",
@@ -79,12 +79,12 @@
     {
      "id": "P2-tier-overlap",
      "note": "Per personality the tiers overlap: cida identical at beginner/casual/smart, juninho at casual/smart, bia/ze at smart/expert. Inherent to personality and difficulty being orthogonal; the match-level ladder is intact.",
-     "owner": "Phase 54 \u2014 AI Balance Metrics"
+     "owner": "Phase 54 — AI Balance Metrics"
     }
    ]
   },
   {
-   "phase": "48 \u2014 Personality Framework",
+   "phase": "48 — Personality Framework",
    "wave": "6B",
    "status": "NO_CHANGE_REQUIRED",
    "result": "PERSONALITY_TRAITS is configuration (holdJokers, minimal, rearrange, patient) over the shared engines; createAi composes it with the difficulty tier; no personality owns planning or legality code.",
@@ -100,7 +100,7 @@
    "roadmapMismatch": "Roadmap lists 'evaluation weight modifiers' in scope. The repo deliberately keeps src/ai/evaluate.ts neutral and expresses personality as candidate-generation policy instead; the exit criteria are met without weights, and weights would move personality into the shared evaluator the architecture keeps neutral. Repo truth preserved."
   },
   {
-   "phase": "49 \u2014 Human-Like Behavior",
+   "phase": "49 — Human-Like Behavior",
    "wave": "6C",
    "status": "PASS",
    "result": "Fixed a measured defect: at the beginner tier the four personalities produced only 2 distinct play sequences over 8 seeded matches each (cida, bia and ze identical), because the tier caps everyone at one action per turn AND patience was excluded at beginner. Patience now applies at every tier.",
@@ -131,25 +131,25 @@
     {
      "id": "P2-cida-bia-identical",
      "note": "cida and bia play identically at beginner and expert; they differ only in the minimal and rearrange traits those tiers override for everyone. Fixing it means either collapsing the tier ladder or a personality-specific comparator inside the neutral evaluator.",
-     "owner": "Phase 54 \u2014 AI Balance Metrics"
+     "owner": "Phase 54 — AI Balance Metrics"
     }
    ],
    "note": "Phase 49's other in-scope items are owned by the presentation layer and were verified, not re-built: per-personality cadence (GameScene.aiThinkDelay), pre-move tells, characterful lines and repeat-line suppression (GameScene.showEmote)."
   },
   {
-   "phase": "50 \u2014 Adaptive AI",
+   "phase": "50 — Adaptive AI",
    "wave": "6C",
    "status": "BLOCKED",
-   "result": "Not built. Nothing adaptive exists in the repo. Building it means player-pattern tracking, bounded policy adjustment, reset/persistence semantics and a privacy section \u2014 new gameplay machinery that AGENTS.md's product guardrails say needs an explicit request, and that works against the difficulty the player chose. The phase goal itself says 'optional'.",
+   "result": "Not built. Nothing adaptive exists in the repo. Building it means player-pattern tracking, bounded policy adjustment, reset/persistence semantics and a privacy section — new gameplay machinery that AGENTS.md's product guardrails say needs an explicit request, and that works against the difficulty the player chose. The phase goal itself says 'optional'.",
    "blockedOn": "product decision by the repository owner: build bounded adaptation, or close the phase as deliberately not-wanted",
-   "impactOnLaterPhases": "none found \u2014 Phase 51 completed without it; Phase 54 measures whatever exists; Phase 72 has less to review",
+   "impactOnLaterPhases": "none found — Phase 51 completed without it; Phase 54 measures whatever exists; Phase 72 has less to review",
    "critic": {
     "round": 0,
-    "result": "n/a \u2014 nothing implemented"
+    "result": "n/a — nothing implemented"
    }
   },
   {
-   "phase": "51 \u2014 AI Explainability",
+   "phase": "51 — AI Explainability",
    "wave": "6C",
    "status": "PASS",
    "result": "Replaced prose-parsed explainability with structured data. Engines record a DecisionTrace (rearranged, patient, candidatesWeighed, features); createAi attaches AiReason {key, personality, trace}. Deleted aiReasonKeySuffix and the personality:reason string round-trip, including the regexes (/rearranged|split|moved/, startsWith('extended')) that decided the player-facing line by pattern-matching the search's own prose.",
@@ -171,12 +171,12 @@
     {
      "id": "P3-perf-spec-flake",
      "note": "stress-table @perf measured 43.9 fps against a local floor of 50 in one full-suite run; passes alone and on rerun. Already one of the two flaky specs docs/ROADMAP.md records.",
-     "owner": "Phase 84 \u2014 Flaky-Test Control"
+     "owner": "Phase 84 — Flaky-Test Control"
     }
    ]
   },
   {
-   "phase": "52 \u2014 AI Performance Budgets",
+   "phase": "52 — AI Performance Budgets",
    "wave": "6D",
    "status": "PASS_WITH_DEFERRED_RISKS",
    "result": "Budgets were already counts rather than durations (SEARCH_BUDGET_TRIALS 120k, MAX_CANDIDATES 20 / EXPERT_MAX_CANDIDATES 48, INTER_MELD_TRIPLE_CAP 300) and src/ai is clock-free. Added the missing profiling hook: DecisionTrace.trialsSpent, so budget headroom is measurable instead of asserted.",
@@ -204,15 +204,15 @@
     {
      "id": "P2-no-low-end-device-runtime-evidence",
      "note": "Runtime evidence is a developer machine plus the emulated-viewport e2e perf specs. No CPU-throttled or real low-end device measurement of AI decision time exists. The trial budget makes the decision device-independent, but the wall time it takes on weak hardware is unmeasured.",
-     "owner": "Phase 67 \u2014 Cross-Browser & Device Validation / Phase 75 \u2014 Performance Budgets"
+     "owner": "Phase 67 — Cross-Browser & Device Validation / Phase 75 — Performance Budgets"
     }
    ]
   },
   {
-   "phase": "53 \u2014 AI Simulation Harness",
+   "phase": "53 — AI Simulation Harness",
    "wave": "6D",
    "status": "PASS",
-   "result": "Added scripts/simulate.ts (npm run simulate): batch AI-vs-AI matches over a seed range through the production path only \u2014 createNewGame, observeForAi, createAi, GameStore.dispatch. Machine-readable per-game rows via --json. A refused action dumps the game's replay and exits non-zero.",
+   "result": "Added scripts/simulate.ts (npm run simulate): batch AI-vs-AI matches over a seed range through the production path only — createNewGame, observeForAi, createAi, GameStore.dispatch. Machine-readable per-game rows via --json. A refused action dumps the game's replay and exits non-zero.",
    "acceptance": "production rules/contracts (no separate turn loop or legality path); every run reproducible from the printed seats/difficulty/seed range; 20 games in 1.1s, 200 in ~11s; --json output consumed by Phase 54",
    "verification": [
     "npm run simulate -- --seeds 1-20 --json tmp/sim-test.json (PASS)",
@@ -222,7 +222,7 @@
    ],
    "critic": {
     "round": 2,
-    "result": "CRITIC PASS \u2014 round 1 found one real bug in the matchup aggregation and two input-validation gaps; all repaired and re-reviewed"
+    "result": "CRITIC PASS — round 1 found one real bug in the matchup aggregation and two input-validation gaps; all repaired and re-reviewed"
    },
    "docs": [
     "docs/TESTING.md developer tools + runtime budget row"
@@ -230,7 +230,7 @@
    "note": "Also corrected scripts/replay.ts, whose header still claimed bia/ze record non-reproducibly under a wall-clock budget."
   },
   {
-   "phase": "54 \u2014 AI Balance Metrics",
+   "phase": "54 — AI Balance Metrics",
    "wave": "6D",
    "status": "PASS",
    "result": "Extended the harness with --sweep difficulty and --sweep matchups, 95% confidence half-widths on win counts and a standard deviation on game length. Matchup pairs play each seed set from both sides, because moving first is worth real games in this format.",
@@ -285,7 +285,7 @@
    },
    "critic": {
     "round": 2,
-    "result": "CRITIC PASS \u2014 round 1 raised one bug (avgCardsLeft not aggregated across the reversed matchup run) and two silent-degradation input gaps; all repaired"
+    "result": "CRITIC PASS — round 1 raised one bug (avgCardsLeft not aggregated across the reversed matchup run) and two silent-degradation input gaps; all repaired"
    },
    "docs": [
     "docs/TESTING.md simulation harness methodology and how to read the numbers"
@@ -294,12 +294,12 @@
     {
      "id": "P2-perf-spec-floors-under-suite-load",
      "note": "Three @perf failures this session inside the full suite, all passing in isolation: crowded-table-max 24.8 and 39.0 fps against a local floor of 45, stress-table 43.9 against 50. The local floors look unachievable under full-suite load rather than randomly flaky; raising them needs CI measurement, not a guess.",
-     "owner": "Phase 84 \u2014 Flaky-Test Control"
+     "owner": "Phase 84 — Flaky-Test Control"
     }
    ]
   },
   {
-   "phase": "55 \u2014 AI Content Tooling",
+   "phase": "55 — AI Content Tooling",
    "wave": "6E",
    "status": "PASS",
    "result": "Added --explain to the simulation harness: one line per decision (seat, personality, reason class, cards played, rearranged, candidates weighed, trials spent). Replaces the throwaway-script / console.log-in-the-engine investigation loop.",
@@ -315,7 +315,7 @@
    }
   },
   {
-   "phase": "56 \u2014 AI Regression & Robustness",
+   "phase": "56 — AI Regression & Robustness",
    "wave": "6E",
    "status": "PASS",
    "result": "Added a strategy-regression threshold: Bia must beat Cida on >=10 of 12 seeded matches and leave her holding >=5 cards on average. Existing coverage (legality, determinism, budgets, redaction, property, probes, golden replays) protects everything except a search that silently gets worse while staying legal and in character.",
@@ -338,7 +338,7 @@
    "roadmapMismatch": "Phase 56 lists 'selective mutation' in scope. stryker.conf.json deliberately excludes src/ai (documented in docs/TESTING.md): mutating a heuristic search measures the heuristic, not a contract. Repo truth preserved."
   },
   {
-   "phase": "57 \u2014 Multiplayer Contract Audit",
+   "phase": "57 — Multiplayer Contract Audit",
    "wave": "7A",
    "status": "PASS",
    "result": "Three read-only audits (protocol drift, redaction, revision/reconnect identity). One P1 defect found and fixed: RoomManager.sweep() reaped rooms at the deployment default grace (30s) while the stalled-turn path used the room's own reconnectGraceMs (60s for every matchmade room and the casual/off presets, up to 300s custom), so a room could be closed while its players were inside the window it promised. Plus protocol doc drift and an undocumented, untested revision asymmetry.",
@@ -366,12 +366,12 @@
     {
      "id": "P3-matchseats-identity-fallback",
      "note": "room.seats[room.matchSeats[i] ?? i] silently falls back to identity mapping when matchSeats has no entry, inventing a seat rather than failing on a violated invariant (AGENTS.md says fail).",
-     "owner": "Phase 58 \u2014 Authoritative Multiplayer State Flow"
+     "owner": "Phase 58 — Authoritative Multiplayer State Flow"
     }
    ]
   },
   {
-   "phase": "58 \u2014 Authoritative Multiplayer State Flow",
+   "phase": "58 — Authoritative Multiplayer State Flow",
    "wave": "7A",
    "status": "PASS",
    "result": "Authority model already satisfied and verified against code (server-only transitions, per-seat redaction, revision checks, viewProjectionProblem rejecting unrepresentable frames before anything is written, applySync testable with no socket/Phaser/clock). Two changes: removed the identity-mapping fallbacks carried over from Phase 57, and fixed a pre-existing seat/player-index confusion in claimMexeBonus found by the critic.",
@@ -393,12 +393,12 @@
     {
      "id": "P2-suite-green-only-when-quiet",
      "note": "Corrected after investigation. Genuine: the @perf fps floors fail under full-suite load (crowded-table-max 24.8 and 39.0 vs a floor of 45, stress-table 43.9 vs 50; all pass in isolation) and tests/server/discovery.test.ts timed out on 4 socket tests in one run. Not genuine: three e2e-multiplayer failures were self-inflicted (overlapping gates, 22.4m for a normally ~5m run), and one vitest timeout was a test of mine with vitest's 5s default, since fixed with an explicit 30s deadline.",
-     "owner": "Phase 84 \u2014 Flaky-Test Control"
+     "owner": "Phase 84 — Flaky-Test Control"
     }
    ]
   },
   {
-   "phase": "59 \u2014 Lobby State Machine",
+   "phase": "59 — Lobby State Machine",
    "wave": "7B",
    "status": "PASS",
    "result": "LobbyMachine already satisfied the structural criteria (one LobbyPhase union instead of boolean combinations, every transition a named method returning effects, no Phaser/socket/DOM/clock, fresh machine per scene create, unsubs released on shutdown). Fixed three fields that leaked from one room into the next within a single machine instance.",
@@ -419,7 +419,7 @@
    "note": "Also fixed a comment in OnlineScene.fireOnce that contradicted the room_joined handler about which response releases an in-flight guard, and gave the Phase 56 strategy-threshold test an explicit 30s deadline after it hit vitest's 5s default under full-suite load."
   },
   {
-   "phase": "60 \u2014 Disconnect & Reconnect",
+   "phase": "60 — Disconnect & Reconnect",
    "wave": "7B",
    "status": "NO_CHANGE_REQUIRED",
    "result": "Every exit criterion already had test evidence: token-only seat ownership (name is not auth), reconnect through the same per-seat projection as a broadcast, restoration into a lobby / mid-match / after the turn moved on / after a rematch recycle, a reaped room refusing to resurrect, and idempotent repeated reconnect. Stale-connection replacement is covered by OH-24. Two additions: a doc correction and one missing assertion.",
@@ -440,15 +440,15 @@
     {
      "id": "P3-reconnect-coverage-gaps",
      "note": "No test drives an exhausted client retry loop through a reload into a successful reconnect (client-side retention verified by inspection), and none combines a repeated reconnect with a turn taken in between.",
-     "owner": "Phase 66 \u2014 Multiplayer Soak Testing"
+     "owner": "Phase 66 — Multiplayer Soak Testing"
     }
    ]
   },
   {
-   "phase": "61 \u2014 Rematch Lifecycle",
+   "phase": "61 — Rematch Lifecycle",
    "wave": "7B",
    "status": "PASS",
-   "result": "Server-side rematch lifecycle already satisfied the phase (recycleForRematch is the one owner of match-scoped reset: state, rev, matchId, matchSeats, winningMove, clocks, Mexe bonus, missed-turn streaks, ready bits; party state deliberately survives). One P1 client defect found and fixed: a seat whose socket was down when the match ended never received game_over, so its client stayed in GameScene on a frozen board and \u2014 being stuck in the match scene \u2014 could never cast the ready bit the room's next match needs.",
+   "result": "Server-side rematch lifecycle already satisfied the phase (recycleForRematch is the one owner of match-scoped reset: state, rev, matchId, matchSeats, winningMove, clocks, Mexe bonus, missed-turn streaks, ready bits; party state deliberately survives). One P1 client defect found and fixed: a seat whose socket was down when the match ended never received game_over, so its client stayed in GameScene on a frozen board and — being stuck in the match scene — could never cast the ready bit the room's next match needs.",
    "acceptance": "a client that reconnects into a room its match already finished in is handed back to the rematch lobby and can vote there; the normal finish path still routes through WinScene (game_over and the recycle room_state arrive in the same server tick); a rematch is revision 1 with a fresh matchId",
    "verification": [
     "npx vitest run tests/online-session.test.ts tests/i18n.test.ts (30)",
@@ -464,10 +464,10 @@
     "repeatedRematches": "existing LB-19..LB-24 (three matches, departures, replacement, host transfer, between-match reconnect) and LB-16..LB-20 at 2/3/4 seats"
    },
    "docs": [
-    "docs/MULTIPLAYER.md \u00a76: \"A drop over the finish\""
+    "docs/MULTIPLAYER.md §6: \"A drop over the finish\""
    ],
    "notes": [
-    "OnlineSession.applySync deliberately still ignores matchId: a frame from the previous match cannot reach a new session (one WebSocket per client, ordered, and the server never re-sends an old match's frames), so a matchId guard would be a code path with no reachable defect. Ordering/duplicate protection is Phase 62's scope \u2014 recorded there rather than pre-built here.",
+    "OnlineSession.applySync deliberately still ignores matchId: a frame from the previous match cannot reach a new session (one WebSocket per client, ordered, and the server never re-sends an old match's frames), so a matchId guard would be a code path with no reachable defect. Ordering/duplicate protection is Phase 62's scope — recorded there rather than pre-built here.",
     "Duplicate listeners across a rematch are not separately instrumented: every scene drops its NetClient subscriptions in its own shutdown, and a leaked handler acting on a dead scene would surface in window.__MEXE__.errors / console errors, which assertClean already fails on in every rematch e2e."
    ],
    "critic": {
@@ -476,10 +476,10 @@
    }
   },
   {
-   "phase": "62 \u2014 Race / Duplicate / Ordering Protection",
+   "phase": "62 — Race / Duplicate / Ordering Protection",
    "wave": "7C",
    "status": "PASS_WITH_DEFERRED_RISKS",
-   "result": "Most of the phase was already built and verified: claimTurn's active-seat + exact-rev + processing guards, idempotent ready / join_queue / cancel_queue / set_room_settings, a repeat mexe_started answered as a no-op, a second start_game refused with game_started, the cancel-vs-match race resolved one way, a reconnect burst leaving exactly one live transport, a budgeted resync, and a client that ignores strictly older frames while re-applying equal-rev ones. Two gaps closed: (1) OnlineSession.applySync ordered every frame against lastRev, but rev restarts at 1 on each deal, so a frame from another match would have been dropped as stale or applied as this match's board \u2014 it now refuses on matchId before the rev comparison (the item Phase 61 explicitly handed to this phase); (2) claimTurn's state.phase !== 'playing' guard was unpinned by any test \u2014 a turn action retried into a finished match or into a recycled rematch room is now a regression.",
+   "result": "Most of the phase was already built and verified: claimTurn's active-seat + exact-rev + processing guards, idempotent ready / join_queue / cancel_queue / set_room_settings, a repeat mexe_started answered as a no-op, a second start_game refused with game_started, the cancel-vs-match race resolved one way, a reconnect burst leaving exactly one live transport, a budgeted resync, and a client that ignores strictly older frames while re-applying equal-rev ones. Two gaps closed: (1) OnlineSession.applySync ordered every frame against lastRev, but rev restarts at 1 on each deal, so a frame from another match would have been dropped as stale or applied as this match's board — it now refuses on matchId before the rev comparison (the item Phase 61 explicitly handed to this phase); (2) claimTurn's state.phase !== 'playing' guard was unpinned by any test — a turn action retried into a finished match or into a recycled rematch room is now a regression.",
    "acceptance": "stale/duplicate actions refused deliberately with an explicit ReasonCode; nothing applied on a frame the session cannot order (lastRev and state untouched); no authoritative mutation from a late/duplicate action after a match ends or after recycleForRematch; focused race regressions exist at the cheapest level (pure session + server manager)",
    "verification": [
     "npx vitest run tests/online-session.test.ts (22/22)",
@@ -498,25 +498,25 @@
     "result": "CRITIC PASS, no blockers, no polish items"
    },
    "docs": [
-    "docs/MULTIPLAYER.md \u00a76: match identity is checked before the revision comparison"
+    "docs/MULTIPLAYER.md §6: match identity is checked before the revision comparison"
    ],
    "deferredRisks": [
     {
      "id": "P3-late-rejection-not-correlated",
      "note": "proposal_rejected carries reqId but the client never correlates it. A rejection that arrives after its pending window was released (the 10s ONLINE_PENDING_TIMEOUT_MS path, or after a state_sync already landed) still plays the invalid sfx, shows a stale reason line and rebuilds the editor from the current state, which would discard a draft the player had just started. Input safety is unaffected: interactivity also requires !online.resyncing (GameScene.ts:2424), so a rejection cannot unlock a board that is mid-resync. Needs delayed delivery to reproduce, which this phase has no harness for.",
-     "owner": "Phase 65 \u2014 Network Chaos Testing"
+     "owner": "Phase 65 — Network Chaos Testing"
     }
    ],
    "notes": [
     "No roadmap/repo mismatch. Phase 62's remaining in-scope items (duplicate intents, retries, reentrancy, concurrent actions, idempotence) were verified against code and existing tests rather than rebuilt; the phase's value here was the two unguarded/unpinned spots above.",
-    "room.processing stays a defensive re-entrancy guard only \u2014 the manager is synchronous between check and mutation, so real double-submit protection is the rev check (S8). Unchanged by this phase."
+    "room.processing stays a defensive re-entrancy guard only — the manager is synchronous between check and mutation, so real double-submit protection is the rev check (S8). Unchanged by this phase."
    ]
   },
   {
-   "phase": "63 \u2014 Multi-Client Harness",
+   "phase": "63 — Multi-Client Harness",
    "wave": "7C",
    "status": "PASS",
-   "result": "Exit criteria 1-3 were already met and were verified rather than rebuilt: one browser context per simulated player (own storage, own sessionStorage, own socket), one real server process per spec file on an OS-assigned port, a fixed MEXE_TEST_SEED for a deterministic deal, and reproducible 2/3/4-seat, reconnect, rematch and endurance scenarios across multiplayer.spec.ts, lobby.spec.ts and ios-lobby.spec.ts. Two gaps closed: (1) multiplayer.spec.ts re-declared its own newClient / trackConsoleErrors / shot / SCALE / toScreen / OUT_DIR, a second definition of 'what a client is' that contradicted docs/TESTING.md's statement that browser-only setup lives in e2e-multiplayer/harness.ts \u2014 deleted, the spec now imports the harness and keeps only its worker's WS URL and the mp- screenshot prefix; (2) a failing test reported only the assertion that noticed, so harness.ts gained attachClientContexts(testInfo), called from each spec's afterEach, which on failure attaches one record per client this test opened.",
+   "result": "Exit criteria 1-3 were already met and were verified rather than rebuilt: one browser context per simulated player (own storage, own sessionStorage, own socket), one real server process per spec file on an OS-assigned port, a fixed MEXE_TEST_SEED for a deterministic deal, and reproducible 2/3/4-seat, reconnect, rematch and endurance scenarios across multiplayer.spec.ts, lobby.spec.ts and ios-lobby.spec.ts. Two gaps closed: (1) multiplayer.spec.ts re-declared its own newClient / trackConsoleErrors / shot / SCALE / toScreen / OUT_DIR, a second definition of 'what a client is' that contradicted docs/TESTING.md's statement that browser-only setup lives in e2e-multiplayer/harness.ts — deleted, the spec now imports the harness and keeps only its worker's WS URL and the mp- screenshot prefix; (2) a failing test reported only the assertion that noticed, so harness.ts gained attachClientContexts(testInfo), called from each spec's afterEach, which on failure attaches one record per client this test opened.",
    "acceptance": "independent stateful clients (unchanged, verified); key multi-client scenarios reproducible (44/44 chromium); orchestration stable (OS-assigned ports, loud bind failures, 2 workers, 5.8m); failures name client, seat and revision",
    "verification": [
     "npx tsc --noEmit (clean)",
@@ -524,7 +524,7 @@
     "npm run verify:multiplayer:chromium (44/44, 5.8m, exit 0, tmp/agent-logs/verify-mp-p63.log)"
    ],
    "evidence": {
-    "failureContext": "a temporary deliberately-failing spec (deleted after the run) produced the attachment in the Playwright report; mid-match it carried per client: seat 0/1, localSeat 0/1, rev 1, matchId 0000bb8d-\u2026, phase match, code ZCPKY, status open, last 8 and 7 wire messages (tmp/agent-logs/p63-context-proof2.json)",
+    "failureContext": "a temporary deliberately-failing spec (deleted after the run) produced the attachment in the Playwright report; mid-match it carried per client: seat 0/1, localSeat 0/1, rev 1, matchId 0000bb8d-…, phase match, code ZCPKY, status open, last 8 and 7 wire messages (tmp/agent-logs/p63-context-proof2.json)",
     "lobbyContext": "the same helper in a lobby-phase failure carried seat 0/1, code PM42Y, phase lobby; rev/matchId are null there because no match exists yet",
     "dedupeSafety": "the harness trackConsoleErrors also captures pageerror, which the deleted spec-local copy did not; the full suite passes with the stricter capture, so no spec assertion became fragile and an unhandled page error can no longer pass this suite silently"
    },
@@ -542,10 +542,10 @@
    ]
   },
   {
-   "phase": "64 \u2014 Multiplayer Scenario Matrix",
+   "phase": "64 — Multiplayer Scenario Matrix",
    "wave": "7C",
    "status": "PASS",
-   "result": "The matrix already existed and is owned by docs/INVARIANTS.md (the INV-N* register plus the Multiplayer canonical-scenario table), with docs/TESTING.md carrying product-level risk (GQA-*) and subsystem routing and docs/MULTIPLAYER.md \u00a711 carrying per-suite prose \u2014 three complementary views, not three authorities. It was stale: the scenario table stopped at the pre-discovery feature set, so five shipped lifecycle families had suites but no row. Added SCN-36 (room discovery, private by default through a browser/invite-link join), SCN-37 (casual matchmaking: idempotent join/cancel, oldest-first groups, one seat each, cancel that lost to a committed match), SCN-38 (party session across matches: wins, rematch votes, bounded history and feed, cooldown-limited reactions), SCN-39 (absent seat through the missed-turn limit to the match ending and the room closing) and SCN-40 (budgets and the reaction cooldown under load), each mapped to its invariants and its existing owning suites, and cross-linked back from INV-N1/N2/N4/N6/N7. No new test, no new document.",
+   "result": "The matrix already existed and is owned by docs/INVARIANTS.md (the INV-N* register plus the Multiplayer canonical-scenario table), with docs/TESTING.md carrying product-level risk (GQA-*) and subsystem routing and docs/MULTIPLAYER.md §11 carrying per-suite prose — three complementary views, not three authorities. It was stale: the scenario table stopped at the pre-discovery feature set, so five shipped lifecycle families had suites but no row. Added SCN-36 (room discovery, private by default through a browser/invite-link join), SCN-37 (casual matchmaking: idempotent join/cancel, oldest-first groups, one seat each, cancel that lost to a committed match), SCN-38 (party session across matches: wins, rematch votes, bounded history and feed, cooldown-limited reactions), SCN-39 (absent seat through the missed-turn limit to the match ending and the room closing) and SCN-40 (budgets and the reaction cooldown under load), each mapped to its invariants and its existing owning suites, and cross-linked back from INV-N1/N2/N4/N6/N7. No new test, no new document.",
    "acceptance": "every high-risk multiplayer behavior mapped to a level and an owning suite; matrix compact (5 rows added, one per behavior family, 40 scenarios total across the whole product); no important lifecycle path unowned",
    "verification": [
     "npx vitest run on all nine suites cited by the new rows (218/218)",
@@ -554,7 +554,7 @@
    ],
    "critic": {
     "round": 2,
-    "result": "CRITIC PASS. Round 1 found one factual blocker \u2014 SCN-40 described reactions as budget-refused when server/index.ts drops them silently on a per-seat cooldown \u2014 which was corrected. The INV-N4/SCN-36 cross-link and the compactness were confirmed; no parallel authority with TESTING.md or MULTIPLAYER.md."
+    "result": "CRITIC PASS. Round 1 found one factual blocker — SCN-40 described reactions as budget-refused when server/index.ts drops them silently on a per-seat cooldown — which was corrected. The INV-N4/SCN-36 cross-link and the compactness were confirmed; no parallel authority with TESTING.md or MULTIPLAYER.md."
    },
    "docs": [
     "docs/INVARIANTS.md: SCN-36..SCN-40 and the INV-N* cross-links"
@@ -563,12 +563,12 @@
     {
      "id": "P3-retry-exhaustion-unowned",
      "note": "e2e-multiplayer covers an unreachable server and a recoverable retry, but no test drives the bounded retry loop to exhaustion and back into a successful reconnect. Same gap Phase 60 recorded as P3-reconnect-coverage-gaps.",
-     "owner": "Phase 66 \u2014 Multiplayer Soak Testing"
+     "owner": "Phase 66 — Multiplayer Soak Testing"
     },
     {
      "id": "P3-pwa-offline-x-online-room",
      "note": "SCN-34 covers an offline reload of a local match only. What an online room does across a PWA offline transition is unmapped and untested.",
-     "owner": "Phase 69 \u2014 Offline-First Resilience"
+     "owner": "Phase 69 — Offline-First Resilience"
     }
    ],
    "notes": [
@@ -576,10 +576,10 @@
    ]
   },
   {
-   "phase": "65 \u2014 Network Chaos Testing",
+   "phase": "65 — Network Chaos Testing",
    "wave": "7D",
    "status": "PASS_WITH_DEFERRED_RISKS",
-   "result": "Adverse delivery is now a real, reproducible condition rather than an argument. CH-01..CH-05 intercept one client's WebSocket with page.routeWebSocket (Playwright 1.63) and delay its incoming frames 800ms, triple them, re-deliver the previous frame behind the newer one, drop the answer to its own move once, or hold a proposal_rejected until a later state_sync has landed; the other client stays clean and is the control, and every test asserts both seats reach the same rev with desyncs()===0 and identical board projections. One product defect closed along the way \u2014 the P3 late-rejection risk Phase 62 deferred to this phase: NetClient now correlates proposal_rejected against the proposals actually in flight and drops one that answers a board already replaced.",
+   "result": "Adverse delivery is now a real, reproducible condition rather than an argument. CH-01..CH-05 intercept one client's WebSocket with page.routeWebSocket (Playwright 1.63) and delay its incoming frames 800ms, triple them, re-deliver the previous frame behind the newer one, drop the answer to its own move once, or hold a proposal_rejected until a later state_sync has landed; the other client stays clean and is the control, and every test asserts both seats reach the same rev with desyncs()===0 and identical board projections. One product defect closed along the way — the P3 late-rejection risk Phase 62 deferred to this phase: NetClient now correlates proposal_rejected against the proposals actually in flight and drops one that answers a board already replaced.",
    "acceptance": "selected adverse conditions reproducible (5 deterministic cases, ~30s total); authoritative state consistent (rev agreement + identical projections + zero desyncs in every case); recovery explicit (CH-04 pins the pending-timeout resync, CH-03 pins the stale-frame rule); failures diagnosable (Phase 63's attachClientContexts reports each client's seat, rev and last wire messages)",
    "verification": [
     "npm run verify (exit 0, tmp/agent-logs/verify-p65.log)",
@@ -590,14 +590,14 @@
    "evidence": {
     "mutationProbes": "removing the applySync stale guard fails CH-03; disabling GameScene.onOnlinePendingTimeout fails CH-04; removing the reqId correlation fails CH-05 and 3 of the 5 correlation unit tests",
     "rejectedApproach": "the first attempt guarded the scene instead (if (!this.onlinePending) return in onOnlineRejected). It broke the existing 'two clients ... illegal proposal' gate, because window.__MEXE__.online.submitRaw deliberately bypasses the scene's input lock, so a legitimate refusal was swallowed. The correlation was moved to the transport, where the reqId ledger already lives, and that gate passes again.",
-    "ch03Model": "the obvious reorder model \u2014 hold frame N until N+1 arrives \u2014 deadlocks, because a client blocks on the answer to its own move and no later frame is produced. CH-03 instead re-delivers the previous frame behind the current one, which is the shape late delivery actually takes on one ordered socket; CH-04 covers the withheld-frame case, which needs the timeout rather than a later frame."
+    "ch03Model": "the obvious reorder model — hold frame N until N+1 arrives — deadlocks, because a client blocks on the answer to its own move and no later frame is produced. CH-03 instead re-delivers the previous frame behind the current one, which is the shape late delivery actually takes on one ordered socket; CH-04 covers the withheld-frame case, which needs the timeout rather than a later frame."
    },
    "critic": {
     "round": 2,
     "result": "CRITIC PASS. Round 1 raised the single-in-flight assumption, a missing two-proposal test and connect() not clearing the ledger; all three were repaired (Set of outstanding ids, new test, clear on connect)."
    },
    "docs": [
-    "docs/MULTIPLAYER.md \u00a76 (refusal correlation) and \u00a711 (the chaos gate)",
+    "docs/MULTIPLAYER.md §6 (refusal correlation) and §11 (the chaos gate)",
     "docs/TESTING.md (chaos as part of the multiplayer suite, not a new level)",
     "docs/INVARIANTS.md SCN-41"
    ],
@@ -605,12 +605,12 @@
     {
      "id": "P3-chaos-timing-under-load",
      "note": "CH-01..CH-05 use wall-clock waits (800ms injected delay, 20s convergence, 25s for CH-04 against the product's 10s pending timeout). Generous, and the five together run ~30s, but they are not immune to a heavily contended CI runner.",
-     "owner": "Phase 84 \u2014 Flaky-Test Control"
+     "owner": "Phase 84 — Flaky-Test Control"
     },
     {
      "id": "P3-chaos-outbound-untouched",
      "note": "Only server-to-client frames are mangled. Client-to-server loss/duplication is covered indirectly (the server's own rev/duplicate guards, Phase 62) rather than by an injected outbound fault.",
-     "owner": "Phase 66 \u2014 Multiplayer Soak Testing"
+     "owner": "Phase 66 — Multiplayer Soak Testing"
     }
    ],
    "notes": [
@@ -618,10 +618,10 @@
    ]
   },
   {
-   "phase": "66 \u2014 Multiplayer Soak Testing",
+   "phase": "66 — Multiplayer Soak Testing",
    "wave": "7D",
    "status": "PASS_WITH_DEFERRED_RISKS",
-   "result": "Repeated lifecycle was already proven at the RoomManager level (lobby-soak: 10 seeds x 1200 steps) and in the browser (LB-19..LB-24 three-match endurance). The gap was the layer between them \u2014 sockets, seat/connection bookkeeping and the process itself \u2014 so this phase added one server-integration soak that repeats a full room life (create, play, rematch, mid-match drop and token reclaim, leave) against the real server process and asserts the baseline returns after every cycle. Also closed the Phase 64 deferred risk P3-retry-exhaustion-unowned with a client-level test that drives the bounded reconnect schedule to exhaustion and then back into a live session.",
+   "result": "Repeated lifecycle was already proven at the RoomManager level (lobby-soak: 10 seeds x 1200 steps) and in the browser (LB-19..LB-24 three-match endurance). The gap was the layer between them — sockets, seat/connection bookkeeping and the process itself — so this phase added one server-integration soak that repeats a full room life (create, play, rematch, mid-match drop and token reclaim, leave) against the real server process and asserts the baseline returns after every cycle. Also closed the Phase 64 deferred risk P3-retry-exhaustion-unowned with a client-level test that drives the bounded reconnect schedule to exhaustion and then back into a live session.",
    "acceptance": "every cycle ends with rooms=0 and connections=0 on /health (state drift); lifecycle counters on /metrics match the cycles exactly (rooms_created=N, games_started/finished=2N, reconnects=N, message_handler_errors=0); heap growth after the first cycle stays under 10 MB (tripwire); failures name the cycle, the phase of the cycle and the last frames received; PR budget 2 cycles (~11s), nightly budget 8 cycles (~43s)",
    "verification": [
     "npx vitest run tests/server/session-soak.integration.test.ts (1/1, 11.1s)",
@@ -632,7 +632,7 @@
    ],
    "evidence": {
     "mutationProbe": "removing `connections.delete(ws)` from the socket close handler in server/index.ts fails the soak at cycle 1 with connections=3 instead of 0; the product file was restored and re-verified clean with git diff",
-    "realDefectShape": "an earlier draft that let the guest seat merely close its socket saw rooms=1 after a cycle \u2014 correct product behaviour (the seat is held for the reconnect grace), which is why the cycle now ends with both seats leaving explicitly",
+    "realDefectShape": "an earlier draft that let the guest seat merely close its socket saw rooms=1 after a cycle — correct product behaviour (the seat is held for the reconnect grace), which is why the cycle now ends with both seats leaving explicitly",
     "heapGrowth": "2.1 MB measured over 7 further cycles at the nightly budget, against a 10 MB threshold"
    },
    "critic": {
@@ -648,17 +648,17 @@
     {
      "id": "P3-soak-adds-to-pr-suite",
      "note": "The 2-cycle soak adds ~11s and one spawned server process to `npm run test`. The first full-suite run after adding it hit the known tests/ai.test.ts load flake (timeout at 5000ms); the same suite passed standalone and the full suite passed on rerun (exit 0). Contention, not a new defect, but the soak makes the existing flake marginally likelier.",
-     "owner": "Phase 84 \u2014 Flaky-Test Control"
+     "owner": "Phase 84 — Flaky-Test Control"
     },
     {
      "id": "P3-chaos-outbound-untouched",
      "note": "Re-deferred from Phase 65. Client-to-server loss/duplication is still only covered indirectly by the server's own rev/duplicate guards; no injected outbound fault.",
-     "owner": "Phase 100 \u2014 final multiplayer QA"
+     "owner": "Phase 100 — final multiplayer QA"
     },
     {
      "id": "P3-soak-heap-tripwire",
      "note": "The heap check reads /metrics without forcing a GC, so it only catches growth large enough to survive V8 noise. The per-cycle rooms/connections baseline is the real drift signal.",
-     "owner": "Phase 77 \u2014 Memory Leak Testing"
+     "owner": "Phase 77 — Memory Leak Testing"
     }
    ],
    "closedRisks": [
@@ -674,10 +674,10 @@
    ]
   },
   {
-   "phase": "67 \u2014 Cross-Browser & Device Validation",
+   "phase": "67 — Cross-Browser & Device Validation",
    "wave": "7D",
    "status": "PASS_WITH_DEFERRED_RISKS",
-   "result": "The risk-based split already existed (Chromium runs the whole multiplayer suite, Firefox and WebKit run the lobby state machine, WebKit also runs the iPhone-viewport suite, e2e-cross covers 8 device/engine profiles), so the phase was audit plus two gaps. Gap 1: background/foreground was unowned at browser level \u2014 added LB-48 on WebKit/iPhone and made its evidence a gate in check-verify-multiplayer.mjs. Gap 2 (a defect this phase found): LB-47 failed on WebKit and passed on Chromium because playToFinish budgeted iterations, not draws \u2014 a seat the server plays for only moves when its 15s turn clock expires, and 600 fast iterations ran out first. The budget is now draws plus a stall deadline.",
+   "result": "The risk-based split already existed (Chromium runs the whole multiplayer suite, Firefox and WebKit run the lobby state machine, WebKit also runs the iPhone-viewport suite, e2e-cross covers 8 device/engine profiles), so the phase was audit plus two gaps. Gap 1: background/foreground was unowned at browser level — added LB-48 on WebKit/iPhone and made its evidence a gate in check-verify-multiplayer.mjs. Gap 2 (a defect this phase found): LB-47 failed on WebKit and passed on Chromium because playToFinish budgeted iterations, not draws — a seat the server plays for only moves when its 15s turn clock expires, and 600 fast iterations ran out first. The budget is now draws plus a stall deadline.",
    "acceptance": "LB-48: a hide/show round trip opens no second socket and leaves seat, host, ready bit and roster identical (WebKit, 390x844); LB-47 passes on WebKit and Chromium; the whole WebKit project and the whole Chromium suite stay green; the cross-device profiles stay green",
    "verification": [
     "npx playwright test -c playwright.multiplayer.config.ts --project=webkit (26/26, 2.3m, tmp/agent-logs/webkit-p67c.log)",
@@ -703,34 +703,59 @@
     {
      "id": "P2-firefox-unverifiable-locally",
      "note": "Firefox cannot launch on this macOS 27 machine (browserType.launch: Failed to launch the browser process), so no Firefox evidence was produced for this phase or for the shared playToFinish change, which the Firefox lobby run also uses. The nightly multiplayer-all-engines job is the only Firefox gate available.",
-     "owner": "Phase 84 \u2014 Flaky-Test Control"
+     "owner": "Phase 84 — Flaky-Test Control"
     },
     {
      "id": "P3-lb48-weak-mutant",
      "note": "LB-48 proves the wiring and the no-duplicate-session invariant, not which resume branch ran. See the critic note.",
-     "owner": "Phase 100 \u2014 final multiplayer QA"
+     "owner": "Phase 100 — final multiplayer QA"
     }
    ],
    "notes": [
     "Roadmap assumed the cross-browser split might need building; the repo already had it. The phase's value was the WebKit-only LB-47 defect and the background/foreground gap, both inside the roadmap's own 'platform-specific issues' bullet.",
     "Engine logs are written per project, so running engines in separate commands leaves check-verify-multiplayer.mjs reporting 'no lobby evidence for webkit'. That is the split run, not a missing gate: the real verify:multiplayer runs all three engines in one pass."
    ]
+  },
+  {
+   "phase": "68 — Persistence & Session Recovery",
+   "wave": "8A",
+   "status": "PASS",
+   "result": "Repo already satisfied corruption handling, server-authoritative online recovery and the no-second-authority rule. Gaps closed: docs claimed a mid-match local save that does not exist, and the supported recovery paths were scattered across five docs.",
+   "acceptance": "supported recovery paths explicit (new docs/ARCHITECTURE.md §Persistence table); corruption fails safely (parseSave/deserializeGameState, existing tests); online sessions resync from server (OnlineScene onAppVisible → requestResync, INV-L3); no second state authority (new boundaries test pins web-storage ownership to persistence.ts + net/client.ts)",
+   "changed": [
+    "docs/ARCHITECTURE.md — corrected the stale 'SAVE restores the match the player left' claim; added the Supported recovery paths table",
+    "src/game-state/replay.ts — same correction in the three-artifact comment",
+    "tests/boundaries.test.ts — 'only the two documented owners touch web storage'"
+   ],
+   "verification": [
+    "MEXE_OUTPUT=ai npx vitest run tests/boundaries.test.ts tests/persistence.test.ts tests/error-recovery.test.ts tests/lifecycle.test.ts tests/net/reconnect.test.ts (64/64)",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "log": "tmp/agent-logs/p68-tests.log",
+    "gateSkipped": "npm run screenshot/verify: no product behaviour or UI changed (docs + one static-analysis test), so the visual gate has nothing to falsify"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the only functional risk (a future phase writing match state to storage, re-creating a second authority) is now a failing test rather than a review rule"
+   },
+   "roadmapMismatch": "Roadmap assumed local-session restoration might need building. Repo truth: local mid-match resume is a deliberate documented limitation (INVARIANTS SCN-34); only the docs disagreed with it, and they were corrected rather than the behaviour."
   }
  ],
  "riskClosures": [
   {
-   "task": "@perf fps floors red on CI (pulled forward from Phase 84 \u2014 Flaky-Test Control)",
+   "task": "@perf fps floors red on CI (pulled forward from Phase 84 — Flaky-Test Control)",
    "closes": [
     "P3-perf-spec-flake",
     "P2-perf-spec-floors-under-suite-load",
     "P3-suite-flake (perf half)"
    ],
-   "trigger": "CI run 35427627357 on this branch failed the Playwright e2e job on two @perf floors \u2014 stress-table 23.61 against 25 and crowded-table-max 14.73 against 15 \u2014 while the nightly fps-drift job, which runs the same three specs with --repeat-each=5, passed. A single-sample gate on a shared runner, not a rendering regression.",
-   "change": "measureFps returns the best of three 2s windows, and stress-table's CI floor is recalibrated for the windowed metric from 25 to 20. crowded-table-max's CI floor of 15 is unchanged \u2014 best-of-three was enough there. Both dev floors (50/45) are untouched.",
+   "trigger": "CI run 35427627357 on this branch failed the Playwright e2e job on two @perf floors — stress-table 23.61 against 25 and crowded-table-max 14.73 against 15 — while the nightly fps-drift job, which runs the same three specs with --repeat-each=5, passed. A single-sample gate on a shared runner, not a rendering regression.",
+   "change": "measureFps returns the best of three 2s windows, and stress-table's CI floor is recalibrated for the windowed metric from 25 to 20. crowded-table-max's CI floor of 15 is unchanged — best-of-three was enough there. Both dev floors (50/45) are untouched.",
    "evidence": {
-    "reproduction": "under six busy loops on a 10-core machine (load 13-15), the single-window version failed exactly as CI did \u2014 stress-table 37.9 against the dev floor of 50, crowded-table-max 44.9 against 45",
+    "reproduction": "under six busy loops on a 10-core machine (load 13-15), the single-window version failed exactly as CI did — stress-table 37.9 against the dev floor of 50, crowded-table-max 44.9 against 45",
     "fix": "best-of-three passed all three specs under the same, heavier load (load 13.29)",
-    "doesNotMask": "a sustained slowdown still fails: with Emulation.setCPUThrottlingRate at 20x, best-of-three read 21.8 against the dev floor of 50. At 6x it passed, which is the honest limit of this metric \u2014 it counts main-thread frame cadence, so it catches saturation rather than per-frame JS cost",
+    "doesNotMask": "a sustained slowdown still fails: with Emulation.setCPUThrottlingRate at 20x, best-of-three read 21.8 against the dev floor of 50. At 6x it passed, which is the honest limit of this metric — it counts main-thread frame cadence, so it catches saturation rather than per-frame JS cost",
     "gate": "npm run verify exit 0 (tmp/agent-logs/verify-perf-fix.log)",
     "metricChange": "git diff origin/main..HEAD -- e2e/screenshot.spec.ts shows waitForTimeout(3000) + lifetime average replaced by measureFps windows; the in-file comment already warned the floors predated the switch",
     "ciAfterFirstFix": "run 35466617437: crowded-table-max passed with best-of-three, stress-table still failed at 24.15"
@@ -744,12 +769,12 @@
   {
    "task": "CH-04 flaked on CI (self-inflicted, Phase 65)",
    "trigger": "run 35466617437: CH-04 failed with expected true, received false at expect(dropped). The test counted two turns and assumed the second was the guest's; on a slower runner the guest was still rendering the previous frame when the helper sampled it, so the host took both turns and no frame was ever dropped.",
-   "change": "CH-04 now waits for the guest to hold the clock, acts there, and polls the mangler's own flag \u2014 the shape CH-05 already used and which passed on CI.",
+   "change": "CH-04 now waits for the guest to hold the clock, acts there, and polls the mangler's own flag — the shape CH-05 already used and which passed on CI.",
    "evidence": "CH-01..CH-05 5/5 locally after the change; CH-05 was green on CI with this shape"
   },
   {
    "task": "AI determinism tests timed out on CI (pre-existing, blocking every run on this branch)",
-   "trigger": "runs 35427627357, 35466617437 and 35468141119: tests/ai.test.ts > decision reproducibility failed with 'Test timed out in 5000ms' at 5.37s, 5.86s and 5.85s. Not introduced by this branch's work \u2014 the same three tests failed on the run that predates it. They pass locally (1117/1117).",
+   "trigger": "runs 35427627357, 35466617437 and 35468141119: tests/ai.test.ts > decision reproducibility failed with 'Test timed out in 5000ms' at 5.37s, 5.86s and 5.85s. Not introduced by this branch's work — the same three tests failed on the run that predates it. They pass locally (1117/1117).",
    "change": "The four heaviest tests in that describe carry an explicit 30s deadline, the same treatment commit 21eac38 already gave the AI soak. Nothing about the searches changed.",
    "rationale": "What they assert is that the heaviest search returns the identical answer every time; the wall clock is incidental to that. The search's actual time budget stays asserted by 'terminates on the heaviest search, both tiers' (expectWithinMs 2000 per decide), so no timing coverage is lost.",
    "evidence": "npm run lint exit 0; npm run test 1117/1117; tests/ai.test.ts 78/78 in 9.27s"
@@ -757,12 +782,12 @@
   {
    "task": "the two heaviest multiplayer e2e tests blew their budgets on CI after Phase 65 added five chaos tests",
    "trigger": "runs 35466617437 and 35468329303: LB-19..LB-24 exceeded its 420s budget (7.1m) and OD-28/OD-29 its 180s one (3.1m), on a branch whose previous CI run passed the same job in 16m16s. The suite went 44 -> 49 tests and 16m16s -> 22.7m.",
-   "ruledOut": "not the Phase 62/65 product changes. Same machine, same eight busy loops: LB-19..LB-24 took 1.5m with src/net/client.ts + src/net/online-session.ts at HEAD, and 1.5m with both reverted to c9e2e96 (under a heavier load average, 19.8 vs 6.7). The chaos tests' own cost is not it either \u2014 all five together are 57s on CI.",
+   "ruledOut": "not the Phase 62/65 product changes. Same machine, same eight busy loops: LB-19..LB-24 took 1.5m with src/net/client.ts + src/net/online-session.ts at HEAD, and 1.5m with both reverted to c9e2e96 (under a heavier load average, 19.8 vs 6.7). The chaos tests' own cost is not it either — all five together are 57s on CI.",
    "cause": "peak concurrency. This suite is contention-bound and already dropped from three workers to two because these same two tests starved; five more tests each holding two browser contexts plus a Node-side frame proxy put it back over the edge.",
    "change": "CH-01..CH-05 are tagged @chaos and greped out of verify:multiplayer:chromium (the PR path). The nightly verify:multiplayer still runs them. Locally they are -g CH-0.",
    "evidence": "PR selection is back to 44 tests in 2 files; npm run verify:multiplayer:chromium exit 0 (tmp/agent-logs/verify-mp-chaos-split.log); the five @chaos tests pass 5/5 in 21.9s when selected",
    "stillOpen": "OD-28/OD-29 also fails nightly on main, so it has a contention problem of its own that predates this branch. Owner: Phase 66.",
-   "followUp": "The chaos split fixed OD-28/OD-29 but not LB-19..LB-24, so the contention story was only half of it. The rest: that test measured 4.8m against its 420s budget on the last green CI run \u2014 31% headroom for the heaviest test in the repo \u2014 and the suite has since gained LB-47 (c9e2e96, committed before this session but after that green run), another multi-context lobby test in the same parallel file. Budget raised to 600s (2x measured). The ratchet has now happened twice (300 -> 420 -> 600); the structural fix is to stop the two heaviest lobby tests from overlapping, which is left to Phase 66/84 rather than guessed at here."
+   "followUp": "The chaos split fixed OD-28/OD-29 but not LB-19..LB-24, so the contention story was only half of it. The rest: that test measured 4.8m against its 420s budget on the last green CI run — 31% headroom for the heaviest test in the repo — and the suite has since gained LB-47 (c9e2e96, committed before this session but after that green run), another multi-context lobby test in the same parallel file. Budget raised to 600s (2x measured). The ratchet has now happened twice (300 -> 420 -> 600); the structural fix is to stop the two heaviest lobby tests from overlapping, which is left to Phase 66/84 rather than guessed at here."
   },
   {
    "task": "attachClientContexts lost its context on exactly the failure it was built for",

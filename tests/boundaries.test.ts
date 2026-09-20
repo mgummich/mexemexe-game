@@ -224,6 +224,23 @@ describe('architecture boundaries', () => {
   });
 
   /**
+   * Persistence is not a second gameplay authority (ARCHITECTURE.md §Persistence): the two modules
+   * that own a storage key are the only ones allowed to read or write web storage. A scene or store
+   * that started saving match state on its own would restore gameplay from disk instead of from the
+   * rules (local) or the server (online), which is the failure this keeps out.
+   */
+  it('only the two documented owners touch web storage', () => {
+    const touching = tsFiles(path.join(ROOT, 'src'))
+      .filter((file) => {
+        const code = fs.readFileSync(file, 'utf8').split('\n').filter((line) => !/^\s*(\/\/|\/?\*)/.test(line));
+        return code.some((line) => /\b(local|session)Storage\b/.test(line));
+      })
+      .map(rel)
+      .sort();
+    expect(touching).toEqual(['src/core/persistence.ts', 'src/net/client.ts']);
+  });
+
+  /**
    * ARCH-014: `RoomManager`'s cohesion was confirmed by the audit — it owns one thing, rooms — and
    * the finding was only "watch its growth". This is that watch: a ceiling near the measured size
    * so the next few hundred lines of room policy have to be a decision instead of an accident.
