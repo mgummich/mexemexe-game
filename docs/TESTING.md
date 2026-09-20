@@ -1099,6 +1099,15 @@ job is the one that is not about browsers: it runs the extended fuzz budget
 under ten seconds combined. Those are the checks that previously ran only when
 somebody remembered, which is the same as not running.
 
+Both multiplayer jobs there are sharded six ways at one worker each, the same
+shape and for the same reason as the PR job: they run strictly more tests
+concurrently than anything else — every engine's lobby replay, the iOS spec and
+`@chaos` on top of the full Chromium suite — and they were red every night from
+2026-09-16 to 2026-09-20 on `page.waitForFunction` timeouts that were never a
+product failure. `multiplayer-all-engines` shards `test:multiplayer` and a
+`Multiplayer, all engines` gate job merges every shard's evidence and runs the
+strict `check-verify-multiplayer.mjs` — no `--engines`, no `--skip-endurance`.
+
 `.github/workflows/mutation.yml` runs the full mutation scope weekly and on
 dispatch — separate from nightly because it takes over an hour, where every
 nightly job is minutes. See [Not a gate](#not-a-gate).
