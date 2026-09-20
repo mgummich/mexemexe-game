@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "8B",
-  "phase": "73 — Optional Product Telemetry",
+  "wave": "8C",
+  "phase": "74 — Structured Playtest Program",
   "status": "NOT_STARTED"
  },
- "head": "ae07124",
+ "head": "1fa315e",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -857,6 +857,21 @@
     "round": 1,
     "result": "CRITIC PASS — the new 'build' log field added in Phase 71 was re-checked against the redaction rules: a version string is not player data and is the one thing an operator needs next to a failure"
    }
+  },
+  {
+   "phase": "73 — Optional Product Telemetry",
+   "wave": "8B",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Telemetry is not justified here and the roadmap allows saying so. The quality questions telemetry usually answers are already answered by process-wide server metrics (matches started/finished, reconnects, queue timeouts, handler error rate) with no per-player series, and by the local play log the player can export themselves.",
+   "acceptance": "no event added, so every collected event still has a purpose; no sensitive data collected; product behaviour depends on no reporting backend (there is none); NO_CHANGE_REQUIRED is the roadmap's own stated valid outcome for this phase",
+   "verification": [
+    "tests/no-telemetry.test.ts (in the Phase 72 run, 94/94) — would fail the build if any upload path, vendor or persistent identifier appeared"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — adding opt-in telemetry would have created a second data path to maintain, a consent surface to localize, and a privacy claim to re-verify, against no decision anyone is currently unable to make"
+   },
+   "roadmapMismatch": "None. The phase anticipates this outcome."
   }
  ],
  "riskClosures": [
