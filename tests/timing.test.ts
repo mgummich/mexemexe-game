@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { IDLE_CLOCK, expired, grantBonus, msLeft, startTurn } from '../src/game-state/timing';
+import { IDLE_CLOCK, NO_RHYTHM, expired, grantBonus, msLeft, noteTurnTaken, startTurn } from '../src/game-state/timing';
 
 describe('shared turn clock', () => {
   it('an untimed budget puts nothing on the clock', () => {
@@ -40,5 +40,37 @@ describe('shared turn clock', () => {
     const spent = grantBonus(startTurn(1000, 45_000), 20_000).clock;
     expect(spent.bonusClaimed).toBe(true);
     expect(startTurn(70_000, 45_000).bonusClaimed).toBe(false);
+  });
+});
+
+describe('Perfect Rhythm', () => {
+  const clock = startTurn(0, 8_000);
+
+  it('keeps the streak for a turn decided inside the first half of the budget', () => {
+    let r = noteTurnTaken(NO_RHYTHM, clock, 8_000);
+    r = noteTurnTaken(r, clock, 4_000); // exactly half still counts
+    expect(r).toEqual({ streak: 2, best: 2 });
+  });
+
+  it('breaks the streak for a turn that ran the clock down, and remembers the best', () => {
+    let r = noteTurnTaken(NO_RHYTHM, clock, 8_000);
+    r = noteTurnTaken(r, clock, 3_999);
+    expect(r).toEqual({ streak: 0, best: 1 });
+    r = noteTurnTaken(r, clock, 8_000);
+    expect(r).toEqual({ streak: 1, best: 1 });
+  });
+
+  it('an untimed turn neither keeps nor breaks it', () => {
+    const started = noteTurnTaken(NO_RHYTHM, clock, 8_000);
+    expect(noteTurnTaken(started, IDLE_CLOCK, null)).toEqual(started);
+    expect(noteTurnTaken(started, clock, null)).toEqual(started);
+  });
+
+  it('scales with the budget rather than with a wall-clock number', () => {
+    const blitz = startTurn(0, 7_000);
+    const casual = startTurn(0, 90_000);
+    // 4s left is in rhythm on a 7s turn and long gone on a 90s one.
+    expect(noteTurnTaken(NO_RHYTHM, blitz, 4_000).streak).toBe(1);
+    expect(noteTurnTaken(NO_RHYTHM, casual, 4_000).streak).toBe(0);
   });
 });

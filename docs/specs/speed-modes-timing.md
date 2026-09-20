@@ -166,3 +166,16 @@ Rules for every later phase:
 - no signal may be colour-only, sound-only or haptic-only
 - mode-specific chrome (Tempo meter, Heat bar, ability buttons) lands in the phase
   that introduces the mechanic, where it has a consumer — not ahead of it
+
+## Perfect Rhythm (Phase 5)
+
+`Rhythm` in `src/game-state/timing.ts`: a streak of turns decided inside the first half of their
+own budget (`RHYTHM_FRACTION`), folded by `noteTurnTaken` when a turn is taken and broken by a
+timeout. Defined against the budget rather than a wall-clock number, so it means the same thing at
+7s and at 90s.
+
+- no setup toggle, no lobby setting — it is native to a timed match
+- it changes nothing about what a move is worth, so reckless fast play buys nothing
+- feedback is the pip run beside the clock (`GameScene.rhythmMarker`), nothing below two in a row
+- the scene folds its own seat only; online this is a local read of the clock the server owns, and
+  it is display-only, which is why it needs no protocol field

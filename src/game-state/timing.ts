@@ -49,3 +49,35 @@ export function grantBonus(clock: TurnClock, bonusMs: number): { clock: TurnCloc
   if (clock.startedAt === null || clock.bonusClaimed || bonusMs <= 0) return { clock, granted: false };
   return { clock: { ...clock, budgetMs: clock.budgetMs + bonusMs, bonusClaimed: true }, granted: true };
 }
+
+/**
+ * Perfect Rhythm: how many turns in a row were decided without letting the clock run down.
+ *
+ * Native to every Speed Mode rather than a setting — there is no toggle for it, and nothing about
+ * it changes what a move is worth. It is a read on how the seat is playing, fed back as a quiet
+ * streak marker and a line in the summary, which is why a "fast" turn is defined against the
+ * budget rather than against a wall-clock number: at 7s and at 90s, keeping rhythm means the same
+ * thing (deciding inside the first half of your own turn).
+ */
+export interface Rhythm {
+  readonly streak: number;
+  readonly best: number;
+}
+
+export const NO_RHYTHM: Rhythm = { streak: 0, best: 0 };
+
+/** The part of a turn's budget that counts as in rhythm. Half: a turn spent mostly thinking is
+ * not a rhythm turn, and a turn decided in the first moments is not required to be one either. */
+export const RHYTHM_FRACTION = 0.5;
+
+/**
+ * Fold one completed turn into the streak. `msLeft` is what the clock had left when the turn was
+ * taken — anything at or above half the budget keeps the streak, anything below breaks it. An
+ * untimed turn (no clock) leaves the streak exactly as it was: there was no pressure to keep.
+ */
+export function noteTurnTaken(rhythm: Rhythm, clock: TurnClock, msLeftAtAction: number | null): Rhythm {
+  if (clock.startedAt === null || msLeftAtAction === null) return rhythm;
+  if (msLeftAtAction < clock.budgetMs * RHYTHM_FRACTION) return { streak: 0, best: rhythm.best };
+  const streak = rhythm.streak + 1;
+  return { streak, best: Math.max(streak, rhythm.best) };
+}

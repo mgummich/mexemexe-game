@@ -20,6 +20,7 @@ import { plural, t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
 import { TIMER_PRESETS } from '../net/protocol';
+import { NO_RHYTHM, noteTurnTaken, startTurn, type Rhythm } from '../game-state/timing';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
 import { OnlineSession } from '../net/online-session';
 import { createRng } from '../rules/rng';
@@ -358,6 +359,11 @@ export class GameScene extends Phaser.Scene {
   private turnWarnMs = 0;
   /** Per-turn budget of a local Blitz match, or 0 for the untimed classic game. */
   private blitzMs = 0;
+  /** This turn's full budget, whoever owns the clock. 0 in an untimed match. */
+  private turnBudgetMs = 0;
+  /** Perfect Rhythm for the local seat. Native to a timed match, never a setting, and it changes
+   * nothing about what a move is worth — see src/game-state/timing.ts. */
+  private rhythm: Rhythm = NO_RHYTHM;
   /** Repaints the reconnect notice once a second while the socket is down. One ticker for the
    * whole scene: a per-component timer is exactly the leak this phase is meant to avoid. */
   private reconnectTicker: Phaser.Time.TimerEvent | null = null;
@@ -458,6 +464,13 @@ export class GameScene extends Phaser.Scene {
     this.guardTimer?.remove();
     this.guardTimer = null;
     this.resetZoomPan();
+    // Timing state is per match, and a reused scene instance would otherwise carry the previous
+    // match's clock and streak into a rematch (ARCH-018).
+    this.blitzMs = 0;
+    this.turnBudgetMs = 0;
+    this.turnWarnMs = 0;
+    this.turnDeadlineAt = null;
+    this.rhythm = NO_RHYTHM;
   }
 
 
@@ -503,6 +516,7 @@ export class GameScene extends Phaser.Scene {
       // Anchor the clock off the view the match started with — waiting for the next state_sync
       // would leave the first turn showing nothing.
       this.turnWarnMs = config.online.view.settings.warnMs;
+      this.turnBudgetMs = config.online.view.settings.turnMs;
       this.turnDeadlineAt = config.online.view.turnMsLeft === null ? null : Date.now() + config.online.view.turnMsLeft;
     } else {
       this.personalities = config.players.map((p) => (p.isAi ? (p.personality ?? 'juninho') : null));
@@ -521,6 +535,7 @@ export class GameScene extends Phaser.Scene {
       // out the step the player is still reading.
       if (settings.get().blitz && !config.tutorial) {
         this.blitzMs = TIMER_PRESETS.blitz.turnMs;
+        this.turnBudgetMs = TIMER_PRESETS.blitz.turnMs;
         this.turnWarnMs = TIMER_PRESETS.blitz.warnMs;
       }
       // The play log listens for this match only, and stops when it ends — see the shutdown
@@ -751,6 +766,7 @@ export class GameScene extends Phaser.Scene {
     this.ui.lastAiReason = null; // every online seat is a person
     this.turnDeadlineAt = view.turnMsLeft === null ? null : Date.now() + view.turnMsLeft;
     this.turnWarnMs = view.settings.warnMs;
+    this.turnBudgetMs = view.settings.turnMs;
     this.ui.lastTickSecond = -1;
     this.editor = null;
     if (result.kind === 'desync') {
@@ -988,6 +1004,7 @@ export class GameScene extends Phaser.Scene {
    * `state_sync` (see `onFeitoOnline`/`onComprarOnline`).
    */
   private dispatch(action: GameAction): ActionOutcome {
+    if (action.actorIndex === this.localSeat) this.noteRhythm();
     const outcome = this.match!.dispatch(action);
     if (!outcome.ok) {
       // Nothing local should reach this: the human path is gated by feitoAccepted() and the AI
@@ -1605,7 +1622,8 @@ export class GameScene extends Phaser.Scene {
     // The turn clock is not an online-only widget any more: a local Blitz match runs the same
     // readout off its own deadline. Built before the online block so both paths share one ticker.
     if (this.online || this.blitzMs > 0) {
-      this.onlineTimerText = label(this, this.r.onlineTimer.x, this.r.onlineTimer.y, '', 8, TEXT.muted)
+      const slot = this.online ? this.r.onlineTimer : this.r.speedClock;
+      this.onlineTimerText = label(this, slot.x, slot.y, '', this.online ? 8 : 10, TEXT.muted)
         .setOrigin(0, 0.5)
         .setDepth(600)
         .setVisible(false);
@@ -1694,6 +1712,9 @@ export class GameScene extends Phaser.Scene {
     // outcome the server gives an online seat (MULTIPLAYER.md §7b): draw one card, pass. Any draft
     // in progress is dropped with the turn, exactly as it is online.
     if (this.blitzMs > 0 && clock.visible && clock.secs === 0 && this.state().phase === 'playing') {
+      // Fold the timeout in before clearing the deadline: a turn the clock took is exactly the
+      // turn that breaks the streak, and a cleared deadline would make the fold a no-op.
+      this.noteRhythm();
       this.turnDeadlineAt = null;
       playSfx(this, 'sfx-invalid', 0.3);
       this.dispatch({ type: 'drawAndEndTurn', actorIndex: this.state().activePlayerIndex });
@@ -1705,7 +1726,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.onlineTimerText
       .setVisible(true)
-      .setText(t('online.turnTimeLeft', { secs: clock.secs }))
+      .setText(t('online.turnTimeLeft', { secs: clock.secs }) + this.rhythmMarker())
       .setColor(clock.tone === 'critical' ? TEXT.error : clock.tone === 'warning' ? TEXT.warning : TEXT.muted)
       .setScale(clock.scale);
     if (clock.tone !== 'muted' && clock.secs !== this.ui.lastTickSecond && clock.secs > 0) {
@@ -1719,6 +1740,24 @@ export class GameScene extends Phaser.Scene {
         if (clock.tone === 'critical') haptic('tick');
       }
     }
+  }
+
+  /**
+   * One decision, folded into Perfect Rhythm. Reads the clock this scene is already rendering, so
+   * an untimed match (no deadline) simply leaves the streak alone. A timeout goes through here too
+   * and breaks the streak, which is the point: the clock ran out.
+   */
+  private noteRhythm(): void {
+    if (this.turnDeadlineAt === null || this.turnBudgetMs <= 0) return;
+    const msLeft = Math.max(0, this.turnDeadlineAt - Date.now());
+    this.rhythm = noteTurnTaken(this.rhythm, startTurn(0, this.turnBudgetMs), msLeft);
+  }
+
+  /** The streak as a quiet run of pips beside the clock — never a number, never a colour of its
+   * own, and nothing at all below two in a row, so it reads as a rhythm rather than a score. */
+  private rhythmMarker(): string {
+    if (this.rhythm.streak < 2) return '';
+    return ' ' + '\u25aa'.repeat(Math.min(5, this.rhythm.streak));
   }
 
   private setOnlineNotice(message: string): void {
@@ -2109,6 +2148,7 @@ export class GameScene extends Phaser.Scene {
     playSfx(this, 'sfx-feito');
     const draft = this.editor.getDraft();
     const melds: SubmitTurnMeld[] = draft.melds.map((m) => ({ id: m.id, cardIds: m.cards.map((c) => c.id) }));
+    this.noteRhythm();
     this.setOnlinePending(true);
     if (this.net!.submitTurn(this.online.lastRev, melds) === null) this.onOnlineSendFailed();
     this.renderAll();

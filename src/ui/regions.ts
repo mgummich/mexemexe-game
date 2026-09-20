@@ -43,6 +43,10 @@ export interface GameRegions {
    * badge sits at the bottom edge in landscape and near the top in portrait, so a fixed offset
    * pushes the clock off screen in one of them. */
   onlineTimer: { x: number; y: number };
+  /** Where a locally-owned Speed clock (Blitz and friends) sits: the top bar, beside the deck
+   * count, not the online badge's corner. Offline there is no badge to hang it under, and the
+   * corner slot is half under the hand — for a 7s turn the clock is the HUD, not a footnote. */
+  speedClock: { x: number; y: number };
 
   tableTop: number;
   tableBottom: number;
@@ -133,6 +137,7 @@ function landscape(p: ViewProfile): GameRegions {
     onlineNotice: { x: w / 2, y: 58, wrap: 300 + dx },
     onlineDot: { x: 6, y: 264 },
     onlineTimer: { x: 16, y: 253 },
+    speedClock: { x: 300 + half, y: 14 },
 
     tableTop: 80,
     tableBottom: 188,
@@ -210,6 +215,7 @@ function portrait(p: ViewProfile): GameRegions {
     onlineNotice: { x: 135, y: 78, wrap: 250 },
     onlineDot: { x: 8, y: 40 },
     onlineTimer: { x: 18, y: 50 },
+    speedClock: { x: 210, y: 14 },
 
     tableTop: 88,
     tableBottom: 320,
