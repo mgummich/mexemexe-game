@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "9A",
-  "phase": "77 — Memory Leak Testing",
+  "phase": "78 — Dependency & Bundle Governance",
   "status": "NOT_STARTED"
  },
- "head": "248b367",
+ "head": "eb2046d",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -976,6 +976,48 @@
      "id": "P2-ai-decision-time-unmeasured-on-mobile",
      "from": "Phase 75",
      "note": "Addressed by the profile instead of a stopwatch: AI code does not appear in the sampled JS at all on the worst board, so its cost is not a frame-time factor on the modest-mobile profile."
+    }
+   ]
+  },
+  {
+   "phase": "77 — Memory Leak Testing",
+   "wave": "9A",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Ten match cycles in one page found a real product-owned leak: the Phaser sound manager accumulated one live sound instance per cue played (+8 per match, never dropped), because Phaser only removes one on COMPLETE and a locked or muted audio context never emits it. Per-scene ambience had the same shape (stop() leaves the instance in the manager). Both fixed; scenes, tweens, bus subscriptions and DOM nodes were already flat.",
+   "changed": [
+    "src/audio/sfx.ts — reuse the instance for a key (sound.get ?? sound.add) instead of sound.play(key), which creates a new one per call",
+    "src/scenes/MenuScene.ts, src/scenes/GameScene.ts — ambience destroy() on shutdown instead of stop()",
+    "src/core/events.ts — EventBus.subscriberCount(), observability for the ARCH-007 leak class",
+    "src/verification/debug-api.ts + src/main.ts — lifecycle() probe: active scenes, scene children, tweens, sounds, bus subscriptions, play-log entries, DOM children",
+    "e2e/screenshot.spec.ts — the gated second-match journey now asserts one active scene and bounded sound/bus counts",
+    "e2e/perf-measure.spec.ts — the 10-cycle memory measurement",
+    "tests/audio.test.ts — models the manager's get/add API and pins one instance per key",
+    "docs/PERFORMANCE.md — §Memory across a long session"
+   ],
+   "acceptance": "critical repeated flows show no unbounded product-owned growth (sounds 33 → flat 4 over 10 cycles; scenes/tweens/nodes/bus flat); known retained resources have owners (every counter in lifecycle() names its owner); regressions reproducible (measurement command documented, bounds asserted in the gated suite)",
+   "verification": [
+    "e2e/perf-measure.spec.ts -g memory: sounds 1→33 before, flat after; nodes 166 flat; heap +110kB→+100kB per cycle",
+    "MEXE_OUTPUT=ai npm run test (1126/1126, exit 0)",
+    "npm run lint (exit 0)",
+    "npm run screenshot (131 + 3 @perf passed) + node scripts/check-verify.mjs (exit 0); regenerated PNGs reverted, no visual change"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p77-test2.log",
+     "tmp/agent-logs/p77-screenshot.log",
+     "tmp/agent-logs/p77-check.log"
+    ],
+    "attribution": "Residual +4 listeners and ~100 kB per cycle: the page's own addEventListener/removeEventListener ledger is flat across cycles, and muting audio removes 9 of the original 13 listeners — Web Audio source nodes whose onended never fires in a headless context. Not product code."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the unit test was rewritten to model the real manager API and now pins the fix (one instance per key), which is stronger than what it asserted before, not weaker"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-residual-heap-drift",
+     "note": "~100 kB and ~4 DOM-level listeners per match cycle remain, inside Phaser/WebAudio rather than product code. Bounded: ~10 MB per 100-match session against an 80 MB budget, with DOM nodes and scene objects flat.",
+     "owner": "Phase 101 — Final Performance Gate"
     }
    ]
   }

@@ -42,7 +42,12 @@ export class MenuScene extends Phaser.Scene {
     const unsubConn = onConnectivityChange(() => this.onlineBtn?.setEnabled(!isOffline()));
     this.events.once('shutdown', unsubConn);
     this.startAmbience();
-    this.events.once('shutdown', () => this.ambience?.stop());
+    // destroy(), not stop(): a stopped sound stays in the sound manager's list for the life of
+    // the page, so re-entering the menu would add another one every time (Phase 77).
+    this.events.once('shutdown', () => {
+      this.ambience?.destroy();
+      this.ambience = undefined;
+    });
     this.rebuild();
     this.markReady();
     const showcase = debugApi.showcase;

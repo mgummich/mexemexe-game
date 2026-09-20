@@ -173,6 +173,24 @@ interface MexeResultsSummary {
   }[];
 }
 
+/** What a repeated-match measurement counts. Every field has one owner in the product. */
+export interface LifecycleCounts {
+  /** Scene keys Phaser currently has running. Exactly one gameplay scene should ever be active. */
+  activeScenes: string[];
+  /** Game objects held by the active scenes — a scene that does not clean up grows this. */
+  sceneChildren: number;
+  /** Tweens still owned by the active scenes. */
+  tweens: number;
+  /** Sound instances the Phaser sound manager holds. */
+  sounds: number;
+  /** Live `bus` subscriptions (`src/core/events.ts`) — the ARCH-007 leak, if it comes back. */
+  busSubscribers: number;
+  /** Entries in the in-memory play log ring (bounded by design). */
+  playlogEntries: number;
+  /** Top-level DOM children of `<body>`: the canvas plus any overlay plate still attached. */
+  domChildren: number;
+}
+
 /** Exposed on window.__MEXE__ for Playwright verification. */
 interface MexeDebugApi {
   ready: boolean;
@@ -230,6 +248,10 @@ interface MexeDebugApi {
   /** Active layout world + input mode (see src/ui/viewport.ts). Lets e2e map world coordinates
    * onto the canvas without assuming an orientation or a scale factor. */
   viewport: () => ViewProfile;
+  /** Verification-only (Phase 77): the counts a long session can grow. Provided by `main.ts`,
+   * which owns the Phaser game; null until it is. Reading it is how the memory-drift measurement
+   * attributes growth to an owner instead of guessing. */
+  lifecycle: (() => LifecycleCounts) | null;
   /** Background-music state for e2e: current track file, whether it is actually playing, and its volume. */
   music: () => { track: string; playing: boolean; volume: number; context: string };
   /** Live Mexe Mode hooks for e2e (bound to the active DraftEditor on human turns). */
@@ -350,6 +372,7 @@ export const debugApi: MexeDebugApi = {
   invalidMeldReasons: () => [],
   renderedMeldStatus: () => [],
   viewport: () => view(),
+  lifecycle: null,
   music: () => ({ track: '', playing: false, volume: 0, context: 'menu' }),
   mexe: null,
   online: null,

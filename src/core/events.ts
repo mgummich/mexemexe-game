@@ -39,6 +39,14 @@ export class EventBus<E extends EventMap = GameEvents> {
   clear(): void {
     this.handlers.clear();
   }
+
+  /** Live subscriptions, summed over events. Observability only: a match that leaves a subscriber
+   * behind (ARCH-007) shows up here as a count that grows with every match played. */
+  subscriberCount(): number {
+    let n = 0;
+    for (const set of this.handlers.values()) n += set.size;
+    return n;
+  }
 }
 
 export const bus = new EventBus();

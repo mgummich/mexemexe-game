@@ -113,3 +113,60 @@ test('perf profile @measure', async ({ browser }) => {
   await ctx.close();
   expect(total).toBeGreaterThan(0);
 });
+
+/**
+ * Phase 77: does a long session grow? Ten menu → setup → match → quit cycles in one page,
+ * reading the browser's own counters (heap, DOM nodes, live JS event listeners) between
+ * cycles. GC is forced before each reading, because otherwise this measures collector
+ * timing rather than retention.
+ */
+const SCALE_ = 1280 / 480;
+const at = (lx: number, ly: number): [number, number] => [lx * SCALE_, ly * SCALE_];
+
+test('memory across repeated match cycles @measure', async ({ browser }) => {
+  const ctx = await browser.newContext();
+  const p = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(p);
+  await cdp.send('Performance.enable');
+  const read = async (): Promise<{ heapMb: number; nodes: number; listeners: number }> => {
+    await cdp.send('HeapProfiler.enable');
+    await cdp.send('HeapProfiler.collectGarbage');
+    const { metrics } = (await cdp.send('Performance.getMetrics')) as { metrics: Array<{ name: string; value: number }> };
+    const get = (n: string) => metrics.find((m) => m.name === n)?.value ?? 0;
+    return { heapMb: Math.round((get('JSHeapUsedSize') / 1048576) * 10) / 10, nodes: get('Nodes'), listeners: get('JSEventListeners') };
+  };
+
+  await p.goto('/?seed=42');
+  await p.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 30_000 });
+  await p.waitForFunction(() => window.__MEXE__.scene === 'menu');
+  const readings: Array<{ cycle: number } & Awaited<ReturnType<typeof read>>> = [];
+
+  for (let cycle = 1; cycle <= 10; cycle++) {
+    // First cycle: the menu leads with the tutorial, so the play entry is the secondary button.
+    await p.mouse.click(...at(240, cycle === 1 ? 207 : 168));
+    await p.waitForFunction(() => window.__MEXE__.scene === 'setup', undefined, { timeout: 15_000 });
+    await p.waitForTimeout(150);
+    await p.mouse.click(...at(300, 248)); // PLAY
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null, undefined, { timeout: 15_000 });
+    // Play a turn so the match is more than a freshly created scene: draw and let the AI answer.
+    await p.keyboard.press('c');
+    await p.waitForFunction(() => {
+      const s = window.__MEXE__.state?.();
+      return !!s && !s.players[s.activePlayerIndex]!.isAi;
+    }, undefined, { timeout: 20_000 });
+    // Quit back to the menu.
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(150);
+    await p.mouse.click(...at(240, 185));
+    await p.waitForTimeout(150);
+    await p.mouse.click(...at(240, 172));
+    await p.waitForFunction(() => window.__MEXE__.scene === 'menu', undefined, { timeout: 15_000 });
+    readings.push({ cycle, ...(await read()) });
+  }
+  console.log('MEM ' + JSON.stringify(readings));
+  const first = readings[1]!; // cycle 2: cycle 1 still carries one-off warmup
+  const last = readings[readings.length - 1]!;
+  console.log(`MEM-DELTA heap ${first.heapMb}->${last.heapMb} MB nodes ${first.nodes}->${last.nodes} listeners ${first.listeners}->${last.listeners}`);
+  await ctx.close();
+  expect(readings.length).toBe(10);
+});

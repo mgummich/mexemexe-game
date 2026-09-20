@@ -85,6 +85,21 @@ game.events.on('step', () => {
   debugApi.fps = Math.round(game.loop.actualFps);
 });
 
+// Phase 77: the counts a long session can grow, read from their owners. Lives here because this
+// is the module that owns the Phaser game; nothing in the product reacts to it.
+debugApi.lifecycle = () => {
+  const active = game.scene.getScenes(true);
+  return {
+    activeScenes: active.map((s) => s.scene.key),
+    sceneChildren: active.reduce((n, s) => n + s.children.list.length, 0),
+    tweens: active.reduce((n, s) => n + s.tweens.getTweens().length, 0),
+    sounds: (game.sound as unknown as { sounds: unknown[] }).sounds.length,
+    busSubscribers: bus.subscriberCount(),
+    playlogEntries: playlog.entries().length,
+    domChildren: document.body.childElementCount,
+  };
+};
+
 // ---------- portrait hint ----------
 // Portrait is now a real playable layout (src/ui/viewport.ts + regions.ts), so this hint must
 // not sit on top of the board forever: show it briefly on load / on entering portrait, then

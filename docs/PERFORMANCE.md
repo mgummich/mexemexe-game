@@ -62,6 +62,50 @@ action deliberately — the phase's job was to find out where the time goes, and
 the answer was "one wasteful download, and nothing else that evidence supports
 touching".
 
+## Memory across a long session (Phase 77)
+
+Ten menu → setup → match (one human turn, one AI turn) → quit cycles in **one
+page**, with a forced GC before each reading, because otherwise a measurement
+like this reports collector timing rather than retention. Counters come from the
+browser (`Performance.getMetrics`) and from `window.__MEXE__.lifecycle()`, which
+reports the counts the product itself owns.
+
+| Counter | Before the fix | After | Owner |
+|---|---|---|---|
+| Phaser sound instances | 1 → 33 (**+8 per match**, never dropped) | flat at 4 | `src/audio/sfx.ts`, `MenuScene`/`GameScene` ambience |
+| active scenes | `['menu']` | `['menu']` | scene lifecycle |
+| scene children, tweens | flat | flat | scene lifecycle |
+| `bus` subscriptions | 2 | 2 | `src/core/events.ts` (ARCH-007) |
+| DOM nodes | 166, flat | 166, flat | overlay plates |
+| JS heap | +110 kB per match | +100 kB per match | see residual below |
+| DOM-level listeners | +13 per match | +4 per match | see residual below |
+
+**The leak that was real.** `scene.sound.play(key, …)` creates a *new* Phaser
+sound per call, and Phaser only removes one when it emits `COMPLETE` — which a
+sound played into a locked or muted audio context never does. A long session
+therefore accumulated one live sound object per cue played. The per-scene
+ambience had the same shape: `stop()` leaves the instance in the manager's list,
+so every visit to the menu or a match added another. Fixed by reusing the
+instance for a key (the 80 ms retrigger guard already means one per key is
+enough) and by destroying the ambience on scene shutdown. The gated
+`second-match` journey now asserts the bounds, so it cannot come back quietly.
+
+**The residual drift, and why it is not ours.** With the fix in place, a match
+cycle still adds ~4 listeners and ~100 kB. It is not product code adding them:
+patching `EventTarget.prototype.addEventListener`/`removeEventListener` for a
+whole session shows the page's own listener ledger flat across cycles, and
+muting audio removes 9 of the original 13 — the signature of Web Audio source
+nodes whose `onended` never fires because the context in a headless run never
+unlocks. Bounded: at 100 matches in one session that is ~10 MB against an 80 MB
+budget, with DOM nodes and scene objects flat. Deferred to the final performance
+gate rather than chased into Phaser's internals.
+
+Re-run with:
+
+```bash
+npx playwright test e2e/perf-measure.spec.ts -g memory --workers=1 --retries=0
+```
+
 ## What is deliberately not budgeted
 
 - **Server CPU and latency.** The server does one legality check per turn on an

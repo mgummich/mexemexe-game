@@ -95,12 +95,39 @@ describe('music context selection', () => {
 });
 
 describe('SFX playback safety', () => {
+  /**
+   * Models the part of Phaser's sound manager `playSfx` uses: one instance per key, looked up with
+   * `get` and created with `add`. `sound.play` is the same spy every instance plays through, so a
+   * call to it still means "a cue was played" — and `sound.add` counts how many instances the
+   * manager was asked to hold, which is what leaked before Phase 77.
+   */
   function fakeScene(hasAudio: boolean, playImpl: () => void = () => {}) {
+    const play = vi.fn(playImpl);
+    const instances = new Map<string, { play: typeof play }>();
+    const add = vi.fn((key: string) => {
+      const instance = { play };
+      instances.set(key, instance);
+      return instance;
+    });
     return {
       cache: { audio: { exists: () => hasAudio } },
-      sound: { play: vi.fn(playImpl) },
+      sound: { play, add, get: (key: string) => instances.get(key) ?? null },
     } as unknown as Parameters<typeof playSfx>[0];
   }
+
+  it('holds one sound instance per key however often the cue fires', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    const scene = fakeScene(true);
+    for (let i = 0; i < 10; i++) {
+      nowSpy.mockReturnValue(2000 + i * 200); // past the retrigger window every time
+      playSfx(scene, 'sfx-drop');
+    }
+    expect((scene.sound.play as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(10);
+    // Phaser only drops a sound it created when that sound emits COMPLETE, which a locked or muted
+    // audio context never does — so one instance per play accumulated for the life of the page.
+    expect((scene.sound as unknown as { add: ReturnType<typeof vi.fn> }).add).toHaveBeenCalledTimes(1);
+    nowSpy.mockRestore();
+  });
 
   it('missing audio file is a silent no-op, never a crash', () => {
     const scene = fakeScene(false);

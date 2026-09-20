@@ -939,6 +939,16 @@ test('second-match: after quitting to the menu, a new match still lets the AI ta
 
   const errs = await page.evaluate(() => window.__MEXE__.errors);
   expect(errs).toEqual([]);
+
+  // Two matches have now been played and quit in one page. The counts the product owns must not
+  // grow with match count: Phase 77 measured the sound manager accumulating one live sound per
+  // cue played (+8 per match) because Phaser only drops an instance when it emits COMPLETE, which
+  // a locked or muted audio context never does. Bounds, not equalities — the exact number depends
+  // on which cues this journey happened to fire.
+  const counts = await page.evaluate(() => window.__MEXE__.lifecycle!());
+  expect(counts.activeScenes, 'exactly one scene left running').toEqual(['menu']);
+  expect(counts.sounds, `sound instances after two matches: ${counts.sounds}`).toBeLessThanOrEqual(12);
+  expect(counts.busSubscribers, `bus subscriptions after two matches: ${counts.busSubscribers}`).toBeLessThanOrEqual(4);
 });
 
 test('rules-large-text: the quick reference at 125% text scale', async ({ page }) => {

@@ -596,7 +596,10 @@ export class GameScene extends Phaser.Scene {
       this.reconnectTicker?.remove();
       for (const e of this.activeEmotes.values()) e.timer.remove();
       this.activeEmotes.clear();
-      this.ambienceSound?.stop();
+      // destroy(), not stop(): see MenuScene.startAmbience — a stopped sound is still held by the
+      // sound manager, so one per match would accumulate for the life of the page (Phase 77).
+      this.ambienceSound?.destroy();
+      this.ambienceSound = null;
       this.resetZoomPan();
       this.game.canvas.removeEventListener('pointercancel', cancelDragOnPointerCancel);
       this.cancelActiveDrag();
