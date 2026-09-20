@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "9C",
-  "phase": "81 — Rollback Strategy",
+  "phase": "82 — Release Channels",
   "status": "NOT_STARTED"
  },
- "head": "934cbb9",
+ "head": "4863a78",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1126,6 +1126,28 @@
      "owner": "Phase 102 — Production & Release Readiness"
     }
    ]
+  },
+  {
+   "phase": "81 — Rollback Strategy",
+   "wave": "9C",
+   "status": "PASS",
+   "result": "A rollback section existed and was correct as far as it went (static client, stateless server, protocol coupling, no database). Missing: when a rollback actually reaches a player, which conditions make one unsafe, how to validate afterwards, and any test at all. Also corrected drift — the doc still told operators to hand-edit a VERSION const in public/sw.js.",
+   "changed": [
+    "docs/OPERATIONS.md — corrected the service-worker version instruction (it is substituted from package.json at build time); added 'What a rollback does and does not reach', 'Unsafe rollback conditions' (4 ordered checks, including the save-envelope one-way door) and 'After a rollback' validation commands",
+    "e2e-pwa/update.spec.ts — rollback rehearsal: serve a lower version to an installed client, assert the handover, that the old cache serves until the player accepts, and that only the rolled-back cache remains"
+   ],
+   "acceptance": "rollback path documented and testable (rehearsed in verify:pwa); compatibility constraints known (protocol must move in lockstep; save envelope still v1 so rollback is lossless today, and a future bump is flagged as a one-way door); unsafe conditions explicit (4 named checks)",
+   "verification": [
+    "npm run verify:pwa (14/14, exit 0) — includes the new rollback rehearsal",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "log": "tmp/agent-logs/p81-pwa.log"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the rehearsal asserts the operationally interesting half (the bad build's cache is gone, and nothing hands over until the player accepts) rather than re-testing the forward update path"
+   }
   }
  ],
  "riskClosures": [

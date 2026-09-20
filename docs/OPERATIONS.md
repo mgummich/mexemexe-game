@@ -253,9 +253,11 @@ version in `/health` and in the client build have most likely diverged.
 ## Releasing a new version / cache busting
 
 The client is a PWA with a service worker (`public/sw.js`) that caches the app shell and
-runtime assets. Bump the `VERSION` const in `public/sw.js` on every release — the
-`activate` handler deletes any cache that isn't the current version, so a stale build
-never lingers. Navigations are network-first, so a new `index.html` (and its new hashed
+runtime assets. The cache name is the release version: `public/sw.js` carries a
+`__BUILD_VERSION__` placeholder that the `vite.config.ts` build plugin substitutes from
+`package.json`, so bumping the package version — which `npm run release` does — is what
+makes a deploy reach cached clients. There is no constant to edit by hand. The `activate`
+handler deletes any cache that isn't the current version, so a stale build never lingers. Navigations are network-first, so a new `index.html` (and its new hashed
 asset URLs) is always picked up on next load without a manual cache purge. Players see a
 non-intrusive update banner and apply it themselves after their current match; a new
 worker never takes over mid-match.
@@ -283,6 +285,51 @@ just deploying the previous artefacts:
 
 There is no database and no migration to reverse. Matches in progress end on either
 rollback; there is nothing else to restore.
+
+### What a rollback does and does not reach
+
+| | When it takes effect |
+|---|---|
+| A player opening the game fresh | immediately: navigations are network-first, so they get the rolled-back `index.html` and its assets |
+| A player with the tab already open | when they accept the update banner, or open a new tab. The rolled-back worker installs and *waits* — an update, forward or back, never takes a match away mid-hand |
+| A player mid-match online | after the match: the client keeps talking to the server it is connected to. If the rollback changed `PROTOCOL_VERSION`, that client is refused on its next frame and told to reload (`unsupported_version`) |
+| The previous build's cache | deleted on activate, so nothing of the bad build survives the handover |
+
+Rehearsed, not assumed: `e2e-pwa/update.spec.ts` serves a *lower* version to an
+installed client and asserts the handover happens, the old cache keeps serving until
+the player accepts, and only the rolled-back cache remains afterwards.
+
+### Unsafe rollback conditions
+
+Check these before rolling back, in this order:
+
+1. **Did `PROTOCOL_VERSION` change between the two versions?** If yes, client and server
+   must move together — a mismatch is refused by design
+   ([ARCHITECTURE.md](ARCHITECTURE.md#compatibility-policy)). Rolling back one
+   half alone takes online play down as surely as the bad release did.
+2. **Did the save envelope version change?** Today it is `version: 1` and has never
+   moved, so rollback is lossless. If a future release bumps it, a client that already
+   wrote the newer envelope will read it back as unsupported and fall back to defaults —
+   the player silently loses settings and cosmetics. That makes a save bump a
+   **one-way door**: plan the rollback window before shipping it, not after.
+3. **Did `public/assets/` change without a version bump?** Then the rolled-back build
+   shares a cache name with the bad one and cached clients keep the bad assets. Bump the
+   version for the rollback deploy too — a rollback is a release.
+4. **Is the rolled-back image actually still available?** Released images are kept by
+   digest; a rollback that depends on rebuilding from a tag needs that tag to build with
+   today's toolchain.
+
+### After a rollback
+
+```bash
+curl -fsS https://<host>/health                 # ok:true, and `protocol` is the value you expect
+npm run verify:preview                          # the served client: assets resolve, no secrets
+npm run verify:multiplayer:chromium             # two real clients against the rolled-back pair
+```
+
+Then read the server's first log line: `server_listening` carries `build`, which is the
+answer to "is the rollback actually what is running" — an image tag is what you asked
+for, not what booted.
 
 ## Verification commands
 
