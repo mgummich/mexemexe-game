@@ -179,3 +179,18 @@ timeout. Defined against the budget rather than a wall-clock number, so it means
 - feedback is the pip run beside the clock (`GameScene.rhythmMarker`), nothing below two in a row
 - the scene folds its own seat only; online this is a local read of the clock the server owns, and
   it is display-only, which is why it needs no protocol field
+
+## Adrenaline (Phase 6)
+
+`turnClockReadout` returns `adrenaline`: 0 outside the critical window, 1 at zero. It drives the
+readout's growth and the tick cue's volume — presentation only, never what a move is worth, and
+never a setting.
+
+The critical window itself is now budget-aware (`CRITICAL_FRACTION`, capped by `TURN_CRITICAL_MS`):
+30% of a short Speed turn, still a flat 5s on a long one. A 7s Blitz turn is critical for its last
+2.1s instead of five of its seven seconds.
+
+Accessibility: the escalation is a size change and a volume change, not motion, so reduced motion
+loses no information; with sound off the size still escalates, and with the screen unread the
+haptic still fires. No channel is load-bearing alone. Reconnect-safe by construction — it is
+derived from the deadline in the frame, holding no state of its own.

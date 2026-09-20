@@ -1707,7 +1707,7 @@ export class GameScene extends Phaser.Scene {
     // The arithmetic — and every threshold in it — lives in src/ui/turn-clock.ts, where it is
     // unit-tested at its boundaries. What stays here is the two things only a scene can do:
     // paint the readout, and decide whether to make a sound.
-    const clock = turnClockReadout(this.turnDeadlineAt, Date.now(), this.turnWarnMs);
+    const clock = turnClockReadout(this.turnDeadlineAt, Date.now(), this.turnWarnMs, this.turnBudgetMs);
     // Local Blitz has no server tick to fall back on, so reaching zero here is the timeout. Same
     // outcome the server gives an online seat (MULTIPLAYER.md §7b): draw one card, pass. Any draft
     // in progress is dropped with the turn, exactly as it is online.
@@ -1733,7 +1733,10 @@ export class GameScene extends Phaser.Scene {
       this.ui.lastTickSecond = clock.secs;
       // Own turn only: a cue for someone else's clock is noise, and the setting is off by choice.
       if (this.state().activePlayerIndex === this.localSeat) {
-        if (settings.get().timerTickSound) playSfx(this, 'sfx-snap', clock.tone === 'critical' ? 0.35 : 0.2);
+        // Adrenaline: the cue leans harder as the window burns down, instead of one flat beep for
+        // the whole of it. Volume only — the sound, the readout size and the buzz all stay
+        // available, so a muted device and a reduced-motion device each keep a full channel.
+        if (settings.get().timerTickSound) playSfx(this, 'sfx-snap', 0.2 + 0.25 * clock.adrenaline);
         // Third channel, never the only one: the readout already says it in size and in colour, so
         // a device that cannot vibrate (every iOS browser) loses nothing. Critical only — a buzz
         // every second of a 10s warning is a nag, not a cue.
