@@ -1059,6 +1059,14 @@ test('keyboard: pressing C (comprar) advances the turn, same as clicking', async
 test('stress-table: many melds on the table still hold fps >= 50 @perf', async ({ page }) => {
   await capture(page, '/?seed=77&showcase=mexe', 'stress-table', async (p) => {
     await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    // Reference read, same page and same runner, before the board is crowded. A shared CI runner
+    // measures the runner as much as the renderer — this floor has already been rebased 35 -> 25
+    // -> 20 for that reason, each time after confirming no rendering-path change — and an
+    // absolute number cannot tell a slow machine from a regression. A ratio can: a runner having
+    // a bad day drags this reading down too, so crowded/reference stays put while the absolute
+    // number moves. Costs one extra measureFpsSamples window (~6s) on one test.
+    await waitForSettledBoard(p);
+    const reference = await measureFpsSamples(p);
     // maximize sprite count: play every hand card to its own new meld (renderAll
     // rebuilds all card sprites every call, so this repeatedly churns the full set)
     await p.evaluate(() => {
@@ -1090,6 +1098,14 @@ test('stress-table: many melds on the table still hold fps >= 50 @perf', async (
     // same machine, same probe). 20 sits below both CI readings with headroom for a runner that
     // is having a worse day, and still fails a catastrophic regression (a 20x CPU throttle reads
     // 21.8 on the dev machine). The dev floor of 50 is untouched and remains the real bar.
+    // Calibration pass: the ratio is measured and logged on every run, but not yet gated on —
+    // its floor has to come from CI readings, the same way every absolute floor here was set.
+    // Once a few runs have reported `FPS stress-table ratio`, replace the CI branch below with
+    // that ratio and a low absolute catastrophe floor.
+    console.log(
+      `FPS stress-table ratio: crowded ${fps.best.toFixed(1)} / reference ${reference.best.toFixed(1)}`
+      + ` = ${(fps.best / reference.best).toFixed(3)} (reference spread ${reference.all.join(' / ')})`,
+    );
     expectFps(fps, process.env.CI ? 20 : 50, 'stress-table');
   });
 });
