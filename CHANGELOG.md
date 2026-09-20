@@ -19,6 +19,19 @@ and those remain readable in git history.
 
 ### Changes
 
+- **The PR multiplayer gate runs on three runners instead of one.** It was 22m
+  of a 23m CI run — 44 tests, 43.8 worker-minutes — and the config already
+  documents why more workers on one 4-core runner made it worse, so the
+  parallelism now comes from `--shard=N/3` across three jobs. A separate
+  `Multiplayer verification` job merges every shard's evidence and runs
+  `check-verify-multiplayer.mjs` once, which needed no new merge logic: the gate
+  already merged per-worker shards. No coverage changes.
+- `LB-19/LB-21..LB-24`, the three-match endurance run, is tagged `@endurance`
+  and off the PR path, like `@chaos` before it: 7.3m of a 21.9m suite in one
+  test. The nightly `multiplayer-all-engines` job runs it on all three engines,
+  so it is a within-a-day guarantee rather than a per-review one; the gate skips
+  its evidence only when asked to, via `--skip-endurance`.
+
 - **9.8 MB of one-off screenshots removed.** `docs/screenshots/final/`
   (untouched since the initial commit), `ios-baseline/` and `ios-fixed/` (the
   simulator audit captures from the iOS tap/drag fix) and `phase20/`: no suite

@@ -801,7 +801,8 @@ incoming frames, with the other client as the clean control. Deterministic by
 construction — the mangler decides, not the network.
 
 They are tagged `@chaos` and **excluded from the PR path**
-(`verify:multiplayer:chromium` greps them out); the nightly
+(`verify:multiplayer:chromium` greps them out, along with `@endurance` — see
+below); the nightly
 `verify:multiplayer` runs them. Not for their own cost — 57s for all five on
 CI — but for peak concurrency: this suite is contention-bound, it already went
 from three workers to two because the heaviest tests starved, and five more
@@ -809,6 +810,17 @@ tests each holding two browser contexts plus a Node-side frame proxy pushed
 `LB-19..LB-24` past its 7-minute budget and `OD-28/OD-29` past its 3-minute one
 on a 4-core runner. Locally they are `-g CH-0`. See
 [MULTIPLAYER.md](MULTIPLAYER.md) §11.
+
+`LB-19/LB-21..LB-24` — three full matches across departures, a replacement and a
+host transfer — is tagged `@endurance` and excluded from the PR path for the
+same reason, on cost rather than concurrency: it measured 7.3m of a 21.9m suite
+in a single test, a third of the whole thing. The nightly
+`multiplayer-all-engines` job runs `verify:multiplayer` with no `--grep-invert`,
+so it still runs daily, on all three engines. The gate's three-matchId check is skipped on the PR
+path only, by `--skip-endurance`; nothing weakens the nightly demand for it. The
+trade is the same one engine parity and `@chaos` already make: a regression in
+between-match churn lands in `main` and is caught within a day rather than at
+review time.
 
 `e2e-multiplayer/harness.ts` is also the single definition of a simulated
 player: `newClient`/`newPhoneClient` (own browser context, own storage, own
@@ -846,7 +858,8 @@ not baseline-diffed.
 |---|---|
 | `npm run verify` | `test` + `lint` + `screenshot` + `scripts/check-verify.mjs`: no console/page errors, every expected screenshot present, no asset fell back to placeholder art, fps floors met (the fps floors are asserted inside the three `@perf` tests). |
 | `npm run verify:multiplayer` | Build + the multiplayer suite on Chromium, Firefox and WebKit + `scripts/check-verify-multiplayer.mjs`: no client console errors, no server stderr, no accepted illegal proposal, hand privacy held, state hashes agree, and per-engine lobby evidence (rendered seat gaps, a three-match endurance run, the iOS orientation/rematch gate, and the background/foreground round trip that must resume on the live session rather than open a second one). |
-| `npm run verify:multiplayer:chromium` | The same, Chromium only, with the gate told not to demand the Firefox/WebKit lobby evidence (`--engines=chromium`). This is the PR-path variant. |
+| `npm run verify:multiplayer:chromium` | The same, Chromium only, without `@chaos` and `@endurance`, and with the gate told not to demand the Firefox/WebKit lobby evidence or the three-match endurance run (`--engines=chromium --skip-endurance`). This is the PR-path variant. |
+| `npm run test:multiplayer:chromium` | Just the suite the variant above runs, without the gate. CI shards it across runners (`-- --shard=N/3`) and runs the gate once over the merged evidence. |
 | `npm run verify:cross` | Build + the cross-browser layout suite. |
 | `npm run verify:pwa` | Build + the offline/update suite. |
 | `npm run verify:preview` | Build + `scripts/check-preview.mjs`: `dist/` serves, every asset reference resolves, no credential-shaped strings in the bundle. |
@@ -1053,10 +1066,18 @@ unit tests + build, multiplayer verification, PWA verification, the e2e
 screenshot suite with its gate, and cross-browser layout.
 
 The multiplayer job installs **Chromium only** and runs
-`verify:multiplayer:chromium`. The three-engine run was the longest job on every
-PR (~18m), and most of that was the lobby state machine replayed on Firefox and
+`test:multiplayer:chromium` across **three shards, two workers each**, with a
+separate `Multiplayer verification` job merging every shard's evidence and
+running the gate once. The three-engine run was the longest job on every PR
+(~18m), and most of that was the lobby state machine replayed on Firefox and
 WebKit; that replay moved to the nightly `multiplayer-all-engines` job. Engine
-parity is therefore a nightly guarantee, not a per-PR one. The PWA and
+parity is therefore a nightly guarantee, not a per-PR one. Even Chromium-only it
+stayed the whole critical path — 44 tests, 43.8 worker-minutes, 22m of a 23m
+run — and raising `workers` inside one job was measured worse, so the
+parallelism comes from more runners instead. Sharding costs no coverage: the
+gate already merged per-worker evidence shards, so per-runner shards only add an
+artifact round trip. The shard count is a tuning knob, not a constant; the tail
+shard is whichever one draws the heaviest `LB-*` tests. The PWA and
 screenshot jobs are Chromium-only too — they drive the service-worker lifecycle
 and rendering, not cross-engine layout, which the cross job (all three engines)
 covers. Failures upload `test-results/` and the relevant log as artifacts.

@@ -38,6 +38,7 @@ let failed = false;
 // the PR gate runs chromium only (Firefox/WebKit lobby coverage runs nightly, where the extra
 // ~15 minutes is free), so the caller passes --engines=. Default is all three, which is what
 // `npm run verify:multiplayer` runs locally and nightly.
+const SKIP_ENDURANCE = process.argv.includes('--skip-endurance');
 const ENGINE_FLAG = '--engines=';
 const ENGINES = (process.argv.find((a) => a.startsWith(ENGINE_FLAG))?.slice(ENGINE_FLAG.length) ?? 'chromium,firefox,webkit')
   .split(',')
@@ -190,11 +191,16 @@ if (!fs.existsSync(LOBBY_PARTS_DIR)) {
       failed = true;
       console.error(`verify:multiplayer: lobby seat-gap evidence wrong (${engine})`, gaps);
     }
-    // Three matches on one room code, each with its own match id.
-    const end = run.endurance;
-    if (!end || new Set(end.matchIds ?? []).size !== 3 || !end.code) {
-      failed = true;
-      console.error(`verify:multiplayer: 3-match endurance evidence missing (${engine})`, end);
+    // Three matches on one room code, each with its own match id. Which run has to produce this
+    // is a CI-schedule decision, like --engines above: LB-19..LB-24 is a third of the suite's
+    // wall clock in one test, so the PR gate greps it out (@endurance) and passes
+    // --skip-endurance; the nightly all-engines run demands it on every engine.
+    if (!SKIP_ENDURANCE) {
+      const end = run.endurance;
+      if (!end || new Set(end.matchIds ?? []).size !== 3 || !end.code) {
+        failed = true;
+        console.error(`verify:multiplayer: 3-match endurance evidence missing (${engine})`, end);
+      }
     }
     for (const shot of run.screenshots ?? []) {
       if (!fs.existsSync(shot)) {

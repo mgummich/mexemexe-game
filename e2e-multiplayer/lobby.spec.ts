@@ -552,7 +552,7 @@ for (const n of [2, 3, 4]) {
 
 // ---------- LB-19, LB-21..LB-24: endurance and between-match churn ----------
 
-test('LB-19/LB-21/LB-22/LB-23/LB-24: three matches across departures, a replacement and a host transfer', async ({ browser }) => {
+test('LB-19/LB-21/LB-22/LB-23/LB-24 @endurance: three matches across departures, a replacement and a host transfer', async ({ browser }) => {
   // Three full matches, five contexts, a departure chain, a replacement and a host transfer —
   // the heaviest test in the repo, and the budget is headroom over measured work rather than
   // cover for a race. Serial local run after the playToFinish rewrite: 1.0m, against LB-18's
