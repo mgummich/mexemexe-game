@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "9C",
-  "phase": "82 — Release Channels",
+  "wave": "10A",
+  "phase": "83 — Regression Suite Optimization",
   "status": "NOT_STARTED"
  },
- "head": "4863a78",
+ "head": "08fe727",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1147,6 +1147,27 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — the rehearsal asserts the operationally interesting half (the bad build's cache is gone, and nothing hands over until the player accepts) rather than re-testing the forward update path"
+   }
+  },
+  {
+   "phase": "82 — Release Channels",
+   "wave": "9C",
+   "status": "PASS",
+   "result": "The release mechanics were already single-sourced on package.json, but the channels were implicit and one promotion had no gate: pages.yml ran on push to main, racing the CI run on the same commit, so a main that failed lint or the browser gates still published a playable build.",
+   "changed": [
+    ".github/workflows/pages.yml — triggers on a successful CI workflow_run for main (manual dispatch still allowed) and checks out the exact commit CI tested",
+    "docs/OPERATIONS.md — §Release channels: the three channels with their trigger, gates and config; the seven deliberate dev/production behaviour differences and what enforces each; and how to reproduce a production deployment",
+    "CONTRIBUTING.md — points at it from the release section"
+   ],
+   "acceptance": "release flow explicit (three channels, one version, promotion not rebuild); environment differences controlled (table, each row enforced in code, not convention); promotion has defined quality gates (CI for the public build, tag + agreement check for images); production configuration reproducible (tag + npm ci + .env.example + MEXE_VERSION digest pin)",
+   "verification": [
+    "all six workflow files parse as YAML after the change",
+    "npm run lint (exit 0)",
+    "noted in the doc: the browser suites run against Vite preview and therefore cannot catch a CSP regression — tests/deployment.test.ts covers the header set instead"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the gate added is the one that was missing (publish after green, not beside it); no staging environment was invented for a single-process alpha that does not have one"
    }
   }
  ],

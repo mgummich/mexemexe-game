@@ -268,6 +268,55 @@ the `controllerchange` reload fires in all of them — including a tab that is m
 Single-tab play, which is how the game is played on phones and how every verification run
 exercises it, is unaffected.
 
+## Release channels
+
+Three places this code runs, and one rule: **a build is promoted, never rebuilt
+differently.** The version in `package.json` is the only version there is — it
+feeds the git tag, the release notes, the image tags and the service-worker cache
+key.
+
+| Channel | What it is | Triggered by | Gates it must pass first | Config |
+|---|---|---|---|---|
+| **Local** | `npm run dev` (Vite) or `npm run preview` (the built client) | a developer | whatever they run; `npm run verify` before a PR | no service worker in dev (it actively unregisters one), `/metrics` open, `MEXE_TEST_SEED` allowed, debug log level |
+| **Public build** (GitHub Pages) | the playable game at `/`, the docs at `/docs` — local play only, no room server | a green **CI** run on `main` (`workflow_run`), or a manual dispatch | CI: lint + unit suites + build, multiplayer (Chromium), PWA, cross-viewport, server image boots unprivileged | production build, service worker on, no room server to talk to, no security headers (GitHub Pages sets its own) |
+| **Released images** (ghcr.io) | `mexemexe-game-web` and `-server`, multi-arch, pushed by digest and joined into one tag | pushing a `vX.Y.Z` tag | release workflow re-runs lint + unit suites + build and refuses a tag that disagrees with `package.json`; the browser/multiplayer gates ran on the commit before it was tagged | `.env` per deployment ([Environment variables](#environment-variables)); `MEXE_VERSION` pins which digest is deployed |
+
+### Environment differences, on purpose
+
+These are the behaviours that are *not* the same everywhere. Every one is a
+decision, and each is enforced in code rather than by convention:
+
+| Behaviour | Development | Production | Enforced by |
+|---|---|---|---|
+| Service worker | unregistered, so a stale cache cannot shadow the dev server | registered, cache keyed by version | `src/core/pwa.ts` |
+| `MEXE_TEST_SEED` | allowed — it is how `verify:multiplayer` deals a known hand | **refuses to start** | `server/config.ts` |
+| `/metrics` | open, `curl` it | 404 without `MEXE_METRICS_TOKEN`, bearer-gated with one | `server/index.ts` |
+| Exception text in logs | kept (the operator is the developer) | dropped, only the error *class* survives | `errorFields` in `server/log.ts` |
+| `MEXE_ALLOWED_ORIGINS` | optional | **required** — the server refuses to start on silence rather than let an omission pass for a decision | `server/config.ts` |
+| Log level | `debug` | `info` | `server/config.ts` |
+| Security headers | none (Vite preview) | CSP, nosniff, referrer and frame policy from `nginx.conf` | the `web` image |
+
+The last row is worth knowing when a CSP question comes up: the browser suites
+run against `npm run preview`, which sends no headers, so a CSP regression is not
+something they can catch. `tests/deployment.test.ts` guards the header set, and
+the policy itself was exercised against the built app under exactly those headers
+([THREAT_MODEL.md](THREAT_MODEL.md) TM-15).
+
+### Reproducing a production deployment
+
+```bash
+git checkout v1.11.0            # the tag is the truth; package.json agrees with it by gate
+npm ci                          # the committed lockfile, never a fresh resolve
+cp .env.example .env            # then fill it in; MEXE_VERSION pins the images
+docker compose -f docker-compose.traefik.prod.yml up -d
+curl -fsS https://<host>/health # protocol + uptime; the log's first line carries `build`
+```
+
+Nothing about a deployment is generated at deploy time except the TLS
+certificate. There is no config service, no feature flags and no per-environment
+build of the game other than `VITE_WS_URL`, which is baked in at image-build time
+and documented in [SELF_HOSTING.md](SELF_HOSTING.md).
+
 ## Rollback
 
 The client is a static directory and the server is stateless. Rollback is therefore
