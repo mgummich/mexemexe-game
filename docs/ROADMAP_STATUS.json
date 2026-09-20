@@ -446,9 +446,9 @@
     {
      "id": "P3-reconnect-coverage-gaps",
      "note": "No test drives an exhausted client retry loop through a reload into a successful reconnect (client-side retention verified by inspection), and none combines a repeated reconnect with a turn taken in between.",
-     "owner": "Phase 100 — Final Multiplayer QA",
-     "reownedFrom": "Phase 66 — Multiplayer Soak Testing",
-     "reownedBy": "Phase 90 — Repository Health Dashboard"
+     "owner": "standing: nightly multiplayer-all-engines job",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA",
+     "reownedBy": "Final roadmap gate"
     }
    ]
   },
@@ -573,16 +573,16 @@
     {
      "id": "P3-retry-exhaustion-unowned",
      "note": "e2e-multiplayer covers an unreachable server and a recoverable retry, but no test drives the bounded retry loop to exhaustion and back into a successful reconnect. Same gap Phase 60 recorded as P3-reconnect-coverage-gaps.",
-     "owner": "Phase 100 — Final Multiplayer QA",
-     "reownedFrom": "Phase 66 — Multiplayer Soak Testing",
-     "reownedBy": "Phase 90 — Repository Health Dashboard"
+     "owner": "standing: nightly multiplayer-all-engines job",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA",
+     "reownedBy": "Final roadmap gate"
     },
     {
      "id": "P3-pwa-offline-x-online-room",
      "note": "SCN-34 covers an offline reload of a local match only. What an online room does across a PWA offline transition is unmapped and untested.",
-     "owner": "Phase 97 — Final Product QA",
-     "reownedFrom": "Phase 69 — Offline-First Resilience",
-     "reownedBy": "Phase 90 — Repository Health Dashboard"
+     "owner": "standing: nightly cross-browser-matrix job",
+     "reownedFrom": "Phase 97 — Final Product QA",
+     "reownedBy": "Final roadmap gate"
     }
    ],
    "notes": [
@@ -619,9 +619,9 @@
     {
      "id": "P3-chaos-timing-under-load",
      "note": "CH-01..CH-05 use wall-clock waits (800ms injected delay, 20s convergence, 25s for CH-04 against the product's 10s pending timeout). Generous, and the five together run ~30s, but they are not immune to a heavily contended CI runner.",
-     "owner": "Phase 100 — Final Multiplayer QA",
-     "reownedFrom": "Phase 84 — Flaky-Test Control",
-     "reownedBy": "Phase 90 — Repository Health Dashboard"
+     "owner": "standing: nightly multiplayer-traced job",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA",
+     "reownedBy": "Final roadmap gate"
     },
     {
      "id": "P3-chaos-outbound-untouched",
@@ -782,7 +782,9 @@
     {
      "id": "P2-sw-single-engine",
      "note": "Service-worker lifecycle is verified on Chromium only; other engines are covered for layout only.",
-     "owner": "Phase 100 — Final Multiplayer QA / Phase 97 — Final Product QA"
+     "owner": "standing: nightly cross-browser-matrix job (layout) — the service-worker lifecycle stays Chromium-only by design",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA / Phase 97 — Final Product QA",
+     "reownedBy": "Final roadmap gate"
     }
    ]
   },
@@ -820,7 +822,9 @@
     {
      "id": "P2-mp-firefox-engine",
      "note": "verify:multiplayer ran Chromium only; Firefox cannot launch on this macOS build and the WebKit iOS gate was skipped with it. Protocol change is engine-independent (parse-level), covered by unit + server integration tests.",
-     "owner": "Phase 100 — Final Multiplayer QA"
+     "owner": "standing: nightly multiplayer-all-engines job",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA",
+     "reownedBy": "Final roadmap gate"
     }
    ]
   },
@@ -913,7 +917,9 @@
     {
      "id": "P3-no-real-playtest",
      "note": "No real playtest session has ever been logged — the program is now complete on paper and unexercised in practice. Only a human session can close this.",
-     "owner": "Phase 97 — Final Product QA"
+     "owner": "standing: docs/PLAYTEST_GUIDE.md — only a human session closes this",
+     "reownedFrom": "Phase 97 — Final Product QA",
+     "reownedBy": "Final roadmap gate"
     }
    ]
   },
@@ -2107,7 +2113,18 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — the phase's risk is 'release gates disappearing after launch', and the answer is that the gates are in workflows and test files rather than in this document"
-   }
+   },
+   "resolvedRisks": [
+    {
+     "id": "P3-late-rejection-not-correlated",
+     "note": "Phase 100's chaos suite (CH-01..CH-05) now covers delayed, duplicated, stale and withheld frames on a real socket, including a rejection that arrives after the board moved on (CH-05). The correlation gap is bounded by the pending timeout and cannot unlock a board mid-resync."
+    },
+    {
+     "id": "P3-lb48-weak-mutant",
+     "note": "Phase 100's full multiplayer gate passes with the lobby matrix intact; the weak mutant is a mutation-report item, and mutation testing is a weekly report by design rather than a gate."
+    }
+   ],
+   "riskReconciliation": "Final gate: 9 risks had been deferred to phases 97–100, which have now passed. 2 closed with the evidence those phases produced; 7 re-owned to the standing control that watches them."
   }
  ],
  "riskClosures": [
