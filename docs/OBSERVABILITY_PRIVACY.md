@@ -47,7 +47,11 @@ processed" — the latter would not be true.
 
 Structured, level-gated, one JSON object per line (`server/log.ts`). stdout carries `debug` and
 `info`; stderr carries only genuine errors, so a non-empty stderr is always worth reading.
-Nothing is written to disk by the application itself.
+Nothing is written to disk by the application itself. The first line a process writes is
+`server_listening`, which carries the `build` (the `package.json` version of the running code) —
+after a deploy or a rollback, the running build is a fact worth having next to the failures. It
+is in the log, not on the open `/health` endpoint, which still says nothing a stranger can
+fingerprint the deployment with.
 
 Privacy is enforced **inside the logger**, not at call sites, so a new call site cannot leak by
 forgetting:
@@ -204,6 +208,13 @@ counters — turns, draws, undos, rejection reasons. It:
 It is on by default because the results screen reads its per-player counters; `?playlog=0`
 turns it off. A player can export it themselves from Settings → Advanced (it goes to the
 clipboard) and choose to attach it to a bug report. Nothing exports it for them.
+
+`window.__MEXE__.errors` is the other client-side buffer: the messages of uncaught errors and
+rejected promises, kept in memory for the e2e suites and for a developer looking at a stuck tab.
+It goes nowhere either — there is no reporting backend, and a failure never depends on one. It
+is capped at 50 entries and drops a repeat of the message already on top, because the failure
+worth reading is the first distinct one, not the thousandth copy of a throw that fires every
+frame in a tab an installed PWA keeps open for days.
 
 Player saves and settings are `localStorage` only; clearing site data resets them.
 

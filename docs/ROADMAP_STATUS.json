@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "8B",
-  "phase": "71 — Production Error Reporting",
+  "phase": "72 — Privacy & Data Model Review",
   "status": "NOT_STARTED"
  },
- "head": "0481c34",
+ "head": "7babe0e",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -803,6 +803,35 @@
      "owner": "Phase 100 — Final Multiplayer QA"
     }
    ]
+  },
+  {
+   "phase": "71 — Production Error Reporting",
+   "wave": "8B",
+   "status": "PASS",
+   "result": "Reason codes, privacy-safe logging, metrics and the no-backend rule were already built (docs/OBSERVABILITY_PRIVACY.md). Two gaps closed: the client error buffer was unbounded and undeduplicated, and no running process said which build it was.",
+   "changed": [
+    "src/verification/debug-api.ts — recordError(): drops a repeat of the message on top, caps the buffer at MAX_RECORDED_ERRORS = 50",
+    "tests/debug-api.test.ts — new, covers dedup and the cap",
+    "server/index.ts — server_listening now carries build (package.json version); deliberately not added to the open /health, which stays unfingerprintable",
+    "docs/OBSERVABILITY_PRIVACY.md — both, in the sections that own them"
+   ],
+   "acceptance": "critical failures diagnosable (errorType + rate metrics + build in the startup line; client keeps the first distinct failures); reporting excludes private state (unchanged logger-level redaction, no new field carries free text); no dependency on reporting availability (there is still no backend anywhere); logging volume controlled (client buffer bounded + deduplicated; server logs level-gated and field-bounded)",
+   "verification": [
+    "MEXE_OUTPUT=ai npm run test (1124/1124, exit 0)",
+    "npm run lint (exit 0)",
+    "npx tsx server/index.ts — startup line shows build 1.11.0"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p71-test.log",
+     "tmp/agent-logs/p71-server2.log"
+    ],
+    "incident": "A first tests/server run showed 2 failures (OH-34/OH-35, session soak). Cause was a stray `tsx server/index.ts` left holding port 8787 by a manual startup check, not the change: both pass after killing it. Recorded rather than hidden."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the dedup rule is 'same as previous', so alternating distinct failures are all kept and only the cap bounds them; no product code path depends on the buffer"
+   }
   }
  ],
  "riskClosures": [

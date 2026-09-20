@@ -365,6 +365,21 @@ export const debugApi: MexeDebugApi = {
   },
 };
 
+/**
+ * One failure usually fires many times — a render throw repeats every frame, and a rejected
+ * promise in a retry loop repeats per attempt. Both would otherwise grow this array for as long
+ * as the tab is open, which an installed PWA measures in days. A repeat of the message already
+ * on top is dropped, and the buffer is capped: what a reader needs is the first distinct
+ * failures, not the thousandth copy of one.
+ */
+export const MAX_RECORDED_ERRORS = 50;
+
+export function recordError(message: string): void {
+  if (debugApi.errors[debugApi.errors.length - 1] === message) return;
+  debugApi.errors.push(message);
+  if (debugApi.errors.length > MAX_RECORDED_ERRORS) debugApi.errors.shift();
+}
+
 export function installDebugApi(): void {
   window.__MEXE__ = debugApi;
   debugApi.offline = isOffline();
@@ -372,10 +387,10 @@ export function installDebugApi(): void {
     debugApi.offline = offline;
   });
   window.addEventListener('error', (e) => {
-    debugApi.errors.push(String(e.message));
+    recordError(String(e.message));
   });
   window.addEventListener('unhandledrejection', (e) => {
-    debugApi.errors.push(`unhandledrejection: ${String(e.reason)}`);
+    recordError(`unhandledrejection: ${String(e.reason)}`);
   });
   const params = new URLSearchParams(location.search);
   // URL input is owned here, not by the modules that react to it — `?playlog=0` opts a session

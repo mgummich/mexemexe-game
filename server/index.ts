@@ -3,6 +3,7 @@
  * See docs/MULTIPLAYER.md for protocol and validation order.
  */
 import { timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -928,11 +929,27 @@ const listenFailed = (err: NodeJS.ErrnoException): never => {
 wss.on('error', listenFailed);
 server.on('error', listenFailed);
 
+/**
+ * Which build is serving. After a deploy or a rollback the operator's first question is exactly
+ * this, and an image tag is what they *asked* for, not what is running. Startup log only: the
+ * open `/health` endpoint deliberately keeps saying nothing a stranger can fingerprint the
+ * deployment with (docs/OBSERVABILITY_PRIVACY.md).
+ */
+function buildVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: unknown };
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 server.listen(config.port, config.host, () => {
   log.info('server_listening', {
     port: config.port,
     host: config.host,
     mode: config.mode,
+    build: buildVersion(),
     protocol: PROTOCOL_VERSION,
     maxRooms: config.maxRooms,
   });
