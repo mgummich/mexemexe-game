@@ -205,13 +205,25 @@ jobs:
           retention-days: 7
 
   multiplayer-all-engines:
-    name: Multiplayer, all engines
+    name: Multiplayer, all engines (shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
     # The engine parity the PR job gave up (see ci.yml's multiplayer job): the lobby state machine
     # on Chromium, Firefox and WebKit plus the iOS-viewport WebKit spec, gated by the full
     # check-verify-multiplayer.mjs (all three engines demanded, since nothing here is engine-
-    # limited). Measured ~18m on a shared runner.
+    # limited).
+    #
+    # Six shards, ONE worker each, same as ci.yml and for the same reason. This job was red every
+    # night from 2026-09-16 to 2026-09-20 on `page.waitForFunction` timeouts (OD-28/OD-29, OM-07,
+    # LB-17, LB-18) — never a product failure, always the runner. It runs strictly more tests
+    # concurrently than anything else: every engine's lobby replay, the iOS spec and @chaos on top
+    # of the full Chromium suite, all on 4 shared cores, and the nightly-only path kept growing
+    # (seat-gap lobby tests, @chaos moved here, then ios-lobby.spec.ts). Two workers each holding
+    # 2-4 browser contexts plus a server is what tipped it; one test per runner is what fixes it.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -220,11 +232,31 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
-      - run: npm run verify:multiplayer
+      - run: npm run test:multiplayer -- --shard=${{ matrix.shard }}/6 --workers=1
+      # Staged into one directory so upload-artifact roots every shard's artifact at the same
+      # depth whichever parts a shard happened to produce. verify-lobby-ios-log.json is a plain
+      # file, not a parts directory, and only the shard that drew the WebKit iOS spec writes it.
+      - name: Stage this shard's evidence
+        if: always()
+        run: |
+          mkdir -p evidence
+          for d in verify-multiplayer-log-parts verify-lobby-log-parts; do
+            if [ -d "docs/screenshots/$d" ]; then cp -r "docs/screenshots/$d" evidence/; fi
+          done
+          if [ -f docs/screenshots/verify-lobby-ios-log.json ]; then
+            cp docs/screenshots/verify-lobby-ios-log.json evidence/
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: multiplayer-all-engines-evidence-${{ matrix.shard }}
+          path: evidence
+          if-no-files-found: warn
+          retention-days: 1
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: multiplayer-all-engines-artifacts
+          name: multiplayer-all-engines-artifacts-${{ matrix.shard }}
           path: |
             test-results/
             docs/screenshots/verify-multiplayer-log.json
@@ -232,14 +264,51 @@ jobs:
             docs/screenshots/verify-lobby-ios-log.json
           retention-days: 7
 
+  multiplayer-all-engines-gate:
+    # Keeps the old job's name: this is the check that says engine parity held.
+    name: Multiplayer, all engines
+    needs: multiplayer-all-engines
+    # A skipped job is not a failed one, so run always and fail on the shards' result instead.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Every shard must have passed
+        if: needs.multiplayer-all-engines.result != 'success'
+        run: |
+          echo "all-engines shards: ${{ needs.multiplayer-all-engines.result }}"
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: multiplayer-all-engines-evidence-*
+          merge-multiple: true
+          path: docs/screenshots
+      # No --engines and no --skip-endurance: the nightly gate is the strict one, demanding lobby
+      # evidence from all three engines, the three-match endurance run and the iOS WebKit gate.
+      - run: node scripts/check-verify-multiplayer.mjs
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: multiplayer-all-engines-gate-evidence
+          path: |
+            docs/screenshots/verify-multiplayer-log.json
+            docs/screenshots/verify-lobby-log.json
+            docs/screenshots/verify-lobby-ios-log.json
+          retention-days: 7
+
   multiplayer-traced:
-    name: Multiplayer, traced (race stress)
+    name: Multiplayer, traced (race stress, shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
     # Tracing slows frame processing enough to lose races a fast machine always wins — that is
     # how the double-click create_room duplicate was found (5/5 reproduction under tracing, 0/5
     # without). It costs wall clock (verify:multiplayer 2m14 -> 5m02), so it lives here instead
     # of on every PR, and it doubles as the traced-diagnostics run for this suite.
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -251,12 +320,15 @@ jobs:
       - run: npm run build
       # Chromium only, and therefore the suite rather than `verify:multiplayer`: this job exists
       # to lose races under tracing, and the Firefox/WebKit lobby evidence its gate would want
-      # comes from multiplayer-all-engines above. Tracing roughly doubles the wall clock.
-      - run: MEXE_TRACE=1 npx playwright test -c playwright.multiplayer.config.ts --project=chromium
+      # comes from multiplayer-all-engines above. Tracing roughly doubles the wall clock, which is
+      # why this job is sharded one-test-per-runner too: tracing is meant to lose races by
+      # slowing frame processing, not by starving the runner of cores. It was red every night
+      # from 2026-09-16 with the same `page.waitForFunction` timeouts as the job above.
+      - run: MEXE_TRACE=1 npx playwright test -c playwright.multiplayer.config.ts --project=chromium --shard=${{ matrix.shard }}/6 --workers=1
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: multiplayer-traced-artifacts
+          name: multiplayer-traced-artifacts-${{ matrix.shard }}
           path: |
             test-results/
             docs/screenshots/verify-multiplayer-log.json

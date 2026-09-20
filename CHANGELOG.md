@@ -29,6 +29,14 @@ and those remain readable in git history.
   `Multiplayer verification` job merges every shard's evidence and runs
   `check-verify-multiplayer.mjs` once, which needed no new merge logic: the gate
   already merged per-worker shards. No coverage changes.
+- **The two nightly multiplayer jobs are sharded the same way.** They had been
+  red every night since 2026-09-16 — `page.waitForFunction` timeouts on
+  `OD-28/OD-29`, `OM-07`, `LB-17` and `LB-18`, never a product failure. They run
+  strictly more tests concurrently than any other job (every engine's lobby
+  replay, the iOS spec and `@chaos` on top of the full Chromium suite), and the
+  nightly-only path kept growing underneath them. Six shards at one worker each,
+  with a gate job merging the evidence and running the strict form of
+  `check-verify-multiplayer.mjs`.
 - `LB-19/LB-21..LB-24`, the three-match endurance run, is tagged `@endurance`
   and off the PR path, like `@chaos` before it: 7.3m of a 21.9m suite in one
   test. The nightly `multiplayer-all-engines` job runs it on all three engines,
