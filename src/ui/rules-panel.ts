@@ -3,10 +3,11 @@ import { CARD_H, CARD_W } from '../assets/manifest';
 import { t } from '../localization/i18n';
 import { clampScroll } from '../table/editor-layout';
 import { cx as centreX, panelW } from './menu-layout';
-import { buildOverlay, onEscape } from './overlay';
+import { buildOverlay, closeOnShutdown, onEscape } from './overlay';
 import { rulesBox, rulesBtnH, RULES_TAB_DX } from './settings-layout';
 import { fontStyle, label, PixelButton } from './widgets';
 import { debugApi } from '../verification/debug-api';
+import { ACTION, LAYER, SURFACE, TEXT } from './tokens';
 
 /**
  * BASICS is a one-screen visual quick reference (what is legal, shown in cards), CONTROLS is how
@@ -27,6 +28,9 @@ const EXAMPLES: { captionKey: string; cards: string[] }[] = [
 const EX_W = Math.round(CARD_W * 0.75);
 const EX_H = Math.round(CARD_H * 0.75);
 const EX_GAP = 2;
+
+/** A mask's fill is coverage, not colour: fully opaque white means "this area shows". Never rendered. */
+const MASK_FILL = 0xffffff;
 
 /**
  * What the board is waiting on right now, supplied by the scene that opens the panel. The panel
@@ -54,9 +58,11 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void, contex
     objs = [];
   };
   const offEsc = onEscape(scene, () => (current === 'basics' ? close() : show('basics')));
+  const offShutdown = closeOnShutdown(scene, () => close());
   const close = (): void => {
     clear();
     offEsc();
+    offShutdown();
     debugApi.rulesOpen = false;
     onClosed();
   };
@@ -69,20 +75,20 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void, contex
       // The answer to "what do I do now" goes above the evergreen rules, in gold so it reads as
       // this-moment information rather than another rule line.
       const hint = scene.add
-        .text(left, 0, context.hint, { ...fontStyle(7, '#f7d23e'), wordWrap: { width: w - 20 } })
+        .text(left, 0, context.hint, { ...fontStyle(7, TEXT.accent), wordWrap: { width: w - 20 } })
         .setOrigin(0, 0);
       c.add(hint);
       y = hint.height + 6;
     }
     const goal = scene.add
-      .text(left, y, t('rules.goal'), { ...fontStyle(7, '#f0e8d8'), wordWrap: { width: w - 20 } })
+      .text(left, y, t('rules.goal'), { ...fontStyle(7, TEXT.primary), wordWrap: { width: w - 20 } })
       .setOrigin(0, 0);
     c.add(goal);
     y += goal.height + 5;
     for (const ex of EXAMPLES) {
       const capX = left + ex.cards.length * (EX_W + EX_GAP) + 6;
       const caption = scene.add
-        .text(capX, 0, t(ex.captionKey), { ...fontStyle(7, '#f0e8d8'), wordWrap: { width: w / 2 - 10 - capX } })
+        .text(capX, 0, t(ex.captionKey), { ...fontStyle(7, TEXT.primary), wordWrap: { width: w / 2 - 10 - capX } })
         .setOrigin(0, 0.5);
       const rowH = Math.max(EX_H, caption.height);
       caption.setY(y + rowH / 2);
@@ -106,7 +112,7 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void, contex
     let y = 0;
     for (const text of blocks) {
       const block = scene.add
-        .text(left, y, text, { ...fontStyle(7, '#f0e8d8'), align: 'left', wordWrap: { width: w - 20 } })
+        .text(left, y, text, { ...fontStyle(7, TEXT.primary), align: 'left', wordWrap: { width: w - 20 } })
         .setOrigin(0, 0);
       c.add(block);
       y += block.height + 6;
@@ -120,7 +126,7 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void, contex
 
     // Content is measured (locale + large-text scaled) instead of assumed, so the panel never
     // guesses wrong about how tall the real copy is.
-    const content = scene.add.container(0, 0).setDepth(510);
+    const content = scene.add.container(0, 0).setDepth(LAYER.panelContent);
     const contentH = next === 'basics'
       ? buildBasics(content)
       : buildText(content, next === 'controls' ? [t('rules.shortcuts'), t('rules.uiHelp')] : [t('rules.body')]);
@@ -137,13 +143,13 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void, contex
     const base = buildOverlay(scene, w, h, close);
     objs.push(...base.objs);
 
-    objs.push(label(scene, cx, top + 11, t('rules.title'), 9, '#f7d23e').setDepth(510));
+    objs.push(label(scene, cx, top + 11, t('rules.title'), 9, TEXT.accent).setDepth(LAYER.panelContent));
 
     const tab = (dx: number, key: string, target: RulesView): void => {
       const btn = new PixelButton(scene, cx + dx, box.tabY, t(key), () => show(target), {
         textureBase: 'btn-comprar', w: Math.min(86, w / 2 - 8), h: btnH, size: 7,
-        color: next === target ? 0xffffff : 0x6b6b73,
-      }).setDepth(510);
+        color: next === target ? ACTION.native : ACTION.tertiary,
+      }).setDepth(LAYER.panelContent);
       // Gold ring, not just a lighter wood: the active tab must not be signalled by colour alone.
       btn.setSelected(next === target);
       objs.push(btn);
@@ -157,7 +163,7 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void, contex
 
     if (canScroll) {
       const gfx = scene.make.graphics(undefined, false);
-      gfx.fillStyle(0xffffff);
+      gfx.fillStyle(MASK_FILL);
       gfx.fillRect(cx - w / 2, contentTop, w, contentAreaH);
       // Phaser 4 ignores setMask() under WebGL ("use a Mask filter instead"), so the geometry
       // mask this panel used to build did nothing and the full-rules text spilled out over the
@@ -169,7 +175,7 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void, contex
       // Now that the clip actually clips, a sentence cut in half needs to read as "there is more
       // below", not as a rendering bug. The arrow disappears once the content is scrolled out.
       const more = scene.add
-        .text(cx + w / 2 - 7, contentTop + contentAreaH, '▼', fontStyle(7, '#f7d23e'))
+        .text(cx + w / 2 - 7, contentTop + contentAreaH, '▼', fontStyle(7, TEXT.accent))
         .setOrigin(0.5, 1)
         .setDepth(511);
       objs.push(more);
@@ -177,7 +183,7 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void, contex
       // Drag-to-scroll over the content area — same gesture (and same clamp) the mobile editor's
       // meld list already uses (src/table/editor-layout.ts).
       const dragSurface = scene.add
-        .rectangle(cx, contentTop + contentAreaH / 2, w, contentAreaH, 0x000000, 0)
+        .rectangle(cx, contentTop + contentAreaH / 2, w, contentAreaH, SURFACE.scrim, 0)
         .setDepth(509)
         .setInteractive({ useHandCursor: false });
       objs.push(dragSurface);
@@ -219,13 +225,13 @@ export function openRulesPanel(scene: Phaser.Scene, onClosed: () => void, contex
       objs.push(
         new PixelButton(scene, cx, box.secondaryY, t(secondaryKey),
           () => show(next === 'basics' ? 'full' : 'basics'), {
-            textureBase: 'btn-comprar', w: Math.min(170, w - 20), h: btnH, size: 7, color: 0x8a7f68,
-          }).setDepth(510),
+            textureBase: 'btn-comprar', w: Math.min(170, w - 20), h: btnH, size: 7, color: ACTION.secondary,
+          }).setDepth(LAYER.panelContent),
       );
     }
     objs.push(new PixelButton(scene, cx, box.closeY, t('settings.close'), close, {
-      textureBase: 'btn-comprar', w: 90, h: btnH, size: 7, color: 0x6b6b73,
-    }).setDepth(510));
+      textureBase: 'btn-comprar', w: 90, h: btnH, size: 7, color: ACTION.tertiary,
+    }).setDepth(LAYER.panelContent));
   };
 
   show('basics');

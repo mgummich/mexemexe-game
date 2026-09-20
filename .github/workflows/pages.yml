@@ -1,8 +1,14 @@
 name: Deploy to GitHub Pages
 
 on:
-  push:
+  # After CI, not beside it. On a `push` trigger this workflow raced the CI run on the same
+  # commit, so a main that failed lint, the unit suites or the multiplayer/PWA gates still
+  # published a playable build. `workflow_run` with a success check makes the public build the
+  # promotion of a green commit rather than of the newest one.
+  workflow_run:
+    workflows: ['CI']
     branches: [main]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -16,10 +22,16 @@ concurrency:
 
 jobs:
   build:
+    # A manual dispatch deploys whatever it was pointed at; an automatic run only ever deploys a
+    # commit whose CI passed.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The commit CI actually tested, not whatever main points at by the time this starts.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22

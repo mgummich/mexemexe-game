@@ -4,33 +4,8 @@ import { applyGameAction } from '../src/game-state/actions';
 import { GameStore } from '../src/game-state/store';
 import { DraftEditor } from '../src/mexe-mode/draft';
 import type { GameState } from '../src/rules/types';
-import { DEFAULT_RULES } from '../src/rules/types';
 import { n } from './helpers/cards';
-
-/** Seat 0 can extend the table run with hearts-2; seat 1 is an AI seat holding one card. */
-function state(): GameState {
-  return {
-    seed: 1,
-    players: [
-      { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 2), n('spades', 9), n('clubs', 9)] },
-      { id: 'p1', name: 'B', isAi: true, hand: [n('clubs', 4), n('clubs', 5)] },
-    ],
-    activePlayerIndex: 0,
-    table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
-    drawPile: [n('spades', 7), n('spades', 8)],
-    turn: 1,
-    winnerId: null,
-    phase: 'playing',
-    config: DEFAULT_RULES,
-  };
-}
-
-/** The legal "play hearts-2 onto the run" draft the UI would build for the given state. */
-function legalDraft(s: GameState) {
-  const ed = new DraftEditor(s);
-  ed.playHandCard('hearts-2-d0', 't1', 0);
-  return ed.getDraft();
-}
+import { finishedMatch, gameState as state, legalDraft } from './helpers/scenarios';
 
 describe('applyGameAction', () => {
   it('accepts a legal confirm and reports what it did', () => {
@@ -50,7 +25,7 @@ describe('applyGameAction', () => {
   });
 
   it('rejects any action once the match is finished', () => {
-    const s: GameState = { ...state(), phase: 'finished', winnerId: 'p0' };
+    const s = finishedMatch();
     expect(applyGameAction(s, { type: 'drawAndEndTurn', actorIndex: 0 })).toEqual({
       ok: false,
       reasons: ['reason.notYourTurn'],

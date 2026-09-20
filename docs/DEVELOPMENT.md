@@ -61,15 +61,111 @@ so a capture does not have to click through the settings panel.
 | `npm run server` | WebSocket server for online rooms |
 | `npm run replay run <file>` / `record <seed>` | Reproduce or capture a deterministic match — see below |
 | `npm run test` / `test:watch` / `test:server` | Vitest — see [TESTING.md](TESTING.md) |
+| `npm run test:property` / `test:replay` / `test:mutation` | Extended fuzz budget, the golden replays alone, mutation testing — see [TESTING.md](TESTING.md) |
 | `npm run lint` | ESLint + `tsc --noEmit` |
 | `npm run screenshot` | Build + Playwright screenshot/perf suite |
 | `npm run verify` / `verify:multiplayer` / `verify:multiplayer:chromium` / `verify:cross` / `verify:pwa` / `verify:preview` | Verification gates — see [TESTING.md](TESTING.md) |
 | `npm run gen:cosmetics` | Regenerate procedural table/card-back/emote PNGs (deterministic) |
 | `npm run gen:icons` | Regenerate the PWA manifest icons (deterministic) |
+| `npm run health` | Roadmap and risk health, derived — see below |
 | `npm run release` | Version bump + CHANGELOG collapse + tag (see [CONTRIBUTING.md](CONTRIBUTING.md)) |
 
 `node scripts/gen-sfx.mjs` regenerates the synthesized sound effects; there is
 no npm alias for it.
+
+## Repository health
+
+```bash
+npm run health
+```
+
+Derives the state of the roadmap from `docs/ROADMAP_STATUS.json` — the current
+phase, how phases closed, anything `BLOCKED`, and the two risk lists that matter:
+risks deferred to a phase that has **already passed** (the actionable ones, since
+nobody is coming back for them by accident) and risks waiting on a phase still
+ahead.
+
+It prints three lists: risks deferred to a phase that has **already passed** (the
+actionable ones), risks waiting on a phase still ahead, and risks a **standing
+control** owns — the ones no phase will ever close, because the thing that
+watches them is a recurring job rather than a milestone.
+
+It prints no score. One number would hide which area is failing, which is the
+only thing worth knowing. And it restates nothing: every other signal is a
+command or a document that owns it, listed at the end of the output — CI and
+nightly for gate status, `tests/boundaries.test.ts` for architecture,
+`tests/docs-drift.test.ts` for documentation, `tests/deployment.test.ts` for
+shipped config, [THREAT_MODEL.md](THREAT_MODEL.md) for anything not yet mitigated,
+[PERFORMANCE.md](PERFORMANCE.md) for budgets, and
+[ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md) §11 for structural debt.
+
+### What keeps running after the roadmap
+
+The controls below are scheduled, not remembered. Together they are what lets
+this repository keep changing without re-running a roadmap to find out what
+broke:
+
+| When | What | Gates? |
+|---|---|---|
+| Every pull request | lint, unit suites, build, multiplayer (Chromium), PWA, browser journeys, cross-browser layout, the server image booting unprivileged — scaled to what the change touches | yes |
+| Every run of `npm run test` | the five guard tests: boundaries, docs drift, deployment config, assets, no-telemetry | yes |
+| Nightly | extended fuzz and golden replays, the long session soak, WebKit touch flake detection, the screenshot suite untraced and retry-free, the full cross-browser matrix, fps drift, multiplayer on all three engines and under tracing, dependency advisories, the six visual baselines, and the performance trend | mostly no — they report |
+| Weekly | mutation testing over the core and wire modules | no, it is a report |
+| Weekly | Dependabot, grouped, three open at a time | no |
+
+Nothing in that table was added at the end as a ceremony: each row exists
+because something it now catches was found by hand at least once.
+
+## Dependencies and bundle cost
+
+Three runtime dependencies. Each one is here for a reason that can be stated in
+a sentence, and the cost of each is measured rather than assumed
+([PERFORMANCE.md](PERFORMANCE.md)):
+
+| Dependency | Why | Cost | What would replace it |
+|---|---|---|---|
+| `phaser` | the game renders a canvas scene graph with input, tweens, audio and asset loading; all of it is used | 347 kB gzip — 80 % of the shipped JS | nothing realistic: this *is* the presentation layer |
+| `ws` | the room server needs a WebSocket implementation; Node has none for servers | server-side only, never shipped to a browser | Node's built-in server WebSocket, if it ever stabilises |
+| `tsx` | runs `server/index.ts` directly, so the server ships as the TypeScript it is reviewed as | server image only: `tsx` + `esbuild` and its platform binary | a compile step in the Dockerfile's server stage and plain `node` — see the note below |
+
+Everything else is dev tooling (10 direct packages: Vite, Vitest, Playwright,
+ESLint, TypeScript, Stryker, and their types). The lockfile has 391 entries, 358
+of them dev-only; of the 33 that are not, most are `esbuild`'s per-platform
+binaries, and exactly one is a transitive library (`eventemitter3`, via Phaser).
+Ten packages exist at two versions in the lockfile — all of them dev-only
+transitives (Babel, ESLint, ajv) that never reach the bundle or the server image.
+
+**`tsx` in production is a deliberate trade.** Running TypeScript directly keeps
+the deployed server identical to the reviewed source, with no build artefact to
+drift, and the server image is not player-facing. The cost is a transpiler and
+`esbuild` inside the runtime image. Revisit if any of these becomes true: the
+server image is exposed to untrusted input beyond the WebSocket boundary, startup
+time starts to matter, or `tsx`/`esbuild` acquires an advisory that has no patch.
+It is a one-stage Dockerfile change plus `OPERATIONS.md`, not an architecture
+change.
+
+### Rules
+
+- **A new runtime dependency needs a sentence in the table above.** If the
+  sentence is "it would be convenient", the answer is no — see the YAGNI ladder
+  in `AGENTS.md` (rung 7 is the last rung, not the first).
+- **A dev dependency still costs.** It runs in CI, on every contributor's
+  machine, and in the supply chain that produces the build.
+- **The lockfile is committed and CI installs with `npm ci`.** Every job, every
+  workflow: a resolved tree is part of what is being tested.
+- **Advisories are checked nightly**, not per PR (`.github/workflows/nightly.yml`,
+  `dependency-audit`): runtime dependencies at `--audit-level=moderate`, dev
+  tooling at `high`, and `npm outdated` reported without failing. A gate that
+  fails for reasons unrelated to the diff in front of a reviewer gets ignored.
+- **Updates land as their own change**, with the gates the dependency affects —
+  a Vite bump runs the build and the browser suites, a Vitest bump runs the unit
+  suites. Majors are never bundled with feature work. Dependabot opens them
+  weekly, grouped into one production and one development pull request and capped
+  at three open at a time (`.github/dependabot.yml`), which is what keeps this
+  rule from turning into a backlog.
+- **Duplicates are only a problem where they ship.** Dev-only duplicate versions
+  are npm doing its job; a duplicate inside `dist/` or the server image is a
+  defect.
 
 ## Reproducing a bug from a replay
 
@@ -108,9 +204,11 @@ corrupt replay: action 31 (confirmTurn) refused: reason.runGap
 
 The hash is a digest of the full final state; a `finalHash` recorded with the
 replay is checked on every run, so a rules change that moves the outcome fails
-as `replayDiverged` rather than silently producing a different match. Committed
-examples live in `tests/fixtures/replays/` and are replayed by
-`tests/replay.test.ts`.
+as `replayDiverged` rather than silently producing a different match. The five
+committed examples in `tests/fixtures/replays/` are the golden corpus, replayed
+by `tests/replay.test.ts` on every `npm run test`; they are behaviour
+expectations, not samples, so regenerating one is a reviewed act —
+[TESTING.md](TESTING.md#golden-update-policy).
 
 Attach the replay JSON to a bug report. It carries no names or tokens — seats
 are `p0`/`p1` and cards are ids — but it does reveal the whole deal, which is
@@ -161,3 +259,6 @@ stay in one place.
 | Server refuses to start | Invalid env value — it names the variable and exits rather than silently defaulting. See [OPERATIONS.md](OPERATIONS.md). |
 | A deal is not reproducible | Pass `?seed=`. Without it the seed comes from the clock; it is recorded in state and in the play log. |
 | The docs build fails in CI but not locally | `mkdocs build --strict` treats warnings as errors. Run it with `--strict` locally too. |
+| `tests/server` times out on the two baseline tests (`OH-34/OH-35`, the session soak) | A leftover `tsx server/index.ts` is holding :8787 — often from running the server by hand, since `npx` children outlive the shell wrapper. `ps aux \| grep "tsx server/index.ts"`, kill it, re-run. The failure looks like starvation, not a port conflict, which is why it reads as a regression in whatever you were changing. |
+| An `@perf` fps floor fails locally | Something else is using the machine — most often a second Playwright suite. The floors assume an idle machine and already take the best of three windows; the failure prints all three, and interference moves one while a real regression moves all ([TESTING.md](TESTING.md) §Flake policy). |
+| `git status` is full of modified PNGs after a verify run | Expected: the screenshot suite writes into `docs/screenshots/`. Consecutive runs are byte-identical, so this is staleness in the committed set, not a visual change. Revert them unless you meant to refresh. |

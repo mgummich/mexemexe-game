@@ -241,7 +241,7 @@ describe('OM queue over the wire', () => {
   it('OM-36 the queue protocol is refused at the wire boundary like every other message', async () => {
     const c = await Client.open(PORT);
     c.sendRaw(JSON.stringify({ v: PROTOCOL_VERSION - 1, type: 'join_queue', reqId: 'r1', target: 'any', name: 'Ana' }));
-    expect((await c.next('error')).code).toBe('bad_message');
+    expect((await c.next('error')).code).toBe('unsupported_version');
     c.close();
   });
 

@@ -3,8 +3,8 @@ import { onAppHidden, onAppVisible } from '../core/lifecycle';
 import { debugApi } from '../verification/debug-api';
 
 /**
- * Ambient background music: a plain HTMLAudioElement (not the Phaser
- * loader, so nothing is preloaded — ~11MB of mp3) streamed over 5 tracks,
+ * Ambient background music: a plain HTMLAudioElement with `preload = 'none'` (not the Phaser
+ * loader, and nothing is fetched until playback actually starts — ~11MB of mp3) over 5 tracks,
  * picked by context so the player gets calmer music during Mexe (the
  * concentration-heavy draft) than during general play. Playback survives
  * scene changes on its own; scenes just call setMusicContext().
@@ -126,7 +126,13 @@ export function setMusicContext(ctx: MusicContext): void {
 /** Starts the playlist. Safe to call more than once — only the first call takes effect. */
 export function startMusic(): void {
   if (audio) return;
-  audio = new Audio(nextTrackFor(context));
+  audio = new Audio();
+  // `preload = 'none'` before the src, not after: Chrome's default is 'auto', so
+  // `new Audio(src)` starts downloading the whole track immediately — 1.2 MB measured on a cold
+  // boot, for music that is *off by default* and may never be played at all. With this, the
+  // first byte is fetched when play() is finally called.
+  audio.preload = 'none';
+  audio.src = nextTrackFor(context);
   audio.volume = settings.musicVolume();
   audio.addEventListener('ended', () => {
     if (!audio) return;

@@ -1,4 +1,5 @@
 import type { DraftState, GameState } from '../rules/types';
+import { isOffline, onConnectivityChange } from '../core/pwa';
 import { settings } from '../core/settings';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { Replay } from '../game-state/replay';
@@ -21,6 +22,21 @@ export interface RenderedSeatRow {
   host: boolean;
   status: 'empty' | 'waiting' | 'ready' | 'offline';
   wins: number;
+}
+
+/**
+ * One painted block of the lobby's vertical stack, in world units, recorded by
+ * `OnlineScene.renderLobby` as it lays out. The lobby is a flow, not a set of fixed
+ * y-coordinates, so "nothing overlaps and nothing leaves the screen" is a property a test can
+ * only check against what was actually painted — at the text scale and in the locale it ran in.
+ */
+export interface LobbyBox {
+  /** Stable name of the block: 'code', 'actions', 'summary', 'seat0'…, 'notice', 'reactions',
+   * 'ready', 'start', 'startReason'. */
+  id: string;
+  /** Top edge and height in world units; the stack is vertical, so x/width are not tracked. */
+  top: number;
+  h: number;
 }
 
 /**
@@ -101,6 +117,9 @@ export interface MexeOnlineDebugApi {
    * lobby screen. Asserting on this (not on `players()`) is what makes a vanished occupied seat
    * visible to a test. */
   lobbySeats?: () => RenderedSeatRow[];
+  /** Verification-only: the lobby's painted vertical blocks, top to bottom. Empty off the lobby
+   * screen. See `LobbyBox`. */
+  lobbyBoxes?: () => LobbyBox[];
   /** Verification-only: the lobby's in-place refusal line (not ready / not host / already
    * started), or null when nothing is being explained. */
   lobbyNotice?: () => string | null;
@@ -154,6 +173,24 @@ interface MexeResultsSummary {
   }[];
 }
 
+/** What a repeated-match measurement counts. Every field has one owner in the product. */
+export interface LifecycleCounts {
+  /** Scene keys Phaser currently has running. Exactly one gameplay scene should ever be active. */
+  activeScenes: string[];
+  /** Game objects held by the active scenes — a scene that does not clean up grows this. */
+  sceneChildren: number;
+  /** Tweens still owned by the active scenes. */
+  tweens: number;
+  /** Sound instances the Phaser sound manager holds. */
+  sounds: number;
+  /** Live `bus` subscriptions (`src/core/events.ts`) — the ARCH-007 leak, if it comes back. */
+  busSubscribers: number;
+  /** Entries in the in-memory play log ring (bounded by design). */
+  playlogEntries: number;
+  /** Top-level DOM children of `<body>`: the canvas plus any overlay plate still attached. */
+  domChildren: number;
+}
+
 /** Exposed on window.__MEXE__ for Playwright verification. */
 interface MexeDebugApi {
   ready: boolean;
@@ -182,9 +219,13 @@ interface MexeDebugApi {
   tutorialStep: number | null;
   /** Explanation text of the most recent AI decision, written by GameScene.runAiTurn. Null before any AI turn. */
   lastAiThought: string | null;
-  /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge. */
-  a11y: { invalidBadges: number };
-  /** Verification-only (Phase 15 PWA): current offline state, kept in sync by src/core/pwa.ts. */
+  /** Accessibility state for e2e: count of meld zones currently showing the invalid (✗) badge,
+   * and whether the tutorial panel is currently *writing out* a refused interaction rather than
+   * only playing the rejection sound (A11Y-007). */
+  a11y: { invalidBadges: number; tutorialRefusalShown: boolean };
+  /** Verification-only (Phase 15 PWA): current offline state. Observed here, from the same
+   * browser events the offline banner reacts to — the banner used to write it, which made the
+   * product module import this one (ARCH-011) and closed a type-only import cycle (ARCH-012). */
   offline: boolean;
   /** Verification-only (Phase 14 perf fix): running count of DraftEditor.analyze() calls this
    * session — used to prove a table pan / editor scroll never re-triggers a legality analysis
@@ -207,6 +248,10 @@ interface MexeDebugApi {
   /** Active layout world + input mode (see src/ui/viewport.ts). Lets e2e map world coordinates
    * onto the canvas without assuming an orientation or a scale factor. */
   viewport: () => ViewProfile;
+  /** Verification-only (Phase 77): the counts a long session can grow. Provided by `main.ts`,
+   * which owns the Phaser game; null until it is. Reading it is how the memory-drift measurement
+   * attributes growth to an owner instead of guessing. */
+  lifecycle: (() => LifecycleCounts) | null;
   /** Background-music state for e2e: current track file, whether it is actually playing, and its volume. */
   music: () => { track: string; playing: boolean; volume: number; context: string };
   /** Live Mexe Mode hooks for e2e (bound to the active DraftEditor on human turns). */
@@ -321,12 +366,13 @@ export const debugApi: MexeDebugApi = {
   dealing: false,
   tutorialStep: null,
   lastAiThought: null,
-  a11y: { invalidBadges: 0 },
+  a11y: { invalidBadges: 0, tutorialRefusalShown: false },
   offline: false,
   analyzeCount: 0,
   invalidMeldReasons: () => [],
   renderedMeldStatus: () => [],
   viewport: () => view(),
+  lifecycle: null,
   music: () => ({ track: '', playing: false, volume: 0, context: 'menu' }),
   mexe: null,
   online: null,
@@ -342,13 +388,32 @@ export const debugApi: MexeDebugApi = {
   },
 };
 
+/**
+ * One failure usually fires many times — a render throw repeats every frame, and a rejected
+ * promise in a retry loop repeats per attempt. Both would otherwise grow this array for as long
+ * as the tab is open, which an installed PWA measures in days. A repeat of the message already
+ * on top is dropped, and the buffer is capped: what a reader needs is the first distinct
+ * failures, not the thousandth copy of one.
+ */
+export const MAX_RECORDED_ERRORS = 50;
+
+export function recordError(message: string): void {
+  if (debugApi.errors[debugApi.errors.length - 1] === message) return;
+  debugApi.errors.push(message);
+  if (debugApi.errors.length > MAX_RECORDED_ERRORS) debugApi.errors.shift();
+}
+
 export function installDebugApi(): void {
   window.__MEXE__ = debugApi;
+  debugApi.offline = isOffline();
+  onConnectivityChange((offline) => {
+    debugApi.offline = offline;
+  });
   window.addEventListener('error', (e) => {
-    debugApi.errors.push(String(e.message));
+    recordError(String(e.message));
   });
   window.addEventListener('unhandledrejection', (e) => {
-    debugApi.errors.push(`unhandledrejection: ${String(e.reason)}`);
+    recordError(`unhandledrejection: ${String(e.reason)}`);
   });
   const params = new URLSearchParams(location.search);
   // URL input is owned here, not by the modules that react to it — `?playlog=0` opts a session

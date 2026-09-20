@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
-import { getLocale, setLocale, t } from '../localization/i18n';
+import { getLocale, plural, setLocale, t } from '../localization/i18n';
 import { settings } from '../core/settings';
 import { bus } from '../core/events';
 import { isOffline, onConnectivityChange } from '../core/pwa';
@@ -10,9 +10,16 @@ import { coverBackground, cx, cy, panelW, vy, woodPanel } from '../ui/menu-layou
 import { view } from '../ui/viewport';
 import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
+import { ACTION, SURFACE, TEXT } from '../ui/tokens';
+
+/** The boteco's string lights, as a screen-wide additive wash. Scene art (it belongs to the menu
+ * painting behind it), not a chrome token a UI pass would re-point. */
+const BULB_WASH = 0xffb35c;
 
 export class MenuScene extends Phaser.Scene {
   private onlineBtn?: PixelButton;
+  /** The ONLINE caption line — flashOnlineBlocked borrows its place for the refusal reason. */
+  private onlineTag?: Phaser.GameObjects.Text;
   private ambience?: Phaser.Sound.BaseSound & { volume: number };
 
   constructor() {
@@ -35,7 +42,12 @@ export class MenuScene extends Phaser.Scene {
     const unsubConn = onConnectivityChange(() => this.onlineBtn?.setEnabled(!isOffline()));
     this.events.once('shutdown', unsubConn);
     this.startAmbience();
-    this.events.once('shutdown', () => this.ambience?.stop());
+    // destroy(), not stop(): a stopped sound stays in the sound manager's list for the life of
+    // the page, so re-entering the menu would add another one every time (Phase 77).
+    this.events.once('shutdown', () => {
+      this.ambience?.destroy();
+      this.ambience = undefined;
+    });
     this.rebuild();
     this.markReady();
     const showcase = debugApi.showcase;
@@ -44,7 +56,7 @@ export class MenuScene extends Phaser.Scene {
         winnerName: t('menu.you'),
         stalemate: false,
         config: { seed: urlSeed(), players: [{ name: t('menu.you'), isAi: false }, { name: 'Juninho', isAi: true, personality: 'juninho' as const }] },
-        winningMoveText: t('game.lastMove.played', { name: t('menu.you'), n: 2 }),
+        winningMoveText: plural('game.lastMove.played', 2, { name: t('menu.you') }),
         results: [
           { name: t('menu.you'), cardsLeft: 0, isWinner: true, avatarKey: 'avatar-player' },
           { name: 'Juninho', cardsLeft: 4, isWinner: false, avatarKey: 'avatar-juninho', personality: 'juninho' as const },
@@ -110,7 +122,7 @@ export class MenuScene extends Phaser.Scene {
     const firstRun = !progress.tutorialCompleted && progress.gamesStarted === 0;
 
     coverBackground(this, 'bg-menu');
-    this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.35);
+    this.add.rectangle(cx(), cy(), view().w, view().h, SURFACE.base, 0.35);
     this.addBulbFlicker();
     // Backdrop so controls read against the busy boteco scene. A near-transparent rectangle with
     // a hairline stroke (what this replaced) read as a debug overlay in playtests — this is a real warm wooden panel:
@@ -127,12 +139,12 @@ export class MenuScene extends Phaser.Scene {
       this.idleBob(logo);
       // The tagline is the brand line, not a stand-in for a missing logo, so it belongs under the
       // real logo too — which is where the fallback branch always put it.
-      tagline.push(label(this, cx(), vy(106), t('menu.tagline'), 8, '#f7f2e7'));
+      tagline.push(label(this, cx(), vy(106), t('menu.tagline'), 8, TEXT.primary));
     } else {
-      const title = label(this, cx(), vy(52), t('menu.title'), 32, '#f7d23e');
+      const title = label(this, cx(), vy(52), t('menu.title'), 32, TEXT.accent);
       brand.push(title);
       this.idleBob(title);
-      tagline.push(label(this, cx(), vy(84), t('menu.tagline'), 8, '#f7f2e7'));
+      tagline.push(label(this, cx(), vy(84), t('menu.tagline'), 8, TEXT.primary));
     }
     this.scheduleCardTeaser();
 
@@ -151,7 +163,7 @@ export class MenuScene extends Phaser.Scene {
       firstRun ? learn : playDirect,
       { textureBase: 'btn-feito', w: firstRun ? 128 : 90, h: 24, size: firstRun ? 9 : 10, primary: true },
     ));
-    if (firstRun) primary.push(label(this, cx(), vy(186), t('menu.learnTime'), 6, '#cbe8bb'));
+    if (firstRun) primary.push(label(this, cx(), vy(186), t('menu.learnTime'), 6, TEXT.muted));
     // kept at its original logical coords (240, 207) in landscape — e2e clicks this position directly
     secondary.push(new PixelButton(
       this,
@@ -175,19 +187,20 @@ export class MenuScene extends Phaser.Scene {
 
     // anchored to the top-right corner, not the 480-wide landscape grid
     utilities.push(new PixelButton(this, view().w - 18, 10, '⚙', () => openSettingsPanel(this, () => { /* noop */ }), {
-      textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x5e5646, tooltip: t('tooltip.settings'),
+      textureBase: 'btn-small', w: 16, h: 14, size: 8, color: ACTION.icon, tooltip: t('tooltip.settings'),
     }));
 
     // Visually subordinate to JOGAR: smaller, muted, tucked below the rules/language row. The
     // alpha caveat rides as a small badge beside the button plus the caption line — "(ALPHA)"
     // shouted inside the label read as a warning not to press it.
     this.onlineBtn = new PixelButton(this, cx(), vy(254), t('menu.online'), () => gotoScene(this, 'online'), {
-      textureBase: 'btn-comprar', w: 104, h: 14, size: 6, color: 0x8a7f68,
+      textureBase: 'btn-comprar', w: 104, h: 14, size: 6, color: ACTION.secondary,
       onBlocked: () => this.flashOnlineBlocked(),
     });
     this.onlineBtn.setEnabled(!isOffline());
     utilities.push(this.onlineBtn, ...this.alphaBadge(cx() + 66, vy(254)));
-    utilities.push(label(this, cx(), vy(264), t('menu.onlineTag'), 6, '#a89e8c'));
+    this.onlineTag = label(this, cx(), vy(264), t('menu.onlineTag'), 6, TEXT.muted);
+    utilities.push(this.onlineTag);
 
     this.playEntrance([brand, tagline, primary, secondary, utilities]);
   }
@@ -244,7 +257,7 @@ export class MenuScene extends Phaser.Scene {
    */
   private addBulbFlicker(): void {
     if (this.motion(1) <= 0) return;
-    const wash = this.add.rectangle(cx(), cy(), view().w, view().h, 0xffb35c, 0.06)
+    const wash = this.add.rectangle(cx(), cy(), view().w, view().h, BULB_WASH, 0.06)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.time.addEvent({
       delay: 3400,
@@ -258,8 +271,8 @@ export class MenuScene extends Phaser.Scene {
 
   /** Small gold plate marking ONLINE as work in progress, beside the button rather than inside its label. */
   private alphaBadge(x: number, y: number): Phaser.GameObjects.GameObject[] {
-    const txt = label(this, x, y, t('menu.alpha'), 6, '#2a1a10');
-    const plate = this.add.rectangle(x, y, txt.width + 6, txt.height, 0xf7d23e, 0.92);
+    const txt = label(this, x, y, t('menu.alpha'), 6, TEXT.onAccent);
+    const plate = this.add.rectangle(x, y, txt.width + 6, txt.height, SURFACE.accent, 0.92);
     txt.setDepth(plate.depth + 1);
     return [plate, txt];
   }
@@ -298,9 +311,19 @@ export class MenuScene extends Phaser.Scene {
 
   /** Transient reason line under ONLINE when it's tapped while offline — same "always say why"
    * pattern as GameScene's onFeitoBlocked, just local to this button since MenuScene has no
-   * persistent reason-text widget. */
+   * persistent reason-text widget.
+   *
+   * The reason takes the ONLINE caption's place rather than being drawn at a fixed y of its own:
+   * it used to land at vy(205), which is on top of the secondary button at vy(207) and two thirds
+   * of a screen away from the button it explains. Same "both are explanation, only one is news"
+   * swap the lobby's queue notice uses. */
   private flashOnlineBlocked(): void {
-    const el = label(this, cx(), vy(205), t('offline.online'), 6, '#ff6b5e');
-    this.time.delayedCall(2000, () => el.destroy());
+    const tag = this.onlineTag;
+    if (!tag?.active) return;
+    const caption = tag.text;
+    tag.setText(t('offline.online')).setColor(TEXT.error);
+    this.time.delayedCall(2000, () => {
+      if (tag.active) tag.setText(caption).setColor(TEXT.muted);
+    });
   }
 }

@@ -93,3 +93,54 @@ test('a waiting update shows the banner and only reloads when tapped', async ({ 
     await context.close();
   }
 });
+
+/**
+ * Phase 81: a rollback is a deploy like any other — the same worker handover, in the other
+ * direction. What an operator needs to know is that it *reaches* players and leaves nothing of
+ * the bad build behind, so this rehearses it: serve a lower version, then apply it.
+ *
+ * The one thing the mechanism cannot do is force the handover. A player mid-match keeps the bad
+ * build until they accept the banner or open a fresh tab; that is deliberate (an update must never
+ * yank a match away) and it is why docs/OPERATIONS.md §Rollback tells operators a rollback is not
+ * instant for already-open tabs.
+ */
+test('rolling back to an older version hands over and leaves no trace of the newer one', async ({ browser }) => {
+  const original = fs.readFileSync(SW_PATH, 'utf-8');
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+  const cacheNames = (): Promise<string[]> => page.evaluate(() => caches.keys());
+  const ROLLED_BACK = 'mexe-v0.0.0-rollback-rehearsal';
+
+  try {
+    await page.goto('/?seed=42&showcase=menu');
+    await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null, undefined, { timeout: 20_000 });
+    const [current] = await cacheNames();
+    expect(current, 'the build under test should own exactly one cache').toBeTruthy();
+
+    // Stand in for redeploying the previous artefacts: the served worker now names an older cache.
+    fs.writeFileSync(SW_PATH, original.replace(current!, ROLLED_BACK));
+    await page.evaluate(async () => {
+      const reg = await navigator.serviceWorker.getRegistration();
+      await reg?.update();
+    });
+
+    const banner = page.locator('[data-mexe-banner="update"]');
+    await expect(banner, 'a rollback must surface the same banner a forward deploy does').toBeVisible({ timeout: 20_000 });
+    // Until the player accepts, the bad build is still the one serving them.
+    expect(await cacheNames()).toContain(current!);
+
+    await banner.click();
+    await page.waitForFunction(
+      (name) => caches.keys().then((keys) => keys.length === 1 && keys[0] === name),
+      ROLLED_BACK,
+      { timeout: 30_000 },
+    );
+    await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 30_000 });
+    expect(await page.evaluate(() => window.__MEXE__.scene)).toBe('menu');
+    expect(await page.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  } finally {
+    fs.writeFileSync(SW_PATH, original);
+    await context.close();
+  }
+});

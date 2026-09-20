@@ -1,32 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { OnlineSession } from '../src/net/online-session';
 import { buildView, DEFAULT_ROOM_SETTINGS, type GameView, type RoomSettings } from '../src/net/protocol';
-import { DEFAULT_RULES, type GameState } from '../src/rules/types';
-import { n } from './helpers/cards';
+import type { GameState } from '../src/rules/types';
+import { gameState as state } from './helpers/scenarios';
 
 /**
  * The online client's application layer, driven by recorded server frames with no socket, no
  * Phaser and no clock (ARCH-002). Every question a scene used to answer inline — stale frame,
  * desync, dropped draft, seat gap, missed-turn limit — is asked of the session here.
  */
-
-function state(patch: Partial<GameState> = {}): GameState {
-  return {
-    seed: 1,
-    players: [
-      { id: 'p0', name: 'A', isAi: false, hand: [n('hearts', 2), n('spades', 9)] },
-      { id: 'p1', name: 'B', isAi: false, hand: [n('clubs', 4), n('diamonds', 7)] },
-    ],
-    activePlayerIndex: 0,
-    table: [{ id: 't1', cards: [n('hearts', 3), n('hearts', 4), n('hearts', 5)] }],
-    drawPile: [n('spades', 1), n('spades', 2)],
-    turn: 3,
-    winnerId: null,
-    phase: 'playing',
-    config: DEFAULT_RULES,
-    ...patch,
-  };
-}
 
 interface ViewOpts {
   seat?: number;
@@ -36,12 +18,13 @@ interface ViewOpts {
   missedTurns?: number[];
   mexeBonusClaimed?: boolean;
   seats?: number[];
+  matchId?: string;
 }
 
 function view(s: GameState, opts: ViewOpts = {}): GameView {
   return buildView(
     s, opts.seat ?? 0, opts.rev ?? 1, opts.settings ?? DEFAULT_ROOM_SETTINGS, opts.turnMsLeft ?? null,
-    opts.missedTurns ?? [0, 0], opts.mexeBonusClaimed ?? false, 'm1', opts.seats ?? [0, 1],
+    opts.missedTurns ?? [0, 0], opts.mexeBonusClaimed ?? false, opts.matchId ?? 'm1', opts.seats ?? [0, 1],
   );
 }
 
@@ -75,6 +58,36 @@ describe('OnlineSession', () => {
     expect(s.lastRev).toBe(5);
   });
 
+  it('applies a duplicate frame at the revision it already holds, rather than guessing which copy was real', () => {
+    // A repeated delivery and the answer to a `resync` look identical from here: same rev, same
+    // board. The server is the only authority on both, so re-applying is idempotent — what must
+    // not happen is the frame being dropped as "stale" and a genuine resync answer with it.
+    const s = session({ rev: 5 });
+    const same = state({ activePlayerIndex: 1, turn: 4 });
+    const first = s.applySync(view(same, { rev: 6 }), false);
+    expect(first).toMatchObject({ kind: 'applied' });
+    const duplicate = s.applySync(view(same, { rev: 6 }), false);
+    expect(duplicate).toMatchObject({ kind: 'applied' });
+    expect(s.lastRev).toBe(6);
+    expect(s.state().activePlayerIndex).toBe(1);
+  });
+
+  it('refuses a frame belonging to another match instead of reading its revision', () => {
+    // `rev` restarts at 1 every deal, so cross-match frames cannot be ordered against `lastRev`:
+    // a lower one would be dropped as stale (frozen board) and a higher one applied as this
+    // match's. Neither is representable here, so nothing is applied and the caller resyncs.
+    const s = session({ rev: 5 });
+    const other = s.applySync(view(state({ activePlayerIndex: 1, turn: 9 }), { rev: 1, matchId: 'm2' }), false);
+    expect(other).toMatchObject({ kind: 'invalid', rev: 1 });
+    expect(s.lastRev).toBe(5);
+    expect(s.state().activePlayerIndex).toBe(0); // untouched
+
+    const ahead = s.applySync(view(state({ activePlayerIndex: 1, turn: 9 }), { rev: 40, matchId: 'm2' }), false);
+    expect(ahead).toMatchObject({ kind: 'invalid', rev: 40 });
+    expect(s.lastRev).toBe(5);
+    expect(s.state().activePlayerIndex).toBe(0);
+  });
+
   it('asks for a resync when the local reconstruction does not hash to the server digest', () => {
     const s = session();
     // A frame whose digest was computed for a different revision: exactly the shape of a client
@@ -84,6 +97,32 @@ describe('OnlineSession', () => {
     expect(result.kind).toBe('desync');
     expect(s.desyncs).toBe(1);
     expect(s.resyncing).toBe(true);
+  });
+
+  // The state digest cannot see this class of fault: both sides hash the same `activeSeat` field,
+  // so a seat pointing at no player agrees with itself and sails through the desync check. Without
+  // the projection check the session would hold a state whose active player is `undefined`.
+  it.each([
+    ['negative', -1],
+    ['one past the last seat', 2],
+    ['far out of range', 99],
+    ['not an integer', 0.5],
+  ])('refuses a frame whose activeSeat is %s, leaving the last good state applied', (_label, activeSeat) => {
+    const s = session();
+    const result = s.applySync({ ...view(state({ turn: 4 }), { rev: 2 }), activeSeat }, false);
+
+    expect(result).toEqual({ kind: 'invalid', rev: 2, problem: `activeSeat ${activeSeat} outside 0..1` });
+    expect(s.state().activePlayerIndex).toBe(0);
+    expect(s.state().turn).toBe(1); // the rejected frame's turn never landed
+    expect(s.lastRev).toBe(1); // nothing applied, so the next honest frame at rev 2 is not stale
+  });
+
+  it('accepts every in-range activeSeat', () => {
+    for (const activeSeat of [0, 1]) {
+      const s = session();
+      expect(s.applySync(view(state({ activePlayerIndex: activeSeat }), { rev: 2 }), false).kind).toBe('applied');
+      expect(s.state().activePlayerIndex).toBe(activeSeat);
+    }
   });
 
   it('takes the second mismatching snapshot rather than looping on resync requests', () => {
@@ -146,5 +185,24 @@ describe('OnlineSession', () => {
     const s = session();
     const finished = state({ phase: 'finished', winnerId: 'p1', turn: 9 });
     expect(s.applyGameOver(view(finished, { rev: 9 })).winnerId).toBe('p1');
+  });
+
+  describe('a match that ended while this client was away (LB-47)', () => {
+    it('reads an unlocked room as the finish it never saw, once', () => {
+      const s = session();
+      // A running match keeps broadcasting room frames; none of them ends anything.
+      expect(s.roomState(true)).toEqual({ missedFinish: false });
+      expect(s.roomState(false)).toEqual({ missedFinish: true });
+      // The reconnect answer broadcasts the room more than once — one handoff is enough.
+      expect(s.roomState(false)).toEqual({ missedFinish: false });
+    });
+
+    it('stays quiet when the match ended in front of this client', () => {
+      const s = session();
+      s.applyGameOver(view(state({ phase: 'finished', winnerId: 'p1' }), { rev: 9 }));
+      // The room recycles into a lobby in the same server tick as game_over: that frame must not
+      // hijack the result screen this client is already on its way to.
+      expect(s.roomState(false)).toEqual({ missedFinish: false });
+    });
   });
 });

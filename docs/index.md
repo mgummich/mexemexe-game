@@ -47,6 +47,9 @@ The authoritative ruleset, with worked examples, is [Game rules](GAME_RULES.md).
 | --- | --- |
 | [Development](DEVELOPMENT.md) | Setup, scripts, env vars, troubleshooting |
 | [Testing](TESTING.md) | Test suites, verification gates, CI |
+| [Performance budgets](PERFORMANCE.md) | Budgets, target devices, how to re-measure |
+| [Threat model](THREAT_MODEL.md) | Assets, trust boundaries, prioritized threats |
+| [Decisions](DECISIONS.md) | Durable decisions, their reasoning, and what was rejected |
 | [Architecture](ARCHITECTURE.md) | Module map, data flow, boundaries, where new code goes |
 | [Invariants & scenarios](INVARIANTS.md) | What must always hold, and the scenarios that prove it |
 | [Contributing](CONTRIBUTING.md) | Branches, commits, review expectations |

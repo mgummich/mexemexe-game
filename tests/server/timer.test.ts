@@ -6,22 +6,12 @@
  * (draw one card, pass) on the server's own turn-start table.
  */
 import { describe, expect, it } from 'vitest';
-import { RoomManager } from '../../server/rooms';
 import { DEFAULT_ROOM_SETTINGS, TIMER_PRESETS, normalizeRoomSettings } from '../../src/net/protocol';
-
-function manager(clock: { t: number }, code = 'ROOM') {
-  let tokens = 0;
-  return new RoomManager({
-    now: () => clock.t,
-    genCode: () => code,
-    genToken: () => `TOKEN${++tokens}`,
-    genSeed: () => 7,
-  });
-}
+import { testManager } from './manager';
 
 /** A started room with `settings` agreed in the lobby first. Two seats unless asked otherwise. */
 function startedRoom(clock: { t: number }, settings = TIMER_PRESETS.fast, code = 'ROOM', seats = 2) {
-  const mgr = manager(clock, code);
+  const mgr = testManager({ clock, code, seed: 7 });
   const created = mgr.createRoom('Host');
   if (!created.ok) throw new Error('setup');
   for (let i = 1; i < seats; i++) mgr.joinRoom(code, `Guest${i}`);
@@ -35,7 +25,7 @@ function startedRoom(clock: { t: number }, settings = TIMER_PRESETS.fast, code =
 describe('room settings lifecycle', () => {
   it('a new room starts on the Casual preset with the deployment reconnect grace', () => {
     const clock = { t: 1000 };
-    const mgr = new RoomManager({ now: () => clock.t, genCode: () => 'ROOM', disconnectGraceMs: 25_000 });
+    const mgr = testManager({ clock, code: 'ROOM', disconnectGraceMs: 25_000 });
     mgr.createRoom('Host');
     const info = mgr.getRoomInfo('ROOM')!;
     expect(info.settings.timerMode).toBe('casual');
@@ -46,7 +36,7 @@ describe('room settings lifecycle', () => {
 
   it('only the host may change them', () => {
     const clock = { t: 1000 };
-    const mgr = manager(clock);
+    const mgr = testManager({ clock, code: 'ROOM', seed: 7 });
     mgr.createRoom('Host');
     mgr.joinRoom('ROOM', 'Guest');
     expect(mgr.setRoomSettings('ROOM', 1, TIMER_PRESETS.fast)).toEqual({ ok: false, error: 'not_host' });
@@ -57,7 +47,7 @@ describe('room settings lifecycle', () => {
 
   it('an out-of-range proposal is clamped, not applied verbatim', () => {
     const clock = { t: 1000 };
-    const mgr = manager(clock);
+    const mgr = testManager({ clock, code: 'ROOM', seed: 7 });
     mgr.createRoom('Host');
     mgr.setRoomSettings('ROOM', 0, normalizeRoomSettings({ timerMode: 'custom', turnMs: 1 }));
     expect(mgr.getRoomInfo('ROOM')!.settings.turnMs).toBe(15_000);
@@ -182,6 +172,25 @@ describe('server-authoritative turn timer', () => {
     const mgr = startedRoom(clock, TIMER_PRESETS.fast);
     expect(mgr.claimMexeBonus('ROOM', 1).ok).toBe(false);
     expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBe(45_000);
+  });
+
+  it('LB-14: the active chair in a gapped room can claim the bonus, and an idle chair still cannot', () => {
+    // Seats 0 and 2 with the gap at 1: chair 2 is player index 1, so a server comparing the chair
+    // number against the active player index would refuse the claim its own timer is offering.
+    const clock = { t: 1000 };
+    const mgr = testManager({ clock, code: 'GAP', seed: 7 });
+    mgr.createRoom('Host');
+    mgr.joinRoom('GAP', 'Bob');
+    mgr.joinRoom('GAP', 'Carol');
+    mgr.leaveRoom('GAP', 1);
+    mgr.setRoomSettings('GAP', 0, TIMER_PRESETS.fast);
+    mgr.setReady('GAP', 0, true);
+    mgr.setReady('GAP', 2, true);
+    expect(mgr.startGame('GAP', 0)).toMatchObject({ ok: true });
+    mgr.drawEndTurn('GAP', 0, mgr.getRoom('GAP')!.rev); // hand the turn to chair 2
+    expect(mgr.getRoom('GAP')!.state!.activePlayerIndex).toBe(1);
+    expect(mgr.claimMexeBonus('GAP', 0).ok).toBe(false); // chair 0 is not on the clock
+    expect(mgr.claimMexeBonus('GAP', 2).ok).toBe(true);
   });
 
   it('the bonus is available again on the next turn, not carried over', () => {
@@ -339,7 +348,7 @@ describe('a timeout that both finishes the match and crosses the missed-turn lim
 describe('a gapped match on the clock', () => {
   it('times out the chair whose turn it is, not the player index that shares its number', () => {
     const clock = { t: 1000 };
-    const mgr = manager(clock);
+    const mgr = testManager({ clock, code: 'ROOM', seed: 7 });
     mgr.createRoom('Alice'); // chair 0
     mgr.joinRoom('ROOM', 'Bob'); // chair 1
     mgr.joinRoom('ROOM', 'Carol'); // chair 2

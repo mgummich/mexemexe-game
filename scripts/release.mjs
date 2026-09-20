@@ -196,7 +196,7 @@ export function renderNotes(text, version, info) {
 
   // No title heading: the GitHub Release page already renders `MEXE! vX.Y.Z`.
   const out = [`_${[date ? `Released ${date}` : null, ...stats].filter(Boolean).join(' · ')}_`, ''];
-  out.push(`▶ **[Play it](${info.pages})** · [Docs](${info.pages}docs/) · [Self-hosting](${info.url}/blob/main/SELF_HOSTING.md)`, '', '---', '');
+  out.push(`▶ **[Play it](${info.pages})** · [Docs](${info.pages}docs/) · [Self-hosting](${info.url}/blob/main/${SELF_HOSTING})`, '', '---', '');
 
   for (const kind of KINDS) {
     const items = buckets.get(kind.key);
@@ -217,6 +217,9 @@ export function renderNotes(text, version, info) {
 function git(...args) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 }
+
+/** Repo-relative, and asserted to exist by the selfcheck: every release note links it. */
+const SELF_HOSTING = 'docs/SELF_HOSTING.md';
 
 function selfcheck() {
   assert.equal(nextVersion('1.6.0', 'minor'), '1.7.0');
@@ -268,6 +271,11 @@ function selfcheck() {
   assert.ok(notes.includes('<details>') && notes.includes('- two'), 'the verbatim section is folded in');
   assert.match(renderNotes(stamped, '1.0.0', { url: 'https://ex.com/o/r', pages: 'https://o.github.io/r/' }),
     /CHANGELOG\.md\)/, 'the oldest release links the file, not a compare');
+
+  // The notes link real files. This one has been wrong before: the guide lives under docs/, and
+  // the link pointed at the repository root, so every release note shipped a 404.
+  assert.ok(fs.existsSync(new URL(`../${SELF_HOSTING}`, import.meta.url)), `${SELF_HOSTING} must exist — release notes link it`);
+  assert.match(notes, new RegExp(`blob/main/${SELF_HOSTING.replace('.', '\\.')}`), 'the self-hosting link points at the real path');
 
   console.log('release.mjs selfcheck ok');
 }

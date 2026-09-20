@@ -1,0 +1,58 @@
+name: Update visual baselines
+
+# Manual, because a baseline is a review: someone has to look at the images before they become
+# the thing every later run is compared against (docs/TESTING.md, "Visual baselines"). This job
+# produces them on the runner whose renderer CI actually gates with, and opens a pull request so
+# the looking happens in a diff rather than in someone's working copy.
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why the baselines are being updated (goes in the PR body)'
+        required: true
+        default: 'No linux baselines committed yet'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: visual-baselines
+
+jobs:
+  update:
+    name: Regenerate and open a PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Regenerate the baselines for this platform
+        run: npx playwright test e2e/visual.spec.ts --workers=1 --retries=0 --update-snapshots
+      - name: Confirm they now pass as written
+        run: npx playwright test e2e/visual.spec.ts --workers=1 --retries=0
+      - name: Open a pull request with whatever changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- e2e/visual.spec.ts-snapshots; then
+            echo "baselines are unchanged — nothing to review"
+            exit 0
+          fi
+          branch="visual-baselines/${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add e2e/visual.spec.ts-snapshots
+          git commit -m "test(visual): update baselines on ${RUNNER_OS}" -m "$REASON"
+          git push origin "$branch"
+          gh pr create --title "test(visual): update baselines on ${RUNNER_OS}" \
+            --body "$(printf '%s\n\n%s\n' "$REASON" 'Look at the images before merging: a baseline adopted without being looked at has stopped meaning anything. See docs/TESTING.md, "Visual baselines".')"

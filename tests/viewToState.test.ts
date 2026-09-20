@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildView, PROTOCOL_VERSION } from '../src/net/protocol';
-import { viewToState } from '../src/net/viewToState';
+import { UnprojectableViewError, viewProjectionProblem, viewToState } from '../src/net/viewToState';
 import { canConfirmTurn } from '../src/rules/rules';
 import { DraftEditor } from '../src/mexe-mode/draft';
 import type { GameState } from '../src/rules/types';
@@ -85,9 +85,18 @@ describe('viewToState (C4: placeholder assumption)', () => {
     for (const card of [...result.players[1]!.hand, ...result.drawPile]) {
       expect(typeof card.id).toBe('string');
       expect(typeof card.deckId).toBe('number');
-      expect(typeof card.isJoker).toBe('boolean');
+      // Inert, not merely well-typed: a placeholder claiming to be a joker would be a fabricated
+      // card with gameplay meaning, which is exactly what the trick promises never to produce.
+      expect(card.isJoker).toBe(false);
       expect(realIds.has(card.id)).toBe(false);
     }
+  });
+
+  // Online, the server owns every turn and the AI never runs. A seat marked `isAi` would invite
+  // the local AI presentation path (think delays, reason lines) onto a human opponent.
+  it('marks every projected seat as a person, never an AI', () => {
+    const result = viewToState(buildView(state(), 0, 5));
+    for (const player of result.players) expect(player.isAi).toBe(false);
   });
 
   it('is faithful for the own seat hand and the table', () => {
@@ -105,6 +114,29 @@ describe('viewToState (C4: placeholder assumption)', () => {
     const editor = new DraftEditor(result);
     editor.playHandCard('hearts-2-d0', 't1', 0); // extends the run legally
     expect(canConfirmTurn(result, editor.getDraft())).toEqual({ ok: true });
+  });
+
+  // A GameState whose activePlayerIndex resolves to no player is not a state this game can
+  // represent: every reader of `players[activePlayerIndex]` asserts it is there. The projection
+  // refuses rather than handing one out, and never invents a seat to make the view fit.
+  it.each([-1, 2, 99, 0.5, Number.NaN])('refuses to project a view whose activeSeat is %s', (activeSeat) => {
+    const view = { ...buildView(state(), 0, 5), activeSeat };
+    expect(() => viewToState(view)).toThrow(UnprojectableViewError);
+    expect(viewProjectionProblem(view)).toBe(`activeSeat ${activeSeat} outside 0..1`);
+  });
+
+  it('projects every in-range activeSeat onto a real player', () => {
+    for (const activeSeat of [0, 1]) {
+      const result = viewToState({ ...buildView(state(), 0, 5), activeSeat });
+      expect(result.players[result.activePlayerIndex]).toBeDefined();
+      expect(viewProjectionProblem({ ...buildView(state(), 0, 5), activeSeat })).toBeNull();
+    }
+  });
+
+  it('refuses a view carrying no players at all', () => {
+    const view = { ...buildView(state(), 0, 5), players: [], activeSeat: 0 };
+    expect(viewProjectionProblem(view)).toBe('no players');
+    expect(() => viewToState(view)).toThrow(UnprojectableViewError);
   });
 
   it('canConfirmTurn rejects a draft smuggling a placeholder (draw-pile) card as foreign', () => {

@@ -41,7 +41,11 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     await c.next('error');
     const errors = c.received.filter((m) => m.type === 'error');
     expect(errors.length).toBe(frames.length);
-    for (const e of errors) expect(e.type === 'error' && e.code).toBe('bad_message');
+    // A wrong version is the one refusal a player can act on ("reload to update"), so it
+    // carries its own code; every other malformed frame stays a developer-detail bad_message.
+    const codes = errors.map((e) => (e.type === 'error' ? e.code : ''));
+    expect(codes.filter((c) => c === 'unsupported_version').length).toBe(1);
+    expect(codes.filter((c) => c === 'bad_message').length).toBe(frames.length - 1);
     // Still serving: the socket is alive and the process answers /health.
     expect(c.closeCode).toBeNull();
     expect((await health(PORT)).ok).toBe(true);
@@ -122,7 +126,12 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     host.clear();
     other.send({ type: 'reconnect', token });
     await other.next('room_joined');
-    // S4: exactly one socket may act for a seat, so the previous holder is closed outright.
+    // S4: exactly one socket may act for a seat, so the previous holder is closed outright —
+    // but it is told `invalid_token` first. That code is the client's signal to drop its own
+    // token and stop retrying (src/net/client.ts); without it the evicted tab would spend its
+    // whole reconnect budget trying to take the seat back from the socket that now holds it.
+    const evicted = await host.next('error');
+    expect(evicted.type === 'error' && evicted.code).toBe('invalid_token');
     expect(await host.closed()).not.toBeNull();
     // And nothing in the room reaches it afterwards.
     host.clear();

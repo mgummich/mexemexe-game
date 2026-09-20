@@ -1,25 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
+import { testManager } from './manager';
 import { MAX_ACTIVITY, MAX_MATCH_HISTORY, parseClientMessage, PROTOCOL_VERSION, REACTION_COOLDOWN_MS } from '../../src/net/protocol';
-import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
-import { createRng } from '../../src/rules/rng';
 import type { Card } from '../../src/rules/types';
 import { withHand } from '../helpers/cards';
+import { seedWithTriple } from '../helpers/scenarios';
 
 /** Clock the manager reads, so the reaction cooldown can be advanced deterministically. */
-function managerAt(clock: { t: number }, seed = 1): RoomManager {
-  let codes = 0;
-  let tokens = 0;
-  return new RoomManager({
-    now: () => clock.t,
-    genCode: () => `CODE${++codes}`,
-    genToken: () => `TOKEN${++tokens}`,
-    genSeed: () => seed,
-  });
-}
-
 function startedRoom(clock: { t: number }, seed: number): { mgr: RoomManager; code: string } {
-  const mgr = managerAt(clock, seed);
+  const mgr = testManager({ clock, seed });
   const created = mgr.createRoom('Alice');
   if (!created.ok) throw new Error('unexpected room_limit');
   mgr.joinRoom(created.code, 'Bob');
@@ -27,19 +16,6 @@ function startedRoom(clock: { t: number }, seed: number): { mgr: RoomManager; co
   mgr.setReady(created.code, 1, true);
   mgr.startGame(created.code, 0);
   return { mgr, code: created.code };
-}
-
-/** A seed whose seat-0 hand holds a same-rank triple, so a legal winning meld exists. */
-function seedWithTriple(): { seed: number; triple: Card[] } {
-  for (let seed = 1; seed < 400; seed++) {
-    const hand = dealInitialHands(shuffleDeck(createDeck(), createRng(seed)), 2).hands[0]!;
-    for (const rank of new Set(hand.map((c) => c.rank))) {
-      const sameRank = hand.filter((c) => c.rank === rank);
-      const distinctSuits = sameRank.filter((c, i) => sameRank.findIndex((o) => o.suit === c.suit) === i);
-      if (distinctSuits.length >= 3) return { seed, triple: distinctSuits.slice(0, 3) };
-    }
-  }
-  throw new Error('no seed with a triple');
 }
 
 /** Rig seat 0 to be holding exactly `triple` and nothing else, then play it — the shortest legal
@@ -75,7 +51,7 @@ describe('preset reactions (ONLINE-21)', () => {
 
   it('enforces the cooldown on the server, per seat', () => {
     const clock = { t: 10_000 };
-    const mgr = managerAt(clock);
+    const mgr = testManager({ clock });
     const created = mgr.createRoom('Alice');
     if (!created.ok) throw new Error('unexpected room_limit');
     mgr.joinRoom(created.code, 'Bob');
@@ -93,7 +69,7 @@ describe('preset reactions (ONLINE-21)', () => {
 
   it('refuses a reaction for an empty seat or an unknown room', () => {
     const clock = { t: 0 };
-    const mgr = managerAt(clock);
+    const mgr = testManager({ clock });
     const created = mgr.createRoom('Alice');
     if (!created.ok) throw new Error('unexpected room_limit');
     expect(mgr.claimReaction(created.code, 3)).toBe(false);
@@ -147,7 +123,7 @@ describe('rematch in the same room (ONLINE-23/24)', () => {
   });
 
   it('is a no-op for a room that no longer exists', () => {
-    const mgr = managerAt({ t: 0 });
+    const mgr = testManager({ clock: { t: 0 } });
     expect(mgr.recycleForRematch('GONE1')).toBe(false);
   });
 });
@@ -177,7 +153,7 @@ describe('party session (OS-01..OS-19)', () => {
     expect(mgr.getWinningMove(code)).toBeNull();
   });
 
-  it('OS-02 a rematch mints a fresh matchId', () => {
+  it('OS-02 a rematch mints a fresh matchId and restarts the revision count', () => {
     const { seed, triple } = seedWithTriple();
     const clock = { t: 0 };
     const { mgr, code } = startedRoom(clock, seed);
@@ -185,12 +161,17 @@ describe('party session (OS-01..OS-19)', () => {
     expect(first).not.toBe('');
 
     winWithTriple(mgr, code, triple);
+    const playedRev = mgr.getRoom(code)!.rev;
+    expect(playedRev).toBeGreaterThan(1);
     mgr.recycleForRematch(code);
     voteAndStart(mgr, code, [0, 1]);
 
-    const second = mgr.getView(code, 0)!.matchId;
-    expect(second).not.toBe('');
-    expect(second).not.toBe(first);
+    const second = mgr.getView(code, 0)!;
+    expect(second.matchId).not.toBe('');
+    expect(second.matchId).not.toBe(first);
+    // A new match is revision 1, never a continuation of the last one's count: the client rebuilds
+    // its session from this frame, so the first frame of a rematch has to be the lowest one.
+    expect(second.rev).toBe(1);
   });
 
   it('OS-06/07 the winner gains exactly one session win, and a duplicate finish adds none', () => {
@@ -332,7 +313,7 @@ describe('party session (OS-01..OS-19)', () => {
 
   it('OS-18 the feed drops its oldest entries rather than growing with the session', () => {
     const clock = { t: 0 };
-    const mgr = managerAt(clock);
+    const mgr = testManager({ clock });
     const created = mgr.createRoom('Alice');
     if (!created.ok) throw new Error('unexpected room_limit');
     for (let i = 0; i < MAX_ACTIVITY * 2; i++) {
