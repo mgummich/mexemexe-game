@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "10C",
-  "phase": "89 — Documentation Drift Detection",
+  "phase": "90 — Repository Health Dashboard",
   "status": "NOT_STARTED"
  },
- "head": "89701f3",
+ "head": "ec56afd",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1315,6 +1315,33 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — nothing new was encoded. The phase's own risk list warns against turning preferences into tests, and the honest finding was that the mechanisms exist and the table lied about two of them."
+   }
+  },
+  {
+   "phase": "89 — Documentation Drift Detection",
+   "wave": "10C",
+   "status": "PASS",
+   "result": "Drift was the most common defect found across this whole roadmap run — a sw.js VERSION const the build had replaced, a SAVE artifact described as restoring a match nothing restores, a playtest guide that predated online rematch, two enforcement rows calling type-checked rules conventions. All of it was caught by reading, which does not scale. The mechanical classes are now a test.",
+   "changed": [
+    "tests/docs-drift.test.ts — new: every `npm run …` a doc names exists; every backticked repo path resolves (with the extension-less shorthand the docs use); every quoted PROTOCOL_VERSION/GAME_STATE_VERSION/REPLAY_VERSION matches its source; every canonical doc AGENTS.md routes to is present",
+    "docs/TESTING.md — GQA-24 row; reworded the one sentence that named the file Phase 83 deleted",
+    "WORKFLOW.md — the docs-only router row now names a real command instead of 'links/content check'"
+   ],
+   "acceptance": "high-value drift classes detected automatically (commands, paths, version constants, canonical-doc presence); canonical-doc ownership clear (the AGENTS.md table is now test-backed); duplicate sources of truth reduced — the check treats CHANGELOG.md and ARCHITECTURE_AUDIT.md as records rather than descriptions, which is the distinction that keeps the check honest instead of noisy",
+   "verification": [
+    "MEXE_OUTPUT=ai npx vitest run tests/docs-drift.test.ts (4/4) — found 3 real drifts while being written: two stale paths and one file deleted in Phase 83 but still named in prose",
+    "MEXE_OUTPUT=ai npm run test (1132/1132, exit 0)",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p89-test2.log"
+    ],
+    "flake": "The first full-suite run failed OP-09 (public-rooms) with a 5s timeout; it passes 19/19 in isolation and the whole suite passed on re-run. This is the documented in-suite load flake class, not a new defect."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the test judges nothing about prose, which is what keeps it from becoming the noisy check the phase's risk list warns about; the two historical documents are exempted from the path check by name, with the reason"
    }
   }
  ],

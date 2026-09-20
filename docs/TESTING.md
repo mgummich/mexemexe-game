@@ -131,6 +131,7 @@ instead. That is usually the smaller, better change.
 | GQA-20 | Game setup | selected config not applied | `e2e` `setup: seat/personality picker` — asserts the dealt lineup is the 4 seats and 3 distinct opponents picked | E2E | Covered |
 | GQA-21 | Accessibility | critical flow inaccessible | `tests/motion.test.ts`, `feel.test.ts`, `persistence.test.ts` (OS reduced-motion/locale on first run), `tokens.test.ts` (`fitTextScale`), `menu/settings-layout` geometry; `e2e` `a11y-reduced-motion`, `*-large-text`, `keyboard`, `mobile-badge-reason` and `tutorial refusal` (non-colour-only, non-sound-only signalling) | unit + E2E | Covered, within the canvas limits documented in [ARCHITECTURE.md](ARCHITECTURE.md) |
 
+| GQA-24 | Documentation | canonical docs no longer describe the code | `tests/docs-drift.test.ts` — every `npm run …` a doc names exists, every backticked repo path resolves, every quoted version constant matches its source, and every canonical doc `AGENTS.md` routes to is present. Prose staleness stays a human judgement | unit | Covered for the mechanical classes |
 | GQA-22 | Deployment | shipped config weakens a boundary | `tests/deployment.test.ts` (the `nginx.conf` header set, CSP without a script escape hatch, access logging still off); CI's `server-image` job (the image boots, answers `/health`, and is not root); nightly `dependency-audit` | unit + CI | Covered |
 | GQA-23 | Long session | resource growth over a long session | `e2e/perf-measure.spec.ts` (10 match cycles: heap, DOM nodes, listeners, and the product-owned counters from `__MEXE__.lifecycle()`), bounded in the gated `second-match` journey | measurement + E2E | Covered |
 
@@ -730,10 +731,10 @@ deadline and fail the AI soak for lack of CPU rather than for a defect. That
 deadline is gone (the search spends a deterministic trial budget, INV-A5), and
 with it the whole class of CPU-contention flake.
 
-Phase 83 removed the last of that class from the unit suite: `tests/soak.test.ts`
-played seeds 1..20 of the same harness `probes.test.ts` runs over seeds 1..40, so
-its termination coverage was a strict subset, and its two remaining assertions
-were a wall clock and a heap sample. The heap tripwire moved into `probes` as an
+Phase 83 removed the last of that class from the unit suite: the deleted soak
+suite played seeds 1..20 of the same harness `probes.test.ts` runs over seeds
+1..40, so its termination coverage was a strict subset, and its two remaining
+assertions were a wall clock and a heap sample. The heap tripwire moved into `probes` as an
 `afterAll` over the runs that already happen (no seed is replayed for it); the
 wall clock did not — it measured
 the runner rather than the code and failed under parallel suite load instead of on
