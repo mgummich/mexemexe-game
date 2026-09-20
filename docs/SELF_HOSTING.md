@@ -254,6 +254,15 @@ npm run server        # listens on :8787, PORT= to override
   resets them.
 - The images build the game from source, so a rebuild is needed after code
   changes.
+- The `web` image sends a content security policy plus `nosniff`,
+  `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY` (`nginx.conf`,
+  [THREAT_MODEL.md](THREAT_MODEL.md) TM-15). If you serve `dist/` with your own
+  web server or put a proxy in front, carry those headers over — and do not let a
+  proxy add a second `Content-Security-Policy`, because two policies are
+  intersected and the strictest one wins, usually by breaking the game.
+- The `server` image runs as the unprivileged `node` user. It binds 8787 and
+  writes nothing to disk, so it needs nothing more; if you change the port, keep
+  it above 1024.
 - `MEXE_TEST_SEED` on the server forces a deterministic deal. It exists for the
   `verify:multiplayer` suite — never set it in a real deployment. With
   `MEXE_ENV`/`NODE_ENV=production` the server refuses to start rather than

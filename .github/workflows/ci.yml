@@ -28,6 +28,43 @@ jobs:
       - run: npm run test
       - run: npm run build
 
+  server-image:
+    name: Server image boots unprivileged
+    runs-on: ubuntu-latest
+    # The images were only ever built at release time, so a Dockerfile change was first exercised
+    # by a deploy. This builds the server stage and proves the two things the image has to do:
+    # answer /health, and not be root while doing it (docs/THREAT_MODEL.md TM-16).
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the server stage
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: server
+          load: true
+          tags: mexe-server:ci
+          cache-from: type=gha,scope=server-ci
+          cache-to: type=gha,mode=max,scope=server-ci
+      - name: Boot it and check /health
+        run: |
+          docker run -d --name mexe-server -p 8787:8787 mexe-server:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8787/health; then break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:8787/health | tee /tmp/health.json
+          grep -q '"ok":true' /tmp/health.json
+      - name: It must not be running as root
+        run: |
+          whoami_in_container=$(docker exec mexe-server whoami)
+          echo "container user: $whoami_in_container"
+          test "$whoami_in_container" = "node"
+      - name: Stop it
+        if: always()
+        run: docker rm -f mexe-server || true
+
   multiplayer:
     name: Multiplayer verification
     runs-on: ubuntu-latest

@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "9B",
-  "phase": "80 — Security Hardening",
+  "wave": "9C",
+  "phase": "81 — Rollback Strategy",
   "status": "NOT_STARTED"
  },
- "head": "0cd0301",
+ "head": "934cbb9",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1087,6 +1087,45 @@
     "round": 1,
     "result": "CRITIC PASS — no generic checklist rows; every threat is one this product can actually meet, and the two new findings came from reading the deployment files rather than from a template"
    }
+  },
+  {
+   "phase": "80 — Security Hardening",
+   "wave": "9B",
+   "status": "PASS",
+   "result": "Closed the two threats Phase 79 found open. Nothing else in the model was open, so nothing else was touched — no controls without a threat behind them.",
+   "changed": [
+    "nginx.conf — CSP (no 'unsafe-eval', 'unsafe-inline' for style only), X-Content-Type-Options, Referrer-Policy, X-Frame-Options, all with `always` so error responses carry them too",
+    "Dockerfile — the server stage drops to the built-in `node` user and runs ./node_modules/.bin/tsx instead of npx (no writable $HOME needed)",
+    ".github/workflows/ci.yml — new server-image job: builds the server stage, boots it, reads /health, asserts the container user is `node`",
+    "tests/deployment.test.ts — nginx.conf keeps the headers, and script-src never gains an escape hatch",
+    "docs/THREAT_MODEL.md — TM-15/TM-16 mitigated, TM-21 (nginx master as root) recorded as accepted",
+    "docs/SELF_HOSTING.md — carry the headers if you front it with your own server; do not add a second CSP"
+   ],
+   "acceptance": "TM-15 and TM-16 addressed; controls tested (browser run under the real header set; CI boots the image and checks the user; unit test guards the header set); no duplicate authority introduced (headers live only in nginx.conf, the test reads that file rather than restating it); residual risk documented (TM-21, TM-17, TM-18)",
+   "verification": [
+    "CSP exercised against the built app in Chromium with exactly nginx.conf's headers (served by a temporary node server that parses them out of nginx.conf): boot → menu → setup → match → one turn, 0 CSP refusals, 0 page errors, 0 missing assets, service worker registered under worker-src 'self'",
+    "./node_modules/.bin/tsx server/index.ts boots and answers (build 1.11.0)",
+    "MEXE_OUTPUT=ai npm run test (1129/1129, exit 0)",
+    "npm run lint (exit 0)",
+    "ci.yml and nightly.yml parse as YAML"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p80-test.log"
+    ],
+    "gap": "Docker is unavailable in this environment, so the server image itself was not built here — which is exactly why the CI job was added rather than a note. The image was previously only ever built at release time."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the CSP was proven with a real browser against the real built app instead of being asserted; the one thing that could not be tested locally (the image) got a CI job rather than a claim"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-nginx-master-root",
+     "note": "TM-21: the web image's nginx master still runs as root (workers drop to nginx). Would need a different base image and a port change through every compose file.",
+     "owner": "Phase 102 — Production & Release Readiness"
+    }
+   ]
   }
  ],
  "riskClosures": [
