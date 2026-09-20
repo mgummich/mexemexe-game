@@ -18,7 +18,11 @@ import {
   timerExpireTurn,
 } from '../src/rules/rules';
 import type { GameState, ReasonCode } from '../src/rules/types';
-import { IDLE_CLOCK, expired, grantBonus, msLeft, startTurn, type TurnClock } from '../src/game-state/timing';
+import {
+  IDLE_CLOCK, assistStateFor, borrowTime, enterLastBreath, expired, grantBonus, msLeft, startTurn,
+  useFreeze, usePanic, type AssistState, type TurnClock,
+} from '../src/game-state/timing';
+import { assistsOf, chargeSeat, creditSeat, isTimeAttack, turnBudgetMs } from './speed-rules';
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import {
   buildView, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, MAX_ACTIVITY, MAX_MATCH_HISTORY,
@@ -59,6 +63,9 @@ export interface StalledTurnResult {
   error?: unknown;
   closed?: boolean;
   timedOut?: number;
+  /** A seat whose clock ran out and was given its Last Breath instead of losing the turn. The
+   * room advanced nothing — the caller still has to sync the longer clock out. */
+  breath?: number;
 }
 
 interface RoomManagerDeps {
@@ -125,6 +132,11 @@ interface RoomInternal {
   /** The active seat's turn clock. Idle while the room has no running turn. The arithmetic lives
    * in the shared timing domain, so the server and a client projection cannot drift. */
   clock: TurnClock;
+  /** Time Attack only: each seat's personal clock in ms, by dense player index. Empty in every
+   * other mode, which is also how `startTurnClock` knows which budget a turn gets. */
+  seatClocks: number[];
+  /** Panic Buttons each seat has left, by dense player index. Empty when the room grants none. */
+  panic: AssistState[];
   /** Public summary of the play that ended the match, set the moment it finishes. Read once by
    * the game_over broadcast and cleared when the room is recycled for a rematch. */
   winningMove: WinningMove | null;
@@ -341,6 +353,8 @@ export class RoomManager {
       // produce anything else — a room becomes discoverable only by its host saying so later.
       visibility: DEFAULT_ROOM_VISIBILITY,
       clock: IDLE_CLOCK,
+      seatClocks: [],
+      panic: [],
       winningMove: null,
       matchId: null,
       matchSeq: 0,
@@ -550,13 +564,28 @@ export class RoomManager {
    * does a match that just ended: a finished game has no turn to time, and a clock left running
    * would keep counting down to a red 0:00 behind the results screen. */
   private startTurnClock(room: RoomInternal): void {
-    const timed = room.state?.phase === 'playing';
-    room.clock = timed ? startTurn(this.now(), room.settings.turnMs) : IDLE_CLOCK;
+    if (room.state?.phase !== 'playing') {
+      room.clock = IDLE_CLOCK;
+      return;
+    }
+    room.clock = startTurn(this.now(), turnBudgetMs(room.settings, room.seatClocks, room.state.activePlayerIndex));
   }
 
   /** ms left on the active seat's turn, or null when this room has no timer. Never negative. */
   private msLeft(room: RoomInternal): number | null {
     return msLeft(room.clock, this.now());
+  }
+
+  /**
+   * Charge the seat that just moved for the time its turn took, and pay it the increment. Called
+   * once per completed turn, before the next turn's clock starts, so a seat is billed exactly the
+   * authoritative interval between its turn starting and its move landing.
+   */
+  private chargeClock(room: RoomInternal, playerIndex: number): void {
+    if (room.clock.startedAt === null) return;
+    const state = room.panic[playerIndex];
+    const debt = chargeSeat(room.settings, room.seatClocks, playerIndex, this.now() - room.clock.startedAt, state?.debtMs ?? 0);
+    if (state) room.panic[playerIndex] = { ...state, debtMs: debt };
   }
 
   /**
@@ -575,6 +604,36 @@ export class RoomManager {
     const { clock, granted } = grantBonus(room.clock, room.settings.mexeBonusMs);
     room.clock = clock;
     return { ok: granted, msLeft: this.msLeft(room) };
+  }
+
+  /**
+   * Spend one of the active seat's time powers. Both work the same way and refuse the same way —
+   * wrong seat, no turn running, spent budget or a room that grants none — and both credit the
+   * personal clock, because the seat is charged for the whole turn either way. A double press is
+   * free: the domain grants at most one.
+   */
+  private spendTimePower(code: string, seat: number, kind: 'panic' | 'freeze'): { ok: boolean; msLeft: number | null } {
+    const room = this.rooms.get(code);
+    const index = room ? this.playerIndex(room, seat) : -1;
+    if (!room || !room.state || room.state.activePlayerIndex !== index) return { ok: false, msLeft: null };
+    const state = room.panic[index];
+    if (!state) return { ok: false, msLeft: this.msLeft(room) };
+    const assists = assistsOf(room.settings);
+    const spend = kind === 'panic' ? usePanic : useFreeze;
+    const result = spend(room.clock, state, assists);
+    if (!result.granted) return { ok: false, msLeft: this.msLeft(room) };
+    room.clock = result.clock;
+    room.panic[index] = result.state;
+    creditSeat(room.settings, room.seatClocks, index, kind === 'panic' ? assists.panicMs : assists.freezeMs);
+    return { ok: true, msLeft: this.msLeft(room) };
+  }
+
+  usePanicButton(code: string, seat: number): { ok: boolean; msLeft: number | null } {
+    return this.spendTimePower(code, seat, 'panic');
+  }
+
+  useFreezeButton(code: string, seat: number): { ok: boolean; msLeft: number | null } {
+    return this.spendTimePower(code, seat, 'freeze');
   }
 
   /** The host seat starts only a full-ready 2–4P lobby. Seats never move, so turn order is
@@ -613,6 +672,11 @@ export class RoomManager {
     room.matchSeq += 1;
     room.matchStartedAt = this.now();
     room.resultRecorded = false;
+    // Personal clocks are dealt with the match, from the settings frozen a moment ago — so a
+    // rematch always starts on full clocks and never inherits the last match's.
+    room.seatClocks = isTimeAttack(room.settings) ? occupied.map(() => room.settings.startClockMs) : [];
+    // Assistance is dealt with the match too, so a rematch never inherits a spent Panic Button.
+    room.panic = occupied.map(() => assistStateFor(assistsOf(room.settings)));
     for (const s of occupied) s.missedTurns = 0;
     // A ready bit means "these terms, this deal". The deal it agreed to has just been made, so it
     // stops meaning anything — clearing it here is what stops a stale vote from counting towards
@@ -647,6 +711,9 @@ export class RoomManager {
   private commitTurn(room: RoomInternal, seat: number, next: GameState): TurnResult {
     assertConservation(next);
     const before = room.state;
+    // Billed against the state that is ending, so the charge lands on the seat that spent the
+    // time rather than on whoever is about to move.
+    if (before) this.chargeClock(room, before.activePlayerIndex);
     room.state = next;
     room.rev += 1;
     room.lastActivityAt = this.now();
@@ -755,6 +822,35 @@ export class RoomManager {
       const timedOut = expired(room.clock, t);
       if (!absentTooLong && !timedOut) continue;
 
+      // Last Breath before the turn is taken away: one extra window per turn, granted by the
+      // authority rather than asked for, and impossible to chain because the used flag rides on
+      // the clock that `startTurnClock` replaces. An absent seat gets none — a breath is for a
+      // player who is there and out of time, not for a seat nobody is sitting in.
+      if (timedOut && !absentTooLong && active.connected) {
+        const breath = enterLastBreath(room.clock, assistsOf(room.settings));
+        if (breath.entered) {
+          room.clock = breath.clock;
+          creditSeat(room.settings, room.seatClocks, state.activePlayerIndex, room.settings.lastBreathMs);
+          advanced.push({ code, gameOver: false, breath: active.seat });
+          continue;
+        }
+        // Time Debt: rather than lose the match here, a seat may borrow against its own future
+        // increments — bounded by `maxDebtMs`, recorded explicitly, and repaid before its clock
+        // grows again. Off unless the room granted it, and never a surprise deduction.
+        const index = state.activePlayerIndex;
+        const assistState = room.panic[index];
+        if (assistState && isTimeAttack(room.settings)) {
+          const borrowed = borrowTime(room.seatClocks[index] ?? 0, assistState, assistsOf(room.settings));
+          if (borrowed.borrowedMs > 0) {
+            room.seatClocks[index] = borrowed.clockMs;
+            room.panic[index] = borrowed.state;
+            room.clock = { ...room.clock, budgetMs: room.clock.budgetMs + borrowed.borrowedMs };
+            advanced.push({ code, gameOver: false, breath: active.seat });
+            continue;
+          }
+        }
+      }
+
       // Per-room isolation: one room whose state can no longer advance legally must not stop
       // every other stalled room from advancing, or throw out of the caller's interval forever.
       // Crash policy: such a room is corrupt — drop it and report it so the caller can notify
@@ -766,6 +862,10 @@ export class RoomManager {
         room.rev += 1;
         room.lastActivityAt = t;
         active.missedTurns += 1;
+        // Time Attack: the clock that ran out *is* the seat's own, so record it as spent. It is
+        // zeroed only for a real expiry — a seat timed out for being absent still has whatever
+        // time it had left, and would get it back on reconnect if the room survived.
+        if (timedOut && isTimeAttack(room.settings)) room.seatClocks[state.activePlayerIndex] = 0;
         this.startTurnClock(room);
         this.noteCardCounts(room, state, next);
         const finished = next.phase === 'finished';
@@ -824,6 +924,8 @@ export class RoomManager {
     room.matchSeats = [];
     room.winningMove = null;
     room.clock = IDLE_CLOCK;
+    room.seatClocks = [];
+    room.panic = [];
     room.lastActivityAt = this.now();
     for (const s of room.seats) {
       if (!s) continue;
@@ -885,7 +987,8 @@ export class RoomManager {
       room.state!, this.playerIndex(room, seat), room.rev, room.settings, this.msLeft(room),
       // Both arrays are indexed by dense player index, like everything else inside a view.
       room.matchSeats.map((s) => room.seats[s]?.missedTurns ?? 0), room.clock.bonusClaimed,
-      room.matchId ?? '', room.matchSeats,
+      room.matchId ?? '', room.matchSeats, room.seatClocks, room.panic.map((p) => p.panicLeft),
+      room.panic.map((p) => p.freezeLeft), room.panic.map((p) => p.debtMs),
     );
   }
 

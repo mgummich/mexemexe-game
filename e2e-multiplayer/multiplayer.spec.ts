@@ -298,7 +298,8 @@ test('room timer: the host sets it in the lobby, it locks at start, and the serv
   // expiry is observable inside an e2e run without weakening the bounds themselves.
   const CUSTOM = {
     timerMode: 'custom' as const, turnMs: 15_000, mexeBonusMs: 5_000, warnMs: 10_000,
-    reconnectGraceMs: 30_000, missedTurnLimit: 5,
+    reconnectGraceMs: 30_000, missedTurnLimit: 5, startClockMs: 0, incrementMs: 0,
+    panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0,
   };
   await pageA.evaluate((s) => window.__MEXE__.online!.setRoomSettings(s), CUSTOM);
   // Both seats must see the same terms — the guest renders the host's choice, never its own.
@@ -309,7 +310,7 @@ test('room timer: the host sets it in the lobby, it locks at start, and the serv
 
   // A non-host proposal is refused: the guest's send changes nothing for anyone.
   await pageB.evaluate(() => window.__MEXE__.online!.setRoomSettings({
-    timerMode: 'off', turnMs: 0, mexeBonusMs: 0, warnMs: 0, reconnectGraceMs: 60_000, missedTurnLimit: 2,
+    timerMode: 'off', turnMs: 0, mexeBonusMs: 0, warnMs: 0, reconnectGraceMs: 60_000, missedTurnLimit: 2, startClockMs: 0, incrementMs: 0, panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0,
   }));
   await pageB.waitForTimeout(400);
   expect(await pageA.evaluate(() => window.__MEXE__.online!.roomSettings()?.turnMs)).toBe(15_000);
@@ -827,7 +828,8 @@ test('custom timing: the host edits the room\'s own numbers and every seat plays
 
   const applied = {
     timerMode: 'custom' as const, turnMs: 60_000, mexeBonusMs: 30_000, warnMs: 15_000,
-    reconnectGraceMs: 90_000, missedTurnLimit: 3,
+    reconnectGraceMs: 90_000, missedTurnLimit: 3, startClockMs: 0, incrementMs: 0,
+    panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0,
   };
   await host.evaluate((s) => window.__MEXE__.online!.setRoomSettings(s), applied);
   // Both seats end up on the host's numbers, and the change costs everyone their ready bit.
@@ -862,7 +864,7 @@ test('custom timing: readable on a portrait phone, and its bounds are the server
   // directly still comes back inside the same bounds the buttons stop at.
   await host.evaluate(() => window.__MEXE__.online!.setRoomSettings({
     timerMode: 'custom', turnMs: 1, mexeBonusMs: -1, warnMs: 999_000,
-    reconnectGraceMs: 1, missedTurnLimit: 99,
+    reconnectGraceMs: 1, missedTurnLimit: 99, startClockMs: 0, incrementMs: 0, panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0,
   }));
   await host.waitForFunction(() => window.__MEXE__.online!.roomSettings()?.timerMode === 'custom', undefined, { timeout: 10_000 });
   // The floor is Blitz speed (5s), not comfort speed, and the warning is capped by the turn it
@@ -902,7 +904,7 @@ test('ON-09/ON-20: a host settings change clears every ready bit, on a landscape
   // both lobbies say so, instead of starting a match under settings nobody re-accepted.
   await host.evaluate(() =>
     window.__MEXE__.online!.setRoomSettings({
-      timerMode: 'fast', turnMs: 45_000, mexeBonusMs: 20_000, warnMs: 10_000, reconnectGraceMs: 30_000, missedTurnLimit: 2,
+      timerMode: 'fast', turnMs: 45_000, mexeBonusMs: 20_000, warnMs: 10_000, reconnectGraceMs: 30_000, missedTurnLimit: 2, startClockMs: 0, incrementMs: 0, panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0,
     }),
   );
   for (const p of [host, guest]) {

@@ -227,3 +227,52 @@ A difficulty sets *defaults*, never a lock:
 
 The setup screen carries one row (difficulty · panic · breath); Custom's turn length lives in the
 settings panel's Game section, because at four seats the setup panel has exactly one free row.
+
+## Time Attack (Phases 9–12)
+
+Server-owned, protocol v11. `RoomSettings` carries `startClockMs`/`incrementMs`, `GameView`
+carries `clocksMs` and `panicLeft` per player index, and `server/speed-rules.ts` holds the policy
+(which budget a turn gets, what a turn costs the seat that took it, what the room grants) so
+`RoomManager` keeps owning rooms rather than arithmetic.
+
+- a turn's budget **is** the active seat's clock; `spendClock` charges the authoritative interval
+  and pays the increment, floored at zero, with a flagged clock earning nothing
+- a clock reaching zero ends the match for that seat (`missedTurnLimit: 1` — there is no second
+  chance to count towards)
+- clocks are dealt with the match, so a rematch always starts full, and a reconnecting client is
+  told them rather than reconstructing them
+- **Perfect Rhythm** reuses the shared fold through `noteTurnUsed`: Time Attack has no per-turn
+  budget to take a fraction of, so a turn that cost less than the increment — one that paid for
+  itself — is a turn in rhythm
+- **Adrenaline** needs no special case: the scene latches the budget at the turn change, so the
+  critical window is a fraction of the clock the seat actually started the turn with
+- **Panic Button** is a `use_panic` message; the server extends both the turn clock and the
+  personal clock, and refuses a non-active seat, a spent budget or a room that grants none
+- **Last Breath** is granted by the server's own tick, once per turn, to a connected seat only —
+  an absent seat is not out of time, it is out of the room
+
+Either assist can be switched off on any preset: `normalizeRoomSettings` accepts an explicit zero
+for panic or breath and ignores everything else a payload sends, so terms can be weakened and never
+strengthened. The lobby has no switch for it yet — that UI is Phase 27's.
+
+## Freeze, Time Debt and Time Attack presets (Phases 13–15)
+
+Protocol v12. Both powers are Time Attack's, both are off in the named preset, and a custom room
+with a `startClockMs` is what turns them on — "does this room have personal clocks?" has one
+answer, `startClockMs > 0`, whatever the preset is called.
+
+- **Freeze** (`use_freeze`, `useFreeze`): stops the personal clock for a fixed span, modelled as
+  time credited to both the turn and the clock. The seat is charged for the whole turn either way,
+  so crediting exactly the frozen span leaves it having spent nothing while frozen — deterministic,
+  and impossible to stretch with a slow connection because no client says when a freeze ended.
+- **Time Debt** (`borrowTime`): at zero, after Last Breath, a seat may borrow against its own
+  future increments up to `maxDebtMs`. The debt is explicit and public (`GameView.debtMs`), the
+  clock never goes negative, and `spendClock` pays the debt out of the increment before the clock
+  grows. Bounded, so a seat cannot borrow its way out twice.
+- **Presets** (`TIME_ATTACK_PRESETS`): Easy 120s/+5s with every power, Medium 90s/+4s, Hard
+  60s/+3s (the lobby preset exactly), Expert 45s/+2s with nothing. Each one is expressible through
+  the custom screen's own bounds, which is where a host picks a non-default difficulty until the
+  lobby ruleset UI lands in Phase 27.
+
+The clock face carries all of it as text: `+Ns` a panic is available, `❄Ns` once it is spent and a
+freeze is not, `−Ns` for debt owed, and the rhythm pips. Never colour alone.

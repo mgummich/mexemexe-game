@@ -25,7 +25,7 @@ import { SURFACE, TEXT } from '../ui/tokens';
 /** Lobby preset cycle — one tap moves between the three answers a room of friends actually
  * chooses between. `custom` is deliberately not in the cycle: it lives behind the CUSTOM screen,
  * so nobody lands on a six-field configuration by tapping past Fast. */
-const PRESET_CYCLE = ['casual', 'fast', 'blitz', 'off'] as const;
+const PRESET_CYCLE = ['casual', 'fast', 'blitz', 'timeattack', 'off'] as const;
 
 /**
  * The custom screen's rows, in display order: the setting, how far one tap moves it, and the

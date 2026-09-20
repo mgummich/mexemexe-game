@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { normalizeRoomSettings, TIMER_PRESETS } from '../src/net/protocol';
 import {
   assistStateFor,
+  borrowTime,
   BLITZ_PRESETS,
   BLITZ_TURN_BOUNDS,
   enterLastBreath,
@@ -11,9 +13,13 @@ import {
   NO_ASSISTS,
   NO_RHYTHM,
   noteTurnTaken,
+  noteTurnUsed,
+  spendClock,
   startTurn,
+  useFreeze,
   usePanic,
   type Assists,
+  TIME_ATTACK_PRESETS,
   type BlitzDifficulty,
 } from '../src/game-state/timing';
 
@@ -92,8 +98,8 @@ describe('Perfect Rhythm', () => {
 });
 
 describe('Panic Button and Last Breath', () => {
-  const both: Assists = { panicMs: 5_000, panicUses: 1, lastBreathMs: 3_000 };
-  const panicOnly: Assists = { ...both, lastBreathMs: 0 };
+  const both: Assists = { panicMs: 5_000, panicUses: 1, lastBreathMs: 3_000, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 };
+  const panicOnly: Assists = { ...both, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 };
   const breathOnly: Assists = { ...both, panicMs: 0, panicUses: 0 };
 
   it('ON/ON: each grants once, and Last Breath cannot chain', () => {
@@ -165,6 +171,95 @@ describe('Blitz difficulty presets', () => {
     for (const preset of Object.values(BLITZ_PRESETS)) {
       expect(preset.turnMs).toBeGreaterThanOrEqual(lo);
       expect(preset.turnMs).toBeLessThanOrEqual(hi);
+    }
+  });
+});
+
+describe('Time Attack personal clock', () => {
+  it('spends what the turn took and pays the increment', () => {
+    expect(spendClock(60_000, 4_000, 3_000).clockMs).toBe(59_000);
+    expect(spendClock(60_000, 0, 3_000).clockMs).toBe(63_000);
+  });
+
+  it('floors at zero, and a flagged clock earns nothing', () => {
+    expect(spendClock(2_000, 5_000, 3_000).clockMs).toBe(0);
+    expect(spendClock(2_000, 2_000, 3_000).clockMs).toBe(0);
+    expect(spendClock(0, 0, 3_000).clockMs).toBe(0);
+  });
+
+  it('works with no increment at all', () => {
+    expect(spendClock(60_000, 4_000, 0).clockMs).toBe(56_000);
+  });
+});
+
+describe('Perfect Rhythm in Time Attack', () => {
+  it('keeps the streak for a turn that paid for itself', () => {
+    // Increment 3s: a turn decided in 2s costs less than it earns.
+    let r = noteTurnUsed(NO_RHYTHM, 2_000, 3_000);
+    r = noteTurnUsed(r, 3_000, 3_000);
+    expect(r).toEqual({ streak: 2, best: 2 });
+    expect(noteTurnUsed(r, 3_001, 3_000)).toEqual({ streak: 0, best: 2 });
+  });
+
+  it('is the same fold the per-turn modes use', () => {
+    const clock = startTurn(0, 8_000);
+    expect(noteTurnTaken(NO_RHYTHM, clock, 5_000)).toEqual(noteTurnUsed(NO_RHYTHM, 3_000, 4_000));
+  });
+});
+
+describe('Freeze and Time Debt, in the domain', () => {
+  const FULL: Assists = { ...NO_ASSISTS, freezeMs: 10_000, freezeUses: 1, maxDebtMs: 20_000 };
+
+  it('Freeze extends the turn once, and never with the feature off', () => {
+    const clock = startTurn(0, 30_000);
+    const first = useFreeze(clock, assistStateFor(FULL), FULL);
+    expect(first.granted).toBe(true);
+    expect(msLeft(first.clock, 0)).toBe(40_000);
+    expect(useFreeze(first.clock, first.state, FULL).granted).toBe(false);
+    expect(useFreeze(clock, assistStateFor(NO_ASSISTS), NO_ASSISTS).granted).toBe(false);
+  });
+
+  it('borrowing is bounded by the debt ceiling and recorded explicitly', () => {
+    const first = borrowTime(0, assistStateFor(FULL), FULL);
+    expect(first).toMatchObject({ clockMs: 20_000, borrowedMs: 20_000 });
+    expect(first.state.debtMs).toBe(20_000);
+    expect(borrowTime(first.clockMs, first.state, FULL).borrowedMs).toBe(0);
+  });
+
+  it('the increment repays debt before the clock sees it, and never goes negative', () => {
+    expect(spendClock(20_000, 0, 3_000, 20_000)).toEqual({ clockMs: 20_000, debtMs: 17_000 });
+    expect(spendClock(20_000, 0, 3_000, 1_000)).toEqual({ clockMs: 22_000, debtMs: 0 });
+    expect(spendClock(1_000, 5_000, 3_000, 4_000)).toEqual({ clockMs: 0, debtMs: 4_000 });
+  });
+});
+
+describe('Time Attack difficulty presets', () => {
+  it('shorten the clock and thin the increment down the ladder', () => {
+    const order: BlitzDifficulty[] = ['easy', 'medium', 'hard', 'expert'];
+    const clocks = order.map((d) => TIME_ATTACK_PRESETS[d].startClockMs);
+    const increments = order.map((d) => TIME_ATTACK_PRESETS[d].incrementMs);
+    expect(clocks).toEqual([...clocks].sort((a, b) => b - a));
+    expect(increments).toEqual([...increments].sort((a, b) => b - a));
+  });
+
+  it('Expert is the unassisted one, and Hard matches the lobby preset', () => {
+    expect(TIME_ATTACK_PRESETS.expert.assists).toEqual(NO_ASSISTS);
+    expect(TIME_ATTACK_PRESETS.hard.startClockMs).toBe(TIMER_PRESETS.timeattack.startClockMs);
+    expect(TIME_ATTACK_PRESETS.hard.incrementMs).toBe(TIMER_PRESETS.timeattack.incrementMs);
+    expect(TIME_ATTACK_PRESETS.hard.assists.panicMs).toBe(TIMER_PRESETS.timeattack.panicMs);
+    expect(TIME_ATTACK_PRESETS.hard.assists.lastBreathMs).toBe(TIMER_PRESETS.timeattack.lastBreathMs);
+  });
+
+  it('every preset is one a custom room could actually be given', () => {
+    for (const preset of Object.values(TIME_ATTACK_PRESETS)) {
+      const applied = normalizeRoomSettings({
+        timerMode: 'custom', startClockMs: preset.startClockMs, incrementMs: preset.incrementMs,
+        ...preset.assists,
+      });
+      expect(applied.startClockMs).toBe(preset.startClockMs);
+      expect(applied.incrementMs).toBe(preset.incrementMs);
+      expect(applied.panicUses).toBe(preset.assists.panicUses);
+      expect(applied.maxDebtMs).toBe(preset.assists.maxDebtMs);
     }
   });
 });

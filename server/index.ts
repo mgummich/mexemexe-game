@@ -465,6 +465,24 @@ function handleMessage(ws: WebSocket, conn: ConnState, msg: ClientMessage): void
       if (rooms.claimMexeBonus(conn.code, conn.seat).ok) broadcastStateSync(conn.code);
       return;
     }
+    case 'use_panic': {
+      if (conn.code === null || conn.seat === null) {
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
+        return;
+      }
+      // Same policy as the Mexe bonus: a refused press is an ordinary no-op, and the next sync
+      // carries the authoritative time left either way.
+      if (rooms.usePanicButton(conn.code, conn.seat).ok) broadcastStateSync(conn.code);
+      return;
+    }
+    case 'use_freeze': {
+      if (conn.code === null || conn.seat === null) {
+        sendError(ws, 'no_room', 'not in a room', msg.reqId);
+        return;
+      }
+      if (rooms.useFreezeButton(conn.code, conn.seat).ok) broadcastStateSync(conn.code);
+      return;
+    }
     case 'start_game': {
       if (conn.code === null || conn.seat === null) {
         sendError(ws, 'no_room', 'not in a room', msg.reqId);
@@ -827,7 +845,7 @@ const heartbeatTimer = setInterval(() => {
 }, HEARTBEAT_INTERVAL_MS).unref();
 
 const turnTickTimer = setInterval(() => {
-  for (const { code, gameOver, crashed, error, closed, timedOut } of rooms.advanceStalledTurns()) {
+  for (const { code, gameOver, crashed, error, closed, timedOut, breath } of rooms.advanceStalledTurns()) {
     if (crashed) {
       // Crash policy: the manager already dropped the corrupt room — log why (an invariant this
       // process broke, not client input) and tell its sockets.
@@ -839,6 +857,11 @@ const turnTickTimer = setInterval(() => {
     // when it applies one, so a notice sent before it would be wiped by the very update it
     // explains. Closing the room comes last, after its survivors have both.
     if (!closed) broadcastStateSync(code);
+    if (breath !== undefined) {
+      // Nothing else happened: the turn is still that seat's, with a little more clock on it. The
+      // sync above is the whole message, so the round ends here.
+      continue;
+    }
     if (timedOut !== undefined) {
       for (const sock of sockets.get(code)?.values() ?? []) {
         send(sock, { v: PROTOCOL_VERSION, type: 'turn_timeout', seat: timedOut });

@@ -671,7 +671,7 @@ is worse than no save or no frame.
 | save (settings/progress/cosmetics) | `version: 1` in `mexe-save` | `src/core/persistence.ts` | yes, one hop: the unversioned `mexe-settings` key migrates once, then is deleted | no — a future `version` is not 1, so the whole envelope is dropped | silent per-field fallback to defaults; the player keeps a working game, never a partial one |
 | game-state snapshot | `GAME_STATE_VERSION = 2` | `src/rules/rules.ts` | no | no | `RulesError` (`corruptSave`, `unsupportedSaveVersion`) — the caller recovers |
 | replay | `REPLAY_VERSION = 1` | `src/game-state/replay.ts` | no | no | refused with the version in the message; a replay is a developer artifact, so a loud failure is the right one |
-| wire protocol | `PROTOCOL_VERSION = 9` | `src/net/protocol.ts` | no | no | `unsupported_version` on the client's first frame, shown as "reload the page to update" |
+| wire protocol | `PROTOCOL_VERSION = 12` | `src/net/protocol.ts` | no | no | `unsupported_version` on the client's first frame, shown as "reload the page to update" |
 
 Rules that follow from it:
 

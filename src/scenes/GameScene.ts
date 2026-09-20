@@ -20,7 +20,8 @@ import { plural, t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
 import {
-  assistStateFor, BLITZ_PRESETS, enterLastBreath, NO_ASSISTS, NO_RHYTHM, noteTurnTaken, startTurn, usePanic,
+  assistStateFor, BLITZ_PRESETS, enterLastBreath, NO_ASSISTS, NO_RHYTHM, noteTurnTaken, noteTurnUsed,
+  startTurn, usePanic,
   type AssistState, type Assists, type Rhythm, type TurnClock,
 } from '../game-state/timing';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
@@ -226,6 +227,8 @@ class MatchViewState {
   lastEmoteBySeat = new Map<number, { line: string | null; at: number }>();
   /** Which seat the last render showed as active, so a handover can be staged rather than swapped. */
   lastRenderedActiveSeat = -1;
+  /** Turn number the Time Attack budget was last latched for — see the state_sync handler. */
+  lastBudgetTurn = -1;
   /** Readback of the most recently *confirmed* (meld) turn — read by onWin() to build the
    * results-screen "winning move" line. Cleared on a draw, since a stalemate win has no meld play
    * to describe. Set before the confirmTurn action, since dispatch() runs onWin() synchronously. */
@@ -554,6 +557,7 @@ export class GameScene extends Phaser.Scene {
         // The difficulty sets how strong each assist is; the two switches decide whether it is
         // there at all. Neither can take the other's decision away.
         this.assists = {
+          ...NO_ASSISTS,
           panicMs: settings.get().blitzPanic ? preset.assists.panicMs : 0,
           panicUses: settings.get().blitzPanic ? preset.assists.panicUses : 0,
           lastBreathMs: settings.get().blitzLastBreath ? preset.assists.lastBreathMs : 0,
@@ -788,7 +792,14 @@ export class GameScene extends Phaser.Scene {
     this.ui.lastAiReason = null; // every online seat is a person
     this.turnDeadlineAt = view.turnMsLeft === null ? null : Date.now() + view.turnMsLeft;
     this.turnWarnMs = view.settings.warnMs;
-    this.turnBudgetMs = view.settings.turnMs;
+    // Time Attack has no per-turn allowance: the budget *is* whatever the seat's own clock held
+    // when the turn began, so it is latched on the turn change rather than re-read from every
+    // frame — otherwise the critical window would shrink along with the clock it measures.
+    if (view.settings.timerMode !== 'timeattack') this.turnBudgetMs = view.settings.turnMs;
+    else if (view.turn !== this.ui.lastBudgetTurn) {
+      this.turnBudgetMs = view.turnMsLeft ?? 0;
+      this.ui.lastBudgetTurn = view.turn;
+    }
     this.ui.lastTickSecond = -1;
     this.editor = null;
     if (result.kind === 'desync') {
@@ -1657,11 +1668,9 @@ export class GameScene extends Phaser.Scene {
       // The clock face is the Panic Button offline: one more button on a HUD this tight buys a
       // collision, and the thing a panicking player is already looking at is the clock. The hit
       // area is a coarse-pointer target (34px) rather than the glyphs' own box.
-      if (!this.online) {
-        this.onlineTimerText
-          .setInteractive(new Phaser.Geom.Rectangle(-10, -17, 80, 34), Phaser.Geom.Rectangle.Contains)
-          .on('pointerdown', () => this.onPanic());
-      }
+      this.onlineTimerText
+        .setInteractive(new Phaser.Geom.Rectangle(-10, -17, 80, 34), Phaser.Geom.Rectangle.Contains)
+        .on('pointerdown', () => this.onPanic());
       // 250 ms, not a per-frame update: the readout has one-second resolution, and a timer event
       // stops with the scene instead of outliving it the way a bare setInterval would.
       // D6: buildStaticUi() re-runs on every viewport:changed (relayout) — without removing the
@@ -1772,7 +1781,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.onlineTimerText
       .setVisible(true)
-      .setText(t('online.turnTimeLeft', { secs: clock.secs }) + this.panicMarker() + this.rhythmMarker())
+      .setText(t('online.turnTimeLeft', { secs: clock.secs }) + this.panicMarker() + this.speedMarkers() + this.rhythmMarker())
       .setColor(clock.tone === 'critical' ? TEXT.error : clock.tone === 'warning' ? TEXT.warning : TEXT.muted)
       .setScale(clock.scale);
     if (clock.tone !== 'muted' && clock.secs !== this.ui.lastTickSecond && clock.secs > 0) {
@@ -1812,6 +1821,14 @@ export class GameScene extends Phaser.Scene {
    */
   private onPanic(): void {
     if (this.turnDeadlineAt === null || this.state().activePlayerIndex !== this.localSeat) return;
+    if (this.online) {
+      // Online the button only asks: the server owns the clock, refuses a spent budget, and the
+      // next state_sync is what actually moves the deadline. One control, two powers, in the order
+      // a player wants them: the emergency extension first, and the freeze once that is spent.
+      if (this.panicLeftHere() > 0) this.net?.usePanic();
+      else if ((this.online.freezeLeft[this.localSeat] ?? 0) > 0) this.net?.useFreeze();
+      return;
+    }
     const result = usePanic(this.localClock(), this.assistState, this.assists);
     if (!result.granted) return;
     this.assistState = result.state;
@@ -1832,16 +1849,57 @@ export class GameScene extends Phaser.Scene {
   private noteRhythm(): void {
     if (this.turnDeadlineAt === null || this.turnBudgetMs <= 0) return;
     const msLeft = Math.max(0, this.turnDeadlineAt - Date.now());
+    const roomSettings = this.online?.settings;
+    if (roomSettings?.timerMode === 'timeattack') {
+      // No per-turn budget to take a fraction of: Time Attack keeps rhythm by the increment, so a
+      // turn that paid for itself is a turn in rhythm.
+      this.rhythm = noteTurnUsed(this.rhythm, this.turnBudgetMs - msLeft, roomSettings.incrementMs);
+      return;
+    }
     this.rhythm = noteTurnTaken(this.rhythm, startTurn(0, this.turnBudgetMs), msLeft);
   }
 
   /** The streak as a quiet run of pips beside the clock — never a number, never a colour of its
    * own, and nothing at all below two in a row, so it reads as a rhythm rather than a score. */
+  /** A seat's Time Attack clock in ms, or null in any mode that has no personal clocks. The
+   * active seat's own figure comes from the running deadline instead, so it ticks rather than
+   * standing still until the next frame lands. */
+  private seatClockMs(playerIndex: number): number | null {
+    const clocks = this.online?.clocksMs ?? [];
+    const stored = clocks[playerIndex];
+    if (stored === undefined) return null;
+    if (playerIndex === this.state().activePlayerIndex && this.turnDeadlineAt !== null) {
+      return Math.max(0, this.turnDeadlineAt - Date.now());
+    }
+    return stored;
+  }
+
   /** The Panic Button as text on the clock face: `+5s` while one is available, nothing once it is
    * spent or switched off. A word, not a colour, so it survives every colour-vision setting. */
   private panicMarker(): string {
-    if (this.online || this.assistState.panicLeft <= 0 || this.turnDeadlineAt === null) return '';
-    return ` +${Math.round(this.assists.panicMs / 1000)}s`;
+    if (this.turnDeadlineAt === null || this.state().activePlayerIndex !== this.localSeat) return '';
+    if (this.panicLeftHere() <= 0) return '';
+    const ms = this.online ? this.online.settings.panicMs : this.assists.panicMs;
+    return ` +${Math.round(ms / 1000)}s`;
+  }
+
+  /** What else the clock face is carrying: a freeze still available, and time already borrowed.
+   * Both are words and numbers, never a colour on its own. */
+  private speedMarkers(): string {
+    if (!this.online || this.state().activePlayerIndex !== this.localSeat) return '';
+    let out = '';
+    if (this.panicLeftHere() <= 0 && (this.online.freezeLeft[this.localSeat] ?? 0) > 0) {
+      out += ` \u2744${Math.round(this.online.settings.freezeMs / 1000)}s`;
+    }
+    const debt = this.online.debtMs[this.localSeat] ?? 0;
+    if (debt > 0) out += ` \u2212${Math.round(debt / 1000)}s`;
+    return out;
+  }
+
+  /** Panic Buttons this seat has left — the server's count online, the scene's own offline. */
+  private panicLeftHere(): number {
+    if (!this.online) return this.assistState.panicLeft;
+    return this.online.panicLeft[this.localSeat] ?? 0;
   }
 
   private rhythmMarker(): string {
@@ -2637,6 +2695,15 @@ export class GameScene extends Phaser.Scene {
         // Handing over is a sequence, not a swap: the hand has just receded, so the seat taking
         // over lights up a beat later rather than at the same instant.
         if (active !== this.ui.lastRenderedActiveSeat) this.activateSeat([ring, glow]);
+      }
+      // Time Attack: a personal clock is the thing the table watches, so it rides with the seat it
+      // belongs to rather than living in one corner. Seconds only — this is a read on how much
+      // room an opponent has left, not a countdown to act on.
+      const seatClock = this.seatClockMs(i);
+      if (seatClock !== null) {
+        this.hud.push(this.add.text(textX + 34, this.r.opponentY + 2,
+          t('online.turnTimeLeft', { secs: Math.ceil(seatClock / 1000) }),
+          fontStyle(8, seatClock <= 10_000 ? TEXT.warning : TEXT.muted)));
       }
       this.hud.push(av, name, count);
       x += this.r.opponentStep;

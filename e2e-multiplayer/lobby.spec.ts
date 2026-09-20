@@ -451,7 +451,7 @@ test('LB-11 @race: a fairness setting change clears every ready bit, once, on ev
   await readyAll(pages);
 
   const before = await a.evaluate(() => window.__MEXE__.online!.roomSettings());
-  await a.evaluate(() => window.__MEXE__.online!.setRoomSettings({ timerMode: 'fast', turnMs: 20_000, mexeBonusMs: 10_000, warnMs: 5_000, missedTurnLimit: 3, reconnectGraceMs: 30_000 }));
+  await a.evaluate(() => window.__MEXE__.online!.setRoomSettings({ timerMode: 'fast', turnMs: 20_000, mexeBonusMs: 10_000, warnMs: 5_000, missedTurnLimit: 3, reconnectGraceMs: 30_000, startClockMs: 0, incrementMs: 0, panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 }));
   for (const p of pages) {
     await p.waitForFunction(
       () => window.__MEXE__.online!.lobbySeats!().filter((r) => r.status !== 'empty').every((r) => r.status === 'waiting'),
@@ -690,7 +690,7 @@ test('LB-47: a seat that was offline when the match ended lands in the rematch l
   // The shortest turn the server allows, a missed-turn limit that will not close the room while
   // the seat is away, and a grace window well past the time it stays away for.
   await a.evaluate(() => window.__MEXE__.online!.setRoomSettings({
-    timerMode: 'custom', turnMs: 15_000, mexeBonusMs: 0, warnMs: 5_000, missedTurnLimit: 10, reconnectGraceMs: 300_000,
+    timerMode: 'custom', turnMs: 15_000, mexeBonusMs: 0, warnMs: 5_000, missedTurnLimit: 10, startClockMs: 0, incrementMs: 0, panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0, reconnectGraceMs: 300_000,
   }));
   for (const p of pages) {
     await p.waitForFunction(() => window.__MEXE__.online!.roomSettings()?.turnMs === 15_000, undefined, { timeout: 10_000 });

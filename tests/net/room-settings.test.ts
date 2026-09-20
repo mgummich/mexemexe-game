@@ -22,7 +22,7 @@ describe('normalizeRoomSettings', () => {
   });
 
   it('a named preset ignores every other field in the payload', () => {
-    const out = normalizeRoomSettings({ timerMode: 'fast', turnMs: 1, missedTurnLimit: 999 });
+    const out = normalizeRoomSettings({ timerMode: 'fast', turnMs: 1, missedTurnLimit: 999, startClockMs: 0, incrementMs: 0 });
     expect(out).toEqual(TIMER_PRESETS.fast);
   });
 
@@ -119,5 +119,29 @@ describe('the Blitz preset', () => {
 
   it('warns for most of its own turn, and never longer than it', () => {
     expect(TIMER_PRESETS.blitz.warnMs).toBeLessThan(TIMER_PRESETS.blitz.turnMs);
+  });
+});
+
+describe('assists on a named preset', () => {
+  it('may be switched off individually, and never strengthened', () => {
+    const noPanic = normalizeRoomSettings({ timerMode: 'timeattack', panicMs: 0, panicUses: 0 });
+    expect(noPanic.panicMs).toBe(0);
+    expect(noPanic.panicUses).toBe(0);
+    expect(noPanic.lastBreathMs).toBe(TIMER_PRESETS.timeattack.lastBreathMs);
+
+    const noBreath = normalizeRoomSettings({ timerMode: 'timeattack', lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 });
+    expect(noBreath.lastBreathMs).toBe(0);
+    expect(noBreath.panicMs).toBe(TIMER_PRESETS.timeattack.panicMs);
+
+    // Anything but an off switch is ignored, so no payload can buy a longer panic or a second one.
+    const greedy = normalizeRoomSettings({ timerMode: 'timeattack', panicMs: 600_000, panicUses: 9, lastBreathMs: 600_000, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 });
+    expect(greedy).toEqual(TIMER_PRESETS.timeattack);
+  });
+
+  it('carries no assists at all in the untimed and per-turn presets', () => {
+    for (const mode of ['off', 'casual', 'fast'] as const) {
+      const out = normalizeRoomSettings({ timerMode: mode });
+      expect([out.panicMs, out.panicUses, out.lastBreathMs]).toEqual([0, 0, 0]);
+    }
   });
 });

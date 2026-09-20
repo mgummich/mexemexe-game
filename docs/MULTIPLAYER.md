@@ -43,7 +43,7 @@ accounts, ranking, chat, or cosmetics sync. The game labels the entry point
 - **A seat disconnected past the room's reconnect grace is played for you**:
   the server draws and ends that seat's turn so the match keeps moving. It never
   melds on your behalf. Losing `missedTurnLimit` turns in a row ends the match.
-- **The turn timer has four lobby presets** (Casual / Fast / Blitz / Off), one tap
+- **The turn timer has five lobby presets** (Casual / Fast / Blitz / Time Attack / Off), one tap
   apart, plus a host-only CUSTOM screen behind them for a room that wants its
   own numbers. The custom screen's buttons stop at `CUSTOM_BOUNDS`, the same
   bounds the server clamps to, and send one proposal on APPLY rather than one
@@ -420,7 +420,13 @@ it. `NetClient.lastRoomState` latches the most recent one, because the
 ## 4. Protocol
 
 JSON text frames. Every message: `{ v, type, ... }` where `v` is the protocol
-version (`PROTOCOL_VERSION = 9` — bumped from 8 for the seat/player split: `GameView` gained
+version (`PROTOCOL_VERSION = 12` — bumped from 11 for Freeze and Time Debt: `RoomSettings` gained
+`freezeMs`/`freezeUses`/`maxDebtMs`, `GameView` gained `freezeLeft`/`debtMs`, and the client
+gained `use_freeze`; v11 bumped from 10 for Speed assistance: `RoomSettings` gained
+`panicMs`/`panicUses`/`lastBreathMs`, `GameView` gained `panicLeft`, and the client gained
+`use_panic`, without which a room's Panic Button is unpressable; v10 bumped from 9 for MexeMexe Time Attack: `RoomSettings` gained
+`startClockMs`/`incrementMs` and `GameView` gained `clocksMs`, the per-seat personal clocks,
+without which a v9 client renders a Time Attack room as an untimed one; v9 bumped from 8 for the seat/player split: `GameView` gained
 `seats`, the room seat of each player by turn-order index, without which a client cannot read a
 room that is playing with a seat gap (§3f); v8 bumped from 7 for the casual matchmaking queue:
 the client gained `join_queue`/`cancel_queue` and the server gained `queue_state`,
@@ -775,6 +781,30 @@ fairness surface: `timerMode`, `turnMs`, `mexeBonusMs`, `warnMs`,
 | Casual (default) | 90s | +45s | 10s | 60s | 2 |
 | Fast | 45s | +20s | 10s | 30s | 2 |
 | Blitz | 7s | — | 4s | 30s | 3 |
+| Time Attack | personal clock | — | 15s | 30s | 1 |
+
+Both Speed presets also carry assistance: Blitz +4s panic once and a 2s Last
+Breath, Time Attack +6s once and 3s. A named preset ignores every other field a
+payload carries **except** an explicit zero for either assist — Panic and Last
+Breath are always individually disableable, and allowing only the off switch
+means a payload can weaken a room's terms but never lengthen a turn or buy a
+second press. `use_panic` spends one; the server refuses it for a non-active
+seat, a spent budget or a room that grants none, and answers nothing either way
+(the next `state_sync` carries the authoritative clock). Last Breath is granted
+by the server's own tick at expiry, once per turn, to a connected seat only.
+
+**Time Attack** is the second Speed Mode: there is no per-turn allowance at all
+(`turnMs: 0`). Each seat is dealt a personal clock (`startClockMs`, 60s) that
+persists across turns, is charged the authoritative time each of its turns
+actually took, and earns `incrementMs` (3s) for taking it — `spendClock` in
+`src/game-state/timing.ts`, floored at zero, with a flagged clock earning
+nothing. A clock that reaches zero ends the match for that seat, which is why
+the preset's `missedTurnLimit` is 1: a seat with no clock left has already lost.
+The clocks ride on every view as `clocksMs` (per player index, empty in other
+modes), so a reconnecting client is told them rather than reconstructing them,
+and a rematch deals fresh ones with the match. `custom` never carries personal
+clocks: they are the Time Attack preset's, so "which mode is this?" has one
+answer.
 
 **Blitz** is the first Speed Mode (`docs/specs/speed-modes-timing.md`): the same
 game with fixed per-turn pressure, not a different rule set. It grants no Mexe
@@ -788,7 +818,7 @@ A brand-new room starts on Casual, except that its reconnect grace comes from
 the deployment's `MEXE_DISCONNECT_GRACE_MS` until a preset is picked.
 
 **Who owns them.** The host proposes, in the lobby only — one tap on the summary
-line cycles Casual/Fast/Blitz/Off, and the CUSTOM link opens a five-row screen
+line cycles Casual/Fast/Blitz/Time Attack/Off, and the CUSTOM link opens a five-row screen
 (`OnlineScene.renderCustom`) whose −/+ buttons go dead at `CUSTOM_BOUNDS`, so
 the host never proposes a number the server would silently clamp. APPLY sends
 one `set_room_settings`; a per-field send would clear everyone's ready bit five

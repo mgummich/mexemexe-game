@@ -28,15 +28,15 @@ DEFERRED
 | 4 — MexeMexe Blitz Core | COMPLETE | Online: fourth timer preset (7s, no Mexe bonus). Local: setup toggle + scene-owned clock, `?blitz=1` e2e hook, `blitz-clock` screenshot evidence. |
 | 5 — Blitz Perfect Rhythm | COMPLETE | `Rhythm` in the timing domain (4 tests); pip run beside the clock; no toggle. Local Speed clock moved to its own HUD slot (`regions.speedClock`). |
 | 6 — Blitz Adrenaline | COMPLETE | `adrenaline` ramp in `turn-clock.ts` (3 tests) driving readout growth and cue volume; budget-aware critical window. Stateless, so reconnect-safe. |
-| 7 — Blitz Panic Button and Last Breath | PARTIAL | Domain + local Blitz: `usePanic`/`enterLastBreath`, four-combination tests, `?panic=`/`?breath=` hooks. Online rulesets carry neither yet — deferred to Phase 27. |
+| 7 — Blitz Panic Button and Last Breath | COMPLETE | Domain + local Blitz (four-combination tests, `?panic=`/`?breath=` hooks); online half landed with Phase 12 — the Blitz preset carries +4s panic and a 2s breath. |
 | 8 — Blitz Difficulty Presets | COMPLETE | `BLITZ_PRESETS` (easy/medium/hard/expert/custom) + setup row with independent panic/breath switches; custom turn length in the settings panel. Evidence: `setup-blitz`. |
-| 9 — MexeMexe Time Attack Core | NOT_STARTED | |
-| 10 — Time Attack Perfect Rhythm | NOT_STARTED | |
-| 11 — Time Attack Adrenaline | NOT_STARTED | |
-| 12 — Time Attack Panic Button and Last Breath | NOT_STARTED | |
-| 13 — Time Attack Freeze | NOT_STARTED | |
-| 14 — Time Attack Time Debt | NOT_STARTED | |
-| 15 — Time Attack Presets | NOT_STARTED | |
+| 9 — MexeMexe Time Attack Core | COMPLETE | Protocol v10: `startClockMs`/`incrementMs`, `GameView.clocksMs`, server charge/increment, `server/speed-rules.ts`. Lobby preset + per-seat HUD clocks. |
+| 10 — Time Attack Perfect Rhythm | COMPLETE | Shared fold via `noteTurnUsed`; threshold is the increment, so a turn that paid for itself keeps rhythm. |
+| 11 — Time Attack Adrenaline | COMPLETE | No special case needed: the scene latches the turn budget at the turn change, so the critical window is a fraction of the seat’s own clock. |
+| 12 — Time Attack Panic Button and Last Breath | COMPLETE | Protocol v11: `use_panic`, `panicLeft`, server-granted Last Breath. Tests: panic near zero, breath at zero, increment after a breath, reconnect mid-breath, rematch reset, both disabled. Lobby switches are Phase 27. |
+| 13 — Time Attack Freeze | COMPLETE | `useFreeze` + `use_freeze` (protocol v12), credited to both turn and personal clock, one use per match, no lag-based extension. |
+| 14 — Time Attack Time Debt | COMPLETE | `borrowTime` at zero (after Last Breath), bounded by `maxDebtMs`, repaid out of the increment first; `GameView.debtMs` renders it. |
+| 15 — Time Attack Presets | PARTIAL | `TIME_ATTACK_PRESETS` (easy/medium/hard/expert/custom), each expressible through the custom screen bounds; Hard is the lobby preset. Named-difficulty lobby UI is Phase 27. |
 | 16 — Optional Overheat Modifier Outside Tempo | NOT_STARTED | |
 | 17 — Commit / No Undo Thinking | NOT_STARTED | |
 | 18 — Simultaneous Start Prototype | NOT_STARTED | |
