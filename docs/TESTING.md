@@ -96,9 +96,10 @@ instead. That is usually the smaller, better change.
 
 ### Deliberately not tested automatically
 
-- **Pixel-level visual regression.** The screenshot suite captures PNGs and
-  fails on page/console errors and fps floors; there is no baseline image diff.
-  Visual correctness is a human judgement made against those artifacts.
+- **Pixel-level visual regression of every screen.** The screenshot suite captures
+  ~130 PNGs and fails on page/console errors and fps floors, not on pixels.
+  *Six* states do have pixel baselines — see below — and the rest stay a human
+  judgement against those artifacts.
 - **Game feel, pacing, clarity, perceived AI quality.** Playtest guide.
 - **Raw synthetic pointer-drag drops** — verified through editor hooks instead
   (see the README's known limitations).
@@ -264,6 +265,7 @@ as orders of magnitude, not deadlines — nothing in the repo asserts them.
 | `npm run verify:multiplayer:chromium` | build + two-plus real clients | minutes |
 | `npm run verify:multiplayer` | the same on three engines | ~18 min — nightly, not per PR |
 | `npm run verify:cross` | build + 8 device/engine layout profiles | minutes |
+| `npm run verify:visual` | build + the six pixel baselines | ~30s |
 | `npm run test:mutation` | 1521 mutants over the six core modules and the two wire-contract modules, six concurrent vitest sandboxes | ~2 h — weekly, or on demand |
 
 The developer loop is the first two rows. Everything below them is a gate, not
@@ -823,6 +825,7 @@ desyncs, app errors and the last twelve wire messages. A canvas screenshot and a
 timed-out `waitForFunction` cannot name a seat or a revision; this does. It
 reports and drains its list, and never closes a context: each test still owns
 the clients it opened.
+| Visual baselines | `e2e/visual.spec.ts` (the default config) | `npm run verify:visual` | Six deterministic states compared pixel-for-pixel against a per-platform baseline — see §Visual baselines |
 | PWA / offline | `playwright.pwa.config.ts` (`e2e-pwa/`) | `npm run verify:pwa` | Service worker registers, offline reload boots to the menu, offline local/AI/tutorial play, online disabled offline, the update handover |
 
 All four serve the production build via `npm run preview` — the service worker
@@ -916,6 +919,36 @@ itself only re-runs lint, unit tests and the build, checks the tag against
 Not every useful QA check blocks every PR. Engine parity for the lobby, traced
 race hunting and fps trend lines are a within-a-day guarantee, not a
 per-review one.
+
+## Visual baselines
+
+Six deterministic states (`e2e/visual.spec.ts`): the menu, a board mid-turn, the
+Mexe draft, the win screen, the board in portrait, and the board at +25 % text.
+Six, because a baseline that covers everything is a baseline nobody dares update.
+
+```bash
+npm run verify:visual                                     # build + compare
+npx playwright test e2e/visual.spec.ts --update-snapshots  # after an intended change
+```
+
+**Baselines are per platform, because the platform is the renderer.** Captures
+are byte-identical across runs on one machine and differ across machines (Phase 84
+measured both), so Playwright's `{platform}` suffix is load-bearing: a
+`-darwin` baseline says nothing about linux. CI's fixed runner is the one that
+gates, in nightly's `visual-baseline` job; a developer's first local run writes
+their own baseline and compares against it from then on. A platform with no
+baseline yet **fails and writes the candidate**, which the job uploads as an
+artifact — that artifact is what a human looks at and commits.
+
+Tolerance is `maxDiffPixelRatio: 0.002` with animations disabled: a handful of
+pixels can move when a tween lands a frame apart, while a real rendering change
+moves thousands. Anything between the two is what a failure is asking you to look
+at.
+
+**Updating a baseline is a review, not a chore.** Regenerate, look at the diff,
+and say in the commit what changed and why. A baseline updated without being
+looked at has stopped meaning anything — which is why this is six states and not
+every screen.
 
 ## Manual playtesting
 

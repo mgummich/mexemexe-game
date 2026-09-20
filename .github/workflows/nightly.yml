@@ -36,6 +36,31 @@ jobs:
       # clock this job has and a PR does not.
       - run: MEXE_SOAK=1 npx vitest run tests/server/session-soak.integration.test.ts
 
+  visual-baseline:
+    name: Visual baselines
+    runs-on: ubuntu-latest
+    # Nightly, and on the runner whose renderer the committed linux baselines were captured on.
+    # A first run on a platform with no baseline *writes* one and fails; that artifact is the
+    # candidate a human looks at and commits (docs/TESTING.md, "Visual baselines").
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run verify:visual
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: visual-baseline-candidates
+          path: |
+            e2e/visual.spec.ts-snapshots/
+            test-results/
+          retention-days: 14
+
   dependency-audit:
     name: Dependency advisories
     runs-on: ubuntu-latest

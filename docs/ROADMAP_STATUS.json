@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "4D",
-  "phase": "33 — Visual Regression Baseline",
+  "phase": "34 — Large-Screen & Responsive Visual QA",
   "status": "NOT_STARTED"
  },
- "head": "6cf0aee",
+ "head": "95e1b54",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1807,6 +1807,41 @@
     "round": 1,
     "result": "CRITIC PASS — the negative control is the part that matters; a structural asset test that has never been seen to fail is the false confidence the phase warns about"
    }
+  },
+  {
+   "phase": "33 — Visual Regression Baseline",
+   "wave": "4D (deferred)",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Revised decision D16. It said pixel diffing was not worth it because renderer-dependent bytes fail on another machine — true, and Phase 84's measurement changed what to do about it: captures are byte-identical across runs on one machine, so a baseline keyed to the platform is meaningful where a shared one is not.",
+   "changed": [
+    "e2e/visual.spec.ts — six deterministic states (menu, board, Mexe draft, win, portrait board, +25% text) compared with toHaveScreenshot at maxDiffPixelRatio 0.002, animations disabled",
+    "e2e/visual.spec.ts-snapshots/*-darwin.png — the darwin baselines, 364 kB for six frames",
+    ".github/workflows/nightly.yml — visual-baseline job on the fixed CI runner; a platform with no baseline fails and uploads the candidate for a human to review and commit",
+    "package.json — npm run verify:visual",
+    "docs/TESTING.md — §Visual baselines and the two table rows; docs/DECISIONS.md — D16 revised with the reason and the phase that changed it"
+   ],
+   "acceptance": "durable states have stable baselines (six, all deterministic showcase states; the suite passes on a second run against the baseline it wrote); review/update workflow explicit (regenerate, look at the diff, say what changed — written into both the spec and TESTING.md); regressions actionable (Playwright writes actual/expected/diff images next to the failure)",
+   "verification": [
+    "npx playwright test e2e/visual.spec.ts: first run wrote 6 baselines and failed as designed; second and third runs 6/6 passed against them",
+    "npm run lint (exit 0); nightly.yml parses"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the platform suffix is the part that makes this honest, and the decision record says the evidence that changed the earlier call rather than silently reversing it"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-linux-baselines-missing",
+     "note": "Only darwin baselines exist. The nightly visual-baseline job will fail on its first run and upload the linux candidates; until a human reviews and commits those, CI gates nothing here.",
+     "owner": "Phase 98 — Final Visual QA"
+    }
+   ],
+   "resolvedRisks": [
+    {
+     "id": "P3-stale-committed-screenshots",
+     "note": "Answered, not by refreshing the 64 stale PNGs but by deciding what a baseline is: six reviewed, per-platform frames gate; docs/screenshots stays a human-read artifact set."
+    }
+   ]
   }
  ],
  "riskClosures": [

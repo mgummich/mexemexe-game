@@ -26,6 +26,7 @@
     "verify:multiplayer:chromium": "npm run build && playwright test -c playwright.multiplayer.config.ts --project=chromium --grep-invert @chaos && node scripts/check-verify-multiplayer.mjs --engines=chromium",
     "verify:cross": "npm run build && playwright test -c playwright.cross.config.ts",
     "verify:pwa": "npm run build && playwright test -c playwright.pwa.config.ts",
+    "verify:visual": "npm run build && playwright test e2e/visual.spec.ts --workers=1 --retries=0",
     "verify:preview": "npm run build && node scripts/check-preview.mjs",
     "release": "node scripts/release.mjs"
   },
