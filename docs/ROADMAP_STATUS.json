@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "8B",
-  "phase": "72 — Privacy & Data Model Review",
+  "phase": "73 — Optional Product Telemetry",
   "status": "NOT_STARTED"
  },
- "head": "7babe0e",
+ "head": "ae07124",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -831,6 +831,31 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — the dedup rule is 'same as previous', so alternating distinct failures are all kept and only the cap bounds them; no product code path depends on the buffer"
+   }
+  },
+  {
+   "phase": "72 — Privacy & Data Model Review",
+   "wave": "8B",
+   "status": "PASS",
+   "result": "Audited every surface the phase names against the code rather than the docs: 5 storage keys (now pinned by a test), reconnect token in sessionStorage only, logger-level redaction, redacted online projection, play log with no upload path, no AI adaptation state at all (Phase 50 is BLOCKED, nothing persists). One documentation gap closed: the production-shipped verification surface had no privacy statement anywhere.",
+   "changed": [
+    "docs/OBSERVABILITY_PRIVACY.md — new §'The verification surface ships in production': what window.__MEXE__ can and cannot reach, and why shipping it is acceptable rather than merely convenient"
+   ],
+   "acceptance": "sensitive data identified (§What is collected / never collected, plus the new debug-surface table); nothing unnecessary found to remove — gamesStarted and headToHead are counts with named consumers (first-run helper mode, results screen); hidden gameplay information protected (property test over redacted views, INV-N2); every privacy-sensitive feature has a stated purpose",
+   "verification": [
+    "MEXE_OUTPUT=ai npx vitest run tests/server/log.test.ts tests/no-telemetry.test.ts tests/property/protocol.property.test.ts tests/persistence.test.ts tests/playlog.test.ts tests/boundaries.test.ts (94/94, exit 0)"
+   ],
+   "evidence": {
+    "log": "tmp/agent-logs/p72-privacy.log",
+    "greps": [
+     "no 'adapt' state anywhere in src (Phase 50 blocked, so no adaptation data model exists)",
+     "no token reachable from src/verification/*",
+     "only persistence.ts and net/client.ts touch web storage (boundaries test)"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the new 'build' log field added in Phase 71 was re-checked against the redaction rules: a version string is not player data and is the one thing an operator needs next to a failure"
    }
   }
  ],

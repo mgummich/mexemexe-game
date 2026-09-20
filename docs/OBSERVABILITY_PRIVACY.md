@@ -218,6 +218,26 @@ frame in a tab an installed PWA keeps open for days.
 
 Player saves and settings are `localStorage` only; clearing site data resets them.
 
+### The verification surface ships in production
+
+`window.__MEXE__` (`src/verification/debug-api.ts`) exists in the production
+bundle, deliberately: the Playwright suites run against `dist/`, and a
+verification surface that only exists in a dev build proves nothing about what
+players get. It is a read surface over objects the product already owns
+(ARCH-011), so the privacy question is only ever "what can it reach":
+
+| Reachable | Not reachable |
+|---|---|
+| the local match state — the player's own game | any opponent hand: online it reads `OnlineSession.state()`, the redacted projection whose opponent cards are placeholders (INV-N2) |
+| the play log and its export | the reconnect token, in `sessionStorage` under its own key and never surfaced here |
+| rendered lobby/seat text, the connection notice, captured error messages | a replay of an online match — `replay()` returns `null` there, because a client-side replay of a redacted projection would be fiction |
+| a handful of product actions (join, ready, COMPRAR) — the same paths a tap takes | any privileged action: every one goes through the server, which validates it exactly as it validates a tap |
+
+So the surface is bounded by the client's own knowledge, and the client's own
+knowledge is bounded by the server. Opening a console gains a player nothing
+they could not already see, which is the property that makes shipping it
+acceptable rather than convenient.
+
 ## Replay artifacts
 
 A replay (`src/game-state/replay.ts`, captured with `window.__MEXE__.replay()`
