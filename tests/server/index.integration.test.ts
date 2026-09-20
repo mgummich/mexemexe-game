@@ -38,7 +38,10 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
       JSON.stringify({ v: PROTOCOL_VERSION, type: 'submit_turn', reqId: 'r1', rev: 1, melds: [{ id: 'm', cardIds: [42] }] }),
     ];
     for (const f of frames) c.sendRaw(f);
-    await c.next('error');
+    // One refusal per frame, so wait for all of them: `next('error')` returns on the *first*
+    // one, and on a loaded runner the rest are still in flight when the assertion below reads
+    // them (seen in CI as `expected 7 to be 10`). Same trap `until` is documented for.
+    await c.until((ms) => ms.filter((m) => m.type === 'error').length === frames.length, `${frames.length} refusals`);
     const errors = c.received.filter((m) => m.type === 'error');
     expect(errors.length).toBe(frames.length);
     // A wrong version is the one refusal a player can act on ("reload to update"), so it
