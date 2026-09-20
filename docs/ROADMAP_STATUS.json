@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "12",
-  "phase": "102 — Production & Release Readiness",
+  "phase": "103 — Final Documentation Reconciliation",
   "status": "NOT_STARTED"
  },
- "head": "0a2cd23",
+ "head": "b04fb7f",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -2010,6 +2010,49 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — measured, not re-asserted; the residual drift is carried forward with the same numbers rather than being quietly dropped at the final gate"
+   }
+  },
+  {
+   "phase": "102 — Production & Release Readiness",
+   "wave": "12",
+   "status": "PASS",
+   "result": "Walked the release path end to end and found one real defect: every generated GitHub Release note linked the self-hosting guide at the repository root, where it has never lived — a 404 in every release published so far.",
+   "changed": [
+    "scripts/release.mjs — the link points at docs/SELF_HOSTING.md, the path is a named constant, and the selfcheck now asserts both that the file exists and that the rendered notes contain the real path"
+   ],
+   "acceptance": "release procedure reproducible (tag → workflow re-runs lint/tests/build, refuses a tag that disagrees with package.json, publishes notes rendered from the CHANGELOG, builds both images per architecture and joins them by digest); rollback path ready (OPERATIONS §Rollback, its four unsafe conditions, and a rehearsal test in the PWA suite); production configuration validated (server refuses to start on a bad or missing value — 20 config/deployment tests; .env.example documents every variable; CSP and non-root user gated by a test and a CI job); release blockers zero — the open items are the deferred risks npm run health lists, none of them P0 or P1",
+   "verification": [
+    "node scripts/release.mjs --selfcheck (ok), with a negative control: restoring the old root path makes it fail",
+    "node scripts/release.mjs --notes 1.11.0 — the rendered link now resolves",
+    "npx vitest run tests/server/config.test.ts tests/deployment.test.ts (20/20)",
+    "npm run verify:preview (exit 0) from Phase 97",
+    "npm run lint (exit 0)"
+   ],
+   "decisions": [
+    {
+     "id": "P3-required-checks-and-skips",
+     "decision": "ACCEPTED (closed)",
+     "why": "Branch protection is not visible from the repository. The requirement — required checks must treat a skipped job as satisfied — is documented in TESTING.md §Which gate runs when, which is where someone configuring it would look."
+    },
+    {
+     "id": "P3-nginx-master-root",
+     "decision": "ACCEPTED (closed)",
+     "why": "Recorded as THREAT_MODEL.md TM-21: nginx workers already drop privileges, and running the master unprivileged means another base image and a port change through every compose file, for a process that serves static files and logs nothing."
+    }
+   ],
+   "resolvedRisks": [
+    {
+     "id": "P3-required-checks-and-skips",
+     "note": "Accepted and documented where it is configured."
+    },
+    {
+     "id": "P3-nginx-master-root",
+     "note": "Accepted as TM-21."
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the defect found was not cosmetic: the release notes are the first thing a self-hoster follows, and it was broken in every published release"
    }
   }
  ],
