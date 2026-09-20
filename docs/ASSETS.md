@@ -99,7 +99,10 @@ prompt** (the later sections below are the standard to follow — not a summary,
 the prompt you actually sent), size, path, status. A PixelLab asset with no
 recorded prompt cannot be re-attempted, which is the whole of its provenance.
 
-**6. Review it in place, not on its own.** Capture the golden frames
+**6. Review it in place, not on its own.** `tests/assets.test.ts` runs inside
+`npm run test` and catches the objective defects first — a file the manifest does
+not know about, a size that does not match the family, a sprite with no alpha, a
+name that is not `family/lowercase-hyphenated.png`. Then the human part: Capture the golden frames
 ([ART_DIRECTION.md](ART_DIRECTION.md) §Accepting an asset) before and after, on
 the same machine — captures are byte-stable there, so the comparison is real —
 and walk the eight acceptance checks. `npm run verify` must stay green: it fails

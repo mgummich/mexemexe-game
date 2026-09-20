@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "4C",
-  "phase": "30 — High-Resolution Asset Production",
+  "wave": "4D",
+  "phase": "33 — Visual Regression Baseline",
   "status": "NOT_STARTED"
  },
- "head": "cd04918",
+ "head": "6cf0aee",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1758,6 +1758,54 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — no new asset was produced for a problem that was a drawing bug, and the change is confined to the one widget that owns button drawing"
+   }
+  },
+  {
+   "phase": "30 — High-Resolution Asset Production",
+   "wave": "4C (deferred)",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "The production set already exists and meets its references. Phase 24 measured 59 files with no placeholder shipping, no orphan and no family below its policy size except the ten backgrounds, and Phase 26 decided those stay at 480×270 with the download budget as the reason. Producing anything here would be quantity over quality — the phase's own first named risk.",
+   "acceptance": "required set exists (every manifest entry has a file, enforced from this phase on by tests/assets.test.ts); assets meet approved references (the six anchors, all shipped assets); source quality supports target displays (27 sprites native at RENDER_SCALE, verified from PNG headers)",
+   "verification": [
+    "npx vitest run tests/assets.test.ts (5/5)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no art was generated to satisfy a phase title"
+   }
+  },
+  {
+   "phase": "31 — Asset Integration Pipeline",
+   "wave": "4C (deferred)",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "The pipeline is already canonical and already predictable: one manifest entry per asset, BootScene GET-probes each path and substitutes a procedural fallback, a fallback is recorded in window.__MEXE__.missingAssets, and npm run verify fails when that list is non-empty. No atlas, because 59 files at 380 kB do not need one, and the probe already warms the service-worker cache.",
+   "acceptance": "runtime uses one pipeline (manifest → probe → load → fallback sweep); missing or invalid assets fail predictably and never silently — the gate fails on a single fallback; loading and fallback behaviour is documented in ASSETS.md and now also asserted",
+   "verification": [
+    "npx vitest run tests/assets.test.ts (5/5) — manifest and disk agree in both directions"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the 'silent fallback' risk does not exist here: the fallback is loud by construction"
+   }
+  },
+  {
+   "phase": "32 — Automated Asset QA",
+   "wave": "4C (deferred)",
+   "status": "PASS",
+   "result": "Turned the Phase 24 audit from a one-off script into a test, so the next asset cannot regress the things that audit had to measure by hand.",
+   "changed": [
+    "tests/assets.test.ts — five checks: manifest and disk agree in both directions (with music and the font excluded for stated reasons), every sprite authored at its drawn size and every background at the documented third, naming convention, a sound for every cue, an alpha channel where a sprite needs one",
+    "docs/TESTING.md — GQA-25; docs/ASSETS.md — the review step names the test that runs first"
+   ],
+   "acceptance": "common objective defects fail automatically (proved: swapping a file for a wrong-size one turns the suite red, and restoring it turns it green); checks are fast (~100 ms, inside npm run test) and actionable (each failure names the file, its size and the size expected); subjective quality stays separate — the test says so in its own comment",
+   "verification": [
+    "npx vitest run tests/assets.test.ts (5/5)",
+    "negative control: replaced effects/sparkle.png with logo.png → suite failed; restored → passed",
+    "npm run lint (exit 0)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the negative control is the part that matters; a structural asset test that has never been seen to fail is the false confidence the phase warns about"
    }
   }
  ],
