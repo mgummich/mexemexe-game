@@ -136,7 +136,10 @@ change.
   fails for reasons unrelated to the diff in front of a reviewer gets ignored.
 - **Updates land as their own change**, with the gates the dependency affects —
   a Vite bump runs the build and the browser suites, a Vitest bump runs the unit
-  suites. Majors are never bundled with feature work.
+  suites. Majors are never bundled with feature work. Dependabot opens them
+  weekly, grouped into one production and one development pull request and capped
+  at three open at a time (`.github/dependabot.yml`), which is what keeps this
+  rule from turning into a backlog.
 - **Duplicates are only a problem where they ship.** Dev-only duplicate versions
   are npm doing its job; a duplicate inside `dist/` or the server image is a
   defect.

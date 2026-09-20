@@ -181,21 +181,6 @@ export function controlH(kind: keyof typeof CONTROL_H, touch: boolean): number {
  */
 export const TOUCH_TARGET = { w: 34, h: 31 } as const;
 
-/**
- * Spacing steps, in world units, from the screen edge inwards. Not a general 4/8/16 scale: these
- * are the four distances the layouts actually use.
- */
-export const SPACE = {
-  /** Screen edge to the first thing on it. */
-  edge: 8,
-  /** Between sections of a screen or panel. */
-  section: 12,
-  /** Between sibling controls in a stack. */
-  control: 6,
-  /** Inside a control, around its label. */
-  inset: 3,
-} as const;
-
 /** `'#rrggbb'` for an integer surface — the CSS form of a colour that is stored as a Phaser fill. */
 export function toHex(int: number): string {
   return `#${int.toString(16).padStart(6, '0')}`;

@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "11A",
-  "phase": "92 — Dead-Code & Legacy Cleanup",
+  "phase": "93 — Technical Debt Review",
   "status": "NOT_STARTED"
  },
- "head": "bb8ff90",
+ "head": "6ef98d3",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1073,7 +1073,8 @@
      "note": "The production server image contains tsx + esbuild to run TypeScript directly. Deliberate, documented, with named revisit conditions.",
      "owner": "Phase 80 — Security Hardening (re-examine under the threat model)"
     }
-   ]
+   ],
+   "correction": "Phase 92 found .github/dependabot.yml — weekly grouped update pull requests, capped at three open. The Phase 78 entry's 'no continuous check anywhere' was true of advisory auditing (npm audit ran nowhere) and wrong about version updates. docs/DEVELOPMENT.md now names it."
   },
   {
    "phase": "79 — Security Threat Model",
@@ -1485,6 +1486,32 @@
     "round": 1,
     "result": "CRITIC PASS — the phase's own out-of-scope line (no rewrites without measurable payoff) is the reason the diff is 40 lines rather than 400, and the measurement that led there is recorded in the audit instead of being re-derived later"
    }
+  },
+  {
+   "phase": "92 — Dead-Code & Legacy Cleanup",
+   "wave": "11A",
+   "status": "PASS",
+   "result": "Scanned rather than guessed: every exported symbol in src/ and server/ cross-referenced against the whole repository (source, tests, e2e, scripts), every source file checked for an importer, the tracked file list read for clutter. The repository is already lean — one genuinely dead export, two unnecessary ones, and no dead file, script or test. One documentation error of my own found and corrected.",
+   "changed": [
+    "src/ui/tokens.ts — deleted the SPACE token set: four spacing steps with a comment claiming the layouts use them, referenced by nothing and named in no doc",
+    "server/connections.ts — hitWindow and hitKeyedWindow un-exported (used only inside their own module)",
+    "docs/DEVELOPMENT.md — names .github/dependabot.yml, which Phase 78 missed"
+   ],
+   "acceptance": "removals evidence-backed (each one a reference count of zero outside its own file, and no doc naming it); no obsolete parallel authority (docs/CHANGELOG.md and docs/CONTRIBUTING.md are symlinks to the root files, not copies — checked); surface area reduced without regressions (tsc, lint, the server suites and the docs-drift test all green)",
+   "verification": [
+    "cross-reference scan: 30 exports with no external reference, of which 26 are types read structurally and 4 were runtime values; each of the 4 checked by hand",
+    "MEXE_OUTPUT=ai npx vitest run tests/docs-drift.test.ts tests/server (312/312)",
+    "npx tsc --noEmit, npm run lint (exit 0)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing was deleted speculatively; the compatibility path that looked deletable (the pre-v1 mexe-settings migration) was left alone because Phase 70's policy keeps exactly one hop for preferences, which is the 'deleting useful compatibility without a policy check' risk avoided"
+   },
+   "findings": [
+    {
+     "note": "Kept deliberately: music/ holds the two unprocessed audio masters (documented in ASSETS.md); the pre-v1 settings migration is the one bounded migration the compatibility policy allows; 26 exported types have no external reference because they are read structurally."
+    }
+   ]
   }
  ],
  "riskClosures": [
