@@ -39,8 +39,28 @@ a regression trips the budget before a player notices it.
 | "the opponent isn't hanging" | one AI decision, expert, dense table | 36 ms / 22 924 trials | ~150 ms derived (4×) | **≤ 120 000 trials** (`SEARCH_BUDGET_TRIALS`) | deterministic work, not a clock: the budget is trials so the same seed gives the same move on any device (INV-A5) |
 | "my move landed" | per-turn wire payload (`state_sync`) | 1.2 kB | same | **≤ 8 kB** | measured on a two-player match start (1.1 kB) and the following turn (1.2 kB); the ceiling leaves room for a four-seat, 44-meld table |
 | "it doesn't eat my phone" | JS heap after boot | ~17 MB | — | **≤ 80 MB**, and no upward drift across repeated matches | drift, not the absolute number, is the leak signal — Phase 77 owns measuring it |
-| "the download was reasonable" | first-load transfer | 1.7 MB (app + art + sfx) | same | **≤ 3 MB** excluding music | `index` 279 kB / 86 kB gzip, `phaser` 1.3 MB / 354 kB gzip, art 380 kB, sfx 400 kB |
+| "the download was reasonable" | first-load wire bytes, cold cache | 432 kB | same | **≤ 1.5 MB** excluding music | `phaser` 347 kB gzip + `index` 84 kB gzip dominate; art (380 kB on disk) and sfx (400 kB) are served compressed and cached on first use. Was 1618 kB until Phase 76 stopped preloading a music track |
 | — | streamed music | 13 MB | same | **not budgeted, never precached** | it is excluded from the service-worker cache on purpose ([PWA_OFFLINE.md](PWA_OFFLINE.md)) |
+
+## Profiling findings (Phase 76)
+
+Profiled on the modest-mobile profile (390×844, 4× CPU throttle) on the worst
+board the game can reach (`?showcase=mexe&crowd=44`, 44 committed melds), plus a
+cold-cache network capture through CDP. Ranked by what it costs a player:
+
+| # | Finding | Evidence | Verdict |
+|---|---|---|---|
+| 1 | **A 1.18 MB music track downloaded on every cold boot, for music that is off by default.** `new Audio(src)` inherits Chrome's `preload = 'auto'`. | cold-cache wire bytes: 1618 kB total, of which `boteco-table.mp3` was 1185 kB | **Fixed here.** `preload = 'none'` before the src; the track is fetched when playback actually starts. Cold load is now 432 kB. Regression test in `tests/music-playback.test.ts` |
+| 2 | **Frame time is not JS-bound.** Under 4× throttle on the crowded table, JS self time is ~5 % of samples (largest single JS frame: Phaser `run`, 1.4 %); 78 % is `(program)` — native paint/GPU/compositor — and 12.5 % is idle. | `Profiler.start/stop`, 4 s sample at 200 µs | **No optimization.** There is no game-code hot spot to fix; fps headroom lives in Phaser's draw-call and text work. Optimizing here would be intuition, not evidence |
+| 3 | **Every asset is requested twice**: `BootScene` probes with GET, then Phaser loads it. | 164 requests for 105 URLs; the second request reports 0 wire bytes (HTTP/service-worker cache hit) | **Accepted, not changed.** The cost is request count, not bytes, and the probe is what produces `missingAssets` and warms the offline cache. Revisit only if a high-RTT profile shows it |
+| 4 | **Phaser is the largest download** at 347 kB gzip, 80 % of the JS bytes. | bundle measurement | **Accepted.** One game screen, no route to split it along; replacing the engine is not a performance decision |
+| 5 | **AI decision cost is bounded in trials, not milliseconds** (22 924 of 120 000 trials, 36 ms desktop, on a dense table). | Phase 52 measurement, unchanged | **No change.** A wall-clock target here would trade determinism (INV-A5) for a number no player can feel |
+
+Method, for the next person: `e2e/perf-measure.spec.ts` prints all of the above
+except the bundle sizes. Findings 2–5 were each ranked *below* the threshold for
+action deliberately — the phase's job was to find out where the time goes, and
+the answer was "one wasteful download, and nothing else that evidence supports
+touching".
 
 ## What is deliberately not budgeted
 

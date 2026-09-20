@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "9A",
-  "phase": "76 — Performance Profiling",
+  "phase": "77 — Memory Leak Testing",
   "status": "NOT_STARTED"
  },
- "head": "1fa315e",
+ "head": "248b367",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -937,6 +937,45 @@
      "id": "P2-ai-decision-time-unmeasured-on-mobile",
      "note": "Expert dense-table decision time under 4x throttle is derived, not measured. Bounded by the deterministic trial budget, so it cannot vary by device in trials — only in wall clock.",
      "owner": "Phase 76 — Performance Profiling"
+    }
+   ]
+  },
+  {
+   "phase": "76 — Performance Profiling",
+   "wave": "9A",
+   "status": "PASS",
+   "result": "Profiled the worst board under 4x CPU throttle and captured a cold-cache network trace. One real waste found and fixed: a 1.18 MB music track was downloaded on every cold boot for music that ships off by default. Everything else profiled below the threshold for action, and is recorded as such rather than optimized on intuition.",
+   "changed": [
+    "src/audio/music.ts — preload='none' set before the src, so a track is fetched when playback starts rather than at boot; module comment corrected (it claimed nothing was preloaded)",
+    "tests/music-playback.test.ts — regression test: every created element has preload 'none'",
+    "docs/PERFORMANCE.md — §Profiling findings, 5 ranked findings with evidence and a verdict each; first-load budget row corrected to the measured wire bytes",
+    "e2e/perf-measure.spec.ts — added the CPU-profile + cold-load capture"
+   ],
+   "acceptance": "bottlenecks evidence-backed (CDP Profiler samples, CDP Network wire bytes, bundle measurement); priorities ranked (table ordered by player cost, each with an explicit verdict); no optimization justified by intuition (4 of 5 findings deliberately left alone, with the reason)",
+   "verification": [
+    "cold-cache wire bytes before/after: 1618 kB → 432 kB (music no longer fetched at boot)",
+    "browser check: with music enabled, the track is requested and __MEXE__.music() reports playing:true, track boteco-table.mp3",
+    "MEXE_OUTPUT=ai npm run test (1125/1125, exit 0)",
+    "npm run lint (exit 0)",
+    "npm run build (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p76-test.log",
+     "tmp/agent-logs/p76-build.log"
+    ],
+    "profile": "4x throttle, crowded table: 78% (program), 12.5% idle, largest JS frame Phaser run at 1.4% — no game-code hot spot",
+    "requests": "164 requests for 105 URLs; the duplicate probe+load pair costs requests, not bytes"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the fix is two lines in the owner module, proven by a before/after network measurement and a browser check that music still plays when it is turned on; the untouched findings each carry the reason they were not worth acting on"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P2-ai-decision-time-unmeasured-on-mobile",
+     "from": "Phase 75",
+     "note": "Addressed by the profile instead of a stopwatch: AI code does not appear in the sampled JS at all on the worst board, so its cost is not a frame-time factor on the modest-mobile profile."
     }
    ]
   }

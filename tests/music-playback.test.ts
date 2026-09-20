@@ -17,12 +17,15 @@ function memoryStorage(): Storage {
 
 /** Stand-in for HTMLAudioElement: enough surface for music.ts (src/volume/play/pause/listeners). */
 class FakeAudio {
+  static created: FakeAudio[] = [];
   src: string;
+  preload = 'auto';
   volume = 1;
   currentTime = 0;
   paused = true;
   constructor(src = '') {
     this.src = src;
+    FakeAudio.created.push(this);
   }
   play(): Promise<void> {
     this.paused = false;
@@ -59,6 +62,18 @@ beforeAll(async () => {
 
 beforeEach(() => {
   setMusicContext('menu');
+});
+
+/**
+ * Chrome's default is `preload = 'auto'`, so `new Audio(src)` downloads the whole track at once.
+ * Music is off by default, so that was 1.2 MB over the wire on every cold boot for audio that may
+ * never play — measured in Phase 76 (docs/PERFORMANCE.md).
+ */
+describe('the track is not fetched before it is wanted', () => {
+  it('creates its element with preload none', () => {
+    expect(FakeAudio.created.length).toBeGreaterThan(0);
+    for (const el of FakeAudio.created) expect(el.preload).toBe('none');
+  });
 });
 
 describe('music track changes', () => {
