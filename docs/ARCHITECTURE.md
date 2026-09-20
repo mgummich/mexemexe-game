@@ -793,7 +793,7 @@ contract as the client — that shared edge is the point, not an accident.
 | anything outside `scenes`/`ui`/`assets`/`audio`/`main.ts` → `phaser` | keeps the domain portable | enforced (`tests/boundaries.test.ts`) |
 | `server/` → any `src/` module other than `rules`, `net/protocol` | the server must never import client presentation | enforced (`tests/boundaries.test.ts`) |
 | presentation → a second legality implementation | one `analyzeMeld`, one `canConfirmTurn` | convention (ARCH-019) |
-| `src/ai` → opponent hand identities | AI must not see what a player cannot | convention (INV-A2) |
+| `src/ai` → opponent hand identities | AI must not see what a player cannot | **type system** — `AiObservation` is branded, so only `observeForAi` can produce what `decide` accepts (§AI, above); plus the redaction tests in `tests/ai.test.ts` and `tests/property/ai.property.test.ts` |
 | `src/core/*` → `ui`, `cosmetics`, `ai`, `verification` | makes the platform layer unusable without presentation | **violated today** — ARCH-009/ARCH-011, Phase 3/4 |
 | `src/game-state` → the global bus | announcement, not turn application — the shareable half lives in `src/rules`, the transition in the pure `applyGameAction` | **narrowed to notification only** — ARCH-004; the control-flow half closed with ARCH-006 |
 
@@ -902,7 +902,7 @@ during restructuring (ARCH-019).
 | product code does not depend on the verification adapters | **test** — `tests/boundaries.test.ts` |
 | the tutorial cannot legalize an illegal move | **test** — `tests/tutorial.test.ts` (authority boundary) |
 | one owner per mutable state domain | **type system** for `GameState`/`DraftState` (`readonly` fields, checked in `tests/boundaries.test.ts`); **convention** elsewhere |
-| `core` does not depend upward | **none** — currently violated, ARCH-009 |
+| `core` does not depend upward | **test** — `tests/boundaries.test.ts` pins the known upward imports as an exact allowlist, so the ARCH-009 violations cannot grow (they are listed, not forgiven) |
 | scene state reset on relaunch | **construction** — the per-match owners (`MatchViewState`, `LocalMatch`, `OnlineSession`, `LobbyMachine`) are replaced, not re-initialised field by field |
 
 The invariants these mechanisms protect, and the scenarios that exercise them,

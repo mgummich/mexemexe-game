@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "10C",
-  "phase": "88 — Architecture Enforcement",
+  "phase": "89 — Documentation Drift Detection",
   "status": "NOT_STARTED"
  },
- "head": "7be79eb",
+ "head": "89701f3",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1299,6 +1299,23 @@
      "owner": "Phase 102 — Production & Release Readiness"
     }
    ]
+  },
+  {
+   "phase": "88 — Architecture Enforcement",
+   "wave": "10C",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Every rule the architecture calls critical already has a cheap mechanism: 13 static-analysis tests in tests/boundaries.test.ts (domain purity, no clock or unseeded randomness across DOMAIN + src/table + src/ai, Phaser confined to presentation, legality declared only in src/rules, server imports only shared code, no type-only cycles, readonly committed state, the core upward-import allowlist, RoomManager's size ceiling, and the web-storage ownership pin added in Phase 68). Two rows of the mechanisms table understated what holds them, which is exactly the false-confidence risk inverted.",
+   "changed": [
+    "docs/ARCHITECTURE.md — the INV-A2 row now names the branded AiObservation type (handing an engine authoritative state does not compile) instead of 'convention'; the core-upward row names the allowlist test instead of 'none'"
+   ],
+   "acceptance": "critical boundaries have cheap automated protection (static text scans, ~150 ms); failures are actionable (each assertion prints the offending file and import); rules reflect canonical architecture (the two stale rows corrected against the code)",
+   "verification": [
+    "MEXE_OUTPUT=ai npx vitest run tests/boundaries.test.ts tests/ai.test.ts (91/91)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing new was encoded. The phase's own risk list warns against turning preferences into tests, and the honest finding was that the mechanisms exist and the table lied about two of them."
+   }
   }
  ],
  "riskClosures": [
