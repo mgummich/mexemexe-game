@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "10C",
-  "phase": "90 — Repository Health Dashboard",
+  "wave": "11A",
+  "phase": "91 — Complexity Reduction",
   "status": "NOT_STARTED"
  },
- "head": "ec56afd",
+ "head": "288b41b",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -79,7 +79,9 @@
     {
      "id": "P2-tier-overlap",
      "note": "Per personality the tiers overlap: cida identical at beginner/casual/smart, juninho at casual/smart, bia/ze at smart/expert. Inherent to personality and difficulty being orthogonal; the match-level ladder is intact.",
-     "owner": "Phase 54 — AI Balance Metrics"
+     "owner": "Phase 93 — Technical Debt Review",
+     "reownedFrom": "Phase 54 — AI Balance Metrics",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     }
    ]
   },
@@ -131,7 +133,9 @@
     {
      "id": "P2-cida-bia-identical",
      "note": "cida and bia play identically at beginner and expert; they differ only in the minimal and rearrange traits those tiers override for everyone. Fixing it means either collapsing the tier ladder or a personality-specific comparator inside the neutral evaluator.",
-     "owner": "Phase 54 — AI Balance Metrics"
+     "owner": "Phase 93 — Technical Debt Review",
+     "reownedFrom": "Phase 54 — AI Balance Metrics",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     }
    ],
    "note": "Phase 49's other in-scope items are owned by the presentation layer and were verified, not re-built: per-personality cadence (GameScene.aiThinkDelay), pre-move tells, characterful lines and repeat-line suppression (GameScene.showEmote)."
@@ -366,7 +370,9 @@
     {
      "id": "P3-matchseats-identity-fallback",
      "note": "room.seats[room.matchSeats[i] ?? i] silently falls back to identity mapping when matchSeats has no entry, inventing a seat rather than failing on a violated invariant (AGENTS.md says fail).",
-     "owner": "Phase 58 — Authoritative Multiplayer State Flow"
+     "owner": "Phase 93 — Technical Debt Review",
+     "reownedFrom": "Phase 58 — Authoritative Multiplayer State Flow",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     }
    ]
   },
@@ -440,7 +446,9 @@
     {
      "id": "P3-reconnect-coverage-gaps",
      "note": "No test drives an exhausted client retry loop through a reload into a successful reconnect (client-side retention verified by inspection), and none combines a repeated reconnect with a turn taken in between.",
-     "owner": "Phase 66 — Multiplayer Soak Testing"
+     "owner": "Phase 100 — Final Multiplayer QA",
+     "reownedFrom": "Phase 66 — Multiplayer Soak Testing",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     }
    ]
   },
@@ -504,7 +512,9 @@
     {
      "id": "P3-late-rejection-not-correlated",
      "note": "proposal_rejected carries reqId but the client never correlates it. A rejection that arrives after its pending window was released (the 10s ONLINE_PENDING_TIMEOUT_MS path, or after a state_sync already landed) still plays the invalid sfx, shows a stale reason line and rebuilds the editor from the current state, which would discard a draft the player had just started. Input safety is unaffected: interactivity also requires !online.resyncing (GameScene.ts:2424), so a rejection cannot unlock a board that is mid-resync. Needs delayed delivery to reproduce, which this phase has no harness for.",
-     "owner": "Phase 65 — Network Chaos Testing"
+     "owner": "Phase 100 — Final Multiplayer QA",
+     "reownedFrom": "Phase 65 — Network Chaos Testing",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     }
    ],
    "notes": [
@@ -563,12 +573,16 @@
     {
      "id": "P3-retry-exhaustion-unowned",
      "note": "e2e-multiplayer covers an unreachable server and a recoverable retry, but no test drives the bounded retry loop to exhaustion and back into a successful reconnect. Same gap Phase 60 recorded as P3-reconnect-coverage-gaps.",
-     "owner": "Phase 66 — Multiplayer Soak Testing"
+     "owner": "Phase 100 — Final Multiplayer QA",
+     "reownedFrom": "Phase 66 — Multiplayer Soak Testing",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     },
     {
      "id": "P3-pwa-offline-x-online-room",
      "note": "SCN-34 covers an offline reload of a local match only. What an online room does across a PWA offline transition is unmapped and untested.",
-     "owner": "Phase 69 — Offline-First Resilience"
+     "owner": "Phase 97 — Final Product QA",
+     "reownedFrom": "Phase 69 — Offline-First Resilience",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     }
    ],
    "notes": [
@@ -605,7 +619,9 @@
     {
      "id": "P3-chaos-timing-under-load",
      "note": "CH-01..CH-05 use wall-clock waits (800ms injected delay, 20s convergence, 25s for CH-04 against the product's 10s pending timeout). Generous, and the five together run ~30s, but they are not immune to a heavily contended CI runner.",
-     "owner": "Phase 84 — Flaky-Test Control"
+     "owner": "Phase 100 — Final Multiplayer QA",
+     "reownedFrom": "Phase 84 — Flaky-Test Control",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     },
     {
      "id": "P3-chaos-outbound-untouched",
@@ -648,7 +664,9 @@
     {
      "id": "P3-soak-adds-to-pr-suite",
      "note": "The 2-cycle soak adds ~11s and one spawned server process to `npm run test`. The first full-suite run after adding it hit the known tests/ai.test.ts load flake (timeout at 5000ms); the same suite passed standalone and the full suite passed on rerun (exit 0). Contention, not a new defect, but the soak makes the existing flake marginally likelier.",
-     "owner": "Phase 84 — Flaky-Test Control"
+     "owner": "Phase 93 — Technical Debt Review",
+     "reownedFrom": "Phase 84 — Flaky-Test Control",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     },
     {
      "id": "P3-chaos-outbound-untouched",
@@ -703,7 +721,9 @@
     {
      "id": "P2-firefox-unverifiable-locally",
      "note": "Firefox cannot launch on this macOS 27 machine (browserType.launch: Failed to launch the browser process), so no Firefox evidence was produced for this phase or for the shared playToFinish change, which the Firefox lobby run also uses. The nightly multiplayer-all-engines job is the only Firefox gate available.",
-     "owner": "Phase 84 — Flaky-Test Control"
+     "owner": "Phase 100 — Final Multiplayer QA",
+     "reownedFrom": "Phase 84 — Flaky-Test Control",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
     },
     {
      "id": "P3-lb48-weak-mutant",
@@ -1343,6 +1363,99 @@
     "round": 1,
     "result": "CRITIC PASS — the test judges nothing about prose, which is what keeps it from becoming the noisy check the phase's risk list warns about; the two historical documents are exempted from the path check by name, with the reason"
    }
+  },
+  {
+   "phase": "90 — Repository Health Dashboard",
+   "wave": "10C",
+   "status": "PASS",
+   "result": "Built the smallest thing that answers 'what is failing' without becoming a second source of truth: a script that derives health from docs/ROADMAP_STATUS.json and points at the files that own every other signal. Running it immediately found what it was built to find — 17 risks had been deferred to phases that have since passed without recording an outcome.",
+   "changed": [
+    "scripts/health.mjs + `npm run health` — current phase, status counts, BLOCKED phases, risks whose owner phase has already passed (the actionable list), risks waiting on a phase still ahead, and a pointer list for the signals it cannot see",
+    "docs/DEVELOPMENT.md — §Repository health",
+    "docs/ROADMAP_STATUS.json — the 17 stale deferrals reconciled in place: 7 closed with the phase and evidence that actually closed them, 10 re-owned (owner rewritten on the original entry, with reownedFrom kept) to the phase that can act on them"
+   ],
+   "acceptance": "actionable health only (three lists, each with a decision behind it); no aggregate score — deliberately, because one number hides which area is failing; failing areas findable quickly (every other signal is a named command or a named doc section, never restated here)",
+   "verification": [
+    "node scripts/health.mjs — prints 43 phases (30 PASS, 6 NO_CHANGE_REQUIRED, 6 PASS_WITH_DEFERRED_RISKS, 1 BLOCKED), the BLOCKED phase, and the risk lists; exits 0 always (reporting, never a gate)",
+    "npm run health after the reconciliation: the overdue list is empty"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the script derives and never restates, so it cannot drift from the file it reads; the reconciliation it forced is the evidence that the signal is real"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P3-screenshot-churn",
+     "note": "Phase 84 measured it: byte-identical between consecutive runs, so it is staleness rather than flake. The remaining question (what the committed set is for) is tracked as P3-stale-committed-screenshots under Phase 33."
+    },
+    {
+     "id": "P3-perf-spec-flake",
+     "note": "Phase 84: contention, not nondeterminism. measureFpsSamples already takes the best of three windows; failures now print every window so interference is distinguishable from a regression."
+    },
+    {
+     "id": "P2-perf-spec-floors-under-suite-load",
+     "note": "Same diagnosis and the same change. Do not read an fps result from a suite running next to another browser suite (documented in TESTING.md §Flake policy)."
+    },
+    {
+     "id": "P2-suite-green-only-when-quiet",
+     "note": "Same: the fps floors assume an otherwise-idle machine, which is now written down rather than rediscovered."
+    },
+    {
+     "id": "P3-soak-heap-tripwire",
+     "note": "Phase 77 replaced the tripwire question with a measurement: 10 match cycles with heap, DOM nodes, listeners and the product-owned lifecycle counters."
+    },
+    {
+     "id": "P2-tsx-in-runtime-image",
+     "note": "Phase 80 accepted it explicitly as THREAT_MODEL.md TM-17, with named revisit conditions; it is tracked there rather than here."
+    },
+    {
+     "id": "P3-chaos-outbound-untouched",
+     "note": "Duplicate: the same risk is recorded once more against Phase 100, which is where it belongs."
+    }
+   ],
+   "deferredRisks": [],
+   "reownedRisks": [
+    {
+     "id": "P2-firefox-unverifiable-locally",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-chaos-timing-under-load",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-late-rejection-not-correlated",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-reconnect-coverage-gaps",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-retry-exhaustion-unowned",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-pwa-offline-x-online-room",
+     "owner": "Phase 97 — Final Product QA"
+    },
+    {
+     "id": "P2-cida-bia-identical",
+     "owner": "Phase 93 — Technical Debt Review"
+    },
+    {
+     "id": "P2-tier-overlap",
+     "owner": "Phase 93 — Technical Debt Review"
+    },
+    {
+     "id": "P3-matchseats-identity-fallback",
+     "owner": "Phase 93 — Technical Debt Review"
+    },
+    {
+     "id": "P3-soak-adds-to-pr-suite",
+     "owner": "Phase 93 — Technical Debt Review"
+    }
+   ]
   }
  ],
  "riskClosures": [

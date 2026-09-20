@@ -72,6 +72,27 @@ so a capture does not have to click through the settings panel.
 `node scripts/gen-sfx.mjs` regenerates the synthesized sound effects; there is
 no npm alias for it.
 
+## Repository health
+
+```bash
+npm run health
+```
+
+Derives the state of the roadmap from `docs/ROADMAP_STATUS.json` — the current
+phase, how phases closed, anything `BLOCKED`, and the two risk lists that matter:
+risks deferred to a phase that has **already passed** (the actionable ones, since
+nobody is coming back for them by accident) and risks waiting on a phase still
+ahead.
+
+It prints no score. One number would hide which area is failing, which is the
+only thing worth knowing. And it restates nothing: every other signal is a
+command or a document that owns it, listed at the end of the output — CI and
+nightly for gate status, `tests/boundaries.test.ts` for architecture,
+`tests/docs-drift.test.ts` for documentation, `tests/deployment.test.ts` for
+shipped config, [THREAT_MODEL.md](THREAT_MODEL.md) for anything not yet mitigated,
+[PERFORMANCE.md](PERFORMANCE.md) for budgets, and
+[ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md) §11 for structural debt.
+
 ## Dependencies and bundle cost
 
 Three runtime dependencies. Each one is here for a reason that can be stated in

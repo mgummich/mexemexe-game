@@ -16,6 +16,7 @@
     "server": "tsx server/index.ts",
     "replay": "tsx scripts/replay.ts",
     "simulate": "tsx scripts/simulate.ts",
+    "health": "node scripts/health.mjs",
     "gen:cosmetics": "node scripts/gen-cosmetics.mjs",
     "gen:icons": "node scripts/gen-icons.mjs",
     "lint": "eslint src tests e2e e2e-cross e2e-multiplayer e2e-pwa server && tsc --noEmit",
