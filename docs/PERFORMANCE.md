@@ -106,6 +106,35 @@ Re-run with:
 npx playwright test e2e/perf-measure.spec.ts -g memory --workers=1 --retries=0
 ```
 
+## Asset cost (Phase 35)
+
+Measured against the budgets above, not re-derived:
+
+| | Measured | Budget | Headroom |
+|---|---|---|---|
+| First-load wire bytes, cold cache | 432 kB | 1.5 MB | 3.5× |
+| Texture bytes on disk | 380 kB across 49 PNGs | — | — |
+| JS heap after boot | ~17 MB | 80 MB | 4.7× |
+| Boot to playable | 350 ms desktop / 836 ms at 4× CPU throttle | 2.5 s / 5 s | 3–6× |
+
+Three things were checked and deliberately not changed:
+
+- **Compression.** Re-encoding every PNG at maximum zlib would save 19 kB (8 %)
+  of 261 kB — against 3.5× headroom on the only budget it touches, and at the
+  cost of the property that makes the procedural assets trustworthy: re-running
+  `gen-cosmetics`/`gen-icons` reproduces them byte-identically today, and a
+  hand-optimised file would not survive the next regeneration.
+- **Atlases.** 49 textures, no duplicate payloads (checked by hash), all loaded
+  once at boot and never streamed. An atlas would add a build step and a
+  packing format to save draw calls that the fps gates say are not the
+  constraint (the profile is 78 % native paint, ~5 % JS).
+- **Load order.** `BootScene` probes and loads everything before the menu, which
+  is what makes the offline cache complete after one visit. An eager precache
+  list was tried in Phase 16 and reverted for starving the first-load fetches.
+
+The one asset that dominates anything is the streamed music (13 MB), and it is
+never precached and no longer fetched at boot at all (Phase 76).
+
 ## What is deliberately not budgeted
 
 - **Server CPU and latency.** The server does one legality check per turn on an

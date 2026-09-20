@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "4D",
-  "phase": "35 — Asset Performance & Loading",
+  "wave": "12",
+  "phase": "97 — Final Product QA",
   "status": "NOT_STARTED"
  },
- "head": "680b24d",
+ "head": "7a5f508",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1861,6 +1861,25 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — two profiles added, not a matrix; the phase's out-of-scope line is 'exhaustive device matrix' and the two chosen are the ones the existing eight could not speak for"
+   }
+  },
+  {
+   "phase": "35 — Asset Performance & Loading",
+   "wave": "4D (deferred)",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Everything this phase optimizes is already measured and already inside budget with 3–5× headroom. Checked the three levers it names and left all three alone, with the numbers that justify it.",
+   "changed": [
+    "docs/PERFORMANCE.md — §Asset cost (Phase 35): the four measurements against their budgets, and why compression, atlases and load order were not touched"
+   ],
+   "acceptance": "loading meets the budgets (432 kB of 1.5 MB, boot 350 ms/836 ms of 2.5 s/5 s); memory acceptable (~17 MB of 80 MB); no visual degradation from optimization to review, because none was applied",
+   "verification": [
+    "PNG payload hashes across public/assets: 0 duplicates",
+    "maximum-zlib re-encode estimate: 261 kB → 242 kB, an 8% saving on a budget with 3.5× headroom, at the cost of byte-identical regeneration",
+    "first-load and heap figures re-read from the Phase 75/76 measurements"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the phase's own out-of-scope line is premature optimization, and an 8% saving that breaks deterministic regeneration is exactly that"
    }
   }
  ],
