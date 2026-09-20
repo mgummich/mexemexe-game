@@ -153,12 +153,21 @@ export class SetupScene extends Phaser.Scene {
       TEXT.primary,
     );
 
+    // MexeMexe Blitz: the one setting here that changes how the match is *played* rather than who
+    // plays it, so it sits with the summary rather than behind ADVANCED. Off is the classic game.
+    const blitzOn = settings.get().blitz;
+    new PixelButton(this, cx(), vy(belowSeats + 28), t(blitzOn ? 'setup.blitzOn' : 'setup.blitzOff'), () => {
+      settings.update({ blitz: !blitzOn });
+      this.rebuild();
+    }, { textureBase: 'btn-comprar', w: 130, h: 13, size: 6, color: blitzOn ? ACTION.primary : ACTION.secondary })
+      .setName('blitz-toggle');
+
     // Where the panel's free space starts — the seating preview fills whatever is left below.
-    let freeY = belowSeats + 26;
+    let freeY = belowSeats + 36;
     const lastSeed = settings.progress().lastSeed;
     if (lastSeed !== null) {
-      freeY = belowSeats + 40;
-      const advY = vy(belowSeats + 32);
+      freeY = belowSeats + 50;
+      const advY = vy(belowSeats + 42);
       // Open state keeps both buttons on one row — a second row would collide with PLAY at 4 seats.
       new PixelButton(this, this.advancedOpen ? cx() - 80 : cx(), advY, this.advancedOpen ? t('setup.advancedHide') : t('setup.advanced'), () => {
         this.advancedOpen = !this.advancedOpen;

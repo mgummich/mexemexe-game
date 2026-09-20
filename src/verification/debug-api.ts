@@ -432,6 +432,9 @@ export function installDebugApi(): void {
   if (params.get('textscale') === '125') settings.update({ largeText: true });
   // e2e hook — ?motion=0 flips reduced motion on for a11y screenshot capture.
   if (params.get('motion') === '0') settings.update({ reducedMotion: true });
+  // e2e hook — ?blitz=1|0 picks the local Blitz clock without clicking through the setup screen.
+  const blitz = params.get('blitz');
+  if (blitz === '1' || blitz === '0') settings.update({ blitz: blitz === '1' });
 }
 
 export function urlSeed(): number {

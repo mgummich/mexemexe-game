@@ -19,6 +19,7 @@ import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_B
 import { plural, t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
+import { TIMER_PRESETS } from '../net/protocol';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
 import { OnlineSession } from '../net/online-session';
 import { createRng } from '../rules/rng';
@@ -350,9 +351,13 @@ export class GameScene extends Phaser.Scene {
   private onlineNoticeText: Phaser.GameObjects.Text | null = null;
   private onlineTimerText: Phaser.GameObjects.Text | null = null;
   /** Local wall-clock instant the server's remaining time maps to, re-anchored on every
-   * state_sync. Display only — the client counting to zero does nothing; the server decides. */
+   * state_sync. Online it is display only — the client counting to zero does nothing; the server
+   * decides. In a local Blitz match there is no server, so this scene owns the deadline and is
+   * the one that spends it (see updateTurnTimer). */
   private turnDeadlineAt: number | null = null;
   private turnWarnMs = 0;
+  /** Per-turn budget of a local Blitz match, or 0 for the untimed classic game. */
+  private blitzMs = 0;
   /** Repaints the reconnect notice once a second while the socket is down. One ticker for the
    * whole scene: a per-component timer is exactly the leak this phase is meant to avoid. */
   private reconnectTicker: Phaser.Time.TimerEvent | null = null;
@@ -512,6 +517,12 @@ export class GameScene extends Phaser.Scene {
           ? buildShowcaseState(config.seed, playerCfgs, debugApi.crowd ?? undefined)
           : createNewGame(config.seed, playerCfgs);
       this.match = new LocalMatch(state, { localSeat: 0, personalities: this.personalities });
+      // Not the tutorial: a lesson being read is not a turn being taken, and a clock would time
+      // out the step the player is still reading.
+      if (settings.get().blitz && !config.tutorial) {
+        this.blitzMs = TIMER_PRESETS.blitz.turnMs;
+        this.turnWarnMs = TIMER_PRESETS.blitz.warnMs;
+      }
       // The play log listens for this match only, and stops when it ends — see the shutdown
       // handler below. A finished match can never record into the next one (ARCH-007).
       this.unsubs.push(playlog.attachMatch(this.match));
@@ -643,6 +654,9 @@ export class GameScene extends Phaser.Scene {
     const dealUntil = this.ui.presentingUntil;
     debugApi.dealing = dealMs > 0;
     if (dealMs > 0) {
+      // The first turn's Blitz clock starts when the cards land, not while they are still in the
+      // air: a seven-second turn cannot spend its first second on an animation.
+      if (this.blitzMs > 0 && this.turnDeadlineAt !== null) this.turnDeadlineAt = Date.now() + dealMs + this.blitzMs;
       this.time.delayedCall(dealMs, () => {
         this.announceTurn();
         debugApi.dealing = false;
@@ -1016,6 +1030,13 @@ export class GameScene extends Phaser.Scene {
       tableMelds: state.table.length,
       tableCards: state.table.reduce((n, m) => n + m.cards.length, 0),
     });
+
+    // A local Blitz clock runs on the human's turn only: an AI seat already has its own pace
+    // (aiThinkDelay), and timing it out would just be the scene racing itself.
+    if (this.blitzMs > 0) {
+      this.turnDeadlineAt = isMyTurn ? Date.now() + this.blitzMs : null;
+      this.ui.lastTickSecond = -1;
+    }
 
     if (isMyTurn) {
       setMusicContext('mexe');
@@ -1581,14 +1602,9 @@ export class GameScene extends Phaser.Scene {
       .setDepth(50);
     this.staticUi.push(this.reasonBg, this.reasonText, this.bannerBg, this.banner, this.lastMoveText);
 
-    if (this.online) {
-      // small corner connection indicator — never a modal
-      this.onlineStatusDot = this.add.circle(this.r.onlineDot.x, this.r.onlineDot.y, 3, STATE_FILL.success).setDepth(600);
-      // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
-      // presence — not just its color — is the "you are online" tell (task: never ambiguous).
-      const onlineLabel = label(this, this.r.onlineDot.x + 10, this.r.onlineDot.y, t('game.onlineBadge'), 6, TEXT.dim).setOrigin(0, 0.5).setDepth(600);
-      // Turn clock under the online badge. Hidden outright in a no-timer room rather than showing
-      // a dash, so an untimed match looks exactly like it did before timers existed.
+    // The turn clock is not an online-only widget any more: a local Blitz match runs the same
+    // readout off its own deadline. Built before the online block so both paths share one ticker.
+    if (this.online || this.blitzMs > 0) {
       this.onlineTimerText = label(this, this.r.onlineTimer.x, this.r.onlineTimer.y, '', 8, TEXT.muted)
         .setOrigin(0, 0.5)
         .setDepth(600)
@@ -1601,6 +1617,14 @@ export class GameScene extends Phaser.Scene {
       // one, one extra 250ms loop per flip.
       this.onlineTimerEvent?.remove();
       this.onlineTimerEvent = this.time.addEvent({ delay: 250, loop: true, callback: () => this.updateTurnTimer() });
+    }
+
+    if (this.online) {
+      // small corner connection indicator — never a modal
+      this.onlineStatusDot = this.add.circle(this.r.onlineDot.x, this.r.onlineDot.y, 3, STATE_FILL.success).setDepth(600);
+      // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
+      // presence — not just its color — is the "you are online" tell (task: never ambiguous).
+      const onlineLabel = label(this, this.r.onlineDot.x + 10, this.r.onlineDot.y, t('game.onlineBadge'), 6, TEXT.dim).setOrigin(0, 0.5).setDepth(600);
       // Backing strip, not bare text: the notice sits over baked-in table props (napkin, mug) and
       // the longer connection sentences were unreadable against them. Hidden entirely while empty,
       // so the strip never shows as a stray blob (see setOnlineNotice).
@@ -1666,6 +1690,15 @@ export class GameScene extends Phaser.Scene {
     // unit-tested at its boundaries. What stays here is the two things only a scene can do:
     // paint the readout, and decide whether to make a sound.
     const clock = turnClockReadout(this.turnDeadlineAt, Date.now(), this.turnWarnMs);
+    // Local Blitz has no server tick to fall back on, so reaching zero here is the timeout. Same
+    // outcome the server gives an online seat (MULTIPLAYER.md §7b): draw one card, pass. Any draft
+    // in progress is dropped with the turn, exactly as it is online.
+    if (this.blitzMs > 0 && clock.visible && clock.secs === 0 && this.state().phase === 'playing') {
+      this.turnDeadlineAt = null;
+      playSfx(this, 'sfx-invalid', 0.3);
+      this.dispatch({ type: 'drawAndEndTurn', actorIndex: this.state().activePlayerIndex });
+      return;
+    }
     if (!clock.visible) {
       this.onlineTimerText.setVisible(false);
       return;
@@ -1796,9 +1829,14 @@ export class GameScene extends Phaser.Scene {
     this.ui.pauseOpen = true;
     const wasPaused = this.aiTimer?.paused ?? false;
     if (this.aiTimer) this.aiTimer.paused = true;
+    const heldAt = Date.now();
     return () => {
       this.ui.pauseOpen = false;
       if (this.aiTimer) this.aiTimer.paused = wasPaused;
+      // A local Blitz clock stops while the pause overlay is up: the overlay is the one blocking
+      // thing in a timed match, and losing a turn to reading the rules screen is a bug, not
+      // pressure. Online the deadline is the server's and is never touched here.
+      if (this.blitzMs > 0 && this.turnDeadlineAt !== null) this.turnDeadlineAt += Date.now() - heldAt;
     };
   }
 

@@ -76,7 +76,11 @@ On your turn:
 **Draw only happens when you pass, cannot play, or will not play.** There is no draw at the start
 of a turn.
 
-**Turn timer — online only.** A local hot-seat or AI match is never on a clock. Online, the
+**Turn timer.** A local match is untimed unless the setup screen's BLITZ toggle is on: Blitz gives
+the human seat a fixed 7s per turn, the scene owns that deadline (there is no server in a local
+match), and running out does exactly what a timeout does online — drop the draft, draw one card,
+end the turn. The clock stops while the pause overlay is up, and AI seats keep their own pace.
+Online, the
 *server* owns the timer (Casual / Fast / Blitz / Off presets, or the host-only CUSTOM
 screen behind them, picked by the host and frozen at match start — see
 [MULTIPLAYER.md](MULTIPLAYER.md) §7b). Expiry runs `timerExpireTurn`: discard whatever draft was

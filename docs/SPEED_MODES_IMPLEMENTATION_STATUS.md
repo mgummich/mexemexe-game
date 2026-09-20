@@ -25,7 +25,7 @@ DEFERRED
 | 1 — Architecture Audit and Shared Timing Design | COMPLETE | Design: `docs/specs/speed-modes-timing.md` |
 | 2 — Shared Authoritative Timing Foundation | PARTIAL | `src/game-state/timing.ts` owns the turn-clock arithmetic; `server/rooms.ts` uses it. Per-seat resources (personal clock, Freeze, Time Debt, Tempo, Heat) land with the phases that introduce them. |
 | 3 — Shared Speed UX | COMPLETE | Contract documented in the spec; existing timed-online UX is the shared layer. Added the missing critical-second haptic cue. Mode chrome lands with its mechanic. |
-| 4 — MexeMexe Blitz Core | NOT_STARTED | |
+| 4 — MexeMexe Blitz Core | COMPLETE | Online: fourth timer preset (7s, no Mexe bonus). Local: setup toggle + scene-owned clock, `?blitz=1` e2e hook, `blitz-clock` screenshot evidence. |
 | 5 — Blitz Perfect Rhythm | NOT_STARTED | |
 | 6 — Blitz Adrenaline | NOT_STARTED | |
 | 7 — Blitz Panic Button and Last Breath | NOT_STARTED | |

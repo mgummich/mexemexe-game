@@ -39,6 +39,11 @@ export interface Settings {
   haptics: boolean;
   /** Ticking cue over the last seconds of an online turn timer. Mixed through the SFX volume. */
   timerTickSound: boolean;
+  /**
+   * Local MexeMexe Blitz: the same game with a fixed per-turn clock, picked on the setup screen.
+   * Off by default — a clock a player did not ask for is a different game, not a nicer one.
+   */
+  blitz: boolean;
 }
 
 export interface Progress {
@@ -73,7 +78,7 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitz: false };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
 export const AI_DIFFICULTIES: readonly Difficulty[] = ['beginner', 'casual', 'smart', 'expert'];
 export const AI_SPEEDS: readonly AiSpeed[] = ['instant', 'fast', 'normal', 'slow'];
@@ -110,6 +115,7 @@ function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
     aiExplain: oneOf(AI_EXPLAIN_MODES, merged.aiExplain, DEFAULT_SETTINGS.aiExplain),
     timerTickSound: typeof merged.timerTickSound === 'boolean' ? merged.timerTickSound : DEFAULT_SETTINGS.timerTickSound,
     haptics: typeof merged.haptics === 'boolean' ? merged.haptics : DEFAULT_SETTINGS.haptics,
+    blitz: typeof merged.blitz === 'boolean' ? merged.blitz : DEFAULT_SETTINGS.blitz,
   };
 }
 

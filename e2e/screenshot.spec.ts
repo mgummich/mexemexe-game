@@ -3223,3 +3223,15 @@ test.afterAll(() => {
     JSON.stringify({ generatedAt: new Date().toISOString(), shots: logs }, null, 2),
   );
 });
+
+// Phase 4 of the Speed Modes roadmap: local Blitz. Runtime evidence that the clock is rendered in
+// a local match (it used to be an online-only widget) and that reaching zero actually spends the
+// turn — the scene owns the deadline here, because there is no server to own it.
+test('blitz-clock: a local Blitz turn shows the clock and times itself out', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe&blitz=1', 'blitz-clock', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const before = await p.evaluate(() => window.__MEXE__.state!()!.turn);
+    // 7s budget plus the deal it waits for, plus slack for a loaded runner.
+    await p.waitForFunction((t) => (window.__MEXE__.state?.()?.turn ?? t) > t, before, { timeout: 20_000 });
+  });
+});
