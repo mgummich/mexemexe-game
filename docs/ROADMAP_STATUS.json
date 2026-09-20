@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "12",
-  "phase": "97 — Final Product QA",
+  "phase": "102 — Production & Release Readiness",
   "status": "NOT_STARTED"
  },
- "head": "7a5f508",
+ "head": "0a2cd23",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1880,6 +1880,136 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — the phase's own out-of-scope line is premature optimization, and an 8% saving that breaks deterministic regeneration is exactly that"
+   }
+  },
+  {
+   "phase": "97 — Final Product QA",
+   "wave": "12",
+   "status": "PASS",
+   "result": "Ran the product gates end to end on the final tree. Critical journeys pass: local play against every AI tier, the 12-step tutorial and its skip path, settings and their persistence, corrupt-save recovery, the offline app shell, and the representative failure paths (unreachable server, bad room code, full room, blocked storage).",
+   "acceptance": "critical player journeys pass; no release-blocking product defect open — the only open items are the deferred risks listed by npm run health, none of them P0/P1",
+   "verification": [
+    "npm run verify (exit 0): 1143 unit/integration tests, lint, 131 browser journeys + 3 @perf, check-verify.mjs — no console errors, no page errors, no fallback art, fps floors held",
+    "npm run verify:pwa (14/14, exit 0) on a quiet machine; a first attempt failed one service-worker test after 6.6 minutes under self-inflicted load (load average 64 from chained suites) and passed in 15 s alone",
+    "npm run verify:preview (exit 0): every asset reference resolves in dist/, no credential-shaped strings in the bundle"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p97-verify.log",
+     "tmp/agent-logs/p97-pwa2.log",
+     "tmp/agent-logs/p97-preview.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the one failure seen was diagnosed to machine load and re-run clean rather than retried into green"
+   }
+  },
+  {
+   "phase": "98 — Final Visual QA",
+   "wave": "12",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "The six pixel baselines match, the 131-capture journey suite is clean, and the ten cross-browser/device profiles render without clipping on every engine that launches here.",
+   "acceptance": "representative states match their baselines; no visual regression from this roadmap's changes (the one intended change, the nine-sliced button, was reviewed and its two embedded captures refreshed); art meets the family anchors (Phase 28) and the asset structure is enforced (tests/assets.test.ts)",
+   "verification": [
+    "npm run verify:visual (6/6, exit 0)",
+    "npm run verify:cross: 99 passed, 7 failed — all seven are Firefox failing to launch on this macOS build, the known P2",
+    "npm run screenshot inside npm run verify: 131 + 3 @perf passed, check-verify.mjs exit 0"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p98-visual.log",
+     "tmp/agent-logs/p98-cross.log"
+    ]
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-linux-baselines-missing",
+     "note": "Still open from Phase 33: CI has no linux baselines yet, so the nightly visual job will write candidates on its first run for a human to review.",
+     "owner": "Phase 104 — Continuous Architecture & Quality Health"
+    },
+    {
+     "id": "P2-firefox-unverifiable-locally",
+     "note": "Firefox cannot launch on this macOS build; its layout and lobby evidence comes only from the nightly CI jobs.",
+     "owner": "Phase 104 — Continuous Architecture & Quality Health"
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the Firefox gap is reported as a gap, not absorbed into a pass"
+   }
+  },
+  {
+   "phase": "99 — Final Accessibility QA",
+   "wave": "12",
+   "status": "PASS",
+   "result": "Re-ran the accessibility evidence on the final tree rather than trusting the matrix: reduced motion, +25 % text on four screens, keyboard operation, non-colour-only signalling, and touch targets.",
+   "acceptance": "reduced motion preserves information (?motion=0 disables cosmetic tweens and the tutorial's undo callout still appears); large text fits (setup, rules, pause, settings and the board at 125 %); keyboard path works (C draws and ends a turn like the button; the online home, browser and lobby are reachable by keyboard); nothing critical is colour-only (invalid melds carry a badge and a written reason, lobby states carry words); touch targets grow on coarse pointers (PixelButton hit box)",
+   "verification": [
+    "the a11y, large-text, reduced-motion and keyboard journeys inside npm run verify (131 passed)",
+    "OD-A11Y keyboard lobby journey inside verify:multiplayer:chromium (44 passed)",
+    "npx vitest run tests/motion.test.ts tests/tokens.test.ts tests/feel.test.ts tests/i18n.test.ts (28/28) — motion scaling, token roles, feel timings, and pt/en parity with every declared key non-empty"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — within the documented canvas limits (no DOM semantics; stated in ARCHITECTURE.md rather than claimed away)"
+   }
+  },
+  {
+   "phase": "100 — Final Multiplayer QA",
+   "wave": "12",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Full multiplayer gate green on Chromium: 44 tests, the room/seat/rematch lobby matrix, 2/3/4-client matches, reconnect and resync, chaos delivery, hand privacy and state-hash agreement, plus the gate script's own checks.",
+   "acceptance": "server authority, revision checks, privacy and redaction, stale/duplicate/reordered frames, disconnect/reconnect, rematch, seat ownership, resync and 2/3/4 players all pass against the real server; no accepted illegal proposal; no server stderr; no client console error",
+   "verification": [
+    "npm run verify:multiplayer:chromium (44/44, 7.1m) + check-verify-multiplayer.mjs: OK, 77 screenshots, room X5K6G seed 2, revisions [1,2]",
+    "an earlier run of the same gate had 4 lobby failures, each taking 15+ minutes against a normal 20 s, while two other browser suites were running (load average 64); all four pass in 1.7m when run alone, and the full gate then passes clean"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p100-mp3.log",
+     "tmp/agent-logs/p100-mp-retry.log",
+     "tmp/agent-logs/p100-check.log"
+    ]
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-mp-engine-parity-nightly-only",
+     "note": "Firefox and WebKit multiplayer evidence comes from the nightly all-engines job; Firefox cannot launch on this machine at all, and the iOS WebKit gate is skipped in the chromium variant.",
+     "owner": "Phase 104 — Continuous Architecture & Quality Health"
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the contended run is reported with its cause and its clean re-run, not quietly replaced by the green one"
+   }
+  },
+  {
+   "phase": "101 — Final Performance Gate",
+   "wave": "12",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Re-measured every budget in docs/PERFORMANCE.md on the final tree. All met, most with 3–5× headroom.",
+   "acceptance": "boot 348 ms desktop / 729 ms at 4× CPU throttle (budgets 2.5 s / 5 s); first contentful paint 196 ms (budget 1.5 s); scene switch 211 ms / 787 ms (budgets 1 s / 2 s); 60 fps desktop and 52 fps throttled on the crowded board (floors 50/45, and the three @perf gates passed inside npm run verify); heap 18.8 MB after boot (budget 80 MB); first-load wire bytes 432 kB (budget 1.5 MB); AI bounded in trials, unchanged",
+   "verification": [
+    "npx playwright test e2e/perf-measure.spec.ts (4/4) — baseline, throttled, CPU profile and the 10-cycle memory walk",
+    "the three @perf fps gates inside npm run verify"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p101-perf.log"
+    ],
+    "profile": "77.9% native paint, 12.9% idle, largest JS frame Phaser run at 1.5% — unchanged shape since Phase 76"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-residual-heap-drift",
+     "note": "~100 kB and ~4 DOM-level listeners per match cycle remain inside Phaser/WebAudio rather than product code (10 cycles: 7.8 → 8.8 MB, DOM nodes flat). Bounded at ~10 MB per 100-match session against an 80 MB budget.",
+     "owner": "Phase 104 — Continuous Architecture & Quality Health"
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — measured, not re-asserted; the residual drift is carried forward with the same numbers rather than being quietly dropped at the final gate"
    }
   }
  ],
