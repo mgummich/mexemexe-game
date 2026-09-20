@@ -1800,10 +1800,10 @@ async function chaosMatch(browser: Browser, mangle: SyncMangler): Promise<{ host
  * frames a client can legitimately not know yet that it is its turn, and that lag is the
  * condition under test, not a failure.
  */
-async function takeTurns(pages: Page[], turns: number, waitMs = 15_000): Promise<void> {
+async function takeTurns(pages: Page[], turns: number, waitMs = CHAOS_WAIT_MS): Promise<void> {
   for (let i = 0; i < turns; i++) {
     const deadline = Date.now() + waitMs;
-    let acted = false;
+    let acted: Page | null = null;
     while (!acted && Date.now() < deadline) {
       for (const p of pages) {
         const mine = await p.evaluate(() => {
@@ -1811,19 +1811,40 @@ async function takeTurns(pages: Page[], turns: number, waitMs = 15_000): Promise
           return !!s && s.winnerId === null && s.activePlayerIndex === window.__MEXE__.online?.localSeat?.();
         });
         if (!mine) continue;
+        const revBefore = await p.evaluate(() => window.__MEXE__.online!.rev());
         await p.evaluate(() => window.__MEXE__.online!.comprar());
-        acted = true;
+        // Wait for the acting client's own revision to move rather than sleeping a fixed 150ms:
+        // under a held or delayed frame the answer can take as long as the scenario makes it
+        // take, and on a contended runner a sleep is a guess either way. A move that is never
+        // answered is CH-04's subject, so that case passes its own deadline.
+        await p.waitForFunction((r) => (window.__MEXE__.online!.rev() ?? -1) > (r ?? -1), revBefore, { timeout: waitMs })
+          .catch(() => undefined);
+        acted = p;
         break;
       }
       if (!acted) await pages[0]!.waitForTimeout(100);
     }
     if (!acted) throw new Error(`no seat claimed the clock within ${waitMs}ms at turn ${i}`);
-    await pages[0]!.waitForTimeout(150);
   }
 }
 
+/**
+ * Deadlines for the chaos suite, doubled on CI.
+ *
+ * These tests inject real delays and then wait for the client to recover, so their waits have to
+ * outlast both the injected delay and the product's own timeouts (`ONLINE_PENDING_TIMEOUT_MS` is
+ * 10s). That leaves them sensitive to a contended runner in a way the rest of the suite is not —
+ * the risk this scales away (P3-chaos-timing-under-load). The *injected* delays are the scenario
+ * and are never scaled; only the patience for a recovery is.
+ */
+const CHAOS_SCALE = process.env.CI ? 2 : 1;
+const CHAOS_WAIT_MS = 15_000 * CHAOS_SCALE;
+const CHAOS_CONVERGE_MS = 20_000 * CHAOS_SCALE;
+/** Long enough for the 10s pending timeout plus the resync round trip it triggers. */
+const CHAOS_RECOVERY_MS = 25_000 * CHAOS_SCALE;
+
 /** Both seats agree on the revision, neither hashed a divergence, and the boards match. */
-async function expectConverged(host: Page, guest: Page, timeout = 20_000): Promise<number> {
+async function expectConverged(host: Page, guest: Page, timeout = CHAOS_CONVERGE_MS): Promise<number> {
   const rev = (await host.evaluate(() => window.__MEXE__.online!.rev()))!;
   await guest.waitForFunction((r) => window.__MEXE__.online!.rev() === r, rev, { timeout });
   for (const p of [host, guest]) expect(await p.evaluate(() => window.__MEXE__.online!.desyncs())).toBe(0);
@@ -1909,14 +1930,13 @@ test('CH-04 @chaos: a dropped answer to the guest\'s own move recovers through t
   await guest.waitForFunction(
     () => window.__MEXE__.state?.()?.activePlayerIndex === window.__MEXE__.online?.localSeat?.(),
     undefined,
-    { timeout: 20_000 },
+    { timeout: CHAOS_CONVERGE_MS },
   );
   await guest.evaluate(() => window.__MEXE__.online!.comprar());
   // The mangler runs in this process, so wait on it directly rather than on a page condition.
   for (let i = 0; i < 100 && !dropped; i++) await guest.waitForTimeout(100);
   expect(dropped).toBe(true);
-  // Long enough for ONLINE_PENDING_TIMEOUT_MS (10s) plus the resync round trip.
-  await expectConverged(host, guest, 25_000);
+  await expectConverged(host, guest, CHAOS_RECOVERY_MS);
   for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
   for (const p of [host, guest]) await p.context().close();
 });

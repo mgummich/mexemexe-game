@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 
 /**
@@ -18,6 +21,15 @@ import { expect, test } from '@playwright/test';
  * before committing it. A baseline updated without being looked at is a baseline that no longer
  * means anything (docs/TESTING.md §Visual baselines).
  */
+/**
+ * A platform with no committed baseline cannot gate. Failing the run would be noise every night
+ * until someone adopts one, and adopting one silently is worse — so the run says, once, which
+ * workflow produces them (`.github/workflows/visual-baselines.yml`).
+ */
+const SNAPSHOT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'visual.spec.ts-snapshots');
+const platformSuffix = `-${process.platform}.png`;
+const hasBaselines = fs.existsSync(SNAPSHOT_DIR) && fs.readdirSync(SNAPSHOT_DIR).some((f) => f.endsWith(platformSuffix));
+
 const STATES: { name: string; url: string; viewport?: { width: number; height: number } }[] = [
   { name: 'menu', url: '/?seed=42&showcase=menu' },
   { name: 'game', url: '/?seed=42&showcase=game' },
@@ -29,6 +41,10 @@ const STATES: { name: string; url: string; viewport?: { width: number; height: n
 
 for (const state of STATES) {
   test(`visual baseline: ${state.name}`, async ({ page }) => {
+    test.skip(
+      !hasBaselines && !!process.env.CI,
+      `no ${process.platform} baselines committed — run the "Update visual baselines" workflow, then review the PR it opens`,
+    );
     if (state.viewport) await page.setViewportSize(state.viewport);
     await page.goto(state.url);
     await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 30_000 });

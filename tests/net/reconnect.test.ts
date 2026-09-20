@@ -170,6 +170,33 @@ describe('OR-20/OR-21 a dropped session reconnects itself', () => {
     expect(client.reconnectAttemptsLeft()).toBe(7);
   });
 
+  it('OR-20 a reload after the loop gave up still reclaims the seat — the token outlives the client', () => {
+    // The other exhaustion case ends with the *same* client being asked to reconnect. This is the
+    // one a player actually performs: the tab was in a tunnel past the last attempt, so they
+    // reload. A fresh NetClient must find the token the dead one left in sessionStorage and
+    // reclaim the seat rather than starting a join (P3-retry-exhaustion-unowned).
+    const dead = droppedClient();
+    while (dead.getStatus() === 'reconnecting') {
+      const before = opened.length;
+      runNextAttempt();
+      if (opened.length === before) break;
+      opened[opened.length - 1]!.fail();
+    }
+    expect(dead.getStatus()).toBe('closed');
+    const beforeReload = opened.length;
+
+    // The reload: the old client and its listeners are gone, a new one is constructed.
+    const reloaded = new NetClient();
+    reloaded.connect();
+    expect(opened.length).toBe(beforeReload + 1);
+    const fresh = opened[opened.length - 1]!;
+    fresh.accept();
+
+    expect(reloaded.getStatus()).toBe('open');
+    expect(JSON.parse(fresh.sent[0]!)).toMatchObject({ type: 'reconnect', token: 'TOKEN1' });
+    expect(reloaded.reconnectAttemptsLeft()).toBe(7);
+  });
+
   it('re-sends the session token on the socket that comes back, and resets the budget', () => {
     const client = droppedClient();
     runNextAttempt();

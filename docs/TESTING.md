@@ -936,9 +936,13 @@ are byte-identical across runs on one machine and differ across machines (Phase 
 measured both), so Playwright's `{platform}` suffix is load-bearing: a
 `-darwin` baseline says nothing about linux. CI's fixed runner is the one that
 gates, in nightly's `visual-baseline` job; a developer's first local run writes
-their own baseline and compares against it from then on. A platform with no
-baseline yet **fails and writes the candidate**, which the job uploads as an
-artifact — that artifact is what a human looks at and commits.
+their own baseline and compares against it from then on.
+
+**A platform with no committed baseline skips, and says so.** Failing every night
+until someone adopts one is noise, and adopting one silently is worse. Run the
+**Update visual baselines** workflow (`workflow_dispatch`): it regenerates on the
+CI runner, confirms the new images pass as written, and opens a pull request — so
+the review happens in a diff. That PR is the only way linux baselines arrive.
 
 Tolerance is `maxDiffPixelRatio: 0.002` with animations disabled: a handful of
 pixels can move when a tween lands a frame apart, while a real rendering change

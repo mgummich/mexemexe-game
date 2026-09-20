@@ -90,15 +90,27 @@ instance for a key (the 80 ms retrigger guard already means one per key is
 enough) and by destroying the ambience on scene shutdown. The gated
 `second-match` journey now asserts the bounds, so it cannot come back quietly.
 
-**The residual drift, and why it is not ours.** With the fix in place, a match
-cycle still adds ~4 listeners and ~100 kB. It is not product code adding them:
-patching `EventTarget.prototype.addEventListener`/`removeEventListener` for a
-whole session shows the page's own listener ledger flat across cycles, and
-muting audio removes 9 of the original 13 — the signature of Web Audio source
-nodes whose `onended` never fires because the context in a headless run never
-unlocks. Bounded: at 100 matches in one session that is ~10 MB against an 80 MB
-budget, with DOM nodes and scene objects flat. Deferred to the final performance
-gate rather than chased into Phaser's internals.
+**The residual drift, chased down and closed.** With the fix in place a cycle
+still added ~100 kB, so the obvious question was whether it ever stops. Twenty-five
+cycles, measured twice, say it does:
+
+```text
+cycle   1    5    9   13   17   21   25
+heap  7.6  8.3  8.8  8.9  8.9  9.0  9.1 MB     DOM nodes 166, listeners 202 — flat throughout
+```
+
+The first nine cycles add ~1.2 MB and the next sixteen add ~0.3 MB: a warm-up
+curve, not a leak. A heap-snapshot diff across six cycles says what is in it —
+**+804 kB of the +843 kB is V8 `code`** (3,434 new code objects, i.e. functions
+being compiled and optimised as more of the game gets exercised), plus 939 native
+objects at 31 kB. Product objects account for 58 plain objects and 12 arrays.
+DOM-level listeners no longer grow at all, which the earlier +13-per-cycle
+reading did: that was Web Audio source nodes in a context that never unlocked, and
+it does not reproduce now that a key holds one reusable sound.
+
+So the ceiling is the JIT's, it plateaus around 9 MB against an 80 MB budget, and
+nothing in the match lifecycle retains. The nightly `perf-trend` job keeps the
+series so a real leak would show as a curve that does not flatten.
 
 Re-run with:
 

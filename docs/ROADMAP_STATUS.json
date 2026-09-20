@@ -6,7 +6,7 @@
   "phase": "104 — Continuous Architecture & Quality Health",
   "status": "PASS"
  },
- "head": "2f610a9",
+ "head": "c9601f8",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -2125,6 +2125,55 @@
     }
    ],
    "riskReconciliation": "Final gate: 9 risks had been deferred to phases 97–100, which have now passed. 2 closed with the evidence those phases produced; 7 re-owned to the standing control that watches them."
+  },
+  {
+   "phase": "Post-roadmap risk closure (visual, performance, multiplayer)",
+   "wave": "follow-up",
+   "status": "PASS",
+   "result": "Closed four of the standing risks with evidence and reduced a fifth to one click. The performance one turned out not to be a leak at all.",
+   "changed": [
+    "e2e/visual.spec.ts — a platform with no committed baseline skips with a message naming the workflow, instead of failing every night until someone adopts one",
+    ".github/workflows/visual-baselines.yml — new workflow_dispatch job: regenerates baselines on the CI runner, re-runs the suite to confirm they pass as written, and opens a pull request so the review happens in a diff (plain git + gh, no third-party action)",
+    "docs/PERFORMANCE.md — §Memory: the drift measured to its plateau and attributed by heap snapshot",
+    "tests/server/reconnect.test.ts — OR-30: three drop/reconnect round trips with a turn taken between each, asserting one membership, the same seat, forward-only revisions and the seat's own hand",
+    "tests/net/reconnect.test.ts — OR-20: an exhausted retry loop followed by a *reload* (a fresh NetClient) still reclaims the seat from the stored token",
+    "e2e-multiplayer/multiplayer.spec.ts — the chaos suite waits on the acting client's revision instead of a fixed 150 ms settle, and its recovery deadlines scale 2× on CI; injected delays are untouched, since they are the scenario"
+   ],
+   "acceptance": "P2-residual-heap-drift closed with measurement; P3-reconnect-coverage-gaps and P3-retry-exhaustion-unowned closed with the two tests that were missing; P3-chaos-timing-under-load closed by removing the fixed settle and scaling the patience; P2-linux-baselines-missing reduced from 'CI gates nothing and fails nightly' to 'run one workflow, review one PR'",
+   "verification": [
+    "25 match cycles, run twice: heap 7.6 → 9.1 MB with the first nine cycles adding ~1.2 MB and the next sixteen ~0.3 MB; DOM nodes flat at 166 and DOM-level listeners flat at 202 throughout",
+    "heap-snapshot diff across six cycles: +843 kB total of which +804 kB is V8 `code` (3,434 objects) and 31 kB native; product objects +58 plain objects, +12 arrays",
+    "npx vitest run tests/server/reconnect.test.ts (14/14), tests/net/reconnect.test.ts (14/14)",
+    "playwright -c playwright.multiplayer.config.ts --project=chromium -g CH-0 (5/5, 23.6s — was ~57s)",
+    "npx playwright test e2e/visual.spec.ts (6/6); negative control with the snapshot directory removed and CI=1: 6 skipped with the workflow named, instead of 6 failures",
+    "MEXE_OUTPUT=ai npm run test (1145/1145, exit 0); npm run lint (exit 0); all workflows parse"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the performance risk was closed by disproving it rather than by accepting it: the earlier +13 listeners per cycle do not reproduce, and what is left plateaus and is V8's, not the match lifecycle's"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P2-residual-heap-drift",
+     "note": "Not a leak. Plateaus at ~9 MB over 25 cycles; +804 kB of the +843 kB across six cycles is V8 code objects. DOM nodes and listeners flat."
+    },
+    {
+     "id": "P3-reconnect-coverage-gaps",
+     "note": "OR-30 covers repeated reconnects with a turn taken between them."
+    },
+    {
+     "id": "P3-retry-exhaustion-unowned",
+     "note": "OR-20 covers exhaustion followed by a reload into a successful reclaim."
+    },
+    {
+     "id": "P3-chaos-timing-under-load",
+     "note": "Fixed settle replaced by a revision wait; recovery deadlines scale on CI."
+    },
+    {
+     "id": "P2-linux-baselines-missing",
+     "note": "Partly: the nightly job no longer fails for a missing baseline, and a dispatchable workflow produces and PRs them. Adoption is one run away and still needs a human to look."
+    }
+   ]
   }
  ],
  "riskClosures": [

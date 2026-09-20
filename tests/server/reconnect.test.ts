@@ -173,6 +173,46 @@ describe('OR-16 reconnect is idempotent', () => {
   });
 });
 
+describe('OR-30 a seat that drops more than once', () => {
+  /**
+   * The gap this closes (P3-reconnect-coverage-gaps): every case above is one round trip. A phone
+   * on a bad train line does several, with the player taking a turn between them — which is the
+   * combination that could plausibly leave a stale hand, a doubled seat or a revision that walks
+   * backwards, and nothing drove it.
+   */
+  it('reconnects, plays, drops and reconnects again — same seat, no duplicate, state keeps moving forward', () => {
+    const mgr = testManager({ seed: 7 });
+    const { code, tokens } = startedRoom(mgr, 2);
+    const seat = 0;
+    const seen: number[] = [];
+
+    for (const round of [1, 2, 3]) {
+      mgr.disconnect(code, seat);
+      const back = mgr.reconnect(tokens[seat]!);
+      if (!back.ok || !back.view) throw new Error(`round ${round}: expected a view`);
+      expect(back.seat).toBe(seat);
+      // The room never grows a second membership for a seat that keeps coming back.
+      expect(mgr.getPlayers(code)).toHaveLength(2);
+      expect(mgr.getRoom(code)!.state!.players).toHaveLength(2);
+      // The reconnecting seat is the active one (it dropped on its own turn), and it plays.
+      expect(back.view.activeSeat).toBe(seat);
+      expect(mgr.drawEndTurn(code, seat, back.view.rev)).toMatchObject({ ok: true });
+      // …then the opponent plays, so the turn comes back around for the next round.
+      const afterMine = mgr.getRoom(code)!;
+      expect(mgr.drawEndTurn(code, 1, afterMine.rev)).toMatchObject({ ok: true });
+      seen.push(mgr.getRoom(code)!.rev);
+    }
+
+    // Revisions only ever move forward across the three round trips, two turns each.
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(new Set(seen).size).toBe(seen.length);
+    // And the seat still holds exactly its own hand, not a stale copy of an earlier one.
+    const final = mgr.reconnect(tokens[seat]!);
+    if (!final.ok || !final.view) throw new Error('expected a view');
+    expect(final.view.players[seat]!.hand).toHaveLength(mgr.getRoom(code)!.state!.players[seat]!.hand.length);
+  });
+});
+
 describe('OR-29 grace expiry is deterministic', () => {
   it('past the grace the absent seat is played for, and its token still reclaims the seat it never lost', () => {
     let now = 1000;
