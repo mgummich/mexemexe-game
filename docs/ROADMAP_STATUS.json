@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "4A",
-  "phase": "26 — Multi-Resolution Strategy",
+  "wave": "4B",
+  "phase": "27 — PixelLab Production System",
   "status": "NOT_STARTED"
  },
- "head": "8bf4ff9",
+ "head": "a4ac650",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1674,6 +1674,24 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — the checks are falsifiable, and the one the current art bends (the shared pixel grid) is named as such rather than quietly excused"
+   }
+  },
+  {
+   "phase": "26 — Multi-Resolution Strategy",
+   "wave": "4A (deferred)",
+   "status": "PASS",
+   "result": "Decided the one open question from Phase 24 with numbers rather than taste: the ten backgrounds stay at 480×270. Regenerating them at RENDER_SCALE would take the background family from 175 kB to roughly 1.5–2 MB, against a measured 1.5 MB first-load budget for the entire game excluding music — and all of it is precached for offline play.",
+   "changed": [
+    "docs/ART_DIRECTION.md §Canvas & scaling — corrected the stale scaling description (RENDER_SCALE=3 and the portrait world were missing) and added §Resolution policy: per-family source resolution, the background decision with the byte counts behind it, device coverage from 390×844 to 1920×1080, large-screen letterboxing, and the memory figure"
+   ],
+   "acceptance": "source/export policy explicit (a table: sprites 3×, cards 2×, backgrounds 1×, pips inherited — and 'a new asset matches the family it joins' is a numbered acceptance check); target displays covered (0.89× at 720p, 1.33× at 1080p, phone at DPR 2–3, all nearest-neighbour); memory understood (380 kB of texture on disk, ~17 MB heap measured against an 80 MB budget)",
+   "verification": [
+    "background family measured at 175 kB across 10 files; whole texture set 380 kB",
+    "first-load wire bytes measured in Phase 76 at 432 kB against the 1.5 MB budget — the headroom the decision spends, and does not have"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the decision is reversible on a stated condition (a changed download budget, or a target where the grid mismatch costs readability) rather than being a permanent excuse, and the stale canvas description it sat on was corrected in the same pass"
    }
   }
  ],

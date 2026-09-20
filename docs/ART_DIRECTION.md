@@ -24,9 +24,50 @@ which is where a re-point of the interface happens; see
 
 ## Canvas & scaling
 
-- Logical canvas **480×270**, Phaser `pixelArt: true`, FIT scaling → 1280×720 (×2.67 letterbox-free), 1920×1080 (×4 exact).
-- Cards **24×32 logical px** (96×128 at 1080p). Rank glyph occupies top-left ~8px; large suit pip bottom-right.
+- Logical canvas **480×270** landscape / **270×480** portrait (`src/ui/viewport.ts`),
+  Phaser `pixelArt: true`, `roundPixels: true`, FIT scaling to whatever the device gives.
+- The canvas itself renders at **`RENDER_SCALE = 3`** — 1440×810 — and every camera is zoomed
+  by the same factor, so scene code keeps writing plain world-unit coordinates while sprites
+  land near their native texture size (`src/main.ts`).
+- Cards are **24×32 world units** from 48×64 files. Rank glyph top-left ~8px, large suit pip
+  bottom-right.
 - No texture smoothing, no anti-aliased blur. Crisp 1px outlines, limited palettes per sprite.
+
+### Resolution policy (Phase 26)
+
+**Source resolution is per family, and it is fixed.** A new asset matches the
+family it joins; that is check 1 in *Accepting an asset* below.
+
+| Family | Source | World units | Why this size |
+|---|---|---|---|
+| Sprites: avatars, emotes, UI buttons, banner, logo, sparkle, props | **3× world units** (native at `RENDER_SCALE`) | as drawn | crisp at every target; this is the default for anything new |
+| Cards | **2× world units** (48×64) | 24×32 | deliberately chunkier — the rank and pip are readable at 1080p and the card is the one sprite drawn dozens of times per frame |
+| Backgrounds | **1× world units** (480×270 / 224×400) | full frame | see the decision below |
+| Suit pips | 32×32 for 8×8 units | 8×8 | inherited, harmless (a 1.33× source) |
+
+**Backgrounds stay at 480×270, deliberately.** Regenerating the ten background
+files at `RENDER_SCALE` would raise them from 175 kB total to roughly 1.5–2 MB —
+against a measured first-load budget of 1.5 MB for the whole game excluding music
+([PERFORMANCE.md](PERFORMANCE.md)), and every one of them is precached for offline
+play. The visible cost of keeping them is a background pixel grid twice the size
+of a card's; the visible cost of changing them is a first load three to four times
+heavier on the phone this game is mostly played on. The coarser grid also reads as
+depth — a soft, blocky table behind crisp cards — which is why this is a decision
+and not a deferral. Revisit only if the download budget changes or a device target
+appears where the mismatch costs readability rather than style.
+
+**Device coverage.** 1280×720 renders the 1440×810 canvas slightly down (0.89×);
+1920×1080 renders it up (1.33×); a 390×844 phone at DPR 2–3 lands between the two.
+Nearest-neighbour sampling throughout, so every one of those is a sharp scale of
+the same pixels rather than a blur — and `roundPixels` keeps a sprite from
+straddling half a device pixel. Large screens letterbox rather than reveal more
+board: the world is a fixed 480×270, so a 21:9 monitor gets bars, not an advantage
+([ARCHITECTURE.md](ARCHITECTURE.md)).
+
+**Memory.** The whole texture set is 380 kB of PNG on disk, which is why
+`BootScene` can load every asset once at boot and never stream. Measured heap
+after boot is ~17 MB against an 80 MB budget
+([PERFORMANCE.md](PERFORMANCE.md)).
 
 ## Asset style rules (PixelLab prompts)
 
