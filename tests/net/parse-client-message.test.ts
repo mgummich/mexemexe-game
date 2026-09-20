@@ -144,3 +144,28 @@ describe('parseClientMessage — the size limits, at their exact edges', () => {
     expect(rejected({ type: 'draw_end_turn', rev: 0 })).toBe(false);
   });
 });
+
+/**
+ * A stale PWA cache is the realistic way a client ends up on the wrong protocol version, and
+ * "something went wrong talking to the server" gives that player nothing to do. The version
+ * refusal therefore carries its own code, and no other malformed frame does — see
+ * docs/MULTIPLAYER.md §12.
+ */
+describe('a version mismatch is the one refusal the player can act on', () => {
+  const codeOf = (raw: string) => {
+    const parsed = parseClientMessage(raw) as { error?: string; code?: string };
+    return parsed.code ?? null;
+  };
+
+  it('carries unsupported_version for an older or newer client', () => {
+    for (const v of [PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1]) {
+      expect(codeOf(JSON.stringify({ v, type: 'ping', reqId: 'r1' }))).toBe('unsupported_version');
+    }
+  });
+
+  it('leaves every other refusal uncoded, so the server answers bad_message', () => {
+    expect(codeOf('not json')).toBeNull();
+    expect(codeOf(JSON.stringify({ v: PROTOCOL_VERSION, reqId: 'r1' }))).toBeNull();
+    expect(codeOf(frame({ type: 'nope' }))).toBeNull();
+  });
+});

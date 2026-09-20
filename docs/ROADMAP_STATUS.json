@@ -2,8 +2,8 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "8A",
-  "phase": "70 — Save & Protocol Compatibility Policy",
+  "wave": "8B",
+  "phase": "71 — Production Error Reporting",
   "status": "NOT_STARTED"
  },
  "head": "0481c34",
@@ -763,6 +763,44 @@
      "id": "P2-sw-single-engine",
      "note": "Service-worker lifecycle is verified on Chromium only; other engines are covered for layout only.",
      "owner": "Phase 100 — Final Multiplayer QA / Phase 97 — Final Product QA"
+    }
+   ]
+  },
+  {
+   "phase": "70 — Save & Protocol Compatibility Policy",
+   "wave": "8A",
+   "status": "PASS",
+   "result": "Version fields and refusals already existed per artifact, but the policy was implicit and one refusal was actionable-but-mute: a protocol mismatch (the stale-service-worker case) surfaced as the generic bad_message, 'something went wrong talking to the server'.",
+   "changed": [
+    "src/net/protocol.ts — SERVER_ERROR_CODES gained 'unsupported_version'; parseClientMessage returns a code for the version refusal only",
+    "server/index.ts — sends that code instead of a blanket bad_message",
+    "src/localization/i18n.ts — pt-BR + en-US copy: reload the page to update",
+    "docs/ARCHITECTURE.md — new §Compatibility policy: the four versioned artifacts, what each reads, how each refuses, and the bounded migration rule",
+    "docs/MULTIPLAYER.md §4/§8 — corrected 'refused at connect' (it is refused at the wire boundary, on the first frame) and named the new code",
+    "tests/net/parse-client-message.test.ts, tests/server/index.integration.test.ts, tests/server/queue.integration.test.ts"
+   ],
+   "acceptance": "supported guarantees explicit (one version at a time per artifact, table in ARCHITECTURE.md); unsupported versions fail clearly (unsupported_version → localized 'reload to update'; RulesError for snapshot/replay; per-field defaults for preferences); migration bounded (one hop, preferences only, stated as policy); rollback implications documented (OPERATIONS.md §Rollback + the ship-together rule)",
+   "verification": [
+    "MEXE_OUTPUT=ai npm run test (1122/1122, exit 0)",
+    "npm run lint (exit 0)",
+    "npm run verify:multiplayer:chromium (44/44, exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p70-test.log",
+     "tmp/agent-logs/p70-mp-chromium.log"
+    ],
+    "note": "No PROTOCOL_VERSION bump: an added error code is additive and older clients already fall back to generic copy (src/net/errors.ts). Bumping would have broken working clients to announce a compatibility rule."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the two changed server tests assert the new intended contract (wrong version coded, every other malformed frame still bad_message), not a weakened one"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-mp-firefox-engine",
+     "note": "verify:multiplayer ran Chromium only; Firefox cannot launch on this macOS build and the WebKit iOS gate was skipped with it. Protocol change is engine-independent (parse-level), covered by unit + server integration tests.",
+     "owner": "Phase 100 — Final Multiplayer QA"
     }
    ]
   }

@@ -437,8 +437,15 @@ and `room_state` gained `settings`/`hostSeat`, and the client gained
 `set_room_settings` and `mexe_started`; v3 bumped from 2 in 1.2.0, when
 `GameView` gained a `hash` digest and the client gained `resync`; v2 bumped from 1 for the rules
 adaptation, when `GameView` gained `config` and card ids changed shape with the
-two-deck/joker model); a mismatch is refused at connect with a clear reason rather than
-producing subtle desyncs. Client-to-server messages carry a client-chosen
+two-deck/joker model); a mismatch is refused at the wire boundary rather than producing subtle
+desyncs: the version is the first thing `parseClientMessage` checks, so the
+refusal lands on the client's first frame, before any room state exists. It is
+the one parse failure that carries its own error code (`unsupported_version`,
+"reload the page to update") instead of the generic `bad_message` — a stale
+service-worker cache is the realistic way a player ends up on the wrong
+version, and that player needs an instruction, not an apology. Compatibility
+across versions is deliberately none, in both directions: see the compatibility
+policy in [ARCHITECTURE.md](ARCHITECTURE.md#compatibility-policy). Client-to-server messages carry a client-chosen
 `reqId`; every rejection echoes it, so a client can tie a rejection to the
 submission that caused it.
 
@@ -834,7 +841,8 @@ client publishes a `ConnStatus` plus a stable `ConnReason` (`unreachable`,
 `socket_failed`), never a browser exception string.
 
 Every inbound frame is parsed inside a try/catch; a parse failure or a failed
-shape check replies `error` and, on repeated abuse, closes the socket. No
+shape check replies `error` (`unsupported_version` for a version mismatch,
+`bad_message` for everything else — §4) and, on repeated abuse, closes the socket. No
 inbound value is ever used as an object key, array index, or loop bound before
 being range-checked. Handlers are wrapped so a thrown `RulesError` becomes a
 rejection message, never an unhandled exception. Per-room work is isolated: a

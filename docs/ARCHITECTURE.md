@@ -658,6 +658,46 @@ state. A bare unversioned state is refused: a snapshot that cannot be dated
 cannot be trusted. Serialization is deterministic — the same state produces
 the same string, which is what `createNewGame` determinism tests compare.
 
+## Compatibility policy
+
+Four things carry a version, on four independent schedules. The policy is the
+same for all four and it is deliberately narrow: **one supported version at a
+time, and anything else is refused in a way the caller can act on.** No
+format is read on a best-effort basis, because a half-understood save or frame
+is worse than no save or no frame.
+
+| Artifact | Version | Owner | Reads older | Reads newer | Refusal |
+|---|---|---|---|---|---|
+| save (settings/progress/cosmetics) | `version: 1` in `mexe-save` | `src/core/persistence.ts` | yes, one hop: the unversioned `mexe-settings` key migrates once, then is deleted | no — a future `version` is not 1, so the whole envelope is dropped | silent per-field fallback to defaults; the player keeps a working game, never a partial one |
+| game-state snapshot | `GAME_STATE_VERSION = 2` | `src/rules/rules.ts` | no | no | `RulesError` (`corruptSave`, `unsupportedSaveVersion`) — the caller recovers |
+| replay | `REPLAY_VERSION = 1` | `src/game-state/replay.ts` | no | no | refused with the version in the message; a replay is a developer artifact, so a loud failure is the right one |
+| wire protocol | `PROTOCOL_VERSION = 9` | `src/net/protocol.ts` | no | no | `unsupported_version` on the client's first frame, shown as "reload the page to update" |
+
+Rules that follow from it:
+
+- **Versions move independently.** A protocol bump is not a save bump. The
+  reason each one moved is recorded where it is owned, not here
+  ([MULTIPLAYER.md](MULTIPLAYER.md) §4 for the wire).
+- **Migration is bounded to one hop, and only for preferences.** The
+  `mexe-settings` → `mexe-save` migration is the only one that exists and the
+  only kind that is worth having: losing a preference is an annoyance, so it
+  is worth code, while a gameplay artifact that cannot be read is simply not
+  read. There is no migration framework and there should not be one.
+- **A refused format never degrades silently into gameplay.** Preferences fall
+  back to defaults; a snapshot, replay or frame throws or is rejected. This is
+  the same rule as [§Persistence](#persistence): nothing persisted decides a
+  gameplay question.
+- **Client and server ship together.** `PROTOCOL_VERSION` is the coupling
+  point, which is why a rollback rolls both or neither
+  ([OPERATIONS.md](OPERATIONS.md) §Rollback). The stale-client case is real
+  even without a bad deploy — a service worker serves the previous build until
+  its cache key changes ([PWA_OFFLINE.md](PWA_OFFLINE.md) §Cache versioning) —
+  and that is exactly the player who is told to reload.
+- **Adding a server error code is not a protocol bump.** Unknown codes already
+  fall back to generic copy on older clients (`src/net/errors.ts`), so the
+  vocabulary can grow without stranding anyone; changing the *shape* of a
+  message is what bumps the version.
+
 ## System context
 
 ```text

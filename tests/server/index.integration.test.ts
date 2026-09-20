@@ -41,7 +41,11 @@ describe('server/index.ts protocol and ownership (Phase 18)', () => {
     await c.next('error');
     const errors = c.received.filter((m) => m.type === 'error');
     expect(errors.length).toBe(frames.length);
-    for (const e of errors) expect(e.type === 'error' && e.code).toBe('bad_message');
+    // A wrong version is the one refusal a player can act on ("reload to update"), so it
+    // carries its own code; every other malformed frame stays a developer-detail bad_message.
+    const codes = errors.map((e) => (e.type === 'error' ? e.code : ''));
+    expect(codes.filter((c) => c === 'unsupported_version').length).toBe(1);
+    expect(codes.filter((c) => c === 'bad_message').length).toBe(frames.length - 1);
     // Still serving: the socket is alive and the process answers /health.
     expect(c.closeCode).toBeNull();
     expect((await health(PORT)).ok).toBe(true);

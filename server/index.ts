@@ -756,7 +756,7 @@ wss.on('connection', (ws: WebSocket, req) => {
       const raw = typeof data === 'string' ? data : data.toString('utf8');
       const parsed = parseClientMessage(raw);
       if ('error' in parsed) {
-        sendError(ws, 'bad_message', parsed.error);
+        sendError(ws, parsed.code ?? 'bad_message', parsed.error);
         return;
       }
       handleMessage(ws, conn, parsed);
