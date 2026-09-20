@@ -29,6 +29,12 @@ export default defineConfig({
     { name: 'android chrome portrait', use: { ...devices['Pixel 7'] } },
     { name: 'ios safari portrait', use: { ...devices['iPhone 14'] } },
     { name: 'ipad', use: { ...devices['iPad (gen 7)'] } },
+    // The two ends the device list misses (Phase 34). Large screen: the world is a fixed
+    // 480x270 widening to 630, so a 1440p monitor must letterbox intentionally rather than
+    // reveal board. High-DPI: a 3x device pixel ratio is where a nearest-neighbour upscale
+    // either stays crisp or turns into a blur.
+    { name: 'desktop 1440p', use: { ...devices['Desktop Chrome'], viewport: { width: 2560, height: 1440 } } },
+    { name: 'high-dpi phone', use: { ...devices['Desktop Chrome'], viewport: { width: 412, height: 915 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true } },
   ],
   webServer: {
     command: 'npm run preview',

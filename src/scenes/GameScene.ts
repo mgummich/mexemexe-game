@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { aiReasonKeySuffix, AI_SPEED_SCALE, PERSONALITY_STYLE, type EmoteKey, type Personality } from '../ai/ai';
+import { AI_SPEED_SCALE, PERSONALITY_STYLE, type EmoteKey, type Personality } from '../ai/ai';
 import { playSfx } from '../audio/sfx';
 import { setMusicContext } from '../audio/music';
 import { CARD_H, CARD_W } from '../assets/manifest';
@@ -14,13 +14,14 @@ import { LocalMatch } from '../game-state/match';
 import { buildShowcaseState } from '../demo/showcase';
 import { isComeback, matchIntensity, threatOf } from '../core/intensity';
 import { doneChecklist, formatChecklist, objectiveKey, objectivePhase } from '../core/objective';
-import { playerStats, summarizeMoveKey } from '../core/results-summary';
+import { lastMoveKey, playerStats, summarizeMoveKey } from '../core/results-summary';
 import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, TABLE_THEMES } from '../cosmetics';
-import { t } from '../localization/i18n';
+import { plural, t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
 import { OnlineSession } from '../net/online-session';
+import { createRng } from '../rules/rng';
 import { analyzeMeld, createNewGame, sortMeldCards } from '../rules/rules';
 import type { Card, GameState, JokerAssignment, Meld, MeldReason, ReasonCode, RulesConfig } from '../rules/types';
 import {
@@ -46,13 +47,26 @@ import { gameRegions, wideReason, type GameRegions } from '../ui/regions';
 import { openRulesPanel } from '../ui/rules-panel';
 import { view } from '../ui/viewport';
 import { coverBackground } from '../ui/menu-layout';
-import { CHROME_GOLD, CHROME_GOLD_TEXT, fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
+import { ACTION, CHROME_GOLD, CHROME_GOLD_TEXT, fitTextScale, FOCUS, STATE_FILL, SURFACE, TEXT } from '../ui/tokens';
+import { turnClockReadout } from '../ui/turn-clock';
+import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 import { matchDebugSurface } from '../verification/online-debug';
 
 /** Pointer kind for the play log: the viewport profile is presentation's to read, not the log's
  * (the log module is platform-free). */
 const pointerKind = (): 'coarse' | 'fine' => (view().touch ? 'coarse' : 'fine');
+
+/**
+ * The corner dot marking a card an opponent just touched. Board content, not chrome: it lives in
+ * the amber band *between* `STATUS_COLOR.incomplete` gold and `illegal` red on purpose, so
+ * "recently moved" can never be read as either verdict, and it must not follow a chrome token
+ * that a later art pass re-points. See the call site's note in renderTable.
+ */
+const RECENT_TOUCH_MARK = 0xf0a030;
+
+/** A mask's fill is coverage, not colour: fully opaque white means "this area shows". Never rendered. */
+const MASK_FILL = 0xffffff;
 
 type SortMode = 'suit' | 'rank';
 
@@ -85,7 +99,6 @@ const CONFIRM_GUARD_MS = 250;
  * proposal, no socket close), the lock releases itself and a resync is requested. */
 const ONLINE_PENDING_TIMEOUT_MS = 10000;
 /** Last seconds of an online turn, where the clock escalates from warning to critical. */
-const TURN_CRITICAL_MS = 5000;
 /** How long an opponent stays quiet after reacting — see `lastEmoteBySeat`. */
 const EMOTE_COOLDOWN_MS = 2500;
 
@@ -427,11 +440,17 @@ export class GameScene extends Phaser.Scene {
     this.ui = new MatchViewState();
     // What is left is the handful of live Phaser resources the scene owns directly. They are not
     // values to re-initialise, they are things to stop.
+    // Stopped here, not merely forgotten: today `create()` always follows a `shutdown` that
+    // removed them, so dropping the handle was enough — but that makes the reset depend on a
+    // lifecycle ordering nothing checks. Removing first is idempotent and holds either way.
     this.setOnlinePending(false);
+    this.onlineTimerEvent?.remove();
     this.onlineTimerEvent = null;
+    this.reconnectTicker?.remove();
     this.reconnectTicker = null;
     for (const e of this.activeEmotes.values()) e.timer.remove();
     this.activeEmotes.clear();
+    this.guardTimer?.remove();
     this.guardTimer = null;
     this.resetZoomPan();
   }
@@ -503,6 +522,7 @@ export class GameScene extends Phaser.Scene {
     debugApi.replay = this.match ? () => this.match!.replay() : () => null;
     this.tutorialDirector = config.tutorial ? new TutorialDirector() : null;
     debugApi.tutorialStep = this.tutorialDirector?.stepIndex ?? null;
+    debugApi.a11y = { ...debugApi.a11y, tutorialRefusalShown: false }; // never leaks past the lesson it belongs to
 
     this.r = this.regionsForMode();
 
@@ -576,7 +596,10 @@ export class GameScene extends Phaser.Scene {
       this.reconnectTicker?.remove();
       for (const e of this.activeEmotes.values()) e.timer.remove();
       this.activeEmotes.clear();
-      this.ambienceSound?.stop();
+      // destroy(), not stop(): see MenuScene.startAmbience — a stopped sound is still held by the
+      // sound manager, so one per match would accumulate for the life of the page (Phase 77).
+      this.ambienceSound?.destroy();
+      this.ambienceSound = null;
       this.resetZoomPan();
       this.game.canvas.removeEventListener('pointercancel', cancelDragOnPointerCancel);
       this.cancelActiveDrag();
@@ -638,6 +661,12 @@ export class GameScene extends Phaser.Scene {
       client.on('state_sync', (msg) => this.onOnlineStateSync(msg.view)),
       client.on('proposal_rejected', (msg) => this.onOnlineRejected(msg.reasons)),
       client.on('game_over', (msg) => this.onOnlineGameOver(msg)),
+      // A room frame is the only thing a client that was disconnected over the finish ever gets:
+      // the server answers its reconnect with the room, not with a match (`game_over` went out
+      // while the socket was down). The session decides whether that means the match is over.
+      client.on('room_state', (msg) => {
+        if (this.online!.roomState(msg.locked).missedFinish) this.onOnlineMissedFinish();
+      }),
       // Room seats on the wire, player indices in this scene — translated once, here.
       client.on('turn_timeout', (msg) => this.onOnlineTurnTimeout(msg.seat)),
       client.on('player_disconnected', (msg) => this.onOnlineOpponentEvent(this.online!.playerIndexOf(msg.seat), true)),
@@ -693,6 +722,16 @@ export class GameScene extends Phaser.Scene {
     // read as a dropped draft.
     const result = this.online.applySync(view, (this.editor?.historyLength() ?? 0) > 1);
     if (result.kind === 'stale') return;
+    if (result.kind === 'invalid') {
+      console.warn(`unprojectable state_sync at rev ${view.rev}: ${result.problem}`);
+      playlog.record('desync', { rev: view.rev });
+      // Nothing was applied, so the previous state is still the one on screen. Lock input and ask
+      // for a fresh snapshot rather than reading a clock or a seat off a frame we rejected.
+      this.setOnlinePending(true);
+      this.setOnlineNotice(t('online.resyncing'));
+      this.net?.requestResync();
+      return;
+    }
     this.setOnlinePending(false);
     this.setOnlineNotice('');
     this.ui.lastAiReason = null; // every online seat is a person
@@ -760,7 +799,7 @@ export class GameScene extends Phaser.Scene {
     // winner put down — never the cards themselves.
     const mover = msg.winningMove ? state.players[this.online!.playerIndexOf(msg.winningMove.seat)] : undefined;
     const winningMoveText = mover && msg.winningMove
-      ? t('game.lastMove.played', { name: mover.name, n: msg.winningMove.cardsPlayed })
+      ? plural('game.lastMove.played', msg.winningMove.cardsPlayed, { name: mover.name })
       : '';
     this.time.delayedCall(400, () => {
       gotoScene(this, 'win', {
@@ -772,6 +811,21 @@ export class GameScene extends Phaser.Scene {
         winningMoveText,
         finalTable: state.table,
       });
+    });
+  }
+
+  /** The match ended while this client was away, so there is no result screen to show for it —
+   * only the lobby the room recycled into. Say what happened, then hand back to that lobby on the
+   * live socket, the same re-entry WinScene's REMATCH uses. Without this the board the drop froze
+   * stays on screen as if it were live, and this seat can never cast the ready bit the room's next
+   * match needs. The party score and history are on the server, so the lobby shows the result. */
+  private onOnlineMissedFinish(): void {
+    this.setOnlineNotice(t('online.matchEndedAway'));
+    const client = this.net!;
+    const { code, seat } = this.online!;
+    this.time.delayedCall(2500, () => {
+      if (!this.online) return;
+      gotoScene(this, 'online', { client, code, seat });
     });
   }
 
@@ -811,7 +865,7 @@ export class GameScene extends Phaser.Scene {
   private onOnlineStatusChange(status: ConnStatus): void {
     if (!this.onlineStatusDot) return;
     const color =
-      status === 'open' ? 0x3ec06a : status === 'connecting' || status === 'reconnecting' ? 0xf7d23e : 0xd83a3a;
+      status === 'open' ? STATE_FILL.success : status === 'connecting' || status === 'reconnecting' ? SURFACE.accent : STATE_FILL.error;
     this.onlineStatusDot.setFillStyle(color);
     // D14: `interactive` (renderAll) reads lastOnlineStatus, but nothing else re-renders on a
     // status change — without this, a drop mid-turn left every control exactly as interactive as
@@ -1002,7 +1056,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Presentation-only "thinking" pause before an AI's move lands — never affects the AI's own
-   * 400ms search deadline. Bia's pace grows with table complexity (more melds to weigh); every
+   * search budget (a trial count, not a deadline). Bia's pace grows with table complexity (more melds to weigh); every
    * personality is capped and scaled by settings.motionScale() (0 under reducedMotion). */
   private aiThinkDelay(personality: Personality, state: GameState): number {
     const style = PERSONALITY_STYLE[personality];
@@ -1122,11 +1176,13 @@ export class GameScene extends Phaser.Scene {
     };
     debugApi.mexe = {
       playHandCard: wrap((cardId: string, meldId: string | null) => {
-        if (!this.tutorialAllows({ type: 'playHandCard', cardId })) return false;
+        // Same refusal the pointer paths get — the hook exists to drive the real gate, not a
+        // quieter copy of it, so an e2e can assert what a player would actually see.
+        if (!this.tutorialPermits({ type: 'playHandCard', cardId })) return this.tutorialRejected();
         return this.editor?.playHandCard(cardId, meldId) ?? false;
       }),
       moveTableCard: wrap((cardId: string, meldId: string | null) => {
-        if (!this.tutorialAllows({ type: 'moveTableCard', cardId })) return false;
+        if (!this.tutorialPermits({ type: 'moveTableCard', cardId })) return this.tutorialRejected();
         return this.editor?.moveTableCard(cardId, meldId) ?? false;
       }),
       undo: wrap(() => {
@@ -1135,7 +1191,7 @@ export class GameScene extends Phaser.Scene {
         return ok;
       }),
       feito: () => {
-        if (!this.tutorialAllows({ type: 'feito' })) return false;
+        if (!this.tutorialPermits({ type: 'feito' })) return this.tutorialRejected();
         const ok = this.editor?.canConfirm().ok ?? false;
         if (ok) this.onFeito();
         return ok;
@@ -1231,6 +1287,38 @@ export class GameScene extends Phaser.Scene {
     return this.tutorialDirector.isAllowed(action);
   }
 
+  /**
+   * The gate every *action* path uses. Same answer as `tutorialAllows`, plus the one side effect
+   * that belongs to acting rather than rendering: a permitted action retires the refusal notice,
+   * because the player has moved on from whatever the lesson turned down. Kept separate from
+   * `tutorialAllows` because that one also runs during render (button enablement), where clearing
+   * would erase the notice before the same frame drew it.
+   */
+  private tutorialPermits(action: TutorialAction): boolean {
+    if (!this.tutorialAllows(action)) return false;
+    this.tutorialDirector?.clearBlocked();
+    return true;
+  }
+
+  /**
+   * What a refused tutorial interaction does. The sound alone said "no" to nobody playing muted,
+   * and said nothing at all about what to do instead — so the refusal is also written into the
+   * step panel (renderTutorialOverlay) and stays there until the player does something the step
+   * accepts. The draft is untouched: refusing is not undoing, so retrying costs nothing.
+   */
+  private tutorialReject(): void {
+    this.tutorialDirector?.noteBlocked();
+    playSfx(this, 'sfx-invalid', 0.15);
+    this.renderAll();
+  }
+
+  /** `tutorialReject()` for the debug hooks, which have to answer "did anything happen" — always
+   * false, because a refusal changes nothing. */
+  private tutorialRejected(): false {
+    this.tutorialReject();
+    return false;
+  }
+
   /** cardId -> meld it currently sits in, for diffing one table position against the next. */
   private static meldOf(state: GameState): Map<string, string> {
     const m = new Map<string, string>();
@@ -1259,8 +1347,7 @@ export class GameScene extends Phaser.Scene {
       this.lastMoveText?.setText('');
       return;
     }
-    const key = played <= 0 ? 'game.lastMove.drew' : moved > 0 ? 'game.lastMove.mexeu' : 'game.lastMove.played';
-    let text = t(key, { name, n: Math.max(0, played), m: moved });
+    let text = t(lastMoveKey(played, moved), { name, n: Math.max(0, played), m: moved });
     if (this.ui.lastAiReason !== null && explain === 'detailed') text += ` ${t(`ai.why.${this.ui.lastAiReason}`)}`;
     this.lastMoveText?.setText(text);
   }
@@ -1292,7 +1379,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       const { decision } = result;
       debugApi.lastAiThought = decision.explanation;
-      this.ui.lastAiReason = aiReasonKeySuffix(decision.explanation);
+      this.ui.lastAiReason = decision.reason?.key ?? 'draw';
       const style = PERSONALITY_STYLE[personality];
       if (decision.kind === 'confirm') {
         const played = decision.draft.handCardsPlayed.length;
@@ -1380,17 +1467,17 @@ export class GameScene extends Phaser.Scene {
     // 270x480 portrait world smears the baked-in props. Identity in landscape.
     const bg = coverBackground(this, tableKey);
     // calm the busy tablecloth/props so cards and HUD stay readable
-    const dim = this.add.rectangle(this.r.w / 2, this.r.h / 2, this.r.w, this.r.h, 0x1a0f0a, playerCount > 2 ? 0.22 : 0.08);
+    const dim = this.add.rectangle(this.r.w / 2, this.r.h / 2, this.r.w, this.r.h, SURFACE.base, playerCount > 2 ? 0.22 : 0.08);
     // near-opaque top bar: baked-in table props (mug/etc.) sit right behind this strip in some
     // backgrounds — keep it solid enough that avatars/names never fight prop art for legibility.
-    const topBar = this.add.rectangle(this.r.w / 2, this.r.barH / 2, this.r.w, this.r.barH, 0x1a0f0a, 0.88);
+    const topBar = this.add.rectangle(this.r.w / 2, this.r.barH / 2, this.r.w, this.r.barH, SURFACE.base, 0.88);
     this.staticUi.push(bg, dim, topBar);
     if (!this.r.portrait) {
       // Landscape-only felt dressing, both keyed to the 480x270 art: a dim patch behind the
       // right-hand action column, and a prop covering a paint smudge on the boteco felt. Portrait
       // reframes that art entirely (and puts the action bar along the bottom), so neither lands
       // where it was drawn for — the portrait board dims the whole table instead.
-      this.staticUi.push(this.add.rectangle(this.r.w - 36, 226, 72, 96, 0x1a0f0a, 0.55));
+      this.staticUi.push(this.add.rectangle(this.r.w - 36, 226, 72, 96, SURFACE.base, 0.55));
       if (playerCount <= 2) {
         this.staticUi.push(this.add.image(60, 60, 'prop-dominoes').setDisplaySize(32, 24).setDepth(1));
       }
@@ -1401,7 +1488,7 @@ export class GameScene extends Phaser.Scene {
     // tooltip must stay readable regardless of what's drawn there.
     const ap = this.r.actionPanel;
     const panel = this.add.graphics();
-    panel.fillStyle(0x1a1410, 0.82);
+    panel.fillStyle(SURFACE.overlay, 0.82);
     if (this.r.portrait) {
       // portrait's bottom bar is a plain full-width strip, not a floating card — a rounded rect
       // there would leave visible corners of table art poking through.
@@ -1419,7 +1506,7 @@ export class GameScene extends Phaser.Scene {
     // column there, and gear/zoom aren't built at all (see below).
     const cp = this.r.controlPanel;
     if (cp && !this.config.tutorial) {
-      panel.fillStyle(0x1a1410, 0.82);
+      panel.fillStyle(SURFACE.overlay, 0.82);
       panel.fillRoundedRect(cp.x, cp.y, cp.w, cp.h, 4);
       panel.lineStyle(1, CHROME_GOLD, 0.35);
       panel.strokeRoundedRect(cp.x, cp.y, cp.w, cp.h, 4);
@@ -1432,19 +1519,19 @@ export class GameScene extends Phaser.Scene {
     this.comprarBtn = new PixelButton(this, this.r.comprar.x, this.r.comprar.y, t('game.comprar'), () => this.onComprar(), {
       textureBase: 'btn-comprar', w: this.r.comprar.w, h: this.r.comprar.h, size: this.r.comprar.size, tooltip: t('tooltip.comprar'),
     });
-    const undoBtn = new PixelButton(this, this.r.undo.x, this.r.undo.y, '↶', () => this.onUndo(), { textureBase: 'btn-small', w: this.r.undo.w, h: this.r.undo.h, size: this.r.undo.size, color: 0x5e5646, tooltip: t('tooltip.undo') });
+    const undoBtn = new PixelButton(this, this.r.undo.x, this.r.undo.y, '↶', () => this.onUndo(), { textureBase: 'btn-small', w: this.r.undo.w, h: this.r.undo.h, size: this.r.undo.size, color: ACTION.icon, tooltip: t('tooltip.undo') });
     this.undoBtn = undoBtn;
-    const redoBtn = new PixelButton(this, this.r.redo.x, this.r.redo.y, '↷', () => this.onRedo(), { textureBase: 'btn-small', w: this.r.redo.w, h: this.r.redo.h, size: this.r.redo.size, color: 0x5e5646, tooltip: t('tooltip.redo') });
+    const redoBtn = new PixelButton(this, this.r.redo.x, this.r.redo.y, '↷', () => this.onRedo(), { textureBase: 'btn-small', w: this.r.redo.w, h: this.r.redo.h, size: this.r.redo.size, color: ACTION.icon, tooltip: t('tooltip.redo') });
     // N8: tooltip flips below the button — "above" (the default) sits right over DRAW/COMPRAR,
     // which reset's row is directly beneath in every layout.
-    const resetBtn = new PixelButton(this, this.r.reset.x, this.r.reset.y, '⟲', () => this.onReset(), { textureBase: 'btn-small', w: this.r.reset.w, h: this.r.reset.h, size: this.r.reset.size, color: 0x8e4632, tooltip: t('tooltip.reset'), tooltipSide: 'below' });
+    const resetBtn = new PixelButton(this, this.r.reset.x, this.r.reset.y, '⟲', () => this.onReset(), { textureBase: 'btn-small', w: this.r.reset.w, h: this.r.reset.h, size: this.r.reset.size, color: ACTION.discard, tooltip: t('tooltip.reset'), tooltipSide: 'below' });
     this.resetBtn = resetBtn;
 
     // shifted off the corner: at (18,254) the table-frame art clipped this icon on both edges.
     const sortBtn = new PixelButton(this, this.r.sort.x, this.r.sort.y, '⇅', () => {
       this.sortMode = this.sortMode === 'suit' ? 'rank' : 'suit';
       this.renderAll();
-    }, { textureBase: 'btn-small', w: this.r.sort.w, h: this.r.sort.h, size: this.r.sort.size, color: 0x5e5646, tooltip: t('tooltip.sort') });
+    }, { textureBase: 'btn-small', w: this.r.sort.w, h: this.r.sort.h, size: this.r.sort.size, color: ACTION.icon, tooltip: t('tooltip.sort') });
 
     this.staticUi.push(panel, this.feitoBtn, this.comprarBtn, undoBtn, redoBtn, resetBtn, sortBtn);
 
@@ -1454,21 +1541,21 @@ export class GameScene extends Phaser.Scene {
       // below: the step panel covers this strip (r.tutorialPanel spans y2-178), so the button
       // would sit under it and be untappable.
       this.mexeToggleBtn = new PixelButton(this, this.r.mexeToggle.x, this.r.mexeToggle.y, t('mobile.editorToggle'), () => this.toggleMexeEditor(), {
-        textureBase: 'btn-small', w: this.r.mexeToggle.w, h: this.r.mexeToggle.h, size: this.r.mexeToggle.size, color: 0x5e5646, tooltip: t('tooltip.mexeEditor'),
+        textureBase: 'btn-small', w: this.r.mexeToggle.w, h: this.r.mexeToggle.h, size: this.r.mexeToggle.size, color: ACTION.icon, tooltip: t('tooltip.mexeEditor'),
       });
       this.staticUi.push(this.mexeToggleBtn);
 
       // tutorial mode uses the whole right column for its step panel — no room for the gear there (Esc still opens pause)
       const gearBtn = new PixelButton(this, this.r.gear.x, this.r.gear.y, '⚙', () => this.togglePause(), {
-        textureBase: 'btn-small', w: this.r.gear.w, h: this.r.gear.h, size: this.r.gear.size, color: 0x5e5646, tooltip: t('tooltip.settings'),
+        textureBase: 'btn-small', w: this.r.gear.w, h: this.r.gear.h, size: this.r.gear.size, color: ACTION.icon, tooltip: t('tooltip.settings'),
       });
       // Table zoom (Phase 14 Wave D) — tutorial melds are always few, so tutorial mode keeps this
       // free strip for its step panel instead (same gate as the gear button above).
       this.zoomInBtn = new PixelButton(this, this.r.zoomIn.x, this.r.zoomIn.y, '+', () => this.onZoomIn(), {
-        textureBase: 'btn-small', w: this.r.zoomIn.w, h: this.r.zoomIn.h, size: this.r.zoomIn.size, color: 0x5e5646, tooltip: t('tooltip.zoomIn'),
+        textureBase: 'btn-small', w: this.r.zoomIn.w, h: this.r.zoomIn.h, size: this.r.zoomIn.size, color: ACTION.icon, tooltip: t('tooltip.zoomIn'),
       });
       this.zoomOutBtn = new PixelButton(this, this.r.zoomOut.x, this.r.zoomOut.y, '−', () => this.onZoomOut(), {
-        textureBase: 'btn-small', w: this.r.zoomOut.w, h: this.r.zoomOut.h, size: this.r.zoomOut.size, color: 0x5e5646, tooltip: t('tooltip.zoomOut'),
+        textureBase: 'btn-small', w: this.r.zoomOut.w, h: this.r.zoomOut.h, size: this.r.zoomOut.size, color: ACTION.icon, tooltip: t('tooltip.zoomOut'),
       });
       this.staticUi.push(gearBtn, this.zoomInBtn, this.zoomOutBtn);
     }
@@ -1476,7 +1563,7 @@ export class GameScene extends Phaser.Scene {
     // Opaque backdrop, sized to the text in renderAll: the reason can grow to several lines (the
     // beginner checklist) and then reaches past its band onto table art, where yellow-on-green is
     // not readable on its own.
-    this.reasonBg = this.add.rectangle(this.r.reason.x, this.r.reason.y, 10, 10, 0x1a1410, 0.8).setDepth(48).setVisible(false);
+    this.reasonBg = this.add.rectangle(this.r.reason.x, this.r.reason.y, 10, 10, SURFACE.overlay, 0.8).setDepth(48).setVisible(false);
     this.reasonText = this.add
       .text(this.r.reason.x, this.r.reason.y, '', { ...fontStyle(this.r.reason.size, CHROME_GOLD_TEXT), align: 'center', wordWrap: { width: this.r.reason.wrap } })
       .setOrigin(0.5, this.r.reason.originY)
@@ -1485,24 +1572,24 @@ export class GameScene extends Phaser.Scene {
     // bolder turn prompt: its own row below the avatar strip (not overlapping opponent name/avatar
     // cells at 3-4p) with an opaque pill behind the text (resized in renderAll) so "Sua vez" / the
     // AI's name always reads clearly regardless of what's behind it.
-    this.bannerBg = this.add.rectangle(this.r.banner.x, this.r.banner.y, 10, 10, 0x1a1410, 0.78).setDepth(49);
+    this.bannerBg = this.add.rectangle(this.r.banner.x, this.r.banner.y, 10, 10, SURFACE.overlay, 0.78).setDepth(49);
     this.banner = label(this, this.r.banner.x, this.r.banner.y, '', 11, CHROME_GOLD_TEXT).setDepth(50);
     // one-line readback of the opponent's last action, just above the table
     this.lastMoveText = this.add
-      .text(this.r.lastMove.x, this.r.lastMove.y, '', { ...fontStyle(8, '#d8c890'), align: 'center', wordWrap: { width: this.r.lastMove.wrap } })
+      .text(this.r.lastMove.x, this.r.lastMove.y, '', { ...fontStyle(8, TEXT.muted), align: 'center', wordWrap: { width: this.r.lastMove.wrap } })
       .setOrigin(0.5)
       .setDepth(50);
     this.staticUi.push(this.reasonBg, this.reasonText, this.bannerBg, this.banner, this.lastMoveText);
 
     if (this.online) {
       // small corner connection indicator — never a modal
-      this.onlineStatusDot = this.add.circle(this.r.onlineDot.x, this.r.onlineDot.y, 3, 0x3ec06a).setDepth(600);
+      this.onlineStatusDot = this.add.circle(this.r.onlineDot.x, this.r.onlineDot.y, 3, STATE_FILL.success).setDepth(600);
       // named, not just a colored dot: a local/AI/tutorial match never shows this, so its mere
       // presence — not just its color — is the "you are online" tell (task: never ambiguous).
-      const onlineLabel = label(this, this.r.onlineDot.x + 10, this.r.onlineDot.y, t('game.onlineBadge'), 6, '#8a7f68').setOrigin(0, 0.5).setDepth(600);
+      const onlineLabel = label(this, this.r.onlineDot.x + 10, this.r.onlineDot.y, t('game.onlineBadge'), 6, TEXT.dim).setOrigin(0, 0.5).setDepth(600);
       // Turn clock under the online badge. Hidden outright in a no-timer room rather than showing
       // a dash, so an untimed match looks exactly like it did before timers existed.
-      this.onlineTimerText = label(this, this.r.onlineTimer.x, this.r.onlineTimer.y, '', 8, '#c0b8a8')
+      this.onlineTimerText = label(this, this.r.onlineTimer.x, this.r.onlineTimer.y, '', 8, TEXT.muted)
         .setOrigin(0, 0.5)
         .setDepth(600)
         .setVisible(false);
@@ -1519,7 +1606,10 @@ export class GameScene extends Phaser.Scene {
       // so the strip never shows as a stray blob (see setOnlineNotice).
       this.onlineNoticeText = this.add
         .text(this.r.onlineNotice.x, this.r.onlineNotice.y, '', {
-          ...fontStyle(8, '#f0c040'),
+          // TEXT.accent, not STATUS_COLOR.incomplete's gold: this strip carries connection news,
+          // not a meld's legality — reusing a status colour as chrome is what the token layer exists
+          // to stop (src/ui/tokens.ts).
+          ...fontStyle(8, TEXT.accent),
           align: 'center',
           wordWrap: { width: this.r.onlineNotice.wrap },
           backgroundColor: 'rgba(26,15,10,0.85)',
@@ -1572,26 +1662,24 @@ export class GameScene extends Phaser.Scene {
    * nothing but show 0s until the server's own tick lands. */
   private updateTurnTimer(): void {
     if (!this.onlineTimerText) return;
-    if (this.turnDeadlineAt === null) {
+    // The arithmetic — and every threshold in it — lives in src/ui/turn-clock.ts, where it is
+    // unit-tested at its boundaries. What stays here is the two things only a scene can do:
+    // paint the readout, and decide whether to make a sound.
+    const clock = turnClockReadout(this.turnDeadlineAt, Date.now(), this.turnWarnMs);
+    if (!clock.visible) {
       this.onlineTimerText.setVisible(false);
       return;
     }
-    const msLeft = Math.max(0, this.turnDeadlineAt - Date.now());
-    const secs = Math.ceil(msLeft / 1000);
-    // Two steps, not one: a single threshold gives the same red at twenty seconds and at three.
-    // The last few seconds also grow the clock, so the pressure is legible without watching digits.
-    const warning = this.turnWarnMs > 0 && msLeft <= this.turnWarnMs;
-    const critical = msLeft <= TURN_CRITICAL_MS;
     this.onlineTimerText
       .setVisible(true)
-      .setText(t('online.turnTimeLeft', { secs }))
-      .setColor(critical ? '#ff3b2e' : warning ? '#ffb35c' : '#c0b8a8')
-      .setScale(critical ? 1.25 : 1);
-    if (warning && secs !== this.ui.lastTickSecond && secs > 0) {
-      this.ui.lastTickSecond = secs;
+      .setText(t('online.turnTimeLeft', { secs: clock.secs }))
+      .setColor(clock.tone === 'critical' ? TEXT.error : clock.tone === 'warning' ? TEXT.warning : TEXT.muted)
+      .setScale(clock.scale);
+    if (clock.tone !== 'muted' && clock.secs !== this.ui.lastTickSecond && clock.secs > 0) {
+      this.ui.lastTickSecond = clock.secs;
       // Own turn only: a cue for someone else's clock is noise, and the setting is off by choice.
       if (settings.get().timerTickSound && this.state().activePlayerIndex === this.localSeat) {
-        playSfx(this, 'sfx-snap', critical ? 0.35 : 0.2);
+        playSfx(this, 'sfx-snap', clock.tone === 'critical' ? 0.35 : 0.2);
       }
     }
   }
@@ -1671,7 +1759,7 @@ export class GameScene extends Phaser.Scene {
       const text = untouched ? t('game.hint.noPlay') : this.blockingReasonText();
       if (!text) return;
       this.hesitationHint = this.add
-        .text(this.r.handCenterX, this.r.handY - CARD_H, text, fontStyle(7, '#f7d23e'))
+        .text(this.r.handCenterX, this.r.handY - CARD_H, text, fontStyle(7, TEXT.accent))
         .setOrigin(0.5)
         .setDepth(500);
     });
@@ -1827,8 +1915,8 @@ export class GameScene extends Phaser.Scene {
       : kind === 'hand'
         ? { type: 'returnToHand' }
         : { type: 'moveTableCard', cardId };
-    if (!this.tutorialAllows(action)) {
-      playSfx(this, 'sfx-invalid', 0.15);
+    if (!this.tutorialPermits(action)) {
+      this.tutorialReject();
       return;
     }
     let acted = false;
@@ -1892,8 +1980,8 @@ export class GameScene extends Phaser.Scene {
       this.onFeitoOnline();
       return;
     }
-    if (!this.tutorialAllows({ type: 'feito' })) {
-      playSfx(this, 'sfx-invalid', 0.15);
+    if (!this.tutorialPermits({ type: 'feito' })) {
+      this.tutorialReject();
       return;
     }
     if (!this.feitoAccepted(this.editor)) return;
@@ -1955,8 +2043,8 @@ export class GameScene extends Phaser.Scene {
       this.onComprarOnline();
       return;
     }
-    if (!this.tutorialAllows({ type: 'comprar' })) {
-      playSfx(this, 'sfx-invalid', 0.15);
+    if (!this.tutorialPermits({ type: 'comprar' })) {
+      this.tutorialReject();
       return;
     }
     playSfx(this, 'sfx-draw');
@@ -2129,7 +2217,7 @@ export class GameScene extends Phaser.Scene {
     const dur = feelMs('expressive');
     if (dur <= 0) return;
     const label = this.add
-      .text(x, y, text, fontStyle(13, '#f7d23e'))
+      .text(x, y, text, fontStyle(13, TEXT.accent))
       .setOrigin(0.5)
       .setDepth(600)
       .setAlpha(0.01);
@@ -2353,13 +2441,13 @@ export class GameScene extends Phaser.Scene {
       const outer = isActiveP ? avSize + 11 : avSize;
       const textX = x + outer / 2 + 4;
       const av = this.add.image(x, this.r.opponentY, key).setDisplaySize(avSize, avSize);
-      const name = this.add.text(textX, this.r.opponentY - 11, p.name, fontStyle(9, isActiveP ? CHROME_GOLD_TEXT : '#d8d0c0'));
+      const name = this.add.text(textX, this.r.opponentY - 11, p.name, fontStyle(9, isActiveP ? CHROME_GOLD_TEXT : TEXT.primary));
       // Hand counts grow and change wording as a seat closes in, so the race is legible from the
       // HUD instead of needing to be counted. Size and the word carry it, never colour alone.
       const threat = threatOf(p.hand.length);
       const countText = threat === 'last' ? t('game.lastCard') : `x${p.hand.length}`;
       const countSize = threat === 'last' ? 11 : threat === 'threat' ? 10 : threat === 'watch' ? 9 : 8;
-      const count = this.add.text(textX, this.r.opponentY + 2, countText, fontStyle(countSize, threat === 'none' ? '#f7f2e7' : '#ffb35c'));
+      const count = this.add.text(textX, this.r.opponentY + 2, countText, fontStyle(countSize, threat === 'none' ? TEXT.primary : TEXT.warning));
       // AI-11: the size/word/colour jump above is the reduced-motion-safe fact of "2 or 1 cards
       // left" — this pulse is the extra decoration on top for a near-win opponent, never the only
       // carrier of the information.
@@ -2393,11 +2481,11 @@ export class GameScene extends Phaser.Scene {
     // used to be readable only by reading a number.
     const deckHeight = intensity.deckCritical ? 13 : intensity.deckLow ? 16 : 19;
     const deckImg = this.add.image(this.r.deckImg.x, this.r.deckImg.y, cardBackKey).setDisplaySize(14, deckHeight);
-    const deckTxt = this.add.text(this.r.deckText.x, this.r.deckText.y, String(state.drawPile.length), fontStyle(intensity.deckLow ? 10 : 9, intensity.deckLow ? '#ffb35c' : '#f7f2e7'));
+    const deckTxt = this.add.text(this.r.deckText.x, this.r.deckText.y, String(state.drawPile.length), fontStyle(intensity.deckLow ? 10 : 9, intensity.deckLow ? TEXT.warning : TEXT.primary));
     this.hud.push(deckImg, deckTxt);
     if (intensity.deckCritical) {
       // Names the ending that is now in play, at the pile it will come from.
-      this.hud.push(this.add.text(this.r.deckText.x, this.r.deckText.y + 12, t('game.deckEnding'), fontStyle(6, '#ffb35c')).setOrigin(0, 0));
+      this.hud.push(this.add.text(this.r.deckText.x, this.r.deckText.y + 12, t('game.deckEnding'), fontStyle(6, TEXT.warning)).setOrigin(0, 0));
     }
 
     // banner
@@ -2512,7 +2600,7 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.renderSelectionLayer(interactive, invalidReasons.size > 0);
     }
-    debugApi.a11y = { invalidBadges: invalidReasons.size };
+    debugApi.a11y = { ...debugApi.a11y, invalidBadges: invalidReasons.size };
     debugApi.invalidMeldReasons = () => [...invalidReasons].map(([meldId, reasons]) => ({ meldId, reasons }));
     // R1: expose what was actually painted, not what the draft says — the resting-board counterpart
     // of mexe.snapTargets()'s drag-time status, so the two can be asserted to agree.
@@ -2603,7 +2691,7 @@ export class GameScene extends Phaser.Scene {
    */
   private unresolvedCountText(open: number): string {
     if (open === 0) return '';
-    return t(open === 1 ? 'objective.unresolved.one' : 'objective.unresolved.many', { n: open });
+    return plural('objective.unresolved', open);
   }
 
   /**
@@ -2778,7 +2866,7 @@ export class GameScene extends Phaser.Scene {
     const skipY = sideBySide ? panelTop + panelH - 12 : panelTop + panelH - 16;
 
     const g = this.add.graphics().setDepth(300);
-    g.fillStyle(0x1a1410, 0.88);
+    g.fillStyle(SURFACE.overlay, 0.88);
     g.fillRoundedRect(p.x, panelTop, p.w, panelH, 4);
     g.lineStyle(1, CHROME_GOLD, 0.7);
     g.strokeRoundedRect(p.x, panelTop, p.w, panelH, 4);
@@ -2792,7 +2880,7 @@ export class GameScene extends Phaser.Scene {
     // phase is dropped there rather than showing a phase the lesson is no longer in.
     const counter = dir.finished ? `${dir.stepIndex + 1}/${dir.total}` : `${t(`tutorial.phase.${dir.step.phase}`)} · ${dir.stepIndex + 1}/${dir.total}`;
     this.hud.push(
-      label(this, sideBySide ? cx + 60 : cx, sideBySide ? panelTop + 10 : panelTop + 20, counter, 6, '#c0b8a8').setDepth(301),
+      label(this, sideBySide ? cx + 60 : cx, sideBySide ? panelTop + 10 : panelTop + 20, counter, 6, TEXT.muted).setDepth(301),
     );
 
     // T-A: the completion beat gets its own line instead of the leftover step-12 instruction
@@ -2805,23 +2893,40 @@ export class GameScene extends Phaser.Scene {
       .setDepth(301);
     this.hud.push(txt);
 
-    // While the opponent is playing, every board control is disabled — say so, or a step that
-    // asks for DRAW/DONE reads as a broken button for as long as that turn lasts.
-    if (!dir.finished && !this.editor && this.state().phase === 'playing') {
+    // One line under the instruction, shared by the two things worth saying between steps. The
+    // refusal wins the slot when both apply: it answers something the player just did.
+    const noteY = Math.min(txt.y + txt.height + 6, nextY - 12);
+    debugApi.a11y = { ...debugApi.a11y, tutorialRefusalShown: dir.blocked && !dir.finished };
+    if (dir.blocked && !dir.finished) {
+      // A11Y-007: the refusal is text plus a glyph, not just the rejection sound and not just a
+      // colour — a muted player, a colour-blind player and a screen-magnifier user all get it.
+      const note = this.add
+        .text(cx, noteY, `✗ ${t('tutorial.blocked')}`, { ...fontStyle(6, TEXT.error), align: 'center', wordWrap: { width: p.w - 10 } })
+        .setOrigin(0.5, 0).setDepth(301);
+      // The panel is a fixed band and the instruction above is already as long as its lesson needs
+      // — so the refusal has to make its own room rather than land on top of the text or under the
+      // buttons. The instruction yields first (the player has just read it); it shrinks only as far
+      // as `fitTextScale`'s readability floor, same rule button captions follow.
+      const room = nextY - 8 - txt.y - note.height - 4;
+      if (txt.height > room) txt.setScale(fitTextScale(txt.height, room, 0));
+      note.y = txt.y + txt.displayHeight + 4;
+      this.hud.push(note);
+    } else if (!dir.finished && !this.editor && this.state().phase === 'playing') {
+      // While the opponent is playing, every board control is disabled — say so, or a step that
+      // asks for DRAW/DONE reads as a broken button for as long as that turn lasts.
       const active = this.state().players[this.state().activePlayerIndex]!;
-      const waitY = Math.min(txt.y + txt.height + 6, nextY - 12);
-      this.hud.push(label(this, cx, waitY, t('game.turnOf', { name: active.name }), 6, '#f7d23e').setDepth(301));
+      this.hud.push(label(this, cx, noteY, t('game.turnOf', { name: active.name }), 6, TEXT.accent).setDepth(301));
     }
 
     if (dir.finished) {
       // TUTORIAL-13: land straight in the first real match instead of stranding the player on a
       // replay-only screen — REPLAY stays for anyone who wants to redo the lesson.
-      this.hud.push(label(this, cx, nextY - 14, t('win.title'), 10, '#f7d23e').setDepth(301));
+      this.hud.push(label(this, cx, nextY - 14, t('win.title'), 10, TEXT.accent).setDepth(301));
       this.hud.push(new PixelButton(this, nextX, nextY, t('tutorial.play'), () => this.startFirstMatch(), {
         textureBase: 'btn-feito', w: btnW, h: 14, size: 6, primary: true,
       }).setDepth(302));
       this.hud.push(new PixelButton(this, skipX, skipY, t('tutorial.replay'), () => this.restartTutorial(), {
-        textureBase: 'btn-comprar', w: btnW, h: 12, size: 6, color: 0x6b6b73,
+        textureBase: 'btn-comprar', w: btnW, h: 12, size: 6, color: ACTION.tertiary,
       }).setDepth(302));
     } else {
       if (dir.step.allowed.some((a) => a.type === 'next')) {
@@ -2829,13 +2934,13 @@ export class GameScene extends Phaser.Scene {
           dir.next();
           debugApi.tutorialStep = dir.stepIndex;
           this.renderAll();
-        }, { textureBase: 'btn-comprar', w: btnW, h: 14, size: 6, color: 0x2e9e50 }).setDepth(302));
+        }, { textureBase: 'btn-comprar', w: btnW, h: 14, size: 6, color: ACTION.primary }).setDepth(302));
       }
       this.hud.push(new PixelButton(this, skipX, skipY, t('tutorial.skip'), () => {
         playlog.record('tutorial:skip', { step: dir.stepIndex });
         gotoScene(this, 'menu');
       }, {
-        textureBase: 'btn-comprar', w: btnW, h: 12, size: 6, color: 0x6b6b73,
+        textureBase: 'btn-comprar', w: btnW, h: 12, size: 6, color: ACTION.tertiary,
       }).setDepth(302));
     }
 
@@ -2857,7 +2962,7 @@ export class GameScene extends Phaser.Scene {
     for (const btnName of dir.finished ? [] : (dir.step.highlightButtons ?? [])) {
       const btn = btnName === 'feito' ? this.feitoBtn : btnName === 'comprar' ? this.comprarBtn : this.undoBtn;
       if (!btn) continue;
-      const arrow = label(this, btn.x - 40, btn.y, '▶', 10, '#f7d23e').setDepth(290);
+      const arrow = label(this, btn.x - 40, btn.y, '▶', 10, TEXT.accent).setDepth(290);
       // reduced motion: the static arrow already points at the button — the wiggle is decoration.
       if (settings.motionScale() > 0) this.tweens.add({ targets: arrow, x: btn.x - 34, duration: 400, yoyo: true, repeat: -1 });
       this.hud.push(arrow);
@@ -2904,7 +3009,7 @@ export class GameScene extends Phaser.Scene {
     const x = Phaser.Math.Clamp(rect.centerX, w / 2 + 2, this.r.tooltip.maxX);
     const y = Phaser.Math.Clamp(rect.bottom + 6 + h / 2, h / 2 + 2, this.r.tooltip.maxY);
     const g = this.add.graphics().setDepth(499);
-    g.fillStyle(0x1a1410, 0.9);
+    g.fillStyle(SURFACE.overlay, 0.9);
     g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 3);
     txt.setPosition(x, y);
     this.meldTooltip = [g, txt];
@@ -2981,7 +3086,7 @@ export class GameScene extends Phaser.Scene {
     };
     if (floor) {
       const maskGfx = this.make.graphics(undefined, false);
-      maskGfx.fillStyle(0xffffff);
+      maskGfx.fillStyle(MASK_FILL);
       maskGfx.fillRect(this.r.tableLeft, this.r.tableTop, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop);
       this.tableMaskGfx = maskGfx;
       container = this.add.container(0, 0);
@@ -2996,7 +3101,7 @@ export class GameScene extends Phaser.Scene {
       // top of it always wins the pointer hit-test — dragging a card can never start a pan, and
       // panning can never move a card. See tests/pan-precedence in e2e for the guard.
       const panBg = this.add
-        .rectangle(this.r.tableLeft + this.r.tableAreaW / 2, this.r.tableTop + (this.r.tableBottom - this.r.tableTop) / 2, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop, 0x000000, 0)
+        .rectangle(this.r.tableLeft + this.r.tableAreaW / 2, this.r.tableTop + (this.r.tableBottom - this.r.tableTop) / 2, this.r.tableAreaW, this.r.tableBottom - this.r.tableTop, SURFACE.scrim, 0)
         .setDepth(-5)
         .setInteractive({ useHandCursor: false });
       panBg.on('pointerdown', (p: Phaser.Input.Pointer) => {
@@ -3054,7 +3159,7 @@ export class GameScene extends Phaser.Scene {
       // Mexe UX: alternating neutral shading (independent of validity color) keeps crowded adjacent melds visually distinct.
       if (meldIndex % 2 === 1) {
         const shade = applyMask(
-          this.add.rectangle(zoneRect.centerX, zoneRect.centerY, zoneRect.width, zoneRect.height, 0x000000, 0.12).setDepth(-1),
+          this.add.rectangle(zoneRect.centerX, zoneRect.centerY, zoneRect.width, zoneRect.height, SURFACE.scrim, 0.12).setDepth(-1),
         );
         this.hud.push(shade);
       }
@@ -3105,7 +3210,7 @@ export class GameScene extends Phaser.Scene {
       // "look here" (R4) — dashed + a colour no status uses keeps the two unmistakably separate.
       if (this.ui.problemHighlightMeldId === meld.id) {
         const focusRing = applyMask(this.add.graphics().setDepth(6));
-        this.drawDashedRect(focusRing, zoneRect.x - 3, zoneRect.y - 3, zoneRect.width + 6, zoneRect.height + 6, 0x6fc3ff, 0.95, 2, 8, 4);
+        this.drawDashedRect(focusRing, zoneRect.x - 3, zoneRect.y - 3, zoneRect.width + 6, zoneRect.height + 6, FOCUS.attention, 0.95, 2, 8, 4);
         this.hud.push(focusRing);
       }
 
@@ -3160,7 +3265,7 @@ export class GameScene extends Phaser.Scene {
       // Never gated on `interactive` — it only reads melds/invalidReasons, works on any turn.
       if (!this.r.portrait) {
         const focusIcon = applyMask(
-          label(this, zoneRect.x + zoneRect.width - 3, zoneRect.y + 2, '🔍', 7, '#d8c890')
+          label(this, zoneRect.x + zoneRect.width - 3, zoneRect.y + 2, '🔍', 7, TEXT.muted)
             .setOrigin(1, 0)
             .setAlpha(0.55)
             .setDepth(50),
@@ -3260,7 +3365,7 @@ export class GameScene extends Phaser.Scene {
           // A small corner dot carries "the opponent touched this" on a channel status doesn't
           // already own, so it can never be mistaken for (or visually collide with) a status ring.
           const mark = applyMask(
-            this.add.circle(x + cw / 2 - 2, y - ch / 2 + 2, 2, 0xf0a030, 1).setStrokeStyle(1, 0x1a0f0a, 0.9).setDepth(5),
+            this.add.circle(x + cw / 2 - 2, y - ch / 2 + 2, 2, RECENT_TOUCH_MARK, 1).setStrokeStyle(1, SURFACE.base, 0.9).setDepth(5),
           );
           this.hud.push(mark);
         }
@@ -3357,12 +3462,12 @@ export class GameScene extends Phaser.Scene {
 
     // Full-scene backdrop: dismiss on any tap outside the panel, and blocks input to whatever's
     // behind it (cards, zoom pan, badges) while the panel is open — a focus view is modal.
-    const backdrop = this.add.rectangle(cx, cy, this.r.w, this.r.h, 0x000000, 0.45).setDepth(700).setInteractive({ useHandCursor: false });
+    const backdrop = this.add.rectangle(cx, cy, this.r.w, this.r.h, SURFACE.scrim, 0.45).setDepth(700).setInteractive({ useHandCursor: false });
     backdrop.on('pointerup', close);
     objs.push(backdrop);
 
     const g = this.add.graphics().setDepth(701);
-    g.fillStyle(0x1a1410, 0.96);
+    g.fillStyle(SURFACE.overlay, 0.96);
     g.fillRoundedRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH, 4);
     g.lineStyle(1, CHROME_GOLD, 0.6);
     g.strokeRoundedRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH, 4);
@@ -3376,7 +3481,7 @@ export class GameScene extends Phaser.Scene {
       const img = this.add.image(x, rowY, key).setDisplaySize(cw, ch).setDepth(702);
       objs.push(img);
       const hint = jokerLabels.get(card.id);
-      if (hint) objs.push(label(this, x, rowY + ch / 2 + 7, hint, 7, '#f7d23e').setDepth(702));
+      if (hint) objs.push(label(this, x, rowY + ch / 2 + 7, hint, 7, TEXT.accent).setDepth(702));
       // C4: R5's "role not decided yet" hint existed in layoutMelds and the editor workspace but
       // not here — the surface a player opens specifically to understand a meld. Same trigger
       // (joker + incomplete status), same tooltip helper, ported rather than reinvented.
@@ -3400,7 +3505,7 @@ export class GameScene extends Phaser.Scene {
 
     objs.push(
       new PixelButton(this, cx + panelW / 2 - 10, cy - panelH / 2 + 10, '✕', close, {
-        textureBase: 'btn-small', w: 14, h: 12, size: 8, color: 0x8e4632,
+        textureBase: 'btn-small', w: 14, h: 12, size: 8, color: ACTION.discard,
       }).setDepth(703),
     );
 
@@ -3422,7 +3527,7 @@ export class GameScene extends Phaser.Scene {
     ];
     const rowH = 30;
     const top = cy - ((examples.length - 1) * rowH) / 2 - 8;
-    this.hud.push(this.add.text(cx, top - 20, t('game.empty.title'), fontStyle(8, '#c0b8a8')).setOrigin(0.5));
+    this.hud.push(this.add.text(cx, top - 20, t('game.empty.title'), fontStyle(8, TEXT.muted)).setOrigin(0.5));
     examples.forEach(([caption, keys], row) => {
       const y = top + row * rowH;
       keys.forEach((key, i) => {
@@ -3430,7 +3535,7 @@ export class GameScene extends Phaser.Scene {
         const ghost = this.add.image(cx - 34 + i * 15, y, key).setDisplaySize(13, 17).setAlpha(0.32);
         this.hud.push(ghost);
       });
-      this.hud.push(this.add.text(cx + 12, y, caption, fontStyle(7, '#a89e8c')).setOrigin(0, 0.5));
+      this.hud.push(this.add.text(cx + 12, y, caption, fontStyle(7, TEXT.muted)).setOrigin(0, 0.5));
     });
   }
 
@@ -3521,7 +3626,7 @@ export class GameScene extends Phaser.Scene {
   private enableHandScroll(overflow: number): void {
     const zone = this.r.handZone;
     const strip = this.add
-      .rectangle(zone.x + zone.w / 2, zone.y + zone.h / 2, zone.w, zone.h, 0x000000, 0.001)
+      .rectangle(zone.x + zone.w / 2, zone.y + zone.h / 2, zone.w, zone.h, SURFACE.scrim, 0.001)
       .setDepth(1); // below the cards (depth 10+), so a card always wins the hit test
     strip.setInteractive({ useHandCursor: false });
     let startX = 0;
@@ -3578,7 +3683,7 @@ export class GameScene extends Phaser.Scene {
 
     // ---- meld list ----
     const listBg = this.add
-      .rectangle(zones.meldList.x + zones.meldList.w / 2, zones.meldList.y + zones.meldList.h / 2, zones.meldList.w, zones.meldList.h, 0x000000, 0.22)
+      .rectangle(zones.meldList.x + zones.meldList.w / 2, zones.meldList.y + zones.meldList.h / 2, zones.meldList.w, zones.meldList.h, SURFACE.scrim, 0.22)
       .setDepth(0);
     if (interactive) {
       listBg.setInteractive({ useHandCursor: false });
@@ -3621,12 +3726,12 @@ export class GameScene extends Phaser.Scene {
       if (y + MELD_LIST_ROW_H < zones.meldList.y || y > zones.meldList.y + zones.meldList.h) continue; // scrolled out of view
       const focused = row.meldId === this.ui.mexeEditorMeldId;
       const rowRect = this.add
-        .rectangle(zones.meldList.x + zones.meldList.w / 2, y + MELD_LIST_ROW_H / 2, zones.meldList.w - 2, MELD_LIST_ROW_H - 2, focused ? 0xf7d23e : 0xffffff, focused ? 0.14 : 0.04)
+        .rectangle(zones.meldList.x + zones.meldList.w / 2, y + MELD_LIST_ROW_H / 2, zones.meldList.w - 2, MELD_LIST_ROW_H - 2, focused ? SURFACE.accent : SURFACE.highlight, focused ? 0.14 : 0.04)
         .setDepth(1);
       this.hud.push(rowRect);
       this.mexeListPanTargets.push(rowRect);
       if (row.meldId === null) {
-        const newMeldLabel = label(this, zones.meldList.x + 6, y + MELD_LIST_ROW_H / 2, t('mobile.editorNewMeld'), 7, '#d8c890').setOrigin(0, 0.5).setDepth(2);
+        const newMeldLabel = label(this, zones.meldList.x + 6, y + MELD_LIST_ROW_H / 2, t('mobile.editorNewMeld'), 7, TEXT.muted).setOrigin(0, 0.5).setDepth(2);
         this.hud.push(newMeldLabel);
         this.mexeListPanTargets.push(newMeldLabel);
         continue;
@@ -3657,15 +3762,15 @@ export class GameScene extends Phaser.Scene {
     // ---- workspace ----
     const wsRect = new Phaser.Geom.Rectangle(zones.workspace.x, zones.workspace.y, zones.workspace.w, zones.workspace.h);
     const wsBg = this.add
-      .rectangle(wsRect.centerX, wsRect.centerY, wsRect.width, wsRect.height, 0x000000, 0.3)
+      .rectangle(wsRect.centerX, wsRect.centerY, wsRect.width, wsRect.height, SURFACE.scrim, 0.3)
       .setDepth(0)
       .setStrokeStyle(1, CHROME_GOLD, 0.5);
     this.hud.push(wsBg);
     this.meldZones = this.ui.mexeEditorMeldId !== undefined ? [{ meldId: this.ui.mexeEditorMeldId ?? '', rect: wsRect }] : [];
 
     if (this.ui.mexeEditorMeldId === undefined) {
-      this.hud.push(label(this, wsRect.centerX, wsRect.centerY - 6, t('mobile.mexeModeHint'), 7, '#b8b0a0'));
-      this.hud.push(label(this, wsRect.centerX, wsRect.centerY + 6, t('mobile.editorSelectMeld'), 8, '#b8b0a0'));
+      this.hud.push(label(this, wsRect.centerX, wsRect.centerY - 6, t('mobile.mexeModeHint'), 7, TEXT.muted));
+      this.hud.push(label(this, wsRect.centerX, wsRect.centerY + 6, t('mobile.editorSelectMeld'), 8, TEXT.muted));
     } else {
       const wsMeld = melds.find((m) => m.id === this.ui.mexeEditorMeldId);
       const wsCards = wsMeld ? sortMeldCards(wsMeld.cards) : [];
@@ -3739,7 +3844,7 @@ export class GameScene extends Phaser.Scene {
         }
       }
       if (wsCards.length === 0) {
-        this.hud.push(label(this, wsRect.centerX, cardY, t('mobile.editorEmpty'), 8, '#b8b0a0'));
+        this.hud.push(label(this, wsRect.centerX, cardY, t('mobile.editorEmpty'), 8, TEXT.muted));
       }
       const reasons = wsMeld && invalidReasons.get(wsMeld.id);
       if (reasons) {
@@ -3782,7 +3887,7 @@ export class GameScene extends Phaser.Scene {
     const hsScroll = clampScroll(this.ui.mexeHandScroll, contentW, hsZone.w);
     this.ui.mexeHandScroll = hsScroll;
     const hsBg = this.add
-      .rectangle(hsZone.x + hsZone.w / 2, hsZone.y + hsZone.h / 2, hsZone.w, hsZone.h, 0x000000, 0.18)
+      .rectangle(hsZone.x + hsZone.w / 2, hsZone.y + hsZone.h / 2, hsZone.w, hsZone.h, SURFACE.scrim, 0.18)
       .setDepth(0);
     if (interactive && sortedHand.length > 0) {
       hsBg.setInteractive({ useHandCursor: false });
@@ -3828,7 +3933,7 @@ export class GameScene extends Phaser.Scene {
     // ✕ closes the editor without discarding the draft — the draft lives in DraftEditor either way.
     this.hud.push(
       new PixelButton(this, zones.meldList.x + zones.meldList.w - 10, zones.meldList.y + 8, t('mobile.editorClose'), () => this.toggleMexeEditor(), {
-        textureBase: 'btn-small', w: 16, h: 14, size: 8, color: 0x8e4632,
+        textureBase: 'btn-small', w: 16, h: 14, size: 8, color: ACTION.discard,
       }).setDepth(5),
     );
   }
@@ -3957,7 +4062,7 @@ export class GameScene extends Phaser.Scene {
         this.sys.displayList.add(sprite);
       }
       this.dragShadow = this.add
-        .ellipse(sprite.x + 2, sprite.y + 5, baseW * 1.05, baseH * 0.5, 0x000000, 0.35)
+        .ellipse(sprite.x + 2, sprite.y + 5, baseW * 1.05, baseH * 0.5, SURFACE.scrim, 0.35)
         .setDepth(299);
       // Picking up the card that would end the match is worth hearing. A louder sample, not slow
       // motion — the player is mid-decision and does not want to be waited on.
@@ -4137,7 +4242,7 @@ export class GameScene extends Phaser.Scene {
     const cy = Phaser.Math.Clamp(rect.bottom + 8 + panelH / 2, panelH / 2 + 2, this.r.h - 30);
 
     const g = this.add.graphics().setDepth(500);
-    g.fillStyle(0x1a1410, 0.9);
+    g.fillStyle(SURFACE.overlay, 0.9);
     g.fillRoundedRect(cx - panelW / 2, cy - panelH / 2, panelW, panelH, 3);
 
     const rowY = cy - panelH / 2 + 6 + ch / 2;
@@ -4223,10 +4328,12 @@ export class GameScene extends Phaser.Scene {
       : inHandArea && !zone
         ? { type: 'returnToHand' }
         : { type: 'moveTableCard', cardId };
-    if (!this.tutorialAllows(action)) {
-      playSfx(this, 'sfx-invalid', 0.15);
+    if (!this.tutorialPermits(action)) {
       playlog.recordDrop('blocked', origin, pointerKind());
-      this.tweenSpriteHome(sprite);
+      // No tweenSpriteHome here: tutorialReject() re-renders, and that rebuilds every card sprite
+      // at its state position — the card goes home by being redrawn, not by tweening a sprite the
+      // same call is about to destroy (see D4 in renderAll).
+      this.tutorialReject();
       return;
     }
 
@@ -4373,8 +4480,8 @@ export class GameScene extends Phaser.Scene {
     const focusRingVisible = this.ui.focusVisible && !!focused;
     if (focusRingVisible) {
       const gfx = this.add.graphics().setDepth(280);
-      this.drawDashedRect(gfx, focused.rect.x - 2, focused.rect.y - 2, focused.rect.width + 4, focused.rect.height + 4, 0xffffff, 0.95);
-      this.hud.push(gfx, label(this, this.r.selectHint.x, this.r.selectHint.y, t('game.selectHint'), 7, '#b8b0a0'));
+      this.drawDashedRect(gfx, focused.rect.x - 2, focused.rect.y - 2, focused.rect.width + 4, focused.rect.height + 4, FOCUS.keyboard, 0.95);
+      this.hud.push(gfx, label(this, this.r.selectHint.x, this.r.selectHint.y, t('game.selectHint'), 7, TEXT.muted));
       // Keyboard-focused destination gets the same ghost preview a pointer hover would.
       if (flags.ghostPreview === 'selectAndHover' && this.ui.selectedCardId !== null && (focused.kind === 'meld' || focused.kind === 'new')) {
         const meldId = focused.kind === 'meld' ? (focused.id ?? null) : null;
@@ -4385,7 +4492,7 @@ export class GameScene extends Phaser.Scene {
       // touch-only one-line caption: guides an untouched board, or points at the ✗ badge once a
       // meld is invalid — replaced above by the keyboard-driven select hint once the focus ring shows.
       const capText = hasInvalidMeld ? t('mobile.warnHint') : t('mobile.tapHint');
-      this.hud.push(label(this, this.r.selectHint.x, this.r.selectHint.y, capText, 7, '#b8b0a0'));
+      this.hud.push(label(this, this.r.selectHint.x, this.r.selectHint.y, capText, 7, TEXT.muted));
     }
   }
 
@@ -4396,10 +4503,14 @@ export class GameScene extends Phaser.Scene {
    * so it can never double up with one already showing.
    */
   private reactToPlayerMexe(state: GameState): void {
-    if (Math.random() >= 0.5) return;
+    // Drawn from a presentation stream keyed on (seed, turn), not from `Math.random` and not from
+    // the gameplay stream (ARCH-017): a replayed seed now paints the same screen, while the deal
+    // for that seed is untouched because this never advances the state's own RNG.
+    const rng = createRng(state.seed + state.turn * 7919);
+    if (rng.next() >= 0.5) return;
     const seats = state.players.map((_, i) => i).filter((i) => i !== this.localSeat && state.players[i]!.isAi);
     if (seats.length === 0) return;
-    const seat = seats[Math.floor(Math.random() * seats.length)]!;
+    const seat = seats[rng.int(seats.length)]!;
     const personality = this.personalities[seat];
     if (!personality) return;
     this.showEmote(seat, PERSONALITY_STYLE[personality].emoteBig, 'playerMexe', personality);

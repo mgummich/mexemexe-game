@@ -1,8 +1,11 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  OUT_DIR, attachClientContexts, consoleErrorsOf, freePort, newClient as openClient, shot as saveShots,
+  startTestServer, toScreen, trackConsoleErrors, type TestServer,
+} from './harness';
 
 /**
  * Phase 5 multiplayer verification: launches the real WS server and drives two browser
@@ -11,7 +14,6 @@ import path from 'node:path';
  * See docs/MULTIPLAYER.md §11.
  */
 
-const OUT_DIR = 'docs/screenshots';
 // One evidence shard per worker process, merged back into verify-multiplayer-log.json by
 // scripts/check-verify-multiplayer.mjs — the shape e2e/screenshot.spec.ts already uses. The old
 // single shared file cannot survive parallel workers: two read-modify-write cycles interleave and
@@ -19,38 +21,19 @@ const OUT_DIR = 'docs/screenshots';
 const PARTS_DIR = path.join(OUT_DIR, 'verify-multiplayer-log-parts');
 const PART_PATH = path.join(PARTS_DIR, `${randomUUID()}.json`);
 // This file runs parallel (see the describe.configure below), so every worker spawns its own
-// server and needs its own port. parallelIndex, not workerIndex: it is bounded by the worker
-// count, so the ports stay in a known small range instead of climbing with every restart.
-//
-// Port blocks across this directory, one slot per parallel worker: 8799-8809 this file's server,
-// 8810-8819 its room-creation-budget server, 8820+ the lobby spec (see lobby.spec.ts), 8776 the
-// iOS lobby spec. None of them is the server's own DEFAULT_PORT (8787).
-const PARALLEL_INDEX = Number(process.env.TEST_PARALLEL_INDEX ?? 0);
-const WS_PORT = 8799 + PARALLEL_INDEX;
-const WS_URL = `ws://localhost:${WS_PORT}`;
+// server. The port comes from the OS (`freePort`), not from a per-worker block: a fixed block is
+// shared with everything else on the machine, and when something already owned it the server died
+// on EADDRINUSE while the health probe was answered by that other process — the suite then ran
+// against a stranger and reported the fallout as a lobby bug. `startTestServer` also fails loudly
+// now if the child dies or the answer comes from a foreign server (see harness.ts).
+let WS_URL = '';
 // Fixed so the deal is deterministic: seat 0's hand contains a ready-made legal run
 // (diamonds J-Q-K), and the draw pile always holds 108 - 2*7 = 94 cards (used below to
 // run the match to a real, server-decided stalemate game_over).
 const TEST_SEED = 2;
 const LEGAL_MELD_CARDS = ['diamonds-11-d0', 'diamonds-12-d0', 'diamonds-13-d0'];
 
-let serverProc: ChildProcessWithoutNullStreams;
-const serverStdout: string[] = [];
-const serverStderr: string[] = [];
-
-async function waitForHealth(url: string, timeoutMs = 15_000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch {
-      // server not up yet
-    }
-    await new Promise((r) => setTimeout(r, 150));
-  }
-  throw new Error(`server health check timed out: ${url}`);
-}
+let server: TestServer;
 
 // Every test here builds its own rooms from scratch against its worker's own server, so nothing
 // in this file is ordered — running it parallel is what takes the CI job off the critical path
@@ -59,65 +42,28 @@ async function waitForHealth(url: string, timeoutMs = 15_000): Promise<void> {
 test.describe.configure({ mode: 'parallel' });
 
 test.beforeAll(async () => {
-  // Run the local tsx binary directly (not via `npx`/`npm run`) — npm/npx write their own
-  // "notice" lines to stderr, which would otherwise look like a server error to the gate.
-  serverProc = spawn(path.join(process.cwd(), 'node_modules', '.bin', 'tsx'), ['server/index.ts'], {
-    cwd: process.cwd(),
-    // Playwright sets NO_COLOR while its parent may carry FORCE_COLOR; Node emits that conflict
-    // on server stderr and our multiplayer gate correctly treats server stderr as a failure.
-    env: { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined, PORT: String(WS_PORT), MEXE_TEST_SEED: String(TEST_SEED) },
-  });
-  serverProc.stdout.on('data', (d) => serverStdout.push(String(d)));
-  serverProc.stderr.on('data', (d) => serverStderr.push(String(d)));
-  await waitForHealth(`http://localhost:${WS_PORT}/health`);
+  server = await startTestServer(await freePort(), TEST_SEED);
+  WS_URL = server.url;
 });
 
 test.afterAll(async () => {
-  serverProc.kill('SIGTERM');
+  server.stop();
   // Per worker, not per suite: each worker runs its own server, and a crash in any of them has
   // to reach the gate. The gate concatenates every shard's server output.
-  appendLog({ server: { stdout: serverStdout, stderr: serverStderr } });
+  appendLog({ server: { stdout: server.stdout, stderr: server.stderr } });
 });
 
-const SCALE = 1280 / 480; // logical 480x270 canvas fills the 1280x720 viewport (Scale.FIT)
-const toScreen = (lx: number, ly: number): [number, number] => [lx * SCALE, ly * SCALE];
+// The browser-side client/screenshot helpers live in ./harness, shared with the lobby specs
+// (docs/TESTING.md): one definition of what a simulated player is. Only the two things that are
+// this file's own stay here — its worker's server URL, and the `mp-` screenshot prefix.
+const newClient = (browser: Browser, wsUrl = WS_URL, prepare?: (page: Page) => Promise<void>): Promise<Page> =>
+  openClient(browser, wsUrl, prepare);
+const shot = (pages: Record<string, Page>, name: string, screenshots: string[]): Promise<void> =>
+  saveShots(pages, `mp-${name}`, screenshots);
 
-const consoleErrorsByPage = new WeakMap<Page, string[]>();
-function trackConsoleErrors(page: Page): string[] {
-  let errs = consoleErrorsByPage.get(page);
-  if (!errs) {
-    errs = [];
-    consoleErrorsByPage.set(page, errs);
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') errs!.push(msg.text());
-    });
-  }
-  return errs;
-}
-
-async function newClient(browser: Browser, wsUrl = WS_URL): Promise<Page> {
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  trackConsoleErrors(page);
-  await page.goto(`/?ws=${encodeURIComponent(wsUrl)}&showcase=menu`);
-  await page.waitForFunction(() => window.__MEXE__?.ready === true, undefined, { timeout: 20_000 });
-  // MenuScene ONLINE button, logical (240, 254) — see MenuScene's onlineBtn.
-  const [ox, oy] = toScreen(240, 254);
-  await page.mouse.click(ox, oy);
-  await page.waitForFunction(() => window.__MEXE__.scene === 'online', undefined, { timeout: 10_000 });
-  await page.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 10_000 });
-  return page;
-}
-
-async function shot(pages: Record<string, Page>, name: string, screenshots: string[]): Promise<void> {
-  fs.mkdirSync(OUT_DIR, { recursive: true });
-  for (const [key, page] of Object.entries(pages)) {
-    await page.waitForTimeout(200); // let tweens settle
-    const file = path.join(OUT_DIR, `mp-${name}-${key}.png`);
-    await page.screenshot({ path: file });
-    screenshots.push(file);
-  }
-}
+// A failed test reports where every client it opened actually was — seat, revision, match, last
+// rejections and its final messages — instead of only the assertion that noticed.
+test.afterEach(async ({}, testInfo) => { await attachClientContexts(testInfo); });
 
 test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/resync', async ({
   browser,
@@ -300,11 +246,11 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
   const illegalProposalAccepted = revB2 !== revB1;
 
   const errorsA = [
-    ...(consoleErrorsByPage.get(pageA) ?? []),
+    ...consoleErrorsOf(pageA),
     ...(await pageA.evaluate(() => window.__MEXE__.errors)),
   ];
   const errorsB = [
-    ...(consoleErrorsByPage.get(pageB) ?? []),
+    ...consoleErrorsOf(pageB),
     ...(await pageB.evaluate(() => window.__MEXE__.errors)),
   ];
   expect(errorsA).toEqual([]);
@@ -322,8 +268,8 @@ test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/
     seed: TEST_SEED,
     revisionsObserved,
     clients: {
-      a: { consoleErrors: consoleErrorsByPage.get(pageA) ?? [], pageErrors: errorsA },
-      b: { consoleErrors: consoleErrorsByPage.get(pageB) ?? [], pageErrors: errorsB },
+      a: { consoleErrors: consoleErrorsOf(pageA), pageErrors: errorsA },
+      b: { consoleErrors: consoleErrorsOf(pageB), pageErrors: errorsB },
     },
     trace: { a: traceA, b: traceB },
     illegalProposal: { reasons: rejectionReasons, accepted: illegalProposalAccepted },
@@ -422,8 +368,8 @@ test('room timer: the host sets it in the lobby, it locks at start, and the serv
   // The next seat's clock started fresh rather than inheriting the expired one.
   expect(after.left!).toBeGreaterThan(10_000);
 
-  expect(consoleErrorsByPage.get(pageA) ?? []).toEqual([]);
-  expect(consoleErrorsByPage.get(pageB) ?? []).toEqual([]);
+  expect(consoleErrorsOf(pageA)).toEqual([]);
+  expect(consoleErrorsOf(pageB)).toEqual([]);
   expect(screenshots.length).toBeGreaterThan(0);
 
   await pageA.context().close();
@@ -533,8 +479,8 @@ test('in-canvas join code, hand privacy, and an explicit resync round-trip', asy
   expect(desyncs).toEqual({ host: 0, guest: 0 });
 
   const errors = [
-    ...(consoleErrorsByPage.get(host) ?? []),
-    ...(consoleErrorsByPage.get(guest) ?? []),
+    ...consoleErrorsOf(host),
+    ...consoleErrorsOf(guest),
     ...(await host.evaluate(() => window.__MEXE__.errors)),
     ...(await guest.evaluate(() => window.__MEXE__.errors)),
   ];
@@ -1043,28 +989,14 @@ test('room-creation budget: the refusal reads as plain copy on desktop and on a 
   browser,
 }) => {
   const screenshots: string[] = [];
-  // Its own server on its own port, with a budget of one room per minute: the shared server runs
-  // the default of 20 and every other test in this file would have to work around a tighter one.
-  // Per worker, like every port in this file — 8800 was worker 1's own server once this spec went
-  // parallel, and this test then spent its budget against a server with the default budget and
-  // waited 10s for a refusal that was never coming.
-  const BUDGET_PORT = 8810 + PARALLEL_INDEX;
-  const budgetProc = spawn(path.join(process.cwd(), 'node_modules', '.bin', 'tsx'), ['server/index.ts'], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      NO_COLOR: undefined,
-      FORCE_COLOR: undefined,
-      PORT: String(BUDGET_PORT),
-      MEXE_TEST_SEED: String(TEST_SEED),
-      MEXE_MAX_ROOM_CREATES_PER_IP: '1',
-    },
-  });
-  budgetProc.stdout.on('data', (d) => serverStdout.push(String(d)));
-  budgetProc.stderr.on('data', (d) => serverStderr.push(String(d)));
+  // Its own server, with a budget of one room per minute: the shared server runs the default of
+  // 20 and every other test in this file would have to work around a tighter one. Its port comes
+  // from the OS for the same reason the suite's does — a fixed 8810+worker block once collided
+  // with another worker's own server, and this test then spent its budget against a server with
+  // the default budget and waited 10s for a refusal that was never coming.
+  const budget = await startTestServer(await freePort(), TEST_SEED, { MEXE_MAX_ROOM_CREATES_PER_IP: '1' });
   try {
-    await waitForHealth(`http://localhost:${BUDGET_PORT}/health`);
-    const budgetUrl = `ws://localhost:${BUDGET_PORT}`;
+    const budgetUrl = budget.url;
 
     // One room spends the whole budget for this address; every client after it is refused.
     const first = await newClient(browser, budgetUrl);
@@ -1100,7 +1032,8 @@ test('room-creation budget: the refusal reads as plain copy on desktop and on a 
     appendLog({ screenshots });
     for (const page of [first, desktop, portrait]) await page.context().close();
   } finally {
-    budgetProc.kill('SIGTERM');
+    budget.stop();
+    appendLog({ server: { stdout: budget.stdout, stderr: budget.stderr } });
   }
 });
 
@@ -1793,5 +1726,274 @@ test('the name can be set from the join screen, without losing the half-typed co
   expect(guestName).toBe('Convidada');
 
   for (const p of [host, guest]) expect(trackConsoleErrors(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+// ---------- CH-01..CH-05: adverse delivery (Phase 65) ----------
+//
+// Tagged @chaos and kept off the PR path (`verify:multiplayer:chromium` greps them out), because
+// this suite is contention-bound rather than CPU-bound: it already dropped from three workers to
+// two after the heaviest tests starved, and five more tests that each hold two browser contexts
+// plus a Node-side frame proxy pushed LB-19..LB-24 past its 7-minute budget and OD-28/OD-29 past
+// its 3-minute one on a 4-core runner. Their own cost is not the problem — 57s for all five — the
+// peak concurrency is. They run in the nightly `verify:multiplayer`, where the wall clock is not
+// on anyone's critical path. Locally they are just `-g CH-0`.
+//
+// Real frames, mangled in the browser's own WebSocket route: the guest's socket is intercepted
+// and its *incoming* frames are delayed, duplicated, dropped or reordered before the app sees
+// them. The host stays clean, so it is the control — whatever the guest went through, both seats
+// have to end on the same authoritative revision with no desync and no lost board.
+//
+// `state_sync` is the only frame mangled. Everything else is relayed untouched, so the room
+// lifecycle itself is never the thing under test here — the client's reconciliation is.
+
+/** `sentOwnMove` is true when this client's own turn action is the one awaiting an answer. */
+type SyncMangler = (
+  frame: string,
+  context: { index: number; sentOwnMove: boolean },
+  deliver: (frame: string) => void,
+) => void;
+
+/** Installs an incoming-frame mangler on the next page load. Only `state_sync` reaches it. */
+function manglingSyncs(mangle: SyncMangler): (page: Page) => Promise<void> {
+  return async (page: Page) => {
+    await page.routeWebSocket((url) => url.protocol === 'ws:', (ws) => {
+      const server = ws.connectToServer();
+      let syncs = 0;
+      let sentOwnMove = false;
+      ws.onMessage((m) => {
+        const frame = String(m);
+        if (frame.includes('"type":"draw_end_turn"') || frame.includes('"type":"submit_turn"')) sentOwnMove = true;
+        server.send(frame);
+      });
+      server.onMessage((m) => {
+        const frame = String(m);
+        if (!frame.includes('"type":"state_sync"')) {
+          ws.send(frame);
+          return;
+        }
+        const own = sentOwnMove;
+        sentOwnMove = false;
+        mangle(frame, { index: syncs++, sentOwnMove: own }, (out) => ws.send(out));
+      });
+    });
+  };
+}
+
+/** Host + a guest whose incoming syncs are mangled, in a started 2-seat match. */
+async function chaosMatch(browser: Browser, mangle: SyncMangler): Promise<{ host: Page; guest: Page }> {
+  const host = await newClient(browser);
+  const guest = await newClient(browser, WS_URL, manglingSyncs(mangle));
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+  await guest.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Joao'), code);
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+  await readyAndStart(host, [host, guest]);
+  return { host, guest };
+}
+
+/**
+ * Draw-and-pass from whichever seat is on the clock, `turns` times.
+ *
+ * It waits for a seat to *claim* the clock rather than sampling once: under delayed or withheld
+ * frames a client can legitimately not know yet that it is its turn, and that lag is the
+ * condition under test, not a failure.
+ */
+async function takeTurns(pages: Page[], turns: number, waitMs = CHAOS_WAIT_MS): Promise<void> {
+  for (let i = 0; i < turns; i++) {
+    const deadline = Date.now() + waitMs;
+    let acted: Page | null = null;
+    while (!acted && Date.now() < deadline) {
+      for (const p of pages) {
+        const mine = await p.evaluate(() => {
+          const s = window.__MEXE__.state?.();
+          return !!s && s.winnerId === null && s.activePlayerIndex === window.__MEXE__.online?.localSeat?.();
+        });
+        if (!mine) continue;
+        const revBefore = await p.evaluate(() => window.__MEXE__.online!.rev());
+        await p.evaluate(() => window.__MEXE__.online!.comprar());
+        // Wait for the acting client's own revision to move rather than sleeping a fixed 150ms:
+        // under a held or delayed frame the answer can take as long as the scenario makes it
+        // take, and on a contended runner a sleep is a guess either way. A move that is never
+        // answered is CH-04's subject, so that case passes its own deadline.
+        await p.waitForFunction((r) => (window.__MEXE__.online!.rev() ?? -1) > (r ?? -1), revBefore, { timeout: waitMs })
+          .catch(() => undefined);
+        acted = p;
+        break;
+      }
+      if (!acted) await pages[0]!.waitForTimeout(100);
+    }
+    if (!acted) throw new Error(`no seat claimed the clock within ${waitMs}ms at turn ${i}`);
+  }
+}
+
+/**
+ * Deadlines for the chaos suite, doubled on CI.
+ *
+ * These tests inject real delays and then wait for the client to recover, so their waits have to
+ * outlast both the injected delay and the product's own timeouts (`ONLINE_PENDING_TIMEOUT_MS` is
+ * 10s). That leaves them sensitive to a contended runner in a way the rest of the suite is not —
+ * the risk this scales away (P3-chaos-timing-under-load). The *injected* delays are the scenario
+ * and are never scaled; only the patience for a recovery is.
+ */
+const CHAOS_SCALE = process.env.CI ? 2 : 1;
+const CHAOS_WAIT_MS = 15_000 * CHAOS_SCALE;
+const CHAOS_CONVERGE_MS = 20_000 * CHAOS_SCALE;
+/** Long enough for the 10s pending timeout plus the resync round trip it triggers. */
+const CHAOS_RECOVERY_MS = 25_000 * CHAOS_SCALE;
+
+/** Both seats agree on the revision, neither hashed a divergence, and the boards match. */
+async function expectConverged(host: Page, guest: Page, timeout = CHAOS_CONVERGE_MS): Promise<number> {
+  const rev = (await host.evaluate(() => window.__MEXE__.online!.rev()))!;
+  await guest.waitForFunction((r) => window.__MEXE__.online!.rev() === r, rev, { timeout });
+  for (const p of [host, guest]) expect(await p.evaluate(() => window.__MEXE__.online!.desyncs())).toBe(0);
+  const boards = await Promise.all([host, guest].map((p) => p.evaluate(() => {
+    const s = window.__MEXE__.state?.();
+    if (!s) throw new Error('no rendered state on this client');
+    return { turn: s.turn, active: s.activePlayerIndex, hands: s.players.map((pl) => pl.hand.length), table: s.table.length };
+  })));
+  expect(boards[1]).toEqual(boards[0]);
+  return rev;
+}
+
+test('CH-01 @chaos: a client whose frames arrive late still converges on the authoritative board', async ({ browser }) => {
+  // Every sync held back 800ms — well inside the 10s pending timeout, so this is pure lateness,
+  // not a dropped proposal. The player waits; the board is never wrong.
+  const { host, guest } = await chaosMatch(browser, (frame, _context, deliver) => {
+    setTimeout(() => deliver(frame), 800);
+  });
+  await takeTurns([host, guest], 4);
+  const rev = await expectConverged(host, guest);
+  expect(rev).toBeGreaterThan(1);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('CH-02 @chaos: duplicated frames are applied idempotently, not twice', async ({ browser }) => {
+  // The same authoritative frame delivered three times is the same board three times: an equal-rev
+  // frame is re-applied on purpose (MULTIPLAYER.md §6), so what this proves is that re-applying
+  // changes nothing — no double-counted turn, no desync, no drifting hand counts.
+  const { host, guest } = await chaosMatch(browser, (frame, _context, deliver) => {
+    deliver(frame);
+    deliver(frame);
+    deliver(frame);
+  });
+  await takeTurns([host, guest], 4);
+  await expectConverged(host, guest);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('CH-03 @chaos: a stale frame arriving after a newer one leaves the newest board standing', async ({ browser }) => {
+  // Every frame is delivered in order, and the *previous* one is then re-delivered behind it —
+  // the shape late delivery actually takes on one ordered socket: an old board turning up after
+  // the client has already moved past it. It must be ignored as stale, not applied as a rewind.
+  //
+  // Deliberately not "hold frame N until N+1 arrives": the client blocks on the answer to its own
+  // move, so withholding a frame stalls the match instead of reordering it. CH-04 covers the
+  // withheld-frame case, which needs a timeout rather than a later frame to recover.
+  const { host, guest } = await chaosMatch(browser, (() => {
+    let previous: string | null = null;
+    return (frame: string, _context: { index: number; sentOwnMove: boolean }, deliver: (f: string) => void): void => {
+      deliver(frame);
+      if (previous !== null) deliver(previous);
+      previous = frame;
+    };
+  })());
+  await takeTurns([host, guest], 5);
+  const rev = await expectConverged(host, guest);
+  expect(rev).toBeGreaterThan(4);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('CH-04 @chaos: a dropped answer to the guest\'s own move recovers through the pending timeout', async ({ browser }) => {
+  // The answer to the guest's *own* move is thrown away — the one case nothing else recovers
+  // from, because the client is holding its input lock waiting for exactly that frame. The 10s
+  // pending timeout has to break it: it resyncs and the board comes back. This is the path
+  // GameScene.onOnlinePendingTimeout exists for. A frame lost while merely watching is a
+  // different case: the client is not waiting on it and catches up on its next action.
+  let dropped = false;
+  const { host, guest } = await chaosMatch(browser, (frame, context, deliver) => {
+    if (context.sentOwnMove && !dropped) {
+      dropped = true;
+      return;
+    }
+    deliver(frame);
+  });
+  // The guest has to be the one that moves, because its own answer is the frame being dropped.
+  // Waiting for the clock rather than counting turns: on a slow runner a seat can still be
+  // rendering the previous frame when a turn-counting helper looks at it, and then the host
+  // takes both turns and nothing is ever dropped.
+  await takeTurns([host, guest], 1);
+  await guest.waitForFunction(
+    () => window.__MEXE__.state?.()?.activePlayerIndex === window.__MEXE__.online?.localSeat?.(),
+    undefined,
+    { timeout: CHAOS_CONVERGE_MS },
+  );
+  await guest.evaluate(() => window.__MEXE__.online!.comprar());
+  // The mangler runs in this process, so wait on it directly rather than on a page condition.
+  for (let i = 0; i < 100 && !dropped; i++) await guest.waitForTimeout(100);
+  expect(dropped).toBe(true);
+  await expectConverged(host, guest, CHAOS_RECOVERY_MS);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
+  for (const p of [host, guest]) await p.context().close();
+});
+
+test('CH-05 @chaos: a rejection that arrives after the board moved on is ignored, not replayed', async ({ browser }) => {
+  // The guest sends an illegal proposal and the server refuses it, but the refusal is held back
+  // until after the next authoritative frame has landed. By then it answers nothing: the board is
+  // already correct, and acting on it would sound the error and rebuild the editor under whatever
+  // the player has started since. The client must drop it.
+  const host = await newClient(browser);
+  const guest = await newClient(browser, WS_URL, async (page) => {
+    await page.routeWebSocket((url) => url.protocol === 'ws:', (ws) => {
+      const server = ws.connectToServer();
+      let held: string | null = null;
+      ws.onMessage((m) => server.send(m));
+      server.onMessage((m) => {
+        const frame = String(m);
+        // Hold the refusal; release it only once a later state_sync has been delivered.
+        if (frame.includes('"type":"proposal_rejected"') && held === null) {
+          held = frame;
+          return;
+        }
+        ws.send(frame);
+        if (held !== null && frame.includes('"type":"state_sync"')) {
+          const late = held;
+          held = null;
+          setTimeout(() => ws.send(late), 50);
+        }
+      });
+    });
+  });
+
+  await host.evaluate(() => window.__MEXE__.online!.createRoom('Marina'));
+  await host.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = (await host.evaluate(() => window.__MEXE__.online!.code()))!;
+  await guest.evaluate((c) => window.__MEXE__.online!.joinRoom(c, 'Joao'), code);
+  await guest.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+  await readyAndStart(host, [host, guest]);
+
+  // Host plays first, so seat 1 is on the clock and its proposal is refused on its merits
+  // (an empty final table plays no card) rather than for being out of turn.
+  await takeTurns([host, guest], 1);
+  await guest.waitForFunction(
+    () => window.__MEXE__.state?.()?.activePlayerIndex === window.__MEXE__.online?.localSeat?.(),
+    undefined,
+    { timeout: 15_000 },
+  );
+  const revBefore = (await guest.evaluate(() => window.__MEXE__.online!.rev()))!;
+  await guest.evaluate((rev) => window.__MEXE__.online!.submitRaw(rev, []), revBefore);
+  // The refusal is now held. The guest's own legal move produces the frame that releases it.
+  await guest.evaluate(() => window.__MEXE__.online!.comprar());
+  await guest.waitForFunction((r) => (window.__MEXE__.online!.rev() ?? 0) > r, revBefore, { timeout: 15_000 });
+  await guest.waitForTimeout(500); // let the late refusal land
+
+  // Dropped, not replayed: the session never recorded it, and both seats still agree.
+  expect(await guest.evaluate(() => window.__MEXE__.online!.lastRejections())).toEqual([]);
+  await expectConverged(host, guest);
+  for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
   for (const p of [host, guest]) await p.context().close();
 });

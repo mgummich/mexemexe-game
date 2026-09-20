@@ -83,6 +83,21 @@ describe('playlog', () => {
     expect(playlog.entries().map((e) => e.type)).toEqual(['turn:start', 'turn:confirmed', 'mexe:first', 'turn:drawn', 'game:won']);
   });
 
+  it('stops recording when the match it was attached to is detached, and never hears the next one', () => {
+    const first = fakeMatch();
+    const detach = playlog.attachMatch(first);
+    first.emit({ type: 'turn:drawn', playerId: 'p1' });
+    detach();
+    first.emit({ type: 'turn:drawn', playerId: 'p1' }); // the finished match keeps announcing
+
+    const second = fakeMatch();
+    playlog.attachMatch(second);
+    second.emit({ type: 'turn:drawn', playerId: 'p2' });
+    // One entry per match: a detached subscription cannot record, and the new match is recorded
+    // once rather than twice (ARCH-007).
+    expect(playlog.entries().map((e) => e.data!.playerId)).toEqual(['p1', 'p2']);
+  });
+
   it('computes turn duration mean/max from turn:start durationMs fields', () => {
     playlog.record('turn:start', { turn: 1 });
     playlog.record('turn:start', { turn: 2, durationMs: 100 });

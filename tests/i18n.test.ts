@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { localeKeys, setLocale, t } from '../src/localization/i18n';
+import { describe, expect, it, vi } from 'vitest';
+import { localeKeys, plural, setLocale, t } from '../src/localization/i18n';
 import type { ReasonCode } from '../src/rules/types';
 
 const LOCALES = ['pt', 'en'] as const;
@@ -86,7 +86,53 @@ describe('i18n', () => {
 
   it('interpolates {params} into the returned string', () => {
     setLocale('en');
-    expect(t('win.statLine', { name: 'Bia', turns: 3, cards: 5, draws: 1 })).toBe('Bia: 3 turns · 5 cards played · 1 draws');
+    expect(t('online.missedWarning', { name: 'Bia', n: 3, left: 1 })).toBe('Bia has missed 3 turns in a row. 1 more ends the match.');
+  });
+
+  // A missing key renders its own name rather than a blank — predictable, but silent, which is
+  // how a missing key ships. The dev-only warning is the diagnosable half; production stays quiet.
+  it('warns once in dev for a key no locale declares, and still renders the key', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(t('nope.not.a.key')).toBe('nope.not.a.key');
+    expect(warn).toHaveBeenCalledWith('[i18n] missing key: nope.not.a.key');
+    warn.mockRestore();
+  });
+
+  // A11Y/i18n: `replace` only swaps the first match, so a locale that mentions the same value
+  // twice (common once word order changes) used to ship literal braces to the player.
+  it('interpolates every occurrence of a placeholder, not just the first', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); // the template below is deliberately not a declared key
+    expect(t('{name} vs {name}', { name: 'Bia' })).toBe('Bia vs Bia');
+    warn.mockRestore();
+  });
+
+  // plural() resolves keys the literal-scan test above cannot see, so its keys get their own
+  // check: every plural('x') call site in src/ must declare at least x.one and x.many.
+  it('every plural() base key declares .one and .many', () => {
+    const declared = new Set(localeKeys('pt'));
+    const bases = new Set<string>();
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.ts')) {
+          for (const m of readFileSync(full, 'utf8').matchAll(/\bplural(?:Key)?\('([a-zA-Z0-9._]+)'/g)) bases.add(m[1]!);
+        }
+      }
+    };
+    walk('src');
+    expect(bases.size).toBeGreaterThan(0);
+    const missing = [...bases].flatMap((b) => ['one', 'many'].map((f) => `${b}.${f}`)).filter((k) => !declared.has(k));
+    expect(missing, 'plural base keys missing a form').toEqual([]);
+  });
+
+  it('plural() picks one/many, and zero only where a locale declares it', () => {
+    setLocale('en');
+    expect(plural('win.statCards', 1)).toBe('1 card played');
+    expect(plural('win.statCards', 4)).toBe('4 cards played');
+    expect(plural('win.statCards', 0)).toBe('0 cards played'); // no .zero declared — falls to .many
+    expect(plural('online.wins', 0)).toBe('no wins yet'); // .zero declared
+    expect(plural('online.wins', 1)).toBe('1 win');
   });
 
   setLocale('pt'); // restore the app default for any test file that runs after this one

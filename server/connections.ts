@@ -61,7 +61,7 @@ export function newConnState(now: number, ip = 'unknown'): ConnState {
 }
 
 /** Counts one hit and reports whether the window's allowance is now used up. */
-export function hitWindow(c: Counter, now: number, max: number, windowMs: number): boolean {
+function hitWindow(c: Counter, now: number, max: number, windowMs: number): boolean {
   if (now - c.start > windowMs) {
     c.start = now;
     c.count = 0;
@@ -71,7 +71,7 @@ export function hitWindow(c: Counter, now: number, max: number, windowMs: number
 }
 
 /** The same fixed window, keyed — one budget per source rather than per connection. */
-export function hitKeyedWindow(
+function hitKeyedWindow(
   map: Map<string, Counter>,
   key: string,
   now: number,

@@ -82,6 +82,11 @@ a deploy reach players who already have the game cached.
 
 `node scripts/release.mjs --selfcheck` covers the bump and CHANGELOG rewriting.
 
+Which build runs where, and which gates stand between them, is
+[OPERATIONS.md](docs/OPERATIONS.md#release-channels) — in short: a green CI run on
+`main` promotes the public build, and a tag promotes the released images. Neither
+is rebuilt differently; both are the same version.
+
 ## Art & audio
 
 All art is generated with PixelLab (`docs/ASSETS.md` has the full

@@ -1,4 +1,5 @@
 import { SimpleAi } from '../ai/ai';
+import { observeForAi } from '../ai/observation';
 import type { PlayerConfig } from '../rules/types';
 import { applyConfirmedTurn, createNewGame, drawAndEndTurn } from '../rules/rules';
 import type { GameState } from '../rules/types';
@@ -26,7 +27,7 @@ export function buildShowcaseState(seed: number, players: PlayerConfig[], minTab
     const reachedFloor = minTableCards !== undefined && tableCardCount(state) >= minTableCards;
     if (!active.isAi && state.table.length > 0 && (minTableCards === undefined || reachedFloor)) return state;
     if (active.isAi) {
-      const d = ai.decide(state);
+      const d = ai.decide(observeForAi(state));
       state = d.kind === 'confirm' ? applyConfirmedTurn(state, d.draft) : drawAndEndTurn(state);
     } else {
       state = drawAndEndTurn(state);

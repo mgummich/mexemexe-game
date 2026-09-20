@@ -16,7 +16,7 @@ rules/          pure functions + seeded rng, no Phaser/DOM/Date  ← the only ru
 core/           event bus, settings, persistence, play log, PWA, lifecycle
 game-state/     GameStore (the committed state slot) + LocalMatch (match orchestration)
 mexe-mode/      table draft editor (break/split/merge/move, undo/redo/reset)
-ai/             SimpleAi, RearrangerAi, personalities        ← rules + mexe-mode only
+ai/             observation → candidates → evaluation → choice   ← rules + mexe-mode only
 net/            wire protocol, WebSocket client, view→state projection,
                 OnlineSession (online application state) + LobbyMachine (lobby state)
 table/ ui/ scenes/ assets/ audio/ cosmetics/                  ← Phaser + DOM layer
@@ -67,16 +67,16 @@ legality.
 | `src/core` | `EventBus` (`events.ts`), settings + `localStorage` persistence, session play log, objective hints, results summary, error recovery, app sleep/resume, PWA registration |
 | `src/game-state` | `actions.ts`: the local gameplay-action vocabulary and the pure `applyGameAction`. `store.ts`: `GameStore`, the one mutable slot for the committed local `GameState`, which only `dispatch` replaces — it emits nothing and imports no bus, so an online client and a server could both hold one. `match.ts`: `LocalMatch`, the local match's application boundary (turn cycle, AI turn routing, per-instance notifications). `replay.ts`: the deterministic reproduction format (record, validate, run) |
 | `src/mexe-mode` | draft state: melds under edit, cards played from hand, undo/redo history |
-| `src/ai` | `SimpleAi`, `RearrangerAi`, the four personalities and their presentation constants |
+| `src/ai` | `observation.ts` (the seat's player view), `evaluate.ts` (the neutral comparison of legal candidates), `ai.ts` (`SimpleAi`, `RearrangerAi`, the four personalities and their presentation constants) |
 | `src/net` | `protocol.ts` (shared wire types, redaction, boundary validation), `client.ts` (browser socket), `viewToState.ts` (server view → local-shaped state), `online-session.ts` (`OnlineSession`: the online match's application state and every policy over a server frame — staleness, desync/resync, seat-gap translation, missed-turn limit), `lobby.ts` (`LobbyMachine`: the explicit lobby state and its transitions), `errors.ts` |
 | `src/table` | table layout, snapping, zoom, tap destinations, the portrait editor layout |
-| `src/ui` | widgets, overlays, panels (settings, rules, pause), helper modes, regions, viewport |
+| `src/ui` | widgets, overlays, panels (settings, rules, pause), helper modes, regions, viewport, the online turn clock's readout arithmetic (`turn-clock.ts`, pure) |
 | `src/scenes` | Boot, Menu, Setup, Game, Online, Tutorial, Win |
 | `src/assets` | asset manifest, procedural fallbacks, card composition |
 | `src/audio` | SFX player and the streamed music playlist |
 | `src/cosmetics` | table themes, card backs, avatars (client-side only) |
-| `src/localization` | pt-BR (default) + en-US dictionaries, `t(key)` |
-| `src/tutorial` | scripted steps, fixture table, step director |
+| `src/localization` | pt-BR (default) + en-US dictionaries, `t(key)`, `plural(key, n)` |
+| `src/tutorial` | scripted steps, fixture table, step director. `script.ts` carries the lesson's learning objectives, step by step |
 | `src/demo` | `?showcase=` scenarios used by the screenshot suite |
 | `src/verification` | `debug-api.ts` (`window.__MEXE__` shape and installation), `online-debug.ts` (the online surface, **built from** `OnlineSession`/`LobbyMachine` rather than assembled by them) — see [TESTING.md](TESTING.md) |
 | `server/` | `index.ts` process + HTTP health/metrics + socket dispatch + broadcast, `rooms.ts` room/turn authority, `connections.ts` socket registry and rate-limit windows, `matchmaking.ts` casual FIFO queue, `metrics.ts` counters + Prometheus text, `config.ts` env parsing, `log.ts` redacting logger |
@@ -186,6 +186,75 @@ The AI is on this same path: `GameScene` owns the thinking *pause* and the chara
 across frames and comes back after the match moved on (or was disposed) is reported `stale` and
 dropped, rather than applied to a board it was not computed for.
 
+### The AI foundation
+
+Five steps, each with one owner, so later AI work changes *how well* a seat plays without
+reopening what it may see or what counts as legal:
+
+```text
+observeForAi(state)          player view of the seat about to move   src/ai/observation.ts
+  → candidate generation     drafts built with DraftEditor           src/ai/ai.ts
+  → DraftEditor.canConfirm   the rules decide, per candidate         src/rules
+  → base evaluation          one neutral comparison of legal moves   src/ai/evaluate.ts
+  → deterministic choice     best features, stable tie-break         src/ai/ai.ts
+  → LocalMatch.runAiTurn     confirmTurn / drawAndEndTurn            src/game-state/match.ts
+```
+
+**Observation.** `observeForAi` projects authoritative state into the seat's own view: own hand,
+committed table, active seat, turn number, public per-seat metadata, rules config. Redacted: the
+other hands' identities, the pile's order, and the deal seed (the pile's order, one step removed).
+It is still a `GameState`, so `DraftEditor` and `canConfirmTurn` read it unchanged, and it is a
+deep-frozen copy, so an engine cannot work in place on the board it is deciding about. The type is
+branded: only `observeForAi` produces an `AiObservation`, so handing an engine authoritative state
+does not compile. That is INV-A2 as a type rather than a habit, and it is the same information a
+remote player is sent, which is why nothing here would need rewriting for a server-side AI.
+
+**Decision.** `AiPlayer.decide(observation)` (or `decideSliced`, the same search yielding between
+phases) returns gameplay intent — `confirm` with a draft, or `draw` — plus a `DecisionTrace`: what
+the search structurally did (rearranged the table, declined a play out of patience, how many legal
+candidates it weighed, how many of its trial budget it spent, the chosen draft's features). `createAi` reads that trace to attach an
+`AiReason`, whose `key` is the `ai.why.*` line the player may be shown. It is observational
+(INV-A7): the engines never read it back, it holds nothing the seat could not see, and it exists
+because the reason used to be recovered by pattern-matching the prose the search wrote about
+itself — so rewording an explanation could silently change what the game told the player. The inputs are the
+observation and the engine's construction-time configuration (personality policy, search tier,
+trial budget); there is no clock, no settings read, no scene and no unseeded randomness. Tie-breaks
+are lexicographic rather than random, so no RNG is threaded in at all.
+
+**Legality.** The AI owns none. Every candidate is a `DraftEditor` draft that `canConfirm`
+accepted before it was kept, and `applyGameAction` validates it again on the way in. If the two
+ever disagreed, `runAiTurn` draws instead of keeping the turn — a bug costs a card, not the match.
+
+**Work budgets.** All three are counts, not durations: `SEARCH_BUDGET_TRIALS` (120k candidate
+trials per decision), `MAX_CANDIDATES`/`EXPERT_MAX_CANDIDATES` (20/48 kept) and
+`INTER_MELD_TRIPLE_CAP`. One trial budget covers both tiers on purpose — the tiers only ever
+differed in how long they were allowed to run, and that difference only had an effect when the
+bound actually bound, which is precisely the regime where the move stops being a function of the
+state. The cap is a safety stop for pathological input, not a tuning knob: on the densest table
+this game can deal (eight long runs, a 20-card hand, the Expert cap) the search finishes on its own
+after ~23k trials in ~36 ms, and a fresh deal spends none at all. `DecisionTrace.trialsSpent`
+reports the spend so that headroom stays measurable rather than assumed.
+
+**Generation scope, honestly.** Nothing here is exhaustive. `SimpleAi` is **greedy**: hand melds in
+a fixed order, then single-card extensions, first fit wins. `RearrangerAi` is a **bounded
+heuristic search** over three shapes (edge steal, run split, single inter-meld move), seeded with
+SimpleAi's own play, capped at `MAX_CANDIDATES`/`EXPERT_MAX_CANDIDATES` kept and
+`SEARCH_BUDGET_TRIALS` attempted. Move classes outside those shapes are simply not generated.
+
+**Evaluation.** `src/ai/evaluate.ts` compares legal candidates on five features in strict
+priority: immediate win, then hand cards shed, then fewer jokers left on the shared table, then
+fewer *stranded* cards left in hand, then the sorted played-card ids as a stable tie-break.
+Ordinal, not a weighted sum — no amount of joker thrift buys back a card. Neutral on purpose:
+personality lives in which candidates get generated (minimal play, joker holding, patience) and
+difficulty in the search tier, not in these features.
+
+**How far ahead it plans.** One ply, and that is a ceiling the rules impose rather than a shortcut.
+`strandedCards` is the only feature that scores the state a move *leaves behind* (cards with no
+possible partner left in hand), which is what separates two drafts that shed the same cards. Deeper
+search would have to predict the next draw or the opponents' replies, and INV-A2 denies the AI both
+the pile order and the other hands, so any such node would be invented rather than observed. The
+depth therefore goes into breadth — more candidate shapes within the turn — not into future turns.
+
 The actor differs between a human and an AI seat; the transition authority does not. UI intents
 (open settings, zoom the table, hover a card, play a sound) are *not* actions and never become
 ones.
@@ -278,6 +347,123 @@ texture (`src/assets/fallbacks.ts`) for anything missing, so a missing file
 never crashes the game. Fallbacks are reported in
 `window.__MEXE__.missingAssets`, and verification fails if that is non-empty.
 See [ASSETS.md](ASSETS.md).
+
+## UI design system
+
+The UI is a small vocabulary, not a component library. Four modules own it, and
+a new screen should reach for them before inventing anything:
+
+| Concern | Owner | Contract |
+|---|---|---|
+| Semantic colours, control priorities, layering, control heights, spacing | `src/ui/tokens.ts` | Phaser-free. Name the **role** (`TEXT.muted`, `ACTION.danger`, `LAYER.panelContent`, `FOCUS.keyboard`, `STATE_FILL.error`), never a hex. `tests/tokens.test.ts` fails a raw `'#rrggbb'` anywhere in `src/ui` or `src/scenes`, and an integer colour used *inline*: an integer that is genuinely content (per-seat identity, the board's felt, a mask's coverage value) must at least be a named module constant whose comment says why it is not a token |
+| Buttons, labels, text metrics, scene transitions | `src/ui/widgets.ts` | `PixelButton` is *the* button — its slab is a nine-slice, so one 168×60 texture serves every size from 128×24 to 16×14 without stretching its rim (Phase 29) — priority via `ACTION.*` + `primary: true`, states via `setEnabled` / `setSelected`, keyboard via `press()`. `fontStyle()` is the only place a font size is decided, so the large-text setting scales everything at once |
+| Modal behaviour | `src/ui/overlay.ts` | `buildOverlay` draws scrim + panel and closes on a backdrop tap; `onEscape` stacks Esc so it backs out one level at a time; `closeOnShutdown` ties the panel's `close()` to the scene's shutdown, so a scene restart (every orientation flip) can't strand its listeners |
+| World geometry and the two authored layouts | `src/ui/viewport.ts`, `src/ui/menu-layout.ts`, `src/ui/regions.ts` | Landscape 480×270 (widening to 630) and portrait 270×480. Menu-family screens map their authored coordinates through `cx()`/`vy()` and sit on `woodPanel`; only the board has a hand-authored portrait layout |
+
+Rules that follow from this:
+
+- **One primary per screen.** `primary: true` is the screen's single call to
+  action. Two full-strength greens beside each other is a bug, not emphasis.
+- **State is never colour alone.** Ready/host/active/selected all carry a word
+  or a ring as well (`setSelected`, the spelled-out lobby badges).
+- **Gameplay colours are not chrome.** `STATUS_COLOR` (`src/table/snap.ts`) and
+  the per-seat badge colours are rules/identity signals; reusing one as a title
+  or a banner colour is exactly what the token layer exists to prevent.
+- **Motion picks a band, not a number.** `src/ui/feel.ts` (`FEEL.fast` …
+  `FEEL.major`) and `feelMs()`, which already returns 0 under reduced motion.
+- **A screen with a stack is a flow, not a set of coordinates.** The lobby
+  (`OnlineScene.renderLobby`) is the worked example: the informational blocks
+  flow down from the room code, the controls are anchored up from VOLTAR, and
+  the leftover space becomes the gaps. When the column genuinely cannot fit —
+  a 270-unit landscape world at 125% text in the longer locale — it degrades in
+  a fixed order (gaps close, the room code gives back its large-text bonus, the
+  emote row goes, the *empty* chair goes) and never by dropping a seat, a
+  control or an explanation. Each painted block is recorded in
+  `window.__MEXE__.online.lobbyBoxes()`, which is what LB-46 asserts against on
+  every engine.
+- **A coarse pointer grows targets, never moves layout.** `view().touch` feeds
+  `controlH()` and `TOUCH_TARGET`; the artwork keeps its authored size.
+- **Phaser and the DOM share semantics, not implementations.** The board, menus
+  and panels are Phaser. The DOM owns exactly what the canvas cannot do: the
+  boot placeholder (`index.html`), the offscreen `<input>` that opens a mobile
+  soft keyboard for the name/room-code screens (`OnlineScene.ensureTextInput`),
+  and the PWA/error toasts (`src/core/pwa.ts`, `src/main.ts`). Each of those is
+  created once, tracked, and removed on shutdown. Do not port one surface to the
+  other for consistency's sake — share the *semantics* instead: those four DOM
+  plates take their fill, ink, padding and z-order from `plateCss()`/`DOM_LAYER`
+  in the same token module the canvas reads, so one re-point moves both surfaces.
+
+## Localization
+
+Two locales ship (`pt` default, `en`), and the shape below is what lets a third
+be a dictionary edit rather than a code change.
+
+- **Domain code never speaks prose.** Rules, game state, AI and the server
+  produce stable codes (`ReasonCode`, `ServerErrorCode`, the `check.*` /
+  `objective.*` / `game.lastMove.*` keys); presentation resolves them. A
+  translated string is never part of a wire contract — see the failure model
+  above.
+- **One dictionary, one lookup.** `src/localization/i18n.ts` holds both locales
+  and exports `t(key, params)` and `plural(key, n, params)`. There is no i18n
+  framework and no runtime loader; the dictionary is a module, so a missing key
+  is a build-visible edit rather than a fetch.
+- **Interpolation, never concatenation.** `t('{player} wins', { player })`, not
+  `player + ' wins'` — word order belongs to the locale. Every occurrence of a
+  placeholder is replaced, so a locale may use a value more than once.
+- **Quantities go through `plural()`.** It resolves `<key>.one` / `<key>.many`,
+  plus `<key>.zero` where a locale declares one, and passes the count as `{n}`.
+  It is a lookup rule, not a plural engine: a locale needing more CLDR forms
+  than `pt`/`en` would need a real selector, and that is the point at which to
+  add one.
+- **Fallback is predictable.** Active locale → `pt` → the key itself. A blank
+  string is never rendered, and in dev a missing key logs once; production stays
+  quiet.
+- **Accessible names are localized too.** The offscreen input's `aria-label` and
+  `<html lang>` come from the same dictionary and the same `setLocale`, so no
+  English label survives a language switch.
+- **Layout assumes expansion.** Panel copy word-wraps, button captions shrink to
+  their plate via `fitTextScale()`, and the lobby column degrades in a fixed
+  order at 125% text in the longer locale (see the UI rules above). Copy refers
+  to controls by name ("press FEITO"), never by screen position.
+
+`tests/i18n.test.ts` holds the contracts: key parity across locales, no blank or
+raw-key copy, every literal `t('…')` in `src/` declared, every `plural('…')` base
+declaring `.one` and `.many`, interpolation, fallback and the dev warning.
+
+## Accessibility
+
+What the game guarantees, and what it does not. The guarantees are the ones a
+change is allowed to break only deliberately; the limits are real and are stated
+here rather than implied away.
+
+**Guaranteed**
+
+| Concern | How it holds | Enforced by |
+|---|---|---|
+| No critical meaning is colour-only | every state carries a word, glyph, ring or position as well (`✗` badges, spelled-out lobby badges, `setSelected`'s ring, the tutorial's `✗` refusal line) | `docs/ARCHITECTURE.md` UI rules; `window.__MEXE__.a11y` assertions in `e2e/screenshot.spec.ts` |
+| No critical meaning is sound-only | every cue that plays `sfx-invalid` also writes its reason somewhere visible — the reason line, the blocking-reason text, the tutorial step panel | `tests/objective.test.ts`, the tutorial-refusal e2e |
+| Reduced motion is respected | `settings.motionScale()` returns 0 and `feelMs()` collapses cosmetic tweens; information-bearing changes stay (outline instead of pulse, arrow instead of wiggle). The boot placeholder, which runs before any JS, follows `prefers-reduced-motion` in CSS | `tests/motion.test.ts`, `tutorial-reduced-motion` e2e |
+| Reduced motion is not a setting you have to find | seeded from the OS preference on first run (`systemSettings`, `src/core/persistence.ts`); a stored save always wins. The *language* is deliberately not seeded this way — pt-BR is the product default, and the language button is one tap from the menu | `tests/persistence.test.ts` |
+| Touch targets stay usable | `view().touch` grows `PixelButton`'s hit box to `TOUCH_TARGET` and `controlH()`'s coarse heights; artwork keeps its authored size | `tests/regions.test.ts` |
+| Text can grow | `fontStyle()` is the single font-size choke point (+25% large text); `fitTextScale()` keeps captions on their plates instead of off the wood | `tests/tokens.test.ts` |
+| The DOM surfaces are real controls | the update prompt is a `<button>`, the status plates are `role="status"`, the error toast is `role="alert"`, the offscreen room-code/name input carries a localized `aria-label`, and `<html lang>` tracks the chosen locale | `setLocale` (`src/localization/i18n.ts`), `src/core/pwa.ts`, `src/main.ts` |
+
+**Not guaranteed — known limits**
+
+- **The board is a canvas.** Cards, melds, the HUD and every panel are Phaser
+  objects with no DOM node and no accessibility tree. A screen reader can reach
+  the DOM plates listed above and nothing else. Making gameplay screen-reader
+  navigable is a structural change (a parallel DOM mirror of board state), not a
+  labelling pass, and has not been done.
+- **Pinch zoom is off.** `user-scalable=no` in `index.html` is deliberate: a
+  drag across the board must not become a browser gesture. The in-game large-text
+  setting is the substitute for browser zoom, and it is the only one.
+- **Keyboard reaches the game, not every gesture.** Esc, the FEITO/COMPRAR
+  shortcuts and the focus ring's select-then-place path are keyboard-operable
+  (`PixelButton.press()`); free-form dragging is not, and select-then-place is
+  the supported equivalent rather than a drag emulation.
+- **No compliance level is claimed.** Nothing here has been validated against a
+  WCAG conformance level, and automated scanning is not part of any gate.
 
 ## Failure model
 
@@ -377,13 +563,32 @@ key and a different shape, so it cannot be confused with history. No hidden
 opponent information is persisted anywhere — see
 [OBSERVABILITY_PRIVACY.md](OBSERVABILITY_PRIVACY.md).
 
+### Supported recovery paths
+
+What survives an interruption, and from which authority. A path not listed here
+is not supported — it is not a bug report, it is this table.
+
+| Interruption | Restored | From | Not restored |
+|---|---|---|---|
+| reload / crash / installed-app relaunch | settings, progress, cosmetics, display name, recent room codes | `mexe-save` + the `mexe.online.*` keys | the local match in progress — a reload of local play returns to the menu (SCN-34) |
+| online reload / crash, same tab | the seat, and then the whole board | `reconnect(token)` from `sessionStorage`, then the server's snapshot | nothing local: the client replaces its state wholesale (INV-L3) |
+| online reload in a new tab, or after the tab closed | nothing — the seat is reclaimed by the grace timer or lost | — | the token is deliberately tab-scoped |
+| background / sleep / bfcache restore | the live session on the socket it already holds | `src/core/lifecycle.ts` → existing socket, resync on wake | no second socket and no second membership (SCN-43) |
+| corrupt or unsupported stored data | per-field defaults; a refused snapshot throws `RulesError` and the boot path falls back | `parseSave` / `deserializeGameState` | the corrupt values — nothing partially trusted is kept (SCN-31) |
+| blocked or full storage | everything, in memory, for this page | defaults + `NULL_STORAGE` | persistence itself; nothing crashes (INV-P4) |
+
+The table has one rule behind it: local recovery restores *preferences*, online
+recovery restores *a seat* and lets the server restore the state. Neither
+restores gameplay from disk, which is why persistence never becomes the second
+authority.
+
 ## Replay and reproduction
 
 Three artifacts, three jobs. They share serialization helpers; they are not the
 same format and must not merge:
 
 ```text
-SAVE     serializeGameState        restore the match the player left
+SAVE     serializeGameState        one whole state as one versioned envelope
 REPLAY   src/game-state/replay.ts  reproduce how a match reached a state
 PLAYLOG  src/core/playlog.ts       human/debug timeline and session statistics
 ```
@@ -421,11 +626,12 @@ Properties that make it worth having:
 
 Capture and run: [DEVELOPMENT.md](DEVELOPMENT.md#reproducing-a-bug-from-a-replay).
 
-**AI decisions are recorded, not recomputed.** The rearranging engines budget
-their search with `performance.now()`, so re-running an AI would not reliably
-choose the same move on a different machine. A replay stores the action the AI
-actually produced, which makes AI turns exactly as reproducible as human ones
-and removes the engine from the replay's trusted set.
+**AI decisions are recorded, not recomputed.** A decision is reproducible on
+its own terms — the search spends a trial budget and reads no clock (INV-A5) —
+but a replay stores the action the AI actually produced anyway. That keeps the
+engine out of the replay's trusted set: a replay from last week still runs
+after the AI is retuned, and an AI turn is exactly as reproducible as a human
+one.
 
 **Online is not client-replayable.** `window.__MEXE__.replay()` returns `null`
 online: the local store there holds `viewToState`'s redacted projection with
@@ -451,6 +657,46 @@ Anything refused throws a `RulesError` with an input error code
 state. A bare unversioned state is refused: a snapshot that cannot be dated
 cannot be trusted. Serialization is deterministic — the same state produces
 the same string, which is what `createNewGame` determinism tests compare.
+
+## Compatibility policy
+
+Four things carry a version, on four independent schedules. The policy is the
+same for all four and it is deliberately narrow: **one supported version at a
+time, and anything else is refused in a way the caller can act on.** No
+format is read on a best-effort basis, because a half-understood save or frame
+is worse than no save or no frame.
+
+| Artifact | Version | Owner | Reads older | Reads newer | Refusal |
+|---|---|---|---|---|---|
+| save (settings/progress/cosmetics) | `version: 1` in `mexe-save` | `src/core/persistence.ts` | yes, one hop: the unversioned `mexe-settings` key migrates once, then is deleted | no — a future `version` is not 1, so the whole envelope is dropped | silent per-field fallback to defaults; the player keeps a working game, never a partial one |
+| game-state snapshot | `GAME_STATE_VERSION = 2` | `src/rules/rules.ts` | no | no | `RulesError` (`corruptSave`, `unsupportedSaveVersion`) — the caller recovers |
+| replay | `REPLAY_VERSION = 1` | `src/game-state/replay.ts` | no | no | refused with the version in the message; a replay is a developer artifact, so a loud failure is the right one |
+| wire protocol | `PROTOCOL_VERSION = 9` | `src/net/protocol.ts` | no | no | `unsupported_version` on the client's first frame, shown as "reload the page to update" |
+
+Rules that follow from it:
+
+- **Versions move independently.** A protocol bump is not a save bump. The
+  reason each one moved is recorded where it is owned, not here
+  ([MULTIPLAYER.md](MULTIPLAYER.md) §4 for the wire).
+- **Migration is bounded to one hop, and only for preferences.** The
+  `mexe-settings` → `mexe-save` migration is the only one that exists and the
+  only kind that is worth having: losing a preference is an annoyance, so it
+  is worth code, while a gameplay artifact that cannot be read is simply not
+  read. There is no migration framework and there should not be one.
+- **A refused format never degrades silently into gameplay.** Preferences fall
+  back to defaults; a snapshot, replay or frame throws or is rejected. This is
+  the same rule as [§Persistence](#persistence): nothing persisted decides a
+  gameplay question.
+- **Client and server ship together.** `PROTOCOL_VERSION` is the coupling
+  point, which is why a rollback rolls both or neither
+  ([OPERATIONS.md](OPERATIONS.md) §Rollback). The stale-client case is real
+  even without a bad deploy — a service worker serves the previous build until
+  its cache key changes ([PWA_OFFLINE.md](PWA_OFFLINE.md) §Cache versioning) —
+  and that is exactly the player who is told to reload.
+- **Adding a server error code is not a protocol bump.** Unknown codes already
+  fall back to generic copy on older clients (`src/net/errors.ts`), so the
+  vocabulary can grow without stranding anyone; changing the *shape* of a
+  message is what bumps the version.
 
 ## System context
 
@@ -492,6 +738,8 @@ suites (through `window.__MEXE__`, never through internals).
 | lobby screen state and its transitions | `LobbyMachine` (`src/net/lobby.ts`) | `OnlineScene` renders it and dispatches into it |
 | Mexe draft | `DraftEditor` (`src/mexe-mode`) | never serialized, never sent until FEITO |
 | AI choice | `src/ai` behind `AiPlayer.decide` | scene only schedules and presents it |
+| what an AI seat may know | `observeForAi` (`src/ai/observation.ts`) | no engine reads authoritative state — the type forbids it |
+| how legal AI moves compare | `src/ai/evaluate.ts` | personality/difficulty choose policy and tier, never the features |
 | online match state, `rev`, deal seed, turn timer, room membership, host, ready, reconnect seat | the server's `RoomManager` | clients render the per-seat view they are given |
 | hidden information | `buildView` redaction (`src/net/protocol.ts`) | no client path may reconstruct an opponent hand |
 | settings, progress, cosmetics | `src/core/settings` over `persistence` | no scene-local copies |
@@ -545,7 +793,7 @@ contract as the client — that shared edge is the point, not an accident.
 | anything outside `scenes`/`ui`/`assets`/`audio`/`main.ts` → `phaser` | keeps the domain portable | enforced (`tests/boundaries.test.ts`) |
 | `server/` → any `src/` module other than `rules`, `net/protocol` | the server must never import client presentation | enforced (`tests/boundaries.test.ts`) |
 | presentation → a second legality implementation | one `analyzeMeld`, one `canConfirmTurn` | convention (ARCH-019) |
-| `src/ai` → opponent hand identities | AI must not see what a player cannot | convention (INV-A2) |
+| `src/ai` → opponent hand identities | AI must not see what a player cannot | **type system** — `AiObservation` is branded, so only `observeForAi` can produce what `decide` accepts (§AI, above); plus the redaction tests in `tests/ai.test.ts` and `tests/property/ai.property.test.ts` |
 | `src/core/*` → `ui`, `cosmetics`, `ai`, `verification` | makes the platform layer unusable without presentation | **violated today** — ARCH-009/ARCH-011, Phase 3/4 |
 | `src/game-state` → the global bus | announcement, not turn application — the shareable half lives in `src/rules`, the transition in the pure `applyGameAction` | **narrowed to notification only** — ARCH-004; the control-flow half closed with ARCH-006 |
 
@@ -623,8 +871,8 @@ testability or removes a leak, which today means the ones already here:
 comes from a seed, and turn expiry is a server decision (`advanceStalledTurns`
 → `timerExpireTurn`) that arrives as an ordinary transition. The client renders
 `turnMsLeft`; it never decides expiry. `performance.now()` appears in the play
-log's relative timeline and in the AI's search budget, both outside the state
-transition.
+log's relative timeline, outside the state transition; the AI's search budget
+is a trial count, so no clock reaches move selection either.
 
 **Non-browser reuse.** `rules`, `mexe-mode`, `game-state` (including
 `replay.ts`), `net/protocol`, `net/viewToState`, `table` and the AI engine run
@@ -654,7 +902,7 @@ during restructuring (ARCH-019).
 | product code does not depend on the verification adapters | **test** — `tests/boundaries.test.ts` |
 | the tutorial cannot legalize an illegal move | **test** — `tests/tutorial.test.ts` (authority boundary) |
 | one owner per mutable state domain | **type system** for `GameState`/`DraftState` (`readonly` fields, checked in `tests/boundaries.test.ts`); **convention** elsewhere |
-| `core` does not depend upward | **none** — currently violated, ARCH-009 |
+| `core` does not depend upward | **test** — `tests/boundaries.test.ts` pins the known upward imports as an exact allowlist, so the ARCH-009 violations cannot grow (they are listed, not forgiven) |
 | scene state reset on relaunch | **construction** — the per-match owners (`MatchViewState`, `LocalMatch`, `OnlineSession`, `LobbyMachine`) are replaced, not re-initialised field by field |
 
 The invariants these mechanisms protect, and the scenarios that exercise them,
@@ -716,6 +964,7 @@ here is a generic state-machine framework, and none of it should become one.
 | Table editing behaviour | `src/mexe-mode` | `GameScene` |
 | Layout, snapping, zoom maths | `src/table` (pure, unit-tested) | `GameScene` |
 | A new widget, panel or helper affordance | `src/ui` | `src/rules` |
+| A colour, control height, spacing step or z-layer | `src/ui/tokens.ts`, as a semantic name | a literal in a scene |
 | AI behaviour or a new personality | `src/ai` | `src/game-state` |
 | A new wire message or field | `src/net/protocol.ts` **and** `server/` together, bumping `PROTOCOL_VERSION` | client-only shortcuts |
 | Player-visible text | `src/localization/i18n.ts` (both locales) | inline literals |

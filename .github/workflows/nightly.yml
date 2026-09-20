@@ -13,6 +13,95 @@ concurrency:
   group: nightly
 
 jobs:
+  specialized-tests:
+    name: Extended fuzz, golden replays & session soak
+    runs-on: ubuntu-latest
+    # `npm run test` already runs these properties at the fast budget on every PR; this is the
+    # same properties at the extended iteration count (MEXE_FUZZ=extended), which is the part that
+    # only ever ran when somebody remembered to. Measured ~9s locally, so the timeout is slack for
+    # a cold shared runner rather than a real bound.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # No browser install: both suites are pure node.
+      - run: npm run test:property
+      - run: npm run test:replay
+      # Same soak the PR path runs at two room lifecycles, here at eight (~45s): long-session
+      # drift in the socket/seat bookkeeping needs the repeats, and the repeats need the wall
+      # clock this job has and a PR does not.
+      - run: MEXE_SOAK=1 npx vitest run tests/server/session-soak.integration.test.ts
+
+  perf-trend:
+    name: Performance trend
+    runs-on: ubuntu-latest
+    # Prints, never gates. The budgets in docs/PERFORMANCE.md are the contract and the three @perf
+    # fps tests are the gate; this job exists so boot time, heap and the per-cycle drift have a
+    # dated series to read when one of them starts moving, instead of being measured once a year
+    # by whoever notices.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Measure (PERF / PERF-THROTTLED / PROFILE-TOP / MEM-DELTA in the log)
+        run: npx playwright test e2e/perf-measure.spec.ts --workers=1 --retries=0
+
+  visual-baseline:
+    name: Visual baselines
+    runs-on: ubuntu-latest
+    # Nightly, and on the runner whose renderer the committed linux baselines were captured on.
+    # A first run on a platform with no baseline *writes* one and fails; that artifact is the
+    # candidate a human looks at and commits (docs/TESTING.md, "Visual baselines").
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run verify:visual
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: visual-baseline-candidates
+          path: |
+            e2e/visual.spec.ts-snapshots/
+            test-results/
+          retention-days: 14
+
+  dependency-audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    # Nightly, not per-PR: a new advisory published mid-review is not the reviewer's problem, and a
+    # gate that fails for reasons unrelated to the diff gets ignored. Runtime deps are audited at a
+    # lower threshold than dev tooling, because only they reach a player or a served room.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Runtime dependencies (phaser, tsx, ws)
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Dev tooling
+        run: npm audit --audit-level=high
+      - name: Report anything outdated (never fails the job)
+        run: npm outdated || true
+
   flake-detection:
     name: WebKit touch flake detection
     runs-on: ubuntu-latest

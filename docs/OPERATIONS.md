@@ -219,6 +219,12 @@ a matching `VITE_WS_URL=wss://your.host/path`. Confirm quickly by loading the ga
 browser's network. Either open it or proxy it; the client talks to the server directly, not
 through the web server.
 
+**`server_listen_failed` with `errno: "EADDRINUSE"` and immediate exit 1.** Something else
+already holds the port — a previous instance that has not finished shutting down, another
+container publishing the same port, or a local proxy. The process refuses to keep running in
+that state and says which port and host it tried, rather than dying on an unhandled error or
+appearing to start while a stranger answers the health check. Free the port or set `PORT`.
+
 **`invalid PORT: "..." must be a finite positive number` on startup.** Exactly what it
 says — the process refuses to start on a malformed value rather than booting on a default
 you did not intend. Same for the other numeric variables.
@@ -247,9 +253,11 @@ version in `/health` and in the client build have most likely diverged.
 ## Releasing a new version / cache busting
 
 The client is a PWA with a service worker (`public/sw.js`) that caches the app shell and
-runtime assets. Bump the `VERSION` const in `public/sw.js` on every release — the
-`activate` handler deletes any cache that isn't the current version, so a stale build
-never lingers. Navigations are network-first, so a new `index.html` (and its new hashed
+runtime assets. The cache name is the release version: `public/sw.js` carries a
+`__BUILD_VERSION__` placeholder that the `vite.config.ts` build plugin substitutes from
+`package.json`, so bumping the package version — which `npm run release` does — is what
+makes a deploy reach cached clients. There is no constant to edit by hand. The `activate`
+handler deletes any cache that isn't the current version, so a stale build never lingers. Navigations are network-first, so a new `index.html` (and its new hashed
 asset URLs) is always picked up on next load without a manual cache purge. Players see a
 non-intrusive update banner and apply it themselves after their current match; a new
 worker never takes over mid-match.
@@ -259,6 +267,55 @@ the game open in several tabs on the same origin and applies the update in one o
 the `controllerchange` reload fires in all of them — including a tab that is mid-match.
 Single-tab play, which is how the game is played on phones and how every verification run
 exercises it, is unaffected.
+
+## Release channels
+
+Three places this code runs, and one rule: **a build is promoted, never rebuilt
+differently.** The version in `package.json` is the only version there is — it
+feeds the git tag, the release notes, the image tags and the service-worker cache
+key.
+
+| Channel | What it is | Triggered by | Gates it must pass first | Config |
+|---|---|---|---|---|
+| **Local** | `npm run dev` (Vite) or `npm run preview` (the built client) | a developer | whatever they run; `npm run verify` before a PR | no service worker in dev (it actively unregisters one), `/metrics` open, `MEXE_TEST_SEED` allowed, debug log level |
+| **Public build** (GitHub Pages) | the playable game at `/`, the docs at `/docs` — local play only, no room server | a green **CI** run on `main` (`workflow_run`), or a manual dispatch | CI: lint + unit suites + build, multiplayer (Chromium), PWA, cross-viewport, server image boots unprivileged | production build, service worker on, no room server to talk to, no security headers (GitHub Pages sets its own) |
+| **Released images** (ghcr.io) | `mexemexe-game-web` and `-server`, multi-arch, pushed by digest and joined into one tag | pushing a `vX.Y.Z` tag | release workflow re-runs lint + unit suites + build and refuses a tag that disagrees with `package.json`; the browser/multiplayer gates ran on the commit before it was tagged | `.env` per deployment ([Environment variables](#environment-variables)); `MEXE_VERSION` pins which digest is deployed |
+
+### Environment differences, on purpose
+
+These are the behaviours that are *not* the same everywhere. Every one is a
+decision, and each is enforced in code rather than by convention:
+
+| Behaviour | Development | Production | Enforced by |
+|---|---|---|---|
+| Service worker | unregistered, so a stale cache cannot shadow the dev server | registered, cache keyed by version | `src/core/pwa.ts` |
+| `MEXE_TEST_SEED` | allowed — it is how `verify:multiplayer` deals a known hand | **refuses to start** | `server/config.ts` |
+| `/metrics` | open, `curl` it | 404 without `MEXE_METRICS_TOKEN`, bearer-gated with one | `server/index.ts` |
+| Exception text in logs | kept (the operator is the developer) | dropped, only the error *class* survives | `errorFields` in `server/log.ts` |
+| `MEXE_ALLOWED_ORIGINS` | optional | **required** — the server refuses to start on silence rather than let an omission pass for a decision | `server/config.ts` |
+| Log level | `debug` | `info` | `server/config.ts` |
+| Security headers | none (Vite preview) | CSP, nosniff, referrer and frame policy from `nginx.conf` | the `web` image |
+
+The last row is worth knowing when a CSP question comes up: the browser suites
+run against `npm run preview`, which sends no headers, so a CSP regression is not
+something they can catch. `tests/deployment.test.ts` guards the header set, and
+the policy itself was exercised against the built app under exactly those headers
+([THREAT_MODEL.md](THREAT_MODEL.md) TM-15).
+
+### Reproducing a production deployment
+
+```bash
+git checkout v1.11.0            # the tag is the truth; package.json agrees with it by gate
+npm ci                          # the committed lockfile, never a fresh resolve
+cp .env.example .env            # then fill it in; MEXE_VERSION pins the images
+docker compose -f docker-compose.traefik.prod.yml up -d
+curl -fsS https://<host>/health # protocol + uptime; the log's first line carries `build`
+```
+
+Nothing about a deployment is generated at deploy time except the TLS
+certificate. There is no config service, no feature flags and no per-environment
+build of the game other than `VITE_WS_URL`, which is baked in at image-build time
+and documented in [SELF_HOSTING.md](SELF_HOSTING.md).
 
 ## Rollback
 
@@ -277,6 +334,51 @@ just deploying the previous artefacts:
 
 There is no database and no migration to reverse. Matches in progress end on either
 rollback; there is nothing else to restore.
+
+### What a rollback does and does not reach
+
+| | When it takes effect |
+|---|---|
+| A player opening the game fresh | immediately: navigations are network-first, so they get the rolled-back `index.html` and its assets |
+| A player with the tab already open | when they accept the update banner, or open a new tab. The rolled-back worker installs and *waits* — an update, forward or back, never takes a match away mid-hand |
+| A player mid-match online | after the match: the client keeps talking to the server it is connected to. If the rollback changed `PROTOCOL_VERSION`, that client is refused on its next frame and told to reload (`unsupported_version`) |
+| The previous build's cache | deleted on activate, so nothing of the bad build survives the handover |
+
+Rehearsed, not assumed: `e2e-pwa/update.spec.ts` serves a *lower* version to an
+installed client and asserts the handover happens, the old cache keeps serving until
+the player accepts, and only the rolled-back cache remains afterwards.
+
+### Unsafe rollback conditions
+
+Check these before rolling back, in this order:
+
+1. **Did `PROTOCOL_VERSION` change between the two versions?** If yes, client and server
+   must move together — a mismatch is refused by design
+   ([ARCHITECTURE.md](ARCHITECTURE.md#compatibility-policy)). Rolling back one
+   half alone takes online play down as surely as the bad release did.
+2. **Did the save envelope version change?** Today it is `version: 1` and has never
+   moved, so rollback is lossless. If a future release bumps it, a client that already
+   wrote the newer envelope will read it back as unsupported and fall back to defaults —
+   the player silently loses settings and cosmetics. That makes a save bump a
+   **one-way door**: plan the rollback window before shipping it, not after.
+3. **Did `public/assets/` change without a version bump?** Then the rolled-back build
+   shares a cache name with the bad one and cached clients keep the bad assets. Bump the
+   version for the rollback deploy too — a rollback is a release.
+4. **Is the rolled-back image actually still available?** Released images are kept by
+   digest; a rollback that depends on rebuilding from a tag needs that tag to build with
+   today's toolchain.
+
+### After a rollback
+
+```bash
+curl -fsS https://<host>/health                 # ok:true, and `protocol` is the value you expect
+npm run verify:preview                          # the served client: assets resolve, no secrets
+npm run verify:multiplayer:chromium             # two real clients against the rolled-back pair
+```
+
+Then read the server's first log line: `server_listening` carries `build`, which is the
+answer to "is the rollback actually what is running" — an image tag is what you asked
+for, not what booted.
 
 ## Verification commands
 

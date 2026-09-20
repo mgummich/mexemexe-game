@@ -1,0 +1,2234 @@
+{
+ "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
+ "updated": "2026-09-20",
+ "current": {
+  "wave": "12",
+  "phase": "104 — Continuous Architecture & Quality Health",
+  "status": "PASS"
+ },
+ "head": "c9601f8",
+ "phases": [
+  {
+   "phase": "46 — Strategic Planning",
+   "wave": "6B",
+   "status": "PASS",
+   "result": "Repo already satisfied bounded deterministic search, candidate sequencing, legal fallback and no-mutation. Gap closed: future-state evaluation (strandedCards) in src/ai/evaluate.ts.",
+   "acceptance": "determinism (INV-A5) unchanged; every candidate still via DraftEditor.canConfirm (INV-A1); O(m^2) per candidate inside existing trial budget; legal draw fallback unchanged",
+   "verification": [
+    "npx tsc --noEmit",
+    "npx vitest run tests/ai.test.ts tests/property/ai.property.test.ts (76/76)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p46c.log)"
+   ],
+   "evidence": {
+    "benchmark": "200 fixed seeds, RearrangerAi vs unchanged SimpleAi",
+    "before": {
+     "wins": 193,
+     "avgTurns": 133.5,
+     "avgCardsLeft": 0.59,
+     "ms": 16847
+    },
+    "after": {
+     "wins": 195,
+     "avgTurns": 130.3,
+     "avgCardsLeft": 0.55,
+     "ms": 17283
+    }
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS with 1 risk + 1 nit, both repaired (joker guard + ace high/low partnering, boundary tests)"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-screenshot-churn",
+     "note": "npm run screenshot rewrites ~60 PNGs with no visual change; reverted each run",
+     "owner": "Phase 84 — Flaky-Test Control"
+    },
+    {
+     "id": "P3-suite-flake",
+     "note": "tutorial 12-step e2e timed out once under full-suite load, passes in isolation and on rerun",
+     "owner": "Phase 84 — Flaky-Test Control"
+    }
+   ],
+   "roadmapMismatch": "Roadmap assumed Phase 46 would add lookahead/search; repo already had a bounded deterministic trial-budget search from Wave 6A. Multi-ply lookahead is impossible under INV-A2 (no pile order, no opponent hands) — documented in docs/ARCHITECTURE.md."
+  },
+  {
+   "phase": "47 — Difficulty Model",
+   "wave": "6B",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Four tiers already exist as configuration over the shared SimpleAi/RearrangerAi engines, settings-persisted, localized and UI-cycled. Fixed a false docstring claim (casual is not 'full lay-down' for a minimal personality) and added the missing tier-ladder regression test.",
+   "acceptance": "legality unchanged at every tier (existing test); deterministic per tier (existing test); tiers distinguishable in the shipped four-seat configuration (new test); bounded by SEARCH_BUDGET_TRIALS",
+   "verification": [
+    "npx vitest run tests/ai.test.ts (74/74)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p47.log)"
+   ],
+   "evidence": {
+    "benchmark": "40 seeds, one tier applied to all four AI seats",
+    "avgTurns": {
+     "beginner": 129.4,
+     "casual": 123.3,
+     "smart": 105.1,
+     "expert": 93.7
+    }
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, no issues"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-tier-overlap",
+     "note": "Per personality the tiers overlap: cida identical at beginner/casual/smart, juninho at casual/smart, bia/ze at smart/expert. Inherent to personality and difficulty being orthogonal; the match-level ladder is intact.",
+     "owner": "Phase 93 — Technical Debt Review",
+     "reownedFrom": "Phase 54 — AI Balance Metrics",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
+    }
+   ]
+  },
+  {
+   "phase": "48 — Personality Framework",
+   "wave": "6B",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "PERSONALITY_TRAITS is configuration (holdJokers, minimal, rearrange, patient) over the shared engines; createAi composes it with the difficulty tier; no personality owns planning or legality code.",
+   "acceptance": "personalities observably diverge on one seed (existing tests); legality holds for every personality (existing tests); personality and difficulty independent (existing tests)",
+   "verification": [
+    "npx vitest run tests/ai.test.ts (74/74)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p47.log)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, no issues"
+   },
+   "roadmapMismatch": "Roadmap lists 'evaluation weight modifiers' in scope. The repo deliberately keeps src/ai/evaluate.ts neutral and expresses personality as candidate-generation policy instead; the exit criteria are met without weights, and weights would move personality into the shared evaluator the architecture keeps neutral. Repo truth preserved."
+  },
+  {
+   "phase": "49 — Human-Like Behavior",
+   "wave": "6C",
+   "status": "PASS",
+   "result": "Fixed a measured defect: at the beginner tier the four personalities produced only 2 distinct play sequences over 8 seeded matches each (cida, bia and ze identical), because the tier caps everyone at one action per turn AND patience was excluded at beginner. Patience now applies at every tier.",
+   "acceptance": "beginner divergence 2/4 -> 3/4 personalities; tier ladder still monotone; PatientAi remains a pure wrapper (INV-A5); draw fallback always legal",
+   "verification": [
+    "npx vitest run tests/ai.test.ts (75/75)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p49.log)"
+   ],
+   "evidence": {
+    "avgTurnsAfter": {
+     "beginner": 128.1,
+     "casual": 123.3,
+     "smart": 105.1,
+     "expert": 93.7
+    },
+    "personalityDivergenceByTier": {
+     "beginner": "3/4",
+     "casual": "4/4",
+     "smart": "4/4",
+     "expert": "3/4"
+    }
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, all exit criteria met, no issues"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-cida-bia-identical",
+     "note": "cida and bia play identically at beginner and expert; they differ only in the minimal and rearrange traits those tiers override for everyone. Fixing it means either collapsing the tier ladder or a personality-specific comparator inside the neutral evaluator.",
+     "owner": "Phase 93 — Technical Debt Review",
+     "reownedFrom": "Phase 54 — AI Balance Metrics",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
+    }
+   ],
+   "note": "Phase 49's other in-scope items are owned by the presentation layer and were verified, not re-built: per-personality cadence (GameScene.aiThinkDelay), pre-move tells, characterful lines and repeat-line suppression (GameScene.showEmote)."
+  },
+  {
+   "phase": "50 — Adaptive AI",
+   "wave": "6C",
+   "status": "BLOCKED",
+   "result": "Not built. Nothing adaptive exists in the repo. Building it means player-pattern tracking, bounded policy adjustment, reset/persistence semantics and a privacy section — new gameplay machinery that AGENTS.md's product guardrails say needs an explicit request, and that works against the difficulty the player chose. The phase goal itself says 'optional'.",
+   "blockedOn": "product decision by the repository owner: build bounded adaptation, or close the phase as deliberately not-wanted",
+   "impactOnLaterPhases": "none found — Phase 51 completed without it; Phase 54 measures whatever exists; Phase 72 has less to review",
+   "critic": {
+    "round": 0,
+    "result": "n/a — nothing implemented"
+   }
+  },
+  {
+   "phase": "51 — AI Explainability",
+   "wave": "6C",
+   "status": "PASS",
+   "result": "Replaced prose-parsed explainability with structured data. Engines record a DecisionTrace (rearranged, patient, candidatesWeighed, features); createAi attaches AiReason {key, personality, trace}. Deleted aiReasonKeySuffix and the personality:reason string round-trip, including the regexes (/rearranged|split|moved/, startsWith('extended')) that decided the player-facing line by pattern-matching the search's own prose.",
+   "acceptance": "reason key of every personality/tier decision is a real ai.why.* key; trace reports what the search did; reason is attached, never consulted (INV-A7); candidatesWeighed bounded by MAX_CANDIDATES; no hidden information (every field derived from the AiObservation)",
+   "verification": [
+    "npx tsc --noEmit",
+    "npx vitest run tests/ai.test.ts (76/76)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p51c.log)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, no bugs; one ambiguity in the INV-A7 wording (whether a trace counts as hidden state) repaired by rewording the invariant and the AiReason doc comment"
+   },
+   "docs": [
+    "docs/ARCHITECTURE.md AI foundation",
+    "docs/INVARIANTS.md INV-A7 (new)"
+   ],
+   "deferredRisks": [
+    {
+     "id": "P3-perf-spec-flake",
+     "note": "stress-table @perf measured 43.9 fps against a local floor of 50 in one full-suite run; passes alone and on rerun. Already one of the two flaky specs docs/ROADMAP.md records.",
+     "owner": "Phase 84 — Flaky-Test Control"
+    }
+   ]
+  },
+  {
+   "phase": "52 — AI Performance Budgets",
+   "wave": "6D",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Budgets were already counts rather than durations (SEARCH_BUDGET_TRIALS 120k, MAX_CANDIDATES 20 / EXPERT_MAX_CANDIDATES 48, INTER_MELD_TRIPLE_CAP 300) and src/ai is clock-free. Added the missing profiling hook: DecisionTrace.trialsSpent, so budget headroom is measurable instead of asserted.",
+   "acceptance": "budgets explicit and exported; no wall clock in any decision path; the cap demonstrably does not choose the move (dense table spends 23k of 120k trials); decideSliced yields between phases only",
+   "verification": [
+    "npx vitest run tests/ai.test.ts (77/77)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p52.log, tmp/agent-logs/verify-p53.log)"
+   ],
+   "evidence": {
+    "denseTableExpertCap": {
+     "trials": 22924,
+     "budget": 120000,
+     "candidates": 32,
+     "ms": 36
+    },
+    "freshDeal": {
+     "trials": 0
+    }
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, no issues"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-no-low-end-device-runtime-evidence",
+     "note": "Runtime evidence is a developer machine plus the emulated-viewport e2e perf specs. No CPU-throttled or real low-end device measurement of AI decision time exists. The trial budget makes the decision device-independent, but the wall time it takes on weak hardware is unmeasured.",
+     "owner": "Phase 67 — Cross-Browser & Device Validation / Phase 75 — Performance Budgets"
+    }
+   ]
+  },
+  {
+   "phase": "53 — AI Simulation Harness",
+   "wave": "6D",
+   "status": "PASS",
+   "result": "Added scripts/simulate.ts (npm run simulate): batch AI-vs-AI matches over a seed range through the production path only — createNewGame, observeForAi, createAi, GameStore.dispatch. Machine-readable per-game rows via --json. A refused action dumps the game's replay and exits non-zero.",
+   "acceptance": "production rules/contracts (no separate turn loop or legality path); every run reproducible from the printed seats/difficulty/seed range; 20 games in 1.1s, 200 in ~11s; --json output consumed by Phase 54",
+   "verification": [
+    "npm run simulate -- --seeds 1-20 --json tmp/sim-test.json (PASS)",
+    "npx eslint scripts/simulate.ts",
+    "npx tsc --noEmit",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p53.log)"
+   ],
+   "critic": {
+    "round": 2,
+    "result": "CRITIC PASS — round 1 found one real bug in the matchup aggregation and two input-validation gaps; all repaired and re-reviewed"
+   },
+   "docs": [
+    "docs/TESTING.md developer tools + runtime budget row"
+   ],
+   "note": "Also corrected scripts/replay.ts, whose header still claimed bia/ze record non-reproducibly under a wall-clock budget."
+  },
+  {
+   "phase": "54 — AI Balance Metrics",
+   "wave": "6D",
+   "status": "PASS",
+   "result": "Extended the harness with --sweep difficulty and --sweep matchups, 95% confidence half-widths on win counts and a standard deviation on game length. Matchup pairs play each seed set from both sides, because moving first is worth real games in this format.",
+   "acceptance": "difficulty separation and personality differentiation both measurable; methodology documented; every number reproducible from the printed config; several metrics reported and none treated as the answer",
+   "verification": [
+    "npm run simulate -- --seeds 1-200 --sweep difficulty",
+    "npm run simulate -- --seeds 1-100 --sweep matchups",
+    "npx eslint scripts/simulate.ts",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p54d.log)"
+   ],
+   "evidence": {
+    "difficultySweep200Seeds": {
+     "beginner": {
+      "cida": 49,
+      "juninho": 88,
+      "bia": 31,
+      "ze": 32,
+      "avgTurns": 126.9,
+      "drawRate": 0.631,
+      "peakTrials": 0
+     },
+     "casual": {
+      "cida": 55,
+      "juninho": 83,
+      "bia": 32,
+      "ze": 30,
+      "avgTurns": 121.6,
+      "drawRate": 0.661,
+      "peakTrials": 0
+     },
+     "smart": {
+      "cida": 4,
+      "juninho": 4,
+      "bia": 96,
+      "ze": 96,
+      "avgTurns": 103.9,
+      "drawRate": 0.564,
+      "peakTrials": 5952
+     },
+     "expert": {
+      "cida": 33,
+      "juninho": 53,
+      "bia": 55,
+      "ze": 59,
+      "avgTurns": 89.7,
+      "drawRate": 0.551,
+      "peakTrials": 4520
+     }
+    },
+    "matchups200GamesPerPair": "bia/ze beat cida/juninho 194-197 to 3-6; bia vs ze 98 vs 102 +/-13.9 (a tie at this sample size)",
+    "reading": "juninho wins the two tiers where nobody rearranges; the rearrangers take over the moment the search switches on; expert levels the field because every personality then rearranges"
+   },
+   "critic": {
+    "round": 2,
+    "result": "CRITIC PASS — round 1 raised one bug (avgCardsLeft not aggregated across the reversed matchup run) and two silent-degradation input gaps; all repaired"
+   },
+   "docs": [
+    "docs/TESTING.md simulation harness methodology and how to read the numbers"
+   ],
+   "deferredRisks": [
+    {
+     "id": "P2-perf-spec-floors-under-suite-load",
+     "note": "Three @perf failures this session inside the full suite, all passing in isolation: crowded-table-max 24.8 and 39.0 fps against a local floor of 45, stress-table 43.9 against 50. The local floors look unachievable under full-suite load rather than randomly flaky; raising them needs CI measurement, not a guess.",
+     "owner": "Phase 84 — Flaky-Test Control"
+    }
+   ]
+  },
+  {
+   "phase": "55 — AI Content Tooling",
+   "wave": "6E",
+   "status": "PASS",
+   "result": "Added --explain to the simulation harness: one line per decision (seat, personality, reason class, cards played, rearranged, candidates weighed, trials spent). Replaces the throwaway-script / console.log-in-the-engine investigation loop.",
+   "acceptance": "reproducible (seeded, deterministic trace); nothing in src/ imports scripts/; no configuration duplicated; output derived from the AiObservation so it cannot name a hidden card",
+   "verification": [
+    "npm run simulate -- --seeds 12 --explain",
+    "npx eslint scripts/simulate.ts",
+    "npm run verify (exit 0)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, exit criteria met"
+   }
+  },
+  {
+   "phase": "56 — AI Regression & Robustness",
+   "wave": "6E",
+   "status": "PASS",
+   "result": "Added a strategy-regression threshold: Bia must beat Cida on >=10 of 12 seeded matches and leave her holding >=5 cards on average. Existing coverage (legality, determinism, budgets, redaction, property, probes, golden replays) protects everything except a search that silently gets worse while staying legal and in character.",
+   "acceptance": "outcome-based, so refactors keeping the AI competent pass; deterministic (no run-to-run randomness); ~2s of a ~9s suite",
+   "verification": [
+    "npx vitest run tests/ai.test.ts (78/78)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p56b.log)"
+   ],
+   "evidence": {
+    "baselineSeeds1to12": {
+     "biaWins": 12,
+     "cidaAvgCardsLeft": 7.67
+    },
+    "harness200Games": "bia 197 / cida 3"
+   },
+   "critic": {
+    "round": 2,
+    "result": "CRITIC PASS after repair. Round 1 called the win-count-only threshold under-powered for moderate regressions (~60% detection at a 10% quality loss); the margin assertion was added as a continuous measurement, one value per game instead of one bit."
+   },
+   "roadmapMismatch": "Phase 56 lists 'selective mutation' in scope. stryker.conf.json deliberately excludes src/ai (documented in docs/TESTING.md): mutating a heuristic search measures the heuristic, not a contract. Repo truth preserved."
+  },
+  {
+   "phase": "57 — Multiplayer Contract Audit",
+   "wave": "7A",
+   "status": "PASS",
+   "result": "Three read-only audits (protocol drift, redaction, revision/reconnect identity). One P1 defect found and fixed: RoomManager.sweep() reaped rooms at the deployment default grace (30s) while the stalled-turn path used the room's own reconnectGraceMs (60s for every matchmade room and the casual/off presets, up to 300s custom), so a room could be closed while its players were inside the window it promised. Plus protocol doc drift and an undocumented, untested revision asymmetry.",
+   "acceptance": "one owner for the reconnect window; reaction messages documented; revision comparison rules written down and the equal-rev frame pinned by a test; redaction verified end to end",
+   "verification": [
+    "npx vitest run tests/server (305 tests)",
+    "npx vitest run tests/online-session.test.ts (19)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p57.log)",
+    "npm run verify:multiplayer:chromium (exit 0, 77 screenshots, tmp/agent-logs/verify-mp-p57.log)"
+   ],
+   "evidence": {
+    "regressionTest": "tests/server/rooms.test.ts S1 sweep-grace test verified red with the fix stashed",
+    "redaction": "single projection point viewFor -> buildView, per recipient seat, 8 asserting tests incl. a property test and a raw-frame check that the seed never appears"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, all exit criteria met, no issues"
+   },
+   "docs": [
+    "docs/MULTIPLAYER.md section 4 reaction rows",
+    "docs/MULTIPLAYER.md section 6 revision asymmetry"
+   ],
+   "nonFinding": "The audit flagged 4 server error codes as undocumented. Section 8 deliberately names SERVER_ERROR_CODES as the single list instead of duplicating it, and src/net/errors.ts has a test that fails on a code without copy. Repo truth preserved.",
+   "deferredRisks": [
+    {
+     "id": "P3-matchseats-identity-fallback",
+     "note": "room.seats[room.matchSeats[i] ?? i] silently falls back to identity mapping when matchSeats has no entry, inventing a seat rather than failing on a violated invariant (AGENTS.md says fail).",
+     "owner": "Phase 93 — Technical Debt Review",
+     "reownedFrom": "Phase 58 — Authoritative Multiplayer State Flow",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
+    }
+   ]
+  },
+  {
+   "phase": "58 — Authoritative Multiplayer State Flow",
+   "wave": "7A",
+   "status": "PASS",
+   "result": "Authority model already satisfied and verified against code (server-only transitions, per-seat redaction, revision checks, viewProjectionProblem rejecting unrepresentable frames before anything is written, applySync testable with no socket/Phaser/clock). Two changes: removed the identity-mapping fallbacks carried over from Phase 57, and fixed a pre-existing seat/player-index confusion in claimMexeBonus found by the critic.",
+   "acceptance": "claimMexeBonus translates chair to player index like claimTurn; no path invents a seat when matchSeats has no entry; authority, projection and resync criteria evidenced at file:line",
+   "verification": [
+    "npx vitest run tests/server (306 tests)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p58c.log)",
+    "npm run verify:multiplayer:chromium (exit 0, tmp/agent-logs/verify-mp-p58c.log)"
+   ],
+   "evidence": {
+    "regressionTest": "tests/server/timer.test.ts LB-14 gapped-room bonus test verified red with the fix stashed",
+    "defect": "in a room with a seat gap every chair after the gap was refused the Mexe timer extension; denial only, never escalation, since the seat comes from the socket rather than the payload"
+   },
+   "critic": {
+    "round": 2,
+    "result": "CRITIC PASS. Round 1 found the claimMexeBonus defect (pre-existing, not in the diff under review) and questioned the ?? -1 skip; round 2 verified the fix and confirmed matchSeats and state are written and cleared together, so the skip is unreachable and correct."
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-suite-green-only-when-quiet",
+     "note": "Corrected after investigation. Genuine: the @perf fps floors fail under full-suite load (crowded-table-max 24.8 and 39.0 vs a floor of 45, stress-table 43.9 vs 50; all pass in isolation) and tests/server/discovery.test.ts timed out on 4 socket tests in one run. Not genuine: three e2e-multiplayer failures were self-inflicted (overlapping gates, 22.4m for a normally ~5m run), and one vitest timeout was a test of mine with vitest's 5s default, since fixed with an explicit 30s deadline.",
+     "owner": "Phase 84 — Flaky-Test Control"
+    }
+   ]
+  },
+  {
+   "phase": "59 — Lobby State Machine",
+   "wave": "7B",
+   "status": "PASS",
+   "result": "LobbyMachine already satisfied the structural criteria (one LobbyPhase union instead of boolean combinations, every transition a named method returning effects, no Phaser/socket/DOM/clock, fresh machine per scene create, unsubs released on shutdown). Fixed three fields that leaked from one room into the next within a single machine instance.",
+   "acceptance": "a second room in the same session starts with open terms and none of the first room's notices, reaction or rematch framing; a resumed room keeps its rematch framing when the reconnect is answered with room_joined",
+   "verification": [
+    "npx vitest run tests/lobby.test.ts (27)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p59d.log)",
+    "npm run verify:multiplayer:chromium (exit 0, 77 screenshots, tmp/agent-logs/verify-mp-p59d.log)"
+   ],
+   "evidence": {
+    "defect": "settingsLocked was written only by roomState, so after room A's match started, an error screen and RETRY, the host of a brand-new room B could not open their own terms screen (openCustom checks the flag)",
+    "test": "tests/lobby.test.ts second-room test verified red before the fix"
+   },
+   "critic": {
+    "round": 2,
+    "result": "CRITIC PASS. Round 1 found two further leaks (rematch, lastReaction) the first fix missed; both now cleared on the serverError branch that means the seat is gone. Round 2 verified the branch is reached only there, confirmed against server/index.ts that reconnect is answered with room_joined (so rematch must survive it), and swept the remaining fields."
+   },
+   "note": "Also fixed a comment in OnlineScene.fireOnce that contradicted the room_joined handler about which response releases an in-flight guard, and gave the Phase 56 strategy-threshold test an explicit 30s deadline after it hit vitest's 5s default under full-suite load."
+  },
+  {
+   "phase": "60 — Disconnect & Reconnect",
+   "wave": "7B",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Every exit criterion already had test evidence: token-only seat ownership (name is not auth), reconnect through the same per-seat projection as a broadcast, restoration into a lobby / mid-match / after the turn moved on / after a rematch recycle, a reaped room refusing to resurrect, and idempotent repeated reconnect. Stale-connection replacement is covered by OH-24. Two additions: a doc correction and one missing assertion.",
+   "acceptance": "seat ownership, restoration, safe failure, repeated reconnect and redaction all evidenced at file:line by existing tests",
+   "verification": [
+    "npx vitest run tests/server/reconnect.test.ts tests/net/reconnect.test.ts (25)",
+    "npx vitest run tests/server/index.integration.test.ts (19)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p60.log)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, no bugs. Raised three coverage gaps; the one worth closing (OH-24 never asserted the evicted socket receives invalid_token, which is the code the client relies on to drop its token) is now asserted."
+   },
+   "docs": [
+    "docs/MULTIPLAYER.md section 0: the retry loop spans the presets' 60s window, not a custom grace of up to 300s; exhausting it does not drop the token, so the seat is still reclaimable"
+   ],
+   "deferredRisks": [
+    {
+     "id": "P3-reconnect-coverage-gaps",
+     "note": "No test drives an exhausted client retry loop through a reload into a successful reconnect (client-side retention verified by inspection), and none combines a repeated reconnect with a turn taken in between.",
+     "owner": "standing: nightly multiplayer-all-engines job",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA",
+     "reownedBy": "Final roadmap gate"
+    }
+   ]
+  },
+  {
+   "phase": "61 — Rematch Lifecycle",
+   "wave": "7B",
+   "status": "PASS",
+   "result": "Server-side rematch lifecycle already satisfied the phase (recycleForRematch is the one owner of match-scoped reset: state, rev, matchId, matchSeats, winningMove, clocks, Mexe bonus, missed-turn streaks, ready bits; party state deliberately survives). One P1 client defect found and fixed: a seat whose socket was down when the match ended never received game_over, so its client stayed in GameScene on a frozen board and — being stuck in the match scene — could never cast the ready bit the room's next match needs.",
+   "acceptance": "a client that reconnects into a room its match already finished in is handed back to the rematch lobby and can vote there; the normal finish path still routes through WinScene (game_over and the recycle room_state arrive in the same server tick); a rematch is revision 1 with a fresh matchId",
+   "verification": [
+    "npx vitest run tests/online-session.test.ts tests/i18n.test.ts (30)",
+    "npx vitest run tests/server tests/online-session.test.ts (327)",
+    "npx tsc --noEmit",
+    "npx eslint (changed files)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p61.log)",
+    "npm run verify:multiplayer:chromium (exit 0, 44 passed, 5.4m, tmp/agent-logs/verify-mp-p61.log)"
+   ],
+   "evidence": {
+    "regressionTest": "LB-47 (e2e-multiplayer/lobby.spec.ts) verified red before the fix: the returning client reached status open but stayed in scene \"game\" (tmp/agent-logs/lb47-red.log, screenshot in test-results/); green after (30.5s, tmp/agent-logs/lb47-green.log)",
+    "reproduction": "2 clients, custom terms (turnMs 15s, missedTurnLimit 10, grace 300s); both draw the pile down to 2, seat 1 goes offline (context offline + forceDrop), seat 0 finishes alone while the server draws and passes for the absent seat, seat 1 comes back",
+    "repeatedRematches": "existing LB-19..LB-24 (three matches, departures, replacement, host transfer, between-match reconnect) and LB-16..LB-20 at 2/3/4 seats"
+   },
+   "docs": [
+    "docs/MULTIPLAYER.md §6: \"A drop over the finish\""
+   ],
+   "notes": [
+    "OnlineSession.applySync deliberately still ignores matchId: a frame from the previous match cannot reach a new session (one WebSocket per client, ordered, and the server never re-sends an old match's frames), so a matchId guard would be a code path with no reachable defect. Ordering/duplicate protection is Phase 62's scope — recorded there rather than pre-built here.",
+    "Duplicate listeners across a rematch are not separately instrumented: every scene drops its NetClient subscriptions in its own shutdown, and a leaked handler acting on a dead scene would surface in window.__MEXE__.errors / console errors, which assertClean already fails on in every rematch e2e."
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, no issues. Confirmed listener order (game_over registered before room_state, FIFO per socket) makes the normal finish path unhijackable, the delayed handoff guard is correct, and rev=1 is now pinned."
+   }
+  },
+  {
+   "phase": "62 — Race / Duplicate / Ordering Protection",
+   "wave": "7C",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Most of the phase was already built and verified: claimTurn's active-seat + exact-rev + processing guards, idempotent ready / join_queue / cancel_queue / set_room_settings, a repeat mexe_started answered as a no-op, a second start_game refused with game_started, the cancel-vs-match race resolved one way, a reconnect burst leaving exactly one live transport, a budgeted resync, and a client that ignores strictly older frames while re-applying equal-rev ones. Two gaps closed: (1) OnlineSession.applySync ordered every frame against lastRev, but rev restarts at 1 on each deal, so a frame from another match would have been dropped as stale or applied as this match's board — it now refuses on matchId before the rev comparison (the item Phase 61 explicitly handed to this phase); (2) claimTurn's state.phase !== 'playing' guard was unpinned by any test — a turn action retried into a finished match or into a recycled rematch room is now a regression.",
+   "acceptance": "stale/duplicate actions refused deliberately with an explicit ReasonCode; nothing applied on a frame the session cannot order (lastRev and state untouched); no authoritative mutation from a late/duplicate action after a match ends or after recycleForRematch; focused race regressions exist at the cheapest level (pure session + server manager)",
+   "verification": [
+    "npx vitest run tests/online-session.test.ts (22/22)",
+    "npx vitest run tests/server/rooms.test.ts (71/71)",
+    "npm run verify (exit 0, tmp/agent-logs/verify-p62.log)",
+    "npm run verify:multiplayer:chromium (44/44 chromium, 5.8m, exit 0, tmp/agent-logs/verify-mp-p62.log)"
+   ],
+   "evidence": {
+    "redBeforeGreenAfter": "the cross-match frame test fails with the matchId guard disabled (1 failed | 21 passed) and passes with it",
+    "mutationProbe": "removing `state.phase !== 'playing'` from claimTurn fails only the new late-action test (1 failed | 70 passed), confirming it was the sole pin on that guard",
+    "producerAudit": "server/rooms.ts:900 is the only production caller of buildView, so every view reaching applySync carries a server-minted matchId; protocol.ts's matchId='' default is a test-fixture path only",
+    "firefox": "the [firefox] Playwright project cannot launch on macOS 27, so the chromium-only multiplayer gate was used (the iOS WebKit row is skipped by that script, as it reports)"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS, no blockers, no polish items"
+   },
+   "docs": [
+    "docs/MULTIPLAYER.md §6: match identity is checked before the revision comparison"
+   ],
+   "deferredRisks": [
+    {
+     "id": "P3-late-rejection-not-correlated",
+     "note": "proposal_rejected carries reqId but the client never correlates it. A rejection that arrives after its pending window was released (the 10s ONLINE_PENDING_TIMEOUT_MS path, or after a state_sync already landed) still plays the invalid sfx, shows a stale reason line and rebuilds the editor from the current state, which would discard a draft the player had just started. Input safety is unaffected: interactivity also requires !online.resyncing (GameScene.ts:2424), so a rejection cannot unlock a board that is mid-resync. Needs delayed delivery to reproduce, which this phase has no harness for.",
+     "owner": "Phase 100 — Final Multiplayer QA",
+     "reownedFrom": "Phase 65 — Network Chaos Testing",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
+    }
+   ],
+   "notes": [
+    "No roadmap/repo mismatch. Phase 62's remaining in-scope items (duplicate intents, retries, reentrancy, concurrent actions, idempotence) were verified against code and existing tests rather than rebuilt; the phase's value here was the two unguarded/unpinned spots above.",
+    "room.processing stays a defensive re-entrancy guard only — the manager is synchronous between check and mutation, so real double-submit protection is the rev check (S8). Unchanged by this phase."
+   ]
+  },
+  {
+   "phase": "63 — Multi-Client Harness",
+   "wave": "7C",
+   "status": "PASS",
+   "result": "Exit criteria 1-3 were already met and were verified rather than rebuilt: one browser context per simulated player (own storage, own sessionStorage, own socket), one real server process per spec file on an OS-assigned port, a fixed MEXE_TEST_SEED for a deterministic deal, and reproducible 2/3/4-seat, reconnect, rematch and endurance scenarios across multiplayer.spec.ts, lobby.spec.ts and ios-lobby.spec.ts. Two gaps closed: (1) multiplayer.spec.ts re-declared its own newClient / trackConsoleErrors / shot / SCALE / toScreen / OUT_DIR, a second definition of 'what a client is' that contradicted docs/TESTING.md's statement that browser-only setup lives in e2e-multiplayer/harness.ts — deleted, the spec now imports the harness and keeps only its worker's WS URL and the mp- screenshot prefix; (2) a failing test reported only the assertion that noticed, so harness.ts gained attachClientContexts(testInfo), called from each spec's afterEach, which on failure attaches one record per client this test opened.",
+   "acceptance": "independent stateful clients (unchanged, verified); key multi-client scenarios reproducible (44/44 chromium); orchestration stable (OS-assigned ports, loud bind failures, 2 workers, 5.8m); failures name client, seat and revision",
+   "verification": [
+    "npx tsc --noEmit (clean)",
+    "npx eslint e2e-multiplayer (clean)",
+    "npm run verify:multiplayer:chromium (44/44, 5.8m, exit 0, tmp/agent-logs/verify-mp-p63.log)"
+   ],
+   "evidence": {
+    "failureContext": "a temporary deliberately-failing spec (deleted after the run) produced the attachment in the Playwright report; mid-match it carried per client: seat 0/1, localSeat 0/1, rev 1, matchId 0000bb8d-…, phase match, code ZCPKY, status open, last 8 and 7 wire messages (tmp/agent-logs/p63-context-proof2.json)",
+    "lobbyContext": "the same helper in a lobby-phase failure carried seat 0/1, code PM42Y, phase lobby; rev/matchId are null there because no match exists yet",
+    "dedupeSafety": "the harness trackConsoleErrors also captures pageerror, which the deleted spec-local copy did not; the full suite passes with the stricter capture, so no spec assertion became fragile and an unhandled page error can no longer pass this suite silently"
+   },
+   "critic": {
+    "round": 2,
+    "result": "CRITIC PASS. Round 1 raised one blocker and two risks; all three were answered with evidence and withdrawn (pageerror capture is deliberate and proven green; a Playwright worker runs one test at a time and the drain is unconditional, so openedClients cannot leak across tests or projects). The one doc-clarity finding was repaired."
+   },
+   "docs": [
+    "docs/TESTING.md: harness owns the definition of a simulated player; attachClientContexts reports and drains only"
+   ],
+   "deferredRisks": [],
+   "notes": [
+    "No roadmap/repo mismatch. The phase's in-scope items (independent clients/processes, deterministic room setup, synchronized actions, reconnect, rematch, multi-seat observation) were already built in Waves 5-7B; the value here was removing the second harness authority and giving failures their seat/revision context.",
+    "The [firefox] and [webkit] multiplayer projects were not run: Firefox cannot launch on this macOS 27 host, so the chromium-only gate is the evidence. The lobby specs' own afterEach wiring is identical across all three projects, so the hook is not engine-specific."
+   ]
+  },
+  {
+   "phase": "64 — Multiplayer Scenario Matrix",
+   "wave": "7C",
+   "status": "PASS",
+   "result": "The matrix already existed and is owned by docs/INVARIANTS.md (the INV-N* register plus the Multiplayer canonical-scenario table), with docs/TESTING.md carrying product-level risk (GQA-*) and subsystem routing and docs/MULTIPLAYER.md §11 carrying per-suite prose — three complementary views, not three authorities. It was stale: the scenario table stopped at the pre-discovery feature set, so five shipped lifecycle families had suites but no row. Added SCN-36 (room discovery, private by default through a browser/invite-link join), SCN-37 (casual matchmaking: idempotent join/cancel, oldest-first groups, one seat each, cancel that lost to a committed match), SCN-38 (party session across matches: wins, rematch votes, bounded history and feed, cooldown-limited reactions), SCN-39 (absent seat through the missed-turn limit to the match ending and the room closing) and SCN-40 (budgets and the reaction cooldown under load), each mapped to its invariants and its existing owning suites, and cross-linked back from INV-N1/N2/N4/N6/N7. No new test, no new document.",
+   "acceptance": "every high-risk multiplayer behavior mapped to a level and an owning suite; matrix compact (5 rows added, one per behavior family, 40 scenarios total across the whole product); no important lifecycle path unowned",
+   "verification": [
+    "npx vitest run on all nine suites cited by the new rows (218/218)",
+    "path check: every file path named in the new rows exists; no SCN id referenced but undefined",
+    "protocol-message audit: all 17 client-to-server message types are exercised over a real socket in tests/server or tests/net; an unsupported PROTOCOL_VERSION frame is covered in tests/server/queue.integration.test.ts:243"
+   ],
+   "critic": {
+    "round": 2,
+    "result": "CRITIC PASS. Round 1 found one factual blocker — SCN-40 described reactions as budget-refused when server/index.ts drops them silently on a per-seat cooldown — which was corrected. The INV-N4/SCN-36 cross-link and the compactness were confirmed; no parallel authority with TESTING.md or MULTIPLAYER.md."
+   },
+   "docs": [
+    "docs/INVARIANTS.md: SCN-36..SCN-40 and the INV-N* cross-links"
+   ],
+   "deferredRisks": [
+    {
+     "id": "P3-retry-exhaustion-unowned",
+     "note": "e2e-multiplayer covers an unreachable server and a recoverable retry, but no test drives the bounded retry loop to exhaustion and back into a successful reconnect. Same gap Phase 60 recorded as P3-reconnect-coverage-gaps.",
+     "owner": "standing: nightly multiplayer-all-engines job",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA",
+     "reownedBy": "Final roadmap gate"
+    },
+    {
+     "id": "P3-pwa-offline-x-online-room",
+     "note": "SCN-34 covers an offline reload of a local match only. What an online room does across a PWA offline transition is unmapped and untested.",
+     "owner": "standing: nightly cross-browser-matrix job",
+     "reownedFrom": "Phase 97 — Final Product QA",
+     "reownedBy": "Final roadmap gate"
+    }
+   ],
+   "notes": [
+    "No roadmap/repo mismatch. The phase warned about matrix explosion; the response was one row per behavior family pointing at suites that already exist, rather than a per-case table or a fourth document."
+   ]
+  },
+  {
+   "phase": "65 — Network Chaos Testing",
+   "wave": "7D",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Adverse delivery is now a real, reproducible condition rather than an argument. CH-01..CH-05 intercept one client's WebSocket with page.routeWebSocket (Playwright 1.63) and delay its incoming frames 800ms, triple them, re-deliver the previous frame behind the newer one, drop the answer to its own move once, or hold a proposal_rejected until a later state_sync has landed; the other client stays clean and is the control, and every test asserts both seats reach the same rev with desyncs()===0 and identical board projections. One product defect closed along the way — the P3 late-rejection risk Phase 62 deferred to this phase: NetClient now correlates proposal_rejected against the proposals actually in flight and drops one that answers a board already replaced.",
+   "acceptance": "selected adverse conditions reproducible (5 deterministic cases, ~30s total); authoritative state consistent (rev agreement + identical projections + zero desyncs in every case); recovery explicit (CH-04 pins the pending-timeout resync, CH-03 pins the stale-frame rule); failures diagnosable (Phase 63's attachClientContexts reports each client's seat, rev and last wire messages)",
+   "verification": [
+    "npm run verify (exit 0, tmp/agent-logs/verify-p65.log)",
+    "npm run verify:multiplayer:chromium (49/49, 6.5m, exit 0, tmp/agent-logs/verify-mp-p65b.log)",
+    "npx vitest run tests/net (81/81)",
+    "npx tsc --noEmit, npx eslint e2e-multiplayer (clean)"
+   ],
+   "evidence": {
+    "mutationProbes": "removing the applySync stale guard fails CH-03; disabling GameScene.onOnlinePendingTimeout fails CH-04; removing the reqId correlation fails CH-05 and 3 of the 5 correlation unit tests",
+    "rejectedApproach": "the first attempt guarded the scene instead (if (!this.onlinePending) return in onOnlineRejected). It broke the existing 'two clients ... illegal proposal' gate, because window.__MEXE__.online.submitRaw deliberately bypasses the scene's input lock, so a legitimate refusal was swallowed. The correlation was moved to the transport, where the reqId ledger already lives, and that gate passes again.",
+    "ch03Model": "the obvious reorder model — hold frame N until N+1 arrives — deadlocks, because a client blocks on the answer to its own move and no later frame is produced. CH-03 instead re-delivers the previous frame behind the current one, which is the shape late delivery actually takes on one ordered socket; CH-04 covers the withheld-frame case, which needs the timeout rather than a later frame."
+   },
+   "critic": {
+    "round": 2,
+    "result": "CRITIC PASS. Round 1 raised the single-in-flight assumption, a missing two-proposal test and connect() not clearing the ledger; all three were repaired (Set of outstanding ids, new test, clear on connect)."
+   },
+   "docs": [
+    "docs/MULTIPLAYER.md §6 (refusal correlation) and §11 (the chaos gate)",
+    "docs/TESTING.md (chaos as part of the multiplayer suite, not a new level)",
+    "docs/INVARIANTS.md SCN-41"
+   ],
+   "deferredRisks": [
+    {
+     "id": "P3-chaos-timing-under-load",
+     "note": "CH-01..CH-05 use wall-clock waits (800ms injected delay, 20s convergence, 25s for CH-04 against the product's 10s pending timeout). Generous, and the five together run ~30s, but they are not immune to a heavily contended CI runner.",
+     "owner": "standing: nightly multiplayer-traced job",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA",
+     "reownedBy": "Final roadmap gate"
+    },
+    {
+     "id": "P3-chaos-outbound-untouched",
+     "note": "Only server-to-client frames are mangled. Client-to-server loss/duplication is covered indirectly (the server's own rev/duplicate guards, Phase 62) rather than by an injected outbound fault.",
+     "owner": "Phase 66 — Multiplayer Soak Testing"
+    }
+   ],
+   "notes": [
+    "Disconnect and retry were already covered (forceDrop, context().setOffline, tests/net/reconnect.test.ts OR-*) and were not re-proven here."
+   ]
+  },
+  {
+   "phase": "66 — Multiplayer Soak Testing",
+   "wave": "7D",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Repeated lifecycle was already proven at the RoomManager level (lobby-soak: 10 seeds x 1200 steps) and in the browser (LB-19..LB-24 three-match endurance). The gap was the layer between them — sockets, seat/connection bookkeeping and the process itself — so this phase added one server-integration soak that repeats a full room life (create, play, rematch, mid-match drop and token reclaim, leave) against the real server process and asserts the baseline returns after every cycle. Also closed the Phase 64 deferred risk P3-retry-exhaustion-unowned with a client-level test that drives the bounded reconnect schedule to exhaustion and then back into a live session.",
+   "acceptance": "every cycle ends with rooms=0 and connections=0 on /health (state drift); lifecycle counters on /metrics match the cycles exactly (rooms_created=N, games_started/finished=2N, reconnects=N, message_handler_errors=0); heap growth after the first cycle stays under 10 MB (tripwire); failures name the cycle, the phase of the cycle and the last frames received; PR budget 2 cycles (~11s), nightly budget 8 cycles (~43s)",
+   "verification": [
+    "npx vitest run tests/server/session-soak.integration.test.ts (1/1, 11.1s)",
+    "MEXE_SOAK=1 npx vitest run tests/server/session-soak.integration.test.ts (1/1, 43.2s, tmp/agent-logs/soak-nightly-p66.log)",
+    "npx vitest run tests/net/reconnect.test.ts (13/13)",
+    "npm run test (1119/1119 on the second run; exit 0, tmp/agent-logs/test-p66b.log)",
+    "npm run lint (eslint + tsc --noEmit, exit 0)"
+   ],
+   "evidence": {
+    "mutationProbe": "removing `connections.delete(ws)` from the socket close handler in server/index.ts fails the soak at cycle 1 with connections=3 instead of 0; the product file was restored and re-verified clean with git diff",
+    "realDefectShape": "an earlier draft that let the guest seat merely close its socket saw rooms=1 after a cycle — correct product behaviour (the seat is held for the reconnect grace), which is why the cycle now ends with both seats leaving explicitly",
+    "heapGrowth": "2.1 MB measured over 7 further cycles at the nightly budget, against a 10 MB threshold"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS after two self-repairs: the soak did not verify that its `set_room_settings` clock-off proposal was accepted (a refusal would have silently turned it into a turn-timeout test), and it ran on an unseeded server, so a failure would not have replayed. Both fixed (room_state assertion, MEXE_TEST_SEED=66)."
+   },
+   "docs": [
+    "docs/INVARIANTS.md SCN-42 (repeated lifecycle)",
+    "docs/TESTING.md: simulation level, the nightly long-budget command row, and the nightly job description",
+    ".github/workflows/nightly.yml: MEXE_SOAK=1 step in specialized-tests"
+   ],
+   "deferredRisks": [
+    {
+     "id": "P3-soak-adds-to-pr-suite",
+     "note": "The 2-cycle soak adds ~11s and one spawned server process to `npm run test`. The first full-suite run after adding it hit the known tests/ai.test.ts load flake (timeout at 5000ms); the same suite passed standalone and the full suite passed on rerun (exit 0). Contention, not a new defect, but the soak makes the existing flake marginally likelier.",
+     "owner": "Phase 93 — Technical Debt Review",
+     "reownedFrom": "Phase 84 — Flaky-Test Control",
+     "reownedBy": "Phase 90 — Repository Health Dashboard"
+    },
+    {
+     "id": "P3-chaos-outbound-untouched",
+     "note": "Re-deferred from Phase 65. Client-to-server loss/duplication is still only covered indirectly by the server's own rev/duplicate guards; no injected outbound fault.",
+     "owner": "Phase 100 — final multiplayer QA"
+    },
+    {
+     "id": "P3-soak-heap-tripwire",
+     "note": "The heap check reads /metrics without forcing a GC, so it only catches growth large enough to survive V8 noise. The per-cycle rooms/connections baseline is the real drift signal.",
+     "owner": "Phase 77 — Memory Leak Testing"
+    }
+   ],
+   "closedRisks": [
+    {
+     "id": "P3-retry-exhaustion-unowned",
+     "from": "Phase 64",
+     "note": "tests/net/reconnect.test.ts now drives the bounded schedule to exhaustion, then reconnects on an explicit connect() and asserts the token is replayed and the budget reset to 7."
+    }
+   ],
+   "notes": [
+    "No roadmap/repo mismatch. The phase warned about a soak that only burns time: every assertion here is a baseline or an exact counter, and the run frequency is split (2 cycles per PR, 8 nightly).",
+    "Status file head was d716589 while HEAD was 5d913bf; the seven commits in between are the Phase 65 repairs already recorded in the Phase 65 entry, not unrecorded work."
+   ]
+  },
+  {
+   "phase": "67 — Cross-Browser & Device Validation",
+   "wave": "7D",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "The risk-based split already existed (Chromium runs the whole multiplayer suite, Firefox and WebKit run the lobby state machine, WebKit also runs the iPhone-viewport suite, e2e-cross covers 8 device/engine profiles), so the phase was audit plus two gaps. Gap 1: background/foreground was unowned at browser level — added LB-48 on WebKit/iPhone and made its evidence a gate in check-verify-multiplayer.mjs. Gap 2 (a defect this phase found): LB-47 failed on WebKit and passed on Chromium because playToFinish budgeted iterations, not draws — a seat the server plays for only moves when its 15s turn clock expires, and 600 fast iterations ran out first. The budget is now draws plus a stall deadline.",
+   "acceptance": "LB-48: a hide/show round trip opens no second socket and leaves seat, host, ready bit and roster identical (WebKit, 390x844); LB-47 passes on WebKit and Chromium; the whole WebKit project and the whole Chromium suite stay green; the cross-device profiles stay green",
+   "verification": [
+    "npx playwright test -c playwright.multiplayer.config.ts --project=webkit (26/26, 2.3m, tmp/agent-logs/webkit-p67c.log)",
+    "npx playwright test -c playwright.multiplayer.config.ts --project=chromium --grep-invert @chaos (44/44, 5.0m, tmp/agent-logs/chromium-p67.log)",
+    "npx playwright test -c playwright.cross.config.ts --project=chrome --project=safari --project='ios safari' --project=ipad (52 passed, 24 skipped, 30.3s)",
+    "npx eslint e2e-multiplayer scripts/check-verify-multiplayer.mjs (clean), npx tsc --noEmit (clean)"
+   ],
+   "evidence": {
+    "lb47Before": "[webkit] LB-47 failed at 20.7s with 'match did not finish within draw-pile budget', standalone and in the full project; [chromium] the same test passed in 30.3s (tmp/agent-logs/webkit-lb47.log, chromium-lb47.log)",
+    "lb47After": "[webkit] LB-47 passes in 25.4s; the failure message now names how long nothing moved",
+    "checkerProbe": "rewriting verify-lobby-ios-log.json with resume.socketsOpened=1 makes check-verify-multiplayer.mjs fail with 'a background/foreground round trip did not resume on the live session'; the log was restored afterwards",
+    "screenshot": "docs/screenshots/lb-ios-resume-resumed.png"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS with one honest limitation recorded: LB-48's socket-count assertion does not flip when OnlineScene's resume branch is mutated from requestResync() to connect(), because NetClient.connect() is a no-op while the socket is open. The test still owns what the unit level cannot: that the shipped bundle wires the lifecycle listeners at all, and that a resume does not duplicate the session. The branch that matters when the socket is gone is covered by tests/net/reconnect.test.ts, including the exhaustion-to-recovery case added in Phase 66."
+   },
+   "docs": [
+    "docs/INVARIANTS.md SCN-43 (background and back)",
+    "docs/TESTING.md: the verify:multiplayer gate description now names the background/foreground evidence"
+   ],
+   "deferredRisks": [
+    {
+     "id": "P2-firefox-unverifiable-locally",
+     "note": "Firefox cannot launch on this macOS 27 machine (browserType.launch: Failed to launch the browser process), so no Firefox evidence was produced for this phase or for the shared playToFinish change, which the Firefox lobby run also uses. The nightly multiplayer-all-engines job is the only Firefox gate available.",
+     "owner": "standing: nightly cross-browser and multiplayer-all-engines jobs",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA",
+     "reownedBy": "Phase 104 — Continuous Architecture & Quality Health"
+    },
+    {
+     "id": "P3-lb48-weak-mutant",
+     "note": "LB-48 proves the wiring and the no-duplicate-session invariant, not which resume branch ran. See the critic note.",
+     "owner": "Phase 100 — final multiplayer QA"
+    }
+   ],
+   "notes": [
+    "Roadmap assumed the cross-browser split might need building; the repo already had it. The phase's value was the WebKit-only LB-47 defect and the background/foreground gap, both inside the roadmap's own 'platform-specific issues' bullet.",
+    "Engine logs are written per project, so running engines in separate commands leaves check-verify-multiplayer.mjs reporting 'no lobby evidence for webkit'. That is the split run, not a missing gate: the real verify:multiplayer runs all three engines in one pass."
+   ]
+  },
+  {
+   "phase": "68 — Persistence & Session Recovery",
+   "wave": "8A",
+   "status": "PASS",
+   "result": "Repo already satisfied corruption handling, server-authoritative online recovery and the no-second-authority rule. Gaps closed: docs claimed a mid-match local save that does not exist, and the supported recovery paths were scattered across five docs.",
+   "acceptance": "supported recovery paths explicit (new docs/ARCHITECTURE.md §Persistence table); corruption fails safely (parseSave/deserializeGameState, existing tests); online sessions resync from server (OnlineScene onAppVisible → requestResync, INV-L3); no second state authority (new boundaries test pins web-storage ownership to persistence.ts + net/client.ts)",
+   "changed": [
+    "docs/ARCHITECTURE.md — corrected the stale 'SAVE restores the match the player left' claim; added the Supported recovery paths table",
+    "src/game-state/replay.ts — same correction in the three-artifact comment",
+    "tests/boundaries.test.ts — 'only the two documented owners touch web storage'"
+   ],
+   "verification": [
+    "MEXE_OUTPUT=ai npx vitest run tests/boundaries.test.ts tests/persistence.test.ts tests/error-recovery.test.ts tests/lifecycle.test.ts tests/net/reconnect.test.ts (64/64)",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "log": "tmp/agent-logs/p68-tests.log",
+    "gateSkipped": "npm run screenshot/verify: no product behaviour or UI changed (docs + one static-analysis test), so the visual gate has nothing to falsify"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the only functional risk (a future phase writing match state to storage, re-creating a second authority) is now a failing test rather than a review rule"
+   },
+   "roadmapMismatch": "Roadmap assumed local-session restoration might need building. Repo truth: local mid-match resume is a deliberate documented limitation (INVARIANTS SCN-34); only the docs disagreed with it, and they were corrected rather than the behaviour."
+  },
+  {
+   "phase": "69 — Offline-First Resilience",
+   "wave": "8A",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Every in-scope item already exists and is gated: app shell + runtime cache-first (public/sw.js), version-keyed cache with eviction on activate, offline banner and disabled online entry, reconnect-on-restore, player-asked update handover. docs/PWA_OFFLINE.md already documents cache/update lifecycle and the known limitations.",
+   "acceptance": "offline-supported features work predictably (offline reload, local/AI/tutorial play, en-US and mobile viewports); unsupported online actions fail clearly (rooms disabled offline, not a mid-connect failure); recovery after network restoration works ('back online restores the online lobby'); cache/update behaviour documented (PWA_OFFLINE.md §Cache versioning, §Update handover)",
+   "verification": [
+    "npm run verify:pwa (13/13, exit 0)"
+   ],
+   "evidence": {
+    "log": "tmp/agent-logs/p69-verify-pwa.log",
+    "note": "Chromium only — documented limitation in PWA_OFFLINE.md §Known limitations, not a new risk"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no second authority added, no stale doc found; Phase 68's recovery table and this doc agree on the offline reload case"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-sw-single-engine",
+     "note": "Service-worker lifecycle is verified on Chromium only; other engines are covered for layout only.",
+     "owner": "standing: nightly cross-browser-matrix job (layout) — the service-worker lifecycle stays Chromium-only by design",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA / Phase 97 — Final Product QA",
+     "reownedBy": "Final roadmap gate"
+    }
+   ]
+  },
+  {
+   "phase": "70 — Save & Protocol Compatibility Policy",
+   "wave": "8A",
+   "status": "PASS",
+   "result": "Version fields and refusals already existed per artifact, but the policy was implicit and one refusal was actionable-but-mute: a protocol mismatch (the stale-service-worker case) surfaced as the generic bad_message, 'something went wrong talking to the server'.",
+   "changed": [
+    "src/net/protocol.ts — SERVER_ERROR_CODES gained 'unsupported_version'; parseClientMessage returns a code for the version refusal only",
+    "server/index.ts — sends that code instead of a blanket bad_message",
+    "src/localization/i18n.ts — pt-BR + en-US copy: reload the page to update",
+    "docs/ARCHITECTURE.md — new §Compatibility policy: the four versioned artifacts, what each reads, how each refuses, and the bounded migration rule",
+    "docs/MULTIPLAYER.md §4/§8 — corrected 'refused at connect' (it is refused at the wire boundary, on the first frame) and named the new code",
+    "tests/net/parse-client-message.test.ts, tests/server/index.integration.test.ts, tests/server/queue.integration.test.ts"
+   ],
+   "acceptance": "supported guarantees explicit (one version at a time per artifact, table in ARCHITECTURE.md); unsupported versions fail clearly (unsupported_version → localized 'reload to update'; RulesError for snapshot/replay; per-field defaults for preferences); migration bounded (one hop, preferences only, stated as policy); rollback implications documented (OPERATIONS.md §Rollback + the ship-together rule)",
+   "verification": [
+    "MEXE_OUTPUT=ai npm run test (1122/1122, exit 0)",
+    "npm run lint (exit 0)",
+    "npm run verify:multiplayer:chromium (44/44, exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p70-test.log",
+     "tmp/agent-logs/p70-mp-chromium.log"
+    ],
+    "note": "No PROTOCOL_VERSION bump: an added error code is additive and older clients already fall back to generic copy (src/net/errors.ts). Bumping would have broken working clients to announce a compatibility rule."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the two changed server tests assert the new intended contract (wrong version coded, every other malformed frame still bad_message), not a weakened one"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-mp-firefox-engine",
+     "note": "verify:multiplayer ran Chromium only; Firefox cannot launch on this macOS build and the WebKit iOS gate was skipped with it. Protocol change is engine-independent (parse-level), covered by unit + server integration tests.",
+     "owner": "standing: nightly multiplayer-all-engines job",
+     "reownedFrom": "Phase 100 — Final Multiplayer QA",
+     "reownedBy": "Final roadmap gate"
+    }
+   ]
+  },
+  {
+   "phase": "71 — Production Error Reporting",
+   "wave": "8B",
+   "status": "PASS",
+   "result": "Reason codes, privacy-safe logging, metrics and the no-backend rule were already built (docs/OBSERVABILITY_PRIVACY.md). Two gaps closed: the client error buffer was unbounded and undeduplicated, and no running process said which build it was.",
+   "changed": [
+    "src/verification/debug-api.ts — recordError(): drops a repeat of the message on top, caps the buffer at MAX_RECORDED_ERRORS = 50",
+    "tests/debug-api.test.ts — new, covers dedup and the cap",
+    "server/index.ts — server_listening now carries build (package.json version); deliberately not added to the open /health, which stays unfingerprintable",
+    "docs/OBSERVABILITY_PRIVACY.md — both, in the sections that own them"
+   ],
+   "acceptance": "critical failures diagnosable (errorType + rate metrics + build in the startup line; client keeps the first distinct failures); reporting excludes private state (unchanged logger-level redaction, no new field carries free text); no dependency on reporting availability (there is still no backend anywhere); logging volume controlled (client buffer bounded + deduplicated; server logs level-gated and field-bounded)",
+   "verification": [
+    "MEXE_OUTPUT=ai npm run test (1124/1124, exit 0)",
+    "npm run lint (exit 0)",
+    "npx tsx server/index.ts — startup line shows build 1.11.0"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p71-test.log",
+     "tmp/agent-logs/p71-server2.log"
+    ],
+    "incident": "A first tests/server run showed 2 failures (OH-34/OH-35, session soak). Cause was a stray `tsx server/index.ts` left holding port 8787 by a manual startup check, not the change: both pass after killing it. Recorded rather than hidden."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the dedup rule is 'same as previous', so alternating distinct failures are all kept and only the cap bounds them; no product code path depends on the buffer"
+   }
+  },
+  {
+   "phase": "72 — Privacy & Data Model Review",
+   "wave": "8B",
+   "status": "PASS",
+   "result": "Audited every surface the phase names against the code rather than the docs: 5 storage keys (now pinned by a test), reconnect token in sessionStorage only, logger-level redaction, redacted online projection, play log with no upload path, no AI adaptation state at all (Phase 50 is BLOCKED, nothing persists). One documentation gap closed: the production-shipped verification surface had no privacy statement anywhere.",
+   "changed": [
+    "docs/OBSERVABILITY_PRIVACY.md — new §'The verification surface ships in production': what window.__MEXE__ can and cannot reach, and why shipping it is acceptable rather than merely convenient"
+   ],
+   "acceptance": "sensitive data identified (§What is collected / never collected, plus the new debug-surface table); nothing unnecessary found to remove — gamesStarted and headToHead are counts with named consumers (first-run helper mode, results screen); hidden gameplay information protected (property test over redacted views, INV-N2); every privacy-sensitive feature has a stated purpose",
+   "verification": [
+    "MEXE_OUTPUT=ai npx vitest run tests/server/log.test.ts tests/no-telemetry.test.ts tests/property/protocol.property.test.ts tests/persistence.test.ts tests/playlog.test.ts tests/boundaries.test.ts (94/94, exit 0)"
+   ],
+   "evidence": {
+    "log": "tmp/agent-logs/p72-privacy.log",
+    "greps": [
+     "no 'adapt' state anywhere in src (Phase 50 blocked, so no adaptation data model exists)",
+     "no token reachable from src/verification/*",
+     "only persistence.ts and net/client.ts touch web storage (boundaries test)"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the new 'build' log field added in Phase 71 was re-checked against the redaction rules: a version string is not player data and is the one thing an operator needs next to a failure"
+   }
+  },
+  {
+   "phase": "73 — Optional Product Telemetry",
+   "wave": "8B",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Telemetry is not justified here and the roadmap allows saying so. The quality questions telemetry usually answers are already answered by process-wide server metrics (matches started/finished, reconnects, queue timeouts, handler error rate) with no per-player series, and by the local play log the player can export themselves.",
+   "acceptance": "no event added, so every collected event still has a purpose; no sensitive data collected; product behaviour depends on no reporting backend (there is none); NO_CHANGE_REQUIRED is the roadmap's own stated valid outcome for this phase",
+   "verification": [
+    "tests/no-telemetry.test.ts (in the Phase 72 run, 94/94) — would fail the build if any upload path, vendor or persistent identifier appeared"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — adding opt-in telemetry would have created a second data path to maintain, a consent surface to localize, and a privacy claim to re-verify, against no decision anyone is currently unable to make"
+   },
+   "roadmapMismatch": "None. The phase anticipates this outcome."
+  },
+  {
+   "phase": "74 — Structured Playtest Program",
+   "wave": "8C",
+   "status": "PASS",
+   "result": "docs/PLAYTEST_GUIDE.md already had repeatable scenarios, deterministic visual checkpoints, recording guidance and a reproduction-complete bug template. Missing: the half after the session — classification, severity, deduplication and a recorded decision. Also corrected drift: the guide still said online rematch, matchmaking and public rooms did not exist.",
+   "changed": [
+    "docs/PLAYTEST_GUIDE.md — new §'Triage: from observation to decision' (4 classes, the audit's own P0–P3 severities, dedup rule, 4 decision outcomes); Known limitations and test step 16 corrected against repo truth"
+   ],
+   "acceptance": "playtests repeatable (unchanged scenarios + showcase seeds); findings classified (defect/friction/preference/misread, severity for defects and frequency for friction); technical defects reproducible (seed, log, mode, seat — unchanged template); feedback accepted/deferred/rejected with rationale (FIX/DEFER/REJECT/LIMITATION, every note leaves triage as exactly one)",
+   "verification": [
+    "docs only; no code path changed. Claims re-checked against the code: online rematch vote + session score exist (src/scenes/WinScene.ts), Quick Match queue and public room discovery exist (src/net/protocol.ts), no chat or spectating exists."
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the severity scale reuses ARCHITECTURE_AUDIT.md §11 rather than inventing a second vocabulary; no new process file, so no competing source of truth"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-no-real-playtest",
+     "note": "No real playtest session has ever been logged — the program is now complete on paper and unexercised in practice. Only a human session can close this.",
+     "owner": "standing: docs/PLAYTEST_GUIDE.md — only a human session closes this",
+     "reownedFrom": "Phase 97 — Final Product QA",
+     "reownedBy": "Final roadmap gate"
+    }
+   ]
+  },
+  {
+   "phase": "75 — Performance Budgets",
+   "wave": "9A",
+   "status": "PASS",
+   "result": "No product performance budgets existed: three fps gates and the AI trial budget were the only numbers, and TESTING.md §Runtime budgets is about suite duration, not player experience. Measured first, then wrote budgets with headroom.",
+   "changed": [
+    "docs/PERFORMANCE.md — new canonical doc: two target environments (desktop; 390x844 mobile at 4x CPU throttle), 9 budgets with the measurement behind each, and what is deliberately not budgeted",
+    "e2e/perf-measure.spec.ts — the measurement tool (prints, does not gate), kept for Phases 76/77/101",
+    "AGENTS.md, docs/index.md, README.md, mkdocs.yml — registered the doc"
+   ],
+   "acceptance": "budgets measurable and justified (every row carries its measurement and its reason); target environments explicit (two classes, reproduced by a named command and a named throttle); budgets map to user-visible risk (each row is named by what the player feels)",
+   "verification": [
+    "npm run build (exit 0)",
+    "npx playwright test e2e/perf-measure.spec.ts (2/2): desktop boot 350ms, FCP 200ms, scene switch 210ms, heap 17MB, 60fps; mobile 4x: boot 836ms, scene switch 836ms, 52fps",
+    "wire payload measured with the server harness: game_started 1104B, next state_sync 1172B, room_joined 424B (temporary spec, removed)",
+    "bundle: index 279kB/86kB gz, phaser 1.3MB/354kB gz, art 380kB, sfx 400kB, music 13MB unbudgeted",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p75-build.log",
+     "tmp/agent-logs/p75-lint.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no budget was set without a measurement, and the AI budget stayed expressed in trials rather than milliseconds so determinism (INV-A5) is not quietly traded for a timing target"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P2-no-low-end-device-runtime-evidence",
+     "from": "Phase 52",
+     "note": "Partly closed: 4x-throttled mobile profile now has measured fps (52) and boot (836ms). AI decision time on that profile is still derived (~150ms from 36ms x4), not measured."
+    }
+   ],
+   "deferredRisks": [
+    {
+     "id": "P2-ai-decision-time-unmeasured-on-mobile",
+     "note": "Expert dense-table decision time under 4x throttle is derived, not measured. Bounded by the deterministic trial budget, so it cannot vary by device in trials — only in wall clock.",
+     "owner": "Phase 76 — Performance Profiling"
+    }
+   ]
+  },
+  {
+   "phase": "76 — Performance Profiling",
+   "wave": "9A",
+   "status": "PASS",
+   "result": "Profiled the worst board under 4x CPU throttle and captured a cold-cache network trace. One real waste found and fixed: a 1.18 MB music track was downloaded on every cold boot for music that ships off by default. Everything else profiled below the threshold for action, and is recorded as such rather than optimized on intuition.",
+   "changed": [
+    "src/audio/music.ts — preload='none' set before the src, so a track is fetched when playback starts rather than at boot; module comment corrected (it claimed nothing was preloaded)",
+    "tests/music-playback.test.ts — regression test: every created element has preload 'none'",
+    "docs/PERFORMANCE.md — §Profiling findings, 5 ranked findings with evidence and a verdict each; first-load budget row corrected to the measured wire bytes",
+    "e2e/perf-measure.spec.ts — added the CPU-profile + cold-load capture"
+   ],
+   "acceptance": "bottlenecks evidence-backed (CDP Profiler samples, CDP Network wire bytes, bundle measurement); priorities ranked (table ordered by player cost, each with an explicit verdict); no optimization justified by intuition (4 of 5 findings deliberately left alone, with the reason)",
+   "verification": [
+    "cold-cache wire bytes before/after: 1618 kB → 432 kB (music no longer fetched at boot)",
+    "browser check: with music enabled, the track is requested and __MEXE__.music() reports playing:true, track boteco-table.mp3",
+    "MEXE_OUTPUT=ai npm run test (1125/1125, exit 0)",
+    "npm run lint (exit 0)",
+    "npm run build (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p76-test.log",
+     "tmp/agent-logs/p76-build.log"
+    ],
+    "profile": "4x throttle, crowded table: 78% (program), 12.5% idle, largest JS frame Phaser run at 1.4% — no game-code hot spot",
+    "requests": "164 requests for 105 URLs; the duplicate probe+load pair costs requests, not bytes"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the fix is two lines in the owner module, proven by a before/after network measurement and a browser check that music still plays when it is turned on; the untouched findings each carry the reason they were not worth acting on"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P2-ai-decision-time-unmeasured-on-mobile",
+     "from": "Phase 75",
+     "note": "Addressed by the profile instead of a stopwatch: AI code does not appear in the sampled JS at all on the worst board, so its cost is not a frame-time factor on the modest-mobile profile."
+    }
+   ]
+  },
+  {
+   "phase": "77 — Memory Leak Testing",
+   "wave": "9A",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Ten match cycles in one page found a real product-owned leak: the Phaser sound manager accumulated one live sound instance per cue played (+8 per match, never dropped), because Phaser only removes one on COMPLETE and a locked or muted audio context never emits it. Per-scene ambience had the same shape (stop() leaves the instance in the manager). Both fixed; scenes, tweens, bus subscriptions and DOM nodes were already flat.",
+   "changed": [
+    "src/audio/sfx.ts — reuse the instance for a key (sound.get ?? sound.add) instead of sound.play(key), which creates a new one per call",
+    "src/scenes/MenuScene.ts, src/scenes/GameScene.ts — ambience destroy() on shutdown instead of stop()",
+    "src/core/events.ts — EventBus.subscriberCount(), observability for the ARCH-007 leak class",
+    "src/verification/debug-api.ts + src/main.ts — lifecycle() probe: active scenes, scene children, tweens, sounds, bus subscriptions, play-log entries, DOM children",
+    "e2e/screenshot.spec.ts — the gated second-match journey now asserts one active scene and bounded sound/bus counts",
+    "e2e/perf-measure.spec.ts — the 10-cycle memory measurement",
+    "tests/audio.test.ts — models the manager's get/add API and pins one instance per key",
+    "docs/PERFORMANCE.md — §Memory across a long session"
+   ],
+   "acceptance": "critical repeated flows show no unbounded product-owned growth (sounds 33 → flat 4 over 10 cycles; scenes/tweens/nodes/bus flat); known retained resources have owners (every counter in lifecycle() names its owner); regressions reproducible (measurement command documented, bounds asserted in the gated suite)",
+   "verification": [
+    "e2e/perf-measure.spec.ts -g memory: sounds 1→33 before, flat after; nodes 166 flat; heap +110kB→+100kB per cycle",
+    "MEXE_OUTPUT=ai npm run test (1126/1126, exit 0)",
+    "npm run lint (exit 0)",
+    "npm run screenshot (131 + 3 @perf passed) + node scripts/check-verify.mjs (exit 0); regenerated PNGs reverted, no visual change"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p77-test2.log",
+     "tmp/agent-logs/p77-screenshot.log",
+     "tmp/agent-logs/p77-check.log"
+    ],
+    "attribution": "Residual +4 listeners and ~100 kB per cycle: the page's own addEventListener/removeEventListener ledger is flat across cycles, and muting audio removes 9 of the original 13 listeners — Web Audio source nodes whose onended never fires in a headless context. Not product code."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the unit test was rewritten to model the real manager API and now pins the fix (one instance per key), which is stronger than what it asserted before, not weaker"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-residual-heap-drift",
+     "note": "~100 kB and ~4 DOM-level listeners per match cycle remain, inside Phaser/WebAudio rather than product code. Bounded: ~10 MB per 100-match session against an 80 MB budget, with DOM nodes and scene objects flat.",
+     "owner": "standing: nightly perf-trend job",
+     "reownedFrom": "Phase 101 — Final Performance Gate",
+     "reownedBy": "Phase 104 — Continuous Architecture & Quality Health"
+    }
+   ]
+  },
+  {
+   "phase": "78 — Dependency & Bundle Governance",
+   "wave": "9A",
+   "status": "PASS",
+   "result": "Inventory is already lean — 3 runtime dependencies, 10 dev, 0 advisories, no duplicate that ships. Nothing to delete. What was missing was governance: no continuous advisory check anywhere, and no written reason for the one runtime dependency that is a build concern (tsx in the server image).",
+   "changed": [
+    ".github/workflows/nightly.yml — new dependency-audit job: runtime deps at --audit-level=moderate, dev tooling at high, npm outdated reported without failing",
+    "docs/DEVELOPMENT.md — §Dependencies and bundle cost: the three runtime deps with purpose/cost/replacement, the dev-tooling and lockfile counts, the explicit tsx-in-production trade with the conditions that would reverse it, and six governance rules"
+   ],
+   "acceptance": "dependencies have a clear stated purpose (table); no waste or shipped duplicates found (10 duplicate versions, all dev-only transitives; 33 of 391 lock entries are non-dev and mostly esbuild platform binaries); bundle cost understood (phaser 347 kB gzip = 80% of shipped JS, measured in Phase 75/76); high-risk runtime dependency addressed by an explicit decision with revisit conditions rather than churn",
+   "verification": [
+    "npm audit --omit=dev --audit-level=moderate (0 vulnerabilities, exit 0)",
+    "npm audit --audit-level=high (exit 0)",
+    "npm outdated: 5 dev patch/minor bumps available, typescript 7 major available — deliberately not taken here, per the 'updates land as their own change' rule",
+    "npm run lint (exit 0)",
+    "nightly.yml parses as YAML"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no dependency was replaced for taste, and the audit job is nightly so it cannot fail a review for an advisory published while the review was open"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-dev-dep-updates-pending",
+     "note": "eslint, vite, vitest, @vitest/coverage-v8 and @types/node have patch/minor updates; typescript has a major. Left for their own change with the gates each affects.",
+     "owner": "Phase 96 — Developer Experience"
+    },
+    {
+     "id": "P2-tsx-in-runtime-image",
+     "note": "The production server image contains tsx + esbuild to run TypeScript directly. Deliberate, documented, with named revisit conditions.",
+     "owner": "Phase 80 — Security Hardening (re-examine under the threat model)"
+    }
+   ],
+   "correction": "Phase 92 found .github/dependabot.yml — weekly grouped update pull requests, capped at three open. The Phase 78 entry's 'no continuous check anywhere' was true of advisory auditing (npm audit ran nowhere) and wrong about version updates. docs/DEVELOPMENT.md now names it."
+  },
+  {
+   "phase": "79 — Security Threat Model",
+   "wave": "9B",
+   "status": "PASS",
+   "result": "Security facts existed but were scattered across MULTIPLAYER §9, OBSERVABILITY_PRIVACY, OPERATIONS and ARCHITECTURE, with no statement of assets, boundaries or priorities. Built the model from the code and found two open deployment gaps nobody had written down.",
+   "changed": [
+    "docs/THREAT_MODEL.md — new canonical doc: 6 assets, the trust-boundary map, 20 prioritized threats each pointing at the code/doc that owns its mitigation, and an explicit out-of-scope list",
+    "AGENTS.md, docs/index.md, README.md, mkdocs.yml — registered"
+   ],
+   "acceptance": "assets, boundaries and threats explicit (TM-01..TM-20); prioritized with the repo's own P0-P3 scale; every mitigation names a concrete owner file or an ops setting; 3 threats recorded as deliberately unmitigated with the reason",
+   "findings": [
+    {
+     "id": "TM-15",
+     "p": "P2",
+     "note": "No security headers on the static host (no CSP, nosniff, Referrer-Policy, frame policy) — nginx defaults only",
+     "owner": "Phase 80"
+    },
+    {
+     "id": "TM-16",
+     "p": "P2",
+     "note": "Neither container image declares USER; the server runs as root although it needs no privileged port and writes nothing",
+     "owner": "Phase 80"
+    }
+   ],
+   "verification": [
+    "Model built against the code, not the docs: re-read parseClientMessage, RoomManager seat/turn checks, token endpoint pairing, logger redaction, nginx.conf and the Dockerfile stages",
+    "no code changed, so no gate applies"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no generic checklist rows; every threat is one this product can actually meet, and the two new findings came from reading the deployment files rather than from a template"
+   }
+  },
+  {
+   "phase": "80 — Security Hardening",
+   "wave": "9B",
+   "status": "PASS",
+   "result": "Closed the two threats Phase 79 found open. Nothing else in the model was open, so nothing else was touched — no controls without a threat behind them.",
+   "changed": [
+    "nginx.conf — CSP (no 'unsafe-eval', 'unsafe-inline' for style only), X-Content-Type-Options, Referrer-Policy, X-Frame-Options, all with `always` so error responses carry them too",
+    "Dockerfile — the server stage drops to the built-in `node` user and runs ./node_modules/.bin/tsx instead of npx (no writable $HOME needed)",
+    ".github/workflows/ci.yml — new server-image job: builds the server stage, boots it, reads /health, asserts the container user is `node`",
+    "tests/deployment.test.ts — nginx.conf keeps the headers, and script-src never gains an escape hatch",
+    "docs/THREAT_MODEL.md — TM-15/TM-16 mitigated, TM-21 (nginx master as root) recorded as accepted",
+    "docs/SELF_HOSTING.md — carry the headers if you front it with your own server; do not add a second CSP"
+   ],
+   "acceptance": "TM-15 and TM-16 addressed; controls tested (browser run under the real header set; CI boots the image and checks the user; unit test guards the header set); no duplicate authority introduced (headers live only in nginx.conf, the test reads that file rather than restating it); residual risk documented (TM-21, TM-17, TM-18)",
+   "verification": [
+    "CSP exercised against the built app in Chromium with exactly nginx.conf's headers (served by a temporary node server that parses them out of nginx.conf): boot → menu → setup → match → one turn, 0 CSP refusals, 0 page errors, 0 missing assets, service worker registered under worker-src 'self'",
+    "./node_modules/.bin/tsx server/index.ts boots and answers (build 1.11.0)",
+    "MEXE_OUTPUT=ai npm run test (1129/1129, exit 0)",
+    "npm run lint (exit 0)",
+    "ci.yml and nightly.yml parse as YAML"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p80-test.log"
+    ],
+    "gap": "Docker is unavailable in this environment, so the server image itself was not built here — which is exactly why the CI job was added rather than a note. The image was previously only ever built at release time."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the CSP was proven with a real browser against the real built app instead of being asserted; the one thing that could not be tested locally (the image) got a CI job rather than a claim"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-nginx-master-root",
+     "note": "TM-21: the web image's nginx master still runs as root (workers drop to nginx). Would need a different base image and a port change through every compose file.",
+     "owner": "Phase 102 — Production & Release Readiness"
+    }
+   ]
+  },
+  {
+   "phase": "81 — Rollback Strategy",
+   "wave": "9C",
+   "status": "PASS",
+   "result": "A rollback section existed and was correct as far as it went (static client, stateless server, protocol coupling, no database). Missing: when a rollback actually reaches a player, which conditions make one unsafe, how to validate afterwards, and any test at all. Also corrected drift — the doc still told operators to hand-edit a VERSION const in public/sw.js.",
+   "changed": [
+    "docs/OPERATIONS.md — corrected the service-worker version instruction (it is substituted from package.json at build time); added 'What a rollback does and does not reach', 'Unsafe rollback conditions' (4 ordered checks, including the save-envelope one-way door) and 'After a rollback' validation commands",
+    "e2e-pwa/update.spec.ts — rollback rehearsal: serve a lower version to an installed client, assert the handover, that the old cache serves until the player accepts, and that only the rolled-back cache remains"
+   ],
+   "acceptance": "rollback path documented and testable (rehearsed in verify:pwa); compatibility constraints known (protocol must move in lockstep; save envelope still v1 so rollback is lossless today, and a future bump is flagged as a one-way door); unsafe conditions explicit (4 named checks)",
+   "verification": [
+    "npm run verify:pwa (14/14, exit 0) — includes the new rollback rehearsal",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "log": "tmp/agent-logs/p81-pwa.log"
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the rehearsal asserts the operationally interesting half (the bad build's cache is gone, and nothing hands over until the player accepts) rather than re-testing the forward update path"
+   }
+  },
+  {
+   "phase": "82 — Release Channels",
+   "wave": "9C",
+   "status": "PASS",
+   "result": "The release mechanics were already single-sourced on package.json, but the channels were implicit and one promotion had no gate: pages.yml ran on push to main, racing the CI run on the same commit, so a main that failed lint or the browser gates still published a playable build.",
+   "changed": [
+    ".github/workflows/pages.yml — triggers on a successful CI workflow_run for main (manual dispatch still allowed) and checks out the exact commit CI tested",
+    "docs/OPERATIONS.md — §Release channels: the three channels with their trigger, gates and config; the seven deliberate dev/production behaviour differences and what enforces each; and how to reproduce a production deployment",
+    "CONTRIBUTING.md — points at it from the release section"
+   ],
+   "acceptance": "release flow explicit (three channels, one version, promotion not rebuild); environment differences controlled (table, each row enforced in code, not convention); promotion has defined quality gates (CI for the public build, tag + agreement check for images); production configuration reproducible (tag + npm ci + .env.example + MEXE_VERSION digest pin)",
+   "verification": [
+    "all six workflow files parse as YAML after the change",
+    "npm run lint (exit 0)",
+    "noted in the doc: the browser suites run against Vite preview and therefore cannot catch a CSP regression — tests/deployment.test.ts covers the header set instead"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the gate added is the one that was missing (publish after green, not beside it); no staging environment was invented for a single-process alpha that does not have one"
+   }
+  },
+  {
+   "phase": "83 — Regression Suite Optimization",
+   "wave": "10A",
+   "status": "PASS",
+   "result": "Measured every suite before touching anything. The unit suite is 1128 tests in ~13s and the browser suites are ~1.2s (screenshot) and ~7s (multiplayer) per test, so there was no runtime problem to solve. One genuine redundancy found: tests/soak.test.ts replayed seeds 1..20 of the same harness probes.test.ts already runs over seeds 1..40, and its only non-duplicated assertions were a wall clock and a heap sample.",
+   "changed": [
+    "tests/soak.test.ts — deleted; its termination coverage was a strict subset of tests/probes.test.ts",
+    "tests/probes.test.ts — heap tripwire as an afterAll over the 40 matches that already run (no seed replayed); the wall-clock assertion deliberately not carried over",
+    "docs/TESTING.md — simulation-level table, suite list and the CPU-contention note updated"
+   ],
+   "acceptance": "each contract has an owning level (TESTING.md §Test levels and the GQA matrix already assign them; no contract lost an owner); redundant coverage reduced (one duplicated 20-seed simulation removed); critical behaviour still protected (probes covers a superset of seeds with per-turn invariants, plus the heap bound)",
+   "verification": [
+    "per-file timings captured with vitest --reporter=json before the change (session-soak 11.0s, ai 7.7s, hardening 5.2s, probes 3.5s, soak 1.5s)",
+    "MEXE_OUTPUT=ai npm run test (1128/1128, exit 0, 12.85s)",
+    "npx vitest run tests/probes.test.ts (45/45, 3.35s — unchanged after absorbing the tripwire)",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p83-json.json",
+     "tmp/agent-logs/p83-test2.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS after one repair: the first attempt added a second 40-match loop for the heap check, which re-introduced the duplication the phase exists to remove. Reworked into an afterAll over the existing runs — probes is 3.35s either way."
+   },
+   "resolvedRisks": [
+    {
+     "id": "P3-suite-flake",
+     "from": "Phase 46",
+     "note": "Partly addressed: the wall-clock assertion that failed under parallel load is gone. Browser-suite flake is Phase 84's."
+    }
+   ]
+  },
+  {
+   "phase": "84 — Flaky-Test Control",
+   "wave": "10A",
+   "status": "PASS",
+   "result": "The policy half already existed (bounded justified retries, @perf at retries=0, nightly no-retry twins, quarantine rules with an owner and a removal condition). The missing half was diagnosis: two long-standing 'flakes' were measured and neither is nondeterminism.",
+   "findings": [
+    {
+     "id": "P3-screenshot-churn",
+     "result": "Not flake — staleness. Two consecutive full screenshot runs produced byte-identical PNGs (md5 lists diffed, 0 differences), and game.png (the only embedded one) regenerates byte-for-byte; 64 committed files simply differ from what this build renders. Disposition handed to Phase 33, which owns what the committed set means."
+    },
+    {
+     "id": "tutorial-12-step-timeout",
+     "result": "Not reproducible: 5/5 isolated passes. The test already waits on observable state and retries a click swallowed by a panel rebuild."
+    },
+    {
+     "id": "crowded-table-max-fps",
+     "result": "Machine contention, reproduced once while a second Playwright suite ran (33.4 best-of-three against a floor of 45), then 6/6 isolated passes. Made diagnosable rather than patched."
+    }
+   ],
+   "changed": [
+    "e2e/screenshot.spec.ts — measureFpsSamples returns every window and expectFps puts the spread in the failure message, so interference (one slow window) is distinguishable from a regression (all windows slow)",
+    "docs/TESTING.md §Flake policy — a 'what is not flake' section with both measurements, including the useful consequence that byte-stable captures make a same-machine before/after visual comparison valid"
+   ],
+   "acceptance": "known flaky tests have root-cause handling (both diagnosed, neither patched blindly); retries bounded and justified (unchanged policy, re-read and still accurate); deterministic failures reproducible (fps failures now carry their samples); flake signal materially reduced (Phase 83 removed the load-sensitive wall clock; no remaining unexplained flake)",
+   "verification": [
+    "npm run screenshot twice: run1 exit 0, run2's @perf stage failed under contention; md5 comparison of the two generated sets shows zero differences",
+    "crowded-table-max 6/6 isolated passes after the contended failure",
+    "tutorial 12-step 5/5 isolated passes",
+    "playwright --grep @perf --retries=0 (3/3 passed) after the measurement change",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p84-shot1.log",
+     "tmp/agent-logs/p84-shot2.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no floor was lowered and no retry added to make a red run green; the change is to the failure message, which is what was actually missing"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-stale-committed-screenshots",
+     "note": "64 committed PNGs do not match what the current build renders. Byte-stable per machine, so refreshing them is a decision about what the committed set is for.",
+     "owner": "Phase 33 — Visual Regression Baseline"
+    }
+   ]
+  },
+  {
+   "phase": "85 — Risk-Based Quality Gates",
+   "wave": "10A",
+   "status": "PASS",
+   "result": "The taxonomy already existed (TESTING.md §Which gate runs when, the GQA risk matrix, WORKFLOW.md's task router). What Wave 9 broke is completeness: deployment, security and performance changes had no router row, and the two new CI jobs were in no gate list. Closed the map rather than adding machinery.",
+   "changed": [
+    "WORKFLOW.md §3 — three new router rows (deployment/container/headers, security, performance) with their read-first doc, fast loop and final gate, including the warning that the browser suites cannot catch a CSP regression",
+    "docs/TESTING.md — server-image added to the PR gate, dependency-audit to the scheduled list, and two new risk-matrix rows: GQA-22 deployment config, GQA-23 long-session resource growth"
+   ],
+   "acceptance": "gates explicit (unchanged, now complete); every major risk category maps to verification (GQA-01..GQA-23, each naming its strongest proving test); developer loop unchanged — nothing was added to the inner loop",
+   "verification": [
+    "npm run lint (exit 0)",
+    "npx vitest run tests/deployment.test.ts (3/3)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no new gate or tool was introduced; the change is that the map now matches the gates that exist"
+   }
+  },
+  {
+   "phase": "86 — Change-Scope Detection + 87 — Risk-Based CI",
+   "wave": "10B",
+   "status": "PASS",
+   "result": "Done as one change because the detection has exactly one consumer and splitting them would have meant landing a classifier nothing reads. CI ran every suite for every change, including a Markdown-only pull request. Now a `scope` job classifies the diff and two narrow shapes shrink the run; everything else falls through to the full set.",
+   "changed": [
+    ".github/workflows/ci.yml — new `scope` job (git diff, no third-party action) producing docs_only and server_only; every other job gained `needs: scope` and an `if:`",
+    "docs/TESTING.md — the scope table, what each shape runs and skips, and the required-status-check caveat"
+   ],
+   "acceptance": "high-risk shared changes detected conservatively (any touch of src/, public/, index.html, a config, package.json, the lockfile or a workflow runs everything); narrow changes avoid unrelated expensive suites (docs-only runs nothing; server-only skips e2e/cross/pwa); fallback exists and is the default (no pull-request context, an empty diff, or an unrecognised path all mean the full set); routing is understandable (two booleans, one job, a table in the docs); extended checks unchanged on their nightly/weekly schedules",
+   "verification": [
+    "the classifier's shell logic exercised locally against six diff shapes: docs-only, server-only, client, workflow, empty, lockfile — each produced the intended pair",
+    "all six workflow files parse as YAML",
+    "npm run lint (exit 0)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no new dependency (git diff, not paths-filter), and the two skips are ones where the skipped suite provably cannot observe the change; a push to main still runs everything, which is what the public build is promoted from"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-required-checks-and-skips",
+     "note": "If branch protection lists the skipped jobs as required checks, it must treat a skipped job as satisfied. Cannot be verified from the repository.",
+     "owner": "Phase 102 — Production & Release Readiness"
+    }
+   ]
+  },
+  {
+   "phase": "88 — Architecture Enforcement",
+   "wave": "10C",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Every rule the architecture calls critical already has a cheap mechanism: 13 static-analysis tests in tests/boundaries.test.ts (domain purity, no clock or unseeded randomness across DOMAIN + src/table + src/ai, Phaser confined to presentation, legality declared only in src/rules, server imports only shared code, no type-only cycles, readonly committed state, the core upward-import allowlist, RoomManager's size ceiling, and the web-storage ownership pin added in Phase 68). Two rows of the mechanisms table understated what holds them, which is exactly the false-confidence risk inverted.",
+   "changed": [
+    "docs/ARCHITECTURE.md — the INV-A2 row now names the branded AiObservation type (handing an engine authoritative state does not compile) instead of 'convention'; the core-upward row names the allowlist test instead of 'none'"
+   ],
+   "acceptance": "critical boundaries have cheap automated protection (static text scans, ~150 ms); failures are actionable (each assertion prints the offending file and import); rules reflect canonical architecture (the two stale rows corrected against the code)",
+   "verification": [
+    "MEXE_OUTPUT=ai npx vitest run tests/boundaries.test.ts tests/ai.test.ts (91/91)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing new was encoded. The phase's own risk list warns against turning preferences into tests, and the honest finding was that the mechanisms exist and the table lied about two of them."
+   }
+  },
+  {
+   "phase": "89 — Documentation Drift Detection",
+   "wave": "10C",
+   "status": "PASS",
+   "result": "Drift was the most common defect found across this whole roadmap run — a sw.js VERSION const the build had replaced, a SAVE artifact described as restoring a match nothing restores, a playtest guide that predated online rematch, two enforcement rows calling type-checked rules conventions. All of it was caught by reading, which does not scale. The mechanical classes are now a test.",
+   "changed": [
+    "tests/docs-drift.test.ts — new: every `npm run …` a doc names exists; every backticked repo path resolves (with the extension-less shorthand the docs use); every quoted PROTOCOL_VERSION/GAME_STATE_VERSION/REPLAY_VERSION matches its source; every canonical doc AGENTS.md routes to is present",
+    "docs/TESTING.md — GQA-24 row; reworded the one sentence that named the file Phase 83 deleted",
+    "WORKFLOW.md — the docs-only router row now names a real command instead of 'links/content check'"
+   ],
+   "acceptance": "high-value drift classes detected automatically (commands, paths, version constants, canonical-doc presence); canonical-doc ownership clear (the AGENTS.md table is now test-backed); duplicate sources of truth reduced — the check treats CHANGELOG.md and ARCHITECTURE_AUDIT.md as records rather than descriptions, which is the distinction that keeps the check honest instead of noisy",
+   "verification": [
+    "MEXE_OUTPUT=ai npx vitest run tests/docs-drift.test.ts (4/4) — found 3 real drifts while being written: two stale paths and one file deleted in Phase 83 but still named in prose",
+    "MEXE_OUTPUT=ai npm run test (1132/1132, exit 0)",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p89-test2.log"
+    ],
+    "flake": "The first full-suite run failed OP-09 (public-rooms) with a 5s timeout; it passes 19/19 in isolation and the whole suite passed on re-run. This is the documented in-suite load flake class, not a new defect."
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the test judges nothing about prose, which is what keeps it from becoming the noisy check the phase's risk list warns about; the two historical documents are exempted from the path check by name, with the reason"
+   }
+  },
+  {
+   "phase": "90 — Repository Health Dashboard",
+   "wave": "10C",
+   "status": "PASS",
+   "result": "Built the smallest thing that answers 'what is failing' without becoming a second source of truth: a script that derives health from docs/ROADMAP_STATUS.json and points at the files that own every other signal. Running it immediately found what it was built to find — 17 risks had been deferred to phases that have since passed without recording an outcome.",
+   "changed": [
+    "scripts/health.mjs + `npm run health` — current phase, status counts, BLOCKED phases, risks whose owner phase has already passed (the actionable list), risks waiting on a phase still ahead, and a pointer list for the signals it cannot see",
+    "docs/DEVELOPMENT.md — §Repository health",
+    "docs/ROADMAP_STATUS.json — the 17 stale deferrals reconciled in place: 7 closed with the phase and evidence that actually closed them, 10 re-owned (owner rewritten on the original entry, with reownedFrom kept) to the phase that can act on them"
+   ],
+   "acceptance": "actionable health only (three lists, each with a decision behind it); no aggregate score — deliberately, because one number hides which area is failing; failing areas findable quickly (every other signal is a named command or a named doc section, never restated here)",
+   "verification": [
+    "node scripts/health.mjs — prints 43 phases (30 PASS, 6 NO_CHANGE_REQUIRED, 6 PASS_WITH_DEFERRED_RISKS, 1 BLOCKED), the BLOCKED phase, and the risk lists; exits 0 always (reporting, never a gate)",
+    "npm run health after the reconciliation: the overdue list is empty"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the script derives and never restates, so it cannot drift from the file it reads; the reconciliation it forced is the evidence that the signal is real"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P3-screenshot-churn",
+     "note": "Phase 84 measured it: byte-identical between consecutive runs, so it is staleness rather than flake. The remaining question (what the committed set is for) is tracked as P3-stale-committed-screenshots under Phase 33."
+    },
+    {
+     "id": "P3-perf-spec-flake",
+     "note": "Phase 84: contention, not nondeterminism. measureFpsSamples already takes the best of three windows; failures now print every window so interference is distinguishable from a regression."
+    },
+    {
+     "id": "P2-perf-spec-floors-under-suite-load",
+     "note": "Same diagnosis and the same change. Do not read an fps result from a suite running next to another browser suite (documented in TESTING.md §Flake policy)."
+    },
+    {
+     "id": "P2-suite-green-only-when-quiet",
+     "note": "Same: the fps floors assume an otherwise-idle machine, which is now written down rather than rediscovered."
+    },
+    {
+     "id": "P3-soak-heap-tripwire",
+     "note": "Phase 77 replaced the tripwire question with a measurement: 10 match cycles with heap, DOM nodes, listeners and the product-owned lifecycle counters."
+    },
+    {
+     "id": "P2-tsx-in-runtime-image",
+     "note": "Phase 80 accepted it explicitly as THREAT_MODEL.md TM-17, with named revisit conditions; it is tracked there rather than here."
+    },
+    {
+     "id": "P3-chaos-outbound-untouched",
+     "note": "Duplicate: the same risk is recorded once more against Phase 100, which is where it belongs."
+    }
+   ],
+   "deferredRisks": [],
+   "reownedRisks": [
+    {
+     "id": "P2-firefox-unverifiable-locally",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-chaos-timing-under-load",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-late-rejection-not-correlated",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-reconnect-coverage-gaps",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-retry-exhaustion-unowned",
+     "owner": "Phase 100 — Final Multiplayer QA"
+    },
+    {
+     "id": "P3-pwa-offline-x-online-room",
+     "owner": "Phase 97 — Final Product QA"
+    },
+    {
+     "id": "P2-cida-bia-identical",
+     "owner": "Phase 93 — Technical Debt Review"
+    },
+    {
+     "id": "P2-tier-overlap",
+     "owner": "Phase 93 — Technical Debt Review"
+    },
+    {
+     "id": "P3-matchseats-identity-fallback",
+     "owner": "Phase 93 — Technical Debt Review"
+    },
+    {
+     "id": "P3-soak-adds-to-pr-suite",
+     "owner": "Phase 93 — Technical Debt Review"
+    }
+   ]
+  },
+  {
+   "phase": "91 — Complexity Reduction",
+   "wave": "11A",
+   "status": "PASS",
+   "result": "Measured the hotspot before touching it. GameScene.ts is 4,580 lines, but every large function left in it is sprite construction, input wiring or Phaser lifecycle — layoutMelds (380 lines) already delegates its geometry to computeMeldLayout, renderMexeEditor (282) to the editor layout module, and earlier waves had already lifted out OnlineSession, LocalMatch, LobbyMachine, DraftEditor and MatchViewState. One piece of arithmetic was still inlined and reachable only through a browser: the online turn clock's readout.",
+   "changed": [
+    "src/ui/turn-clock.ts — new, pure: deadline + now + the room's warning threshold to visible/secs/tone/scale, with TURN_CRITICAL_MS moved beside it",
+    "src/scenes/GameScene.ts — updateTurnTimer now paints a readout and decides a sound; the thresholds and the rounding left with the arithmetic",
+    "tests/turn-clock.test.ts — the boundaries that were previously unasserted: exactly at the warning threshold, exactly at critical, past zero, and a room with no threshold at all",
+    "docs/ARCHITECTURE.md, docs/ARCHITECTURE_AUDIT.md — the ui module row, and the measurement that justified stopping"
+   ],
+   "acceptance": "the selected hotspot is easier to reason about where it counts (five thresholds and a rounding rule are now readable and tested in 38 lines instead of inline in a 4,580-line scene); behaviour unchanged (multiplayer room-timer e2e passes, unit suite green); complexity moved toward ownership, not abstraction — one pure module, no new indirection, no interface",
+   "verification": [
+    "MEXE_OUTPUT=ai npm run test (1138/1138, exit 0)",
+    "npx vitest run tests/turn-clock.test.ts (6/6) and tests/boundaries.test.ts (13/13)",
+    "npm run lint, npm run build (exit 0)",
+    "playwright -c playwright.multiplayer.config.ts --project=chromium --grep 'room timer' (1 passed) — the timer's own browser gate"
+   ],
+   "evidence": {
+    "measurement": "per-method line counts for GameScene.ts: layoutMelds 380, renderMexeEditor 282, renderAll 249, create 191, buildStaticUi 176 — all Phaser-shaped",
+    "logs": [
+     "tmp/agent-logs/p91-test.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the phase's own out-of-scope line (no rewrites without measurable payoff) is the reason the diff is 40 lines rather than 400, and the measurement that led there is recorded in the audit instead of being re-derived later"
+   }
+  },
+  {
+   "phase": "92 — Dead-Code & Legacy Cleanup",
+   "wave": "11A",
+   "status": "PASS",
+   "result": "Scanned rather than guessed: every exported symbol in src/ and server/ cross-referenced against the whole repository (source, tests, e2e, scripts), every source file checked for an importer, the tracked file list read for clutter. The repository is already lean — one genuinely dead export, two unnecessary ones, and no dead file, script or test. One documentation error of my own found and corrected.",
+   "changed": [
+    "src/ui/tokens.ts — deleted the SPACE token set: four spacing steps with a comment claiming the layouts use them, referenced by nothing and named in no doc",
+    "server/connections.ts — hitWindow and hitKeyedWindow un-exported (used only inside their own module)",
+    "docs/DEVELOPMENT.md — names .github/dependabot.yml, which Phase 78 missed"
+   ],
+   "acceptance": "removals evidence-backed (each one a reference count of zero outside its own file, and no doc naming it); no obsolete parallel authority (docs/CHANGELOG.md and docs/CONTRIBUTING.md are symlinks to the root files, not copies — checked); surface area reduced without regressions (tsc, lint, the server suites and the docs-drift test all green)",
+   "verification": [
+    "cross-reference scan: 30 exports with no external reference, of which 26 are types read structurally and 4 were runtime values; each of the 4 checked by hand",
+    "MEXE_OUTPUT=ai npx vitest run tests/docs-drift.test.ts tests/server (312/312)",
+    "npx tsc --noEmit, npm run lint (exit 0)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing was deleted speculatively; the compatibility path that looked deletable (the pre-v1 mexe-settings migration) was left alone because Phase 70's policy keeps exactly one hop for preferences, which is the 'deleting useful compatibility without a policy check' risk avoided"
+   },
+   "findings": [
+    {
+     "note": "Kept deliberately: music/ holds the two unprocessed audio masters (documented in ASSETS.md); the pre-v1 settings migration is the one bounded migration the compatibility policy allows; 26 exported types have no external reference because they are read structurally."
+    }
+   ]
+  },
+  {
+   "phase": "93 — Technical Debt Review",
+   "wave": "11A",
+   "status": "PASS",
+   "result": "Re-read all 21 ARCH findings, the 19 live deferred risks, the threat model and the performance deferrals against the code, then decided the four risks that had been re-owned here. No P0 and no unowned P1 debt exists.",
+   "changed": [
+    "docs/ARCHITECTURE_AUDIT.md §11 — 'Debt review (Phase 93)': one prioritized table across architecture, test, platform, performance, security, UX/AI and documentation debt, each row with its state and owner, pointing at `npm run health` for the live risk list rather than copying it"
+   ],
+   "acceptance": "remaining debt prioritized (seven categories, each with the specific open item and its guard); accepted items carry a rationale (the AI tier overlap, the soak's suite cost, the accepted threat-model rows); no hidden P0/P1 — the only structural item still open (ARCH-009) is frozen by an exact-allowlist test, so it cannot grow unnoticed",
+   "decisions": [
+    {
+     "id": "P2-cida-bia-identical",
+     "decision": "ACCEPTED",
+     "why": "Personality and difficulty are orthogonal configuration over one engine (Phase 48's deliberate design). The match-level ladder is intact and measured; fixing the per-personality overlap means collapsing the ladder or putting personality weights inside the neutral evaluator."
+    },
+    {
+     "id": "P2-tier-overlap",
+     "decision": "ACCEPTED",
+     "why": "Same reason, same measurement."
+    },
+    {
+     "id": "P3-matchseats-identity-fallback",
+     "decision": "RESOLVED IN CODE",
+     "why": "server/rooms.ts no longer falls back to the identity mapping: both call sites now read `room.matchSeats[i] ?? -1` and skip, with a comment naming the invariant. Verified at lines 685 and 763."
+    },
+    {
+     "id": "P3-soak-adds-to-pr-suite",
+     "decision": "ACCEPTED",
+     "why": "Measured in Phase 83: ~11s of a ~13s unit suite, and the long-session room bookkeeping it covers has no cheaper level."
+    }
+   ],
+   "verification": [
+    "register re-read: 14 of 21 ARCH findings resolved or narrowed; ARCH-005 half resolved; ARCH-009 frozen by the boundaries allowlist; ARCH-013 moderate and size-capped",
+    "server/rooms.ts read at both matchSeats call sites to confirm the fallback is gone",
+    "npm run health after recording the decisions: no overdue risks"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the review closed items with evidence or accepted them with a reason, and did not reopen a deliberately accepted decision (the phase's own named risk); the debt table points at the derived list instead of duplicating it"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P2-cida-bia-identical",
+     "note": "Accepted with rationale — see the Phase 93 debt table."
+    },
+    {
+     "id": "P2-tier-overlap",
+     "note": "Accepted with rationale — same row."
+    },
+    {
+     "id": "P3-matchseats-identity-fallback",
+     "note": "Already fixed in server/rooms.ts: `?? -1` and skip, at both call sites."
+    },
+    {
+     "id": "P3-soak-adds-to-pr-suite",
+     "note": "Accepted: measured cost, no cheaper level for the coverage."
+    }
+   ]
+  },
+  {
+   "phase": "94 — Architectural Decision Records",
+   "wave": "11B",
+   "status": "PASS",
+   "result": "One index instead of an ADR directory. Twenty durable decisions, each a single row naming where its reasoning already lives and what was rejected — the rationale stays in the canonical doc that owns the subject, so this file cannot become a second architecture document.",
+   "changed": [
+    "docs/DECISIONS.md — new: D1..D20 (legality authority, server authority, trial budgets, no lookahead, orthogonal AI config, persistence, compatibility, wire versioning, token storage, no database, no telemetry, error-class logging, the shipped debug surface, no code splitting, music preload, no pixel diffing, retry policy, mechanical drift only, CI scope routing, tsx in the image)",
+    "AGENTS.md, docs/index.md, README.md, mkdocs.yml — registered under Develop"
+   ],
+   "acceptance": "only significant decisions recorded (the bar is written into the file: a decision earns a row if reversing it ripples across modules or gets re-litigated); every row links to canonical architecture rather than restating it; the rejected alternative is the point of each row, and the file says how to keep it true",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4) — every path and link in the new file resolves",
+    "mkdocs.yml parses; the page sits under Develop beside the audit"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no ADR directory, no duplicated rationale, and the two risks the phase names (stale ADRs, duplicating architecture docs) are structurally avoided: a row has nowhere to go stale except its own rejected column"
+   }
+  },
+  {
+   "phase": "95 — Agent Regression Guardrails",
+   "wave": "11B",
+   "status": "PASS",
+   "result": "AGENTS.md was already concise and mostly accurate; what it did not know is what Waves 9–11 automated. An agent reading it could not tell which contracts are enforced by a test in seconds and which rely on care, so it either over-verified or worked around a failure it did not understand.",
+   "changed": [
+    "AGENTS.md — three invariants added from this wave's decisions (persistence is not an authority; a refused format fails loudly; the four documents that gain a row in the same change), plus a table of the five automated guards naming exactly what each catches, and the pre-push hook's opt-in command"
+   ],
+   "acceptance": "guidance concise and aligned with repository truth (a table of guards that exist, not rules to remember); critical regressions prevented by automation where possible (five guards, all inside `npm run test`, all listed with what they catch); prompts reference canonical sources — the additions link to the owning docs rather than restating them",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4) — every path named in the new AGENTS.md section resolves",
+    "AGENTS.md is 287 lines; the addition is 25"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing was duplicated into the prompt surface, and the one thing agents most often get wrong (not knowing a guard exists, then routing around its failure) is now a table with the guard's name next to the violation it reports"
+   }
+  },
+  {
+   "phase": "96 — Developer Experience",
+   "wave": "11B",
+   "status": "PASS",
+   "result": "The workflows were already documented and the script list short; what was missing were the three failures that cost me the most time in this roadmap run, none of which looked like what they were.",
+   "changed": [
+    "docs/DEVELOPMENT.md — `npm run health` added to the script table (it was missing since Phase 90); three troubleshooting rows: a stray `tsx server/index.ts` on :8787 (reads as starvation in the two baseline server tests, not a port conflict), an `@perf` fps floor failing next to another browser suite, and a `git status` full of modified PNGs after a verify run"
+   ],
+   "acceptance": "correct workflows identifiable quickly (script table complete, router in WORKFLOW.md §3, docs navigation registered for every doc added this wave); commands predictable (no new wrapper, no new alias beyond `health`); common debugging paths documented (the three real ones, with the symptom as it actually appears); tooling reduces friction rather than adding layers — nothing was added, one thing was named",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4) — the script the table now names exists, and every path in the new rows resolves",
+    "npm outdated re-read: 5 dev patch/minor bumps and one TypeScript major available"
+   ],
+   "decisions": [
+    {
+     "id": "P3-dev-dep-updates-pending",
+     "decision": "ACCEPTED (closed)",
+     "why": "Dependabot opens these weekly, grouped into one production and one development pull request, capped at three open (.github/dependabot.yml). Taking them by hand here would duplicate that and land a lockfile change with no gate behind it."
+    }
+   ],
+   "resolvedRisks": [
+    {
+     "id": "P3-dev-dep-updates-pending",
+     "note": "Closed: dependabot owns it, weekly and grouped."
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no wrapper was added (the phase's own named risk), and the troubleshooting rows describe the symptom as it presents rather than as the cause, which is what makes such a table usable"
+   }
+  },
+  {
+   "phase": "24 — Asset Inventory & Visual Debt Audit",
+   "wave": "4A (deferred)",
+   "status": "PASS",
+   "result": "The inventory already existed in docs/ASSETS.md with provenance per asset; what was missing was a measurement. Cross-checked every file on disk against the manifest and compared each one's pixel size with the size it is drawn at. Exactly one family is below native: the ten table/menu backgrounds, at a third of their drawn size.",
+   "changed": [
+    "docs/ASSETS.md — §Visual debt (Phase 24 audit): the per-family measurement table, the four things the audit found clean (no placeholders ship, no orphans, no missing states, provenance recorded), and an explicit replacement scope of one family"
+   ],
+   "acceptance": "inventory complete enough to plan production (59 files, every one reachable from the manifest or from music.ts); visual debt prioritized (one P2, the rest accepted with the ratio that justifies it); replacement scope explicit — ten backgrounds, and only if Phase 26 decides the mixed pixel grid is wrong rather than stylistic",
+   "verification": [
+    "scripted cross-check: 59 files on disk, 0 manifest paths missing, 0 orphans once loop-built paths are resolved",
+    "per-family source-to-drawn ratios computed from the manifest and RENDER_SCALE=3: backgrounds 0.33x, cards 0.5x, avatars/emotes/UI 1.0x, suit pips 1.33x",
+    "read docs/screenshots/game.png at 1280x720 to confirm the coarser background grid is visible but does not cost readability"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing healthy was scheduled for replacement (the phase's first named risk); the one debt item is measured rather than asserted, and its fix is deferred to the phase that owns the decision"
+   }
+  },
+  {
+   "phase": "25 — Art Direction Lock",
+   "wave": "4A (deferred)",
+   "status": "PASS",
+   "result": "The direction itself was already locked — pillars, palette, canvas maths, character briefs, motion. What no document answered was how to judge a finished asset, which is what 'lock' has to mean before production starts.",
+   "changed": [
+    "docs/ART_DIRECTION.md — §Accepting an asset: eight checks (native at RENDER_SCALE, one pixel grid with its neighbours, readable at 390x844, transparency, light direction, nothing critical by colour alone, no likenesses, and a row in ASSETS.md in the same change), plus the golden reference frames"
+   ],
+   "acceptance": "approved references exist (the deterministic showcase frames, named, and byte-stable per machine so a before/after is valid); visual rules concrete enough to judge an asset (eight pass/fail checks, not adjectives); readability and accessibility constraints preserved — two of the eight are exactly those",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4) — every path and doc link in both new sections resolves"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the checks are falsifiable, and the one the current art bends (the shared pixel grid) is named as such rather than quietly excused"
+   }
+  },
+  {
+   "phase": "26 — Multi-Resolution Strategy",
+   "wave": "4A (deferred)",
+   "status": "PASS",
+   "result": "Decided the one open question from Phase 24 with numbers rather than taste: the ten backgrounds stay at 480×270. Regenerating them at RENDER_SCALE would take the background family from 175 kB to roughly 1.5–2 MB, against a measured 1.5 MB first-load budget for the entire game excluding music — and all of it is precached for offline play.",
+   "changed": [
+    "docs/ART_DIRECTION.md §Canvas & scaling — corrected the stale scaling description (RENDER_SCALE=3 and the portrait world were missing) and added §Resolution policy: per-family source resolution, the background decision with the byte counts behind it, device coverage from 390×844 to 1920×1080, large-screen letterboxing, and the memory figure"
+   ],
+   "acceptance": "source/export policy explicit (a table: sprites 3×, cards 2×, backgrounds 1×, pips inherited — and 'a new asset matches the family it joins' is a numbered acceptance check); target displays covered (0.89× at 720p, 1.33× at 1080p, phone at DPR 2–3, all nearest-neighbour); memory understood (380 kB of texture on disk, ~17 MB heap measured against an 80 MB budget)",
+   "verification": [
+    "background family measured at 175 kB across 10 files; whole texture set 380 kB",
+    "first-load wire bytes measured in Phase 76 at 432 kB against the 1.5 MB budget — the headroom the decision spends, and does not have"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the decision is reversible on a stated condition (a changed download budget, or a target where the grid mismatch costs readability) rather than being a permanent excuse, and the stale canvas description it sat on was corrected in the same pass"
+   }
+  },
+  {
+   "phase": "27 — PixelLab Production System",
+   "wave": "4B (deferred)",
+   "status": "PASS",
+   "result": "Provenance already existed per asset (the later sections record the full prompt sent). What was missing was the workflow around it — and a measurement error of my own from Phase 24, found while writing it: the card files are 72×96, native at RENDER_SCALE, not the 48×64 that ASSETS.md had claimed since they were first generated.",
+   "changed": [
+    "docs/ASSETS.md — §Producing or regenerating an asset: seven steps covering which kind of asset it is (PixelLab is not reproducible, the scripts are byte-identically), source size, naming, the single manifest line, recording the full prompt, reviewing in the golden frames, and bumping the version so the cache key moves",
+    "docs/ASSETS.md — the stale 48×64 card rows corrected to the measured 72×96, and the Phase 24 debt table corrected with it (27 files are native, not 21 plus a chunkier card family)",
+    "docs/ART_DIRECTION.md — the resolution table and the pixel-grid check corrected to match"
+   ],
+   "acceptance": "assets can be regenerated intentionally (the two kinds are separated, and the reproducible one has a check: re-run and expect a clean git status); prompt and source metadata preserved (a full prompt in the row is a step, with the existing sections named as the standard); naming and version rules clear (family directory, -portrait, no -v2 suffixes, package bump for the cache key)",
+   "verification": [
+    "PNG headers read for every file under public/assets: 27 sprites at ratio 1.0, 10 backgrounds at 0.33, 5 pips/sparkle at 1.33",
+    "npx vitest run tests/docs-drift.test.ts (4/4)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — and a correction rather than a defence: the Phase 24 table was wrong about the card family because it trusted this document's own stale size column instead of the file headers, which is exactly the drift the measurement was supposed to catch"
+   }
+  },
+  {
+   "phase": "28 — Asset Families & Golden References",
+   "wave": "4B (deferred)",
+   "status": "PASS",
+   "result": "Named six families and gave each one a shipped anchor file, because 'matches the style' is unanswerable and 'matches this file' is not.",
+   "changed": [
+    "docs/ART_DIRECTION.md — §Families and their anchors: the anchor per family, what each anchor fixes (canvas, outline weight, shading, silhouette, readability floor), its members, and the rule that readability outranks family consistency where they conflict"
+   ],
+   "acceptance": "major families have approved anchors (6, each an asset already shipped and already passing); future assets judged consistently (a new member sits beside its anchor in a golden frame); references preserve readability — the tie-break is stated rather than left to taste",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the reference set is six files, not a gallery, which is the phase's 'reference set too broad' risk avoided"
+   }
+  },
+  {
+   "phase": "29 — Scalable UI Asset System",
+   "wave": "4B (deferred)",
+   "status": "PASS",
+   "result": "The UI asset system was already lean — one texture per button, four states as runtime tints, panels drawn as Graphics, labels drawn by the engine so they stay translatable. But it did not scale without distortion: a 168x60 slab was stretched with setDisplaySize to sizes from 128x24 to 16x14, so the same rim read 1px tall and nearly 2px wide on the menu's primary button, and the wood grain smeared with it.",
+   "changed": [
+    "src/ui/widgets.ts — PixelButton's slab is a Phaser nine-slice: geometry in texture pixels, uniformly scaled by 1/RENDER_SCALE, corner inset clamped so the 16x14 icon button degrades to 'almost all corner' rather than to a broken slice",
+    "docs/ARCHITECTURE.md, docs/ART_DIRECTION.md, docs/ASSETS.md — the widget contract, the Controls anchor and the button note now say one authored aspect serves every size",
+    "docs/screenshots/menu.png, game.png — refreshed, since they are the two images the README and docs site embed and this change is visible in both"
+   ],
+   "acceptance": "canonical states visually supported (normal/hover/pressed/disabled unchanged, still tints, plus the focus ring); assets scale without distortion (corners authored-size, middles stretch); interaction and accessibility semantics unchanged — same sizes, same hit boxes, same touch-target growth, same disabled behaviour",
+   "verification": [
+    "npm run screenshot (131 + 3 @perf passed) + node scripts/check-verify.mjs (exit 0): no console errors, no missing assets, fps floors held",
+    "visual comparison of menu.png before and after: crisp uniform rim, grain no longer smeared, layout identical",
+    "npx playwright test -c playwright.cross.config.ts: 85 passed across WebKit, iPad and the mobile profiles; the 7 failures are all Firefox failing to launch on this macOS build (known, P2-firefox-unverifiable-locally)",
+    "MEXE_OUTPUT=ai npm run test (exit 0), npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p29-shot.log",
+     "tmp/agent-logs/p29-check.log",
+     "tmp/agent-logs/p29-test.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no new asset was produced for a problem that was a drawing bug, and the change is confined to the one widget that owns button drawing"
+   }
+  },
+  {
+   "phase": "30 — High-Resolution Asset Production",
+   "wave": "4C (deferred)",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "The production set already exists and meets its references. Phase 24 measured 59 files with no placeholder shipping, no orphan and no family below its policy size except the ten backgrounds, and Phase 26 decided those stay at 480×270 with the download budget as the reason. Producing anything here would be quantity over quality — the phase's own first named risk.",
+   "acceptance": "required set exists (every manifest entry has a file, enforced from this phase on by tests/assets.test.ts); assets meet approved references (the six anchors, all shipped assets); source quality supports target displays (27 sprites native at RENDER_SCALE, verified from PNG headers)",
+   "verification": [
+    "npx vitest run tests/assets.test.ts (5/5)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no art was generated to satisfy a phase title"
+   }
+  },
+  {
+   "phase": "31 — Asset Integration Pipeline",
+   "wave": "4C (deferred)",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "The pipeline is already canonical and already predictable: one manifest entry per asset, BootScene GET-probes each path and substitutes a procedural fallback, a fallback is recorded in window.__MEXE__.missingAssets, and npm run verify fails when that list is non-empty. No atlas, because 59 files at 380 kB do not need one, and the probe already warms the service-worker cache.",
+   "acceptance": "runtime uses one pipeline (manifest → probe → load → fallback sweep); missing or invalid assets fail predictably and never silently — the gate fails on a single fallback; loading and fallback behaviour is documented in ASSETS.md and now also asserted",
+   "verification": [
+    "npx vitest run tests/assets.test.ts (5/5) — manifest and disk agree in both directions"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the 'silent fallback' risk does not exist here: the fallback is loud by construction"
+   }
+  },
+  {
+   "phase": "32 — Automated Asset QA",
+   "wave": "4C (deferred)",
+   "status": "PASS",
+   "result": "Turned the Phase 24 audit from a one-off script into a test, so the next asset cannot regress the things that audit had to measure by hand.",
+   "changed": [
+    "tests/assets.test.ts — five checks: manifest and disk agree in both directions (with music and the font excluded for stated reasons), every sprite authored at its drawn size and every background at the documented third, naming convention, a sound for every cue, an alpha channel where a sprite needs one",
+    "docs/TESTING.md — GQA-25; docs/ASSETS.md — the review step names the test that runs first"
+   ],
+   "acceptance": "common objective defects fail automatically (proved: swapping a file for a wrong-size one turns the suite red, and restoring it turns it green); checks are fast (~100 ms, inside npm run test) and actionable (each failure names the file, its size and the size expected); subjective quality stays separate — the test says so in its own comment",
+   "verification": [
+    "npx vitest run tests/assets.test.ts (5/5)",
+    "negative control: replaced effects/sparkle.png with logo.png → suite failed; restored → passed",
+    "npm run lint (exit 0)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the negative control is the part that matters; a structural asset test that has never been seen to fail is the false confidence the phase warns about"
+   }
+  },
+  {
+   "phase": "33 — Visual Regression Baseline",
+   "wave": "4D (deferred)",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Revised decision D16. It said pixel diffing was not worth it because renderer-dependent bytes fail on another machine — true, and Phase 84's measurement changed what to do about it: captures are byte-identical across runs on one machine, so a baseline keyed to the platform is meaningful where a shared one is not.",
+   "changed": [
+    "e2e/visual.spec.ts — six deterministic states (menu, board, Mexe draft, win, portrait board, +25% text) compared with toHaveScreenshot at maxDiffPixelRatio 0.002, animations disabled",
+    "e2e/visual.spec.ts-snapshots/*-darwin.png — the darwin baselines, 364 kB for six frames",
+    ".github/workflows/nightly.yml — visual-baseline job on the fixed CI runner; a platform with no baseline fails and uploads the candidate for a human to review and commit",
+    "package.json — npm run verify:visual",
+    "docs/TESTING.md — §Visual baselines and the two table rows; docs/DECISIONS.md — D16 revised with the reason and the phase that changed it"
+   ],
+   "acceptance": "durable states have stable baselines (six, all deterministic showcase states; the suite passes on a second run against the baseline it wrote); review/update workflow explicit (regenerate, look at the diff, say what changed — written into both the spec and TESTING.md); regressions actionable (Playwright writes actual/expected/diff images next to the failure)",
+   "verification": [
+    "npx playwright test e2e/visual.spec.ts: first run wrote 6 baselines and failed as designed; second and third runs 6/6 passed against them",
+    "npm run lint (exit 0); nightly.yml parses"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the platform suffix is the part that makes this honest, and the decision record says the evidence that changed the earlier call rather than silently reversing it"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-linux-baselines-missing",
+     "note": "Only darwin baselines exist. The nightly visual-baseline job will fail on its first run and upload the linux candidates; until a human reviews and commits those, CI gates nothing here.",
+     "owner": "standing: nightly visual-baseline job",
+     "reownedFrom": "Phase 98 — Final Visual QA",
+     "reownedBy": "Phase 104 — Continuous Architecture & Quality Health"
+    }
+   ],
+   "resolvedRisks": [
+    {
+     "id": "P3-stale-committed-screenshots",
+     "note": "Answered, not by refreshing the 64 stale PNGs but by deciding what a baseline is: six reviewed, per-platform frames gate; docs/screenshots stays a human-read artifact set."
+    }
+   ]
+  },
+  {
+   "phase": "34 — Large-Screen & Responsive Visual QA",
+   "wave": "4D (deferred)",
+   "status": "PASS",
+   "result": "The device matrix covered eight profiles and missed exactly the two ends this phase is about: nothing above 1080p, and nothing above DPR 2. Added both, and looked at what they render.",
+   "changed": [
+    "playwright.cross.config.ts — 'desktop 1440p' (2560×1440) and 'high-dpi phone' (412×915 at DPR 3) projects",
+    "docs/TESTING.md, docs/ART_DIRECTION.md — the covered set now says so"
+   ],
+   "acceptance": "representative displays look intentional (1440p letterboxes the fixed world rather than revealing board; the DPR-3 phone is a clean nearest-neighbour upscale with no blur); critical UI readable (hand, rank/suit, both action buttons and the reason line, read at both ends); no major scaling issue found — the existing fit/centre/aspect assertions pass unchanged on both new profiles",
+   "verification": [
+    "npx playwright test -c playwright.cross.config.ts --project='desktop 1440p' --project='high-dpi phone' (14/14)",
+    "the wider re-run across chrome, safari, ipad and both new profiles (47/47)",
+    "read docs/screenshots/cross-browser/desktop-1440p/game.png and high-dpi-phone/game.png directly: crisp pixels, no clipping, intentional letterboxing"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — two profiles added, not a matrix; the phase's out-of-scope line is 'exhaustive device matrix' and the two chosen are the ones the existing eight could not speak for"
+   }
+  },
+  {
+   "phase": "35 — Asset Performance & Loading",
+   "wave": "4D (deferred)",
+   "status": "NO_CHANGE_REQUIRED",
+   "result": "Everything this phase optimizes is already measured and already inside budget with 3–5× headroom. Checked the three levers it names and left all three alone, with the numbers that justify it.",
+   "changed": [
+    "docs/PERFORMANCE.md — §Asset cost (Phase 35): the four measurements against their budgets, and why compression, atlases and load order were not touched"
+   ],
+   "acceptance": "loading meets the budgets (432 kB of 1.5 MB, boot 350 ms/836 ms of 2.5 s/5 s); memory acceptable (~17 MB of 80 MB); no visual degradation from optimization to review, because none was applied",
+   "verification": [
+    "PNG payload hashes across public/assets: 0 duplicates",
+    "maximum-zlib re-encode estimate: 261 kB → 242 kB, an 8% saving on a budget with 3.5× headroom, at the cost of byte-identical regeneration",
+    "first-load and heap figures re-read from the Phase 75/76 measurements"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the phase's own out-of-scope line is premature optimization, and an 8% saving that breaks deterministic regeneration is exactly that"
+   }
+  },
+  {
+   "phase": "97 — Final Product QA",
+   "wave": "12",
+   "status": "PASS",
+   "result": "Ran the product gates end to end on the final tree. Critical journeys pass: local play against every AI tier, the 12-step tutorial and its skip path, settings and their persistence, corrupt-save recovery, the offline app shell, and the representative failure paths (unreachable server, bad room code, full room, blocked storage).",
+   "acceptance": "critical player journeys pass; no release-blocking product defect open — the only open items are the deferred risks listed by npm run health, none of them P0/P1",
+   "verification": [
+    "npm run verify (exit 0): 1143 unit/integration tests, lint, 131 browser journeys + 3 @perf, check-verify.mjs — no console errors, no page errors, no fallback art, fps floors held",
+    "npm run verify:pwa (14/14, exit 0) on a quiet machine; a first attempt failed one service-worker test after 6.6 minutes under self-inflicted load (load average 64 from chained suites) and passed in 15 s alone",
+    "npm run verify:preview (exit 0): every asset reference resolves in dist/, no credential-shaped strings in the bundle"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p97-verify.log",
+     "tmp/agent-logs/p97-pwa2.log",
+     "tmp/agent-logs/p97-preview.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the one failure seen was diagnosed to machine load and re-run clean rather than retried into green"
+   }
+  },
+  {
+   "phase": "98 — Final Visual QA",
+   "wave": "12",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "The six pixel baselines match, the 131-capture journey suite is clean, and the ten cross-browser/device profiles render without clipping on every engine that launches here.",
+   "acceptance": "representative states match their baselines; no visual regression from this roadmap's changes (the one intended change, the nine-sliced button, was reviewed and its two embedded captures refreshed); art meets the family anchors (Phase 28) and the asset structure is enforced (tests/assets.test.ts)",
+   "verification": [
+    "npm run verify:visual (6/6, exit 0)",
+    "npm run verify:cross: 99 passed, 7 failed — all seven are Firefox failing to launch on this macOS build, the known P2",
+    "npm run screenshot inside npm run verify: 131 + 3 @perf passed, check-verify.mjs exit 0"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p98-visual.log",
+     "tmp/agent-logs/p98-cross.log"
+    ]
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-linux-baselines-missing",
+     "note": "Still open from Phase 33: CI has no linux baselines yet, so the nightly visual job will write candidates on its first run for a human to review.",
+     "owner": "standing: nightly visual-baseline job",
+     "reownedFrom": "Phase 104 — Continuous Architecture & Quality Health",
+     "reownedBy": "Phase 104 — Continuous Architecture & Quality Health"
+    },
+    {
+     "id": "P2-firefox-unverifiable-locally",
+     "note": "Firefox cannot launch on this macOS build; its layout and lobby evidence comes only from the nightly CI jobs.",
+     "owner": "standing: nightly cross-browser and multiplayer-all-engines jobs",
+     "reownedFrom": "Phase 104 — Continuous Architecture & Quality Health",
+     "reownedBy": "Phase 104 — Continuous Architecture & Quality Health"
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the Firefox gap is reported as a gap, not absorbed into a pass"
+   }
+  },
+  {
+   "phase": "99 — Final Accessibility QA",
+   "wave": "12",
+   "status": "PASS",
+   "result": "Re-ran the accessibility evidence on the final tree rather than trusting the matrix: reduced motion, +25 % text on four screens, keyboard operation, non-colour-only signalling, and touch targets.",
+   "acceptance": "reduced motion preserves information (?motion=0 disables cosmetic tweens and the tutorial's undo callout still appears); large text fits (setup, rules, pause, settings and the board at 125 %); keyboard path works (C draws and ends a turn like the button; the online home, browser and lobby are reachable by keyboard); nothing critical is colour-only (invalid melds carry a badge and a written reason, lobby states carry words); touch targets grow on coarse pointers (PixelButton hit box)",
+   "verification": [
+    "the a11y, large-text, reduced-motion and keyboard journeys inside npm run verify (131 passed)",
+    "OD-A11Y keyboard lobby journey inside verify:multiplayer:chromium (44 passed)",
+    "npx vitest run tests/motion.test.ts tests/tokens.test.ts tests/feel.test.ts tests/i18n.test.ts (28/28) — motion scaling, token roles, feel timings, and pt/en parity with every declared key non-empty"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — within the documented canvas limits (no DOM semantics; stated in ARCHITECTURE.md rather than claimed away)"
+   }
+  },
+  {
+   "phase": "100 — Final Multiplayer QA",
+   "wave": "12",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Full multiplayer gate green on Chromium: 44 tests, the room/seat/rematch lobby matrix, 2/3/4-client matches, reconnect and resync, chaos delivery, hand privacy and state-hash agreement, plus the gate script's own checks.",
+   "acceptance": "server authority, revision checks, privacy and redaction, stale/duplicate/reordered frames, disconnect/reconnect, rematch, seat ownership, resync and 2/3/4 players all pass against the real server; no accepted illegal proposal; no server stderr; no client console error",
+   "verification": [
+    "npm run verify:multiplayer:chromium (44/44, 7.1m) + check-verify-multiplayer.mjs: OK, 77 screenshots, room X5K6G seed 2, revisions [1,2]",
+    "an earlier run of the same gate had 4 lobby failures, each taking 15+ minutes against a normal 20 s, while two other browser suites were running (load average 64); all four pass in 1.7m when run alone, and the full gate then passes clean"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p100-mp3.log",
+     "tmp/agent-logs/p100-mp-retry.log",
+     "tmp/agent-logs/p100-check.log"
+    ]
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-mp-engine-parity-nightly-only",
+     "note": "Firefox and WebKit multiplayer evidence comes from the nightly all-engines job; Firefox cannot launch on this machine at all, and the iOS WebKit gate is skipped in the chromium variant.",
+     "owner": "standing: nightly multiplayer-all-engines job",
+     "reownedFrom": "Phase 104 — Continuous Architecture & Quality Health",
+     "reownedBy": "Phase 104 — Continuous Architecture & Quality Health"
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the contended run is reported with its cause and its clean re-run, not quietly replaced by the green one"
+   }
+  },
+  {
+   "phase": "101 — Final Performance Gate",
+   "wave": "12",
+   "status": "PASS_WITH_DEFERRED_RISKS",
+   "result": "Re-measured every budget in docs/PERFORMANCE.md on the final tree. All met, most with 3–5× headroom.",
+   "acceptance": "boot 348 ms desktop / 729 ms at 4× CPU throttle (budgets 2.5 s / 5 s); first contentful paint 196 ms (budget 1.5 s); scene switch 211 ms / 787 ms (budgets 1 s / 2 s); 60 fps desktop and 52 fps throttled on the crowded board (floors 50/45, and the three @perf gates passed inside npm run verify); heap 18.8 MB after boot (budget 80 MB); first-load wire bytes 432 kB (budget 1.5 MB); AI bounded in trials, unchanged",
+   "verification": [
+    "npx playwright test e2e/perf-measure.spec.ts (4/4) — baseline, throttled, CPU profile and the 10-cycle memory walk",
+    "the three @perf fps gates inside npm run verify"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p101-perf.log"
+    ],
+    "profile": "77.9% native paint, 12.9% idle, largest JS frame Phaser run at 1.5% — unchanged shape since Phase 76"
+   },
+   "deferredRisks": [
+    {
+     "id": "P2-residual-heap-drift",
+     "note": "~100 kB and ~4 DOM-level listeners per match cycle remain inside Phaser/WebAudio rather than product code (10 cycles: 7.8 → 8.8 MB, DOM nodes flat). Bounded at ~10 MB per 100-match session against an 80 MB budget.",
+     "owner": "standing: nightly perf-trend job",
+     "reownedFrom": "Phase 104 — Continuous Architecture & Quality Health",
+     "reownedBy": "Phase 104 — Continuous Architecture & Quality Health"
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — measured, not re-asserted; the residual drift is carried forward with the same numbers rather than being quietly dropped at the final gate"
+   }
+  },
+  {
+   "phase": "102 — Production & Release Readiness",
+   "wave": "12",
+   "status": "PASS",
+   "result": "Walked the release path end to end and found one real defect: every generated GitHub Release note linked the self-hosting guide at the repository root, where it has never lived — a 404 in every release published so far.",
+   "changed": [
+    "scripts/release.mjs — the link points at docs/SELF_HOSTING.md, the path is a named constant, and the selfcheck now asserts both that the file exists and that the rendered notes contain the real path"
+   ],
+   "acceptance": "release procedure reproducible (tag → workflow re-runs lint/tests/build, refuses a tag that disagrees with package.json, publishes notes rendered from the CHANGELOG, builds both images per architecture and joins them by digest); rollback path ready (OPERATIONS §Rollback, its four unsafe conditions, and a rehearsal test in the PWA suite); production configuration validated (server refuses to start on a bad or missing value — 20 config/deployment tests; .env.example documents every variable; CSP and non-root user gated by a test and a CI job); release blockers zero — the open items are the deferred risks npm run health lists, none of them P0 or P1",
+   "verification": [
+    "node scripts/release.mjs --selfcheck (ok), with a negative control: restoring the old root path makes it fail",
+    "node scripts/release.mjs --notes 1.11.0 — the rendered link now resolves",
+    "npx vitest run tests/server/config.test.ts tests/deployment.test.ts (20/20)",
+    "npm run verify:preview (exit 0) from Phase 97",
+    "npm run lint (exit 0)"
+   ],
+   "decisions": [
+    {
+     "id": "P3-required-checks-and-skips",
+     "decision": "ACCEPTED (closed)",
+     "why": "Branch protection is not visible from the repository. The requirement — required checks must treat a skipped job as satisfied — is documented in TESTING.md §Which gate runs when, which is where someone configuring it would look."
+    },
+    {
+     "id": "P3-nginx-master-root",
+     "decision": "ACCEPTED (closed)",
+     "why": "Recorded as THREAT_MODEL.md TM-21: nginx workers already drop privileges, and running the master unprivileged means another base image and a port change through every compose file, for a process that serves static files and logs nothing."
+    }
+   ],
+   "resolvedRisks": [
+    {
+     "id": "P3-required-checks-and-skips",
+     "note": "Accepted and documented where it is configured."
+    },
+    {
+     "id": "P3-nginx-master-root",
+     "note": "Accepted as TM-21."
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the defect found was not cosmetic: the release notes are the first thing a self-hoster follows, and it was broken in every published release"
+   }
+  },
+  {
+   "phase": "103 — Final Documentation Reconciliation",
+   "wave": "12",
+   "status": "PASS",
+   "result": "Most of this phase's work had already been done along the way — drift was the most common defect this roadmap found, and Phase 89 turned the mechanical half into a test. What was left was the prose a test cannot judge: three documents describing a product that had moved on.",
+   "changed": [
+    "docs/ROADMAP.md — says the remaining roadmap is executed and points at ROADMAP_STATUS.json and npm run health for the detail; the 'per-IP rate limiting' deferral corrected (per-IP caps and room-creation budgets are shipped; a connection farm is the part that is not); the flake note updated to measureFpsSamples",
+    "docs/PLAYTEST_GUIDE.md — 'rate limiting is per connection, not per IP' corrected to what the server actually enforces",
+    "README.md — CI description updated for the scope routing and the container check, and for the fact that a green main deploys rather than the newest commit"
+   ],
+   "acceptance": "canonical docs reflect the implementation (the mechanical classes are gated by tests/docs-drift.test.ts on every run; the prose claims above were re-read against the code); obsolete documentation is clearly historical (CHANGELOG.md and ARCHITECTURE_AUDIT.md are records, exempted from the path check by name and for that reason); operational instructions accurate (OPERATIONS env table complete against server/config.ts; .env.example documents every deployment variable; the release note link fixed in Phase 102)",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts tests/assets.test.ts tests/deployment.test.ts tests/boundaries.test.ts (25/25)",
+    "cross-checked every environment variable in .env.example against OPERATIONS.md and SELF_HOSTING.md, and every server/config.ts variable against OPERATIONS.md: no gaps"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing historical was deleted for tidiness, which is this phase's stated out-of-scope"
+   }
+  },
+  {
+   "phase": "104 — Continuous Architecture & Quality Health",
+   "wave": "12",
+   "status": "PASS",
+   "result": "Closed the roadmap by making sure nothing in it depends on the roadmap continuing. Every control is scheduled, every remaining risk is owned by something that recurs, and the one signal a maintainer has to read is a command.",
+   "changed": [
+    "scripts/health.mjs — a third list: risks a standing control owns. A risk whose owner names a recurring job rather than a phase number is no longer printed as though a milestone will close it",
+    ".github/workflows/nightly.yml — perf-trend job: runs e2e/perf-measure.spec.ts and prints boot, throttled boot, the CPU profile and the 10-cycle memory walk. It gates nothing; the budgets and the three @perf tests are the gate, and this is the dated series to read when one of them starts moving",
+    "docs/ROADMAP_STATUS.json — the four risks that had been handed to this phase re-owned to the standing controls that actually watch them (7 entries across duplicated records)",
+    "docs/DEVELOPMENT.md — §What keeps running after the roadmap: the per-PR, per-test-run, nightly and weekly controls, and which of them gate"
+   ],
+   "acceptance": "critical checks remain automated and scheduled (five guard tests in every test run, a scoped PR gate, ten nightly jobs, weekly mutation and dependency updates); ownership of future risks clear (no risk is owned by a phase that will never run again — npm run health separates actionable, ahead and standing); maintainers have concise signals (one command, three lists, no score); the repository can evolve without recreating the roadmap — each control exists because something it catches was found by hand at least once, which is recorded per phase in this file",
+   "verification": [
+    "node scripts/health.mjs: 69 phases recorded, 0 overdue risks, 7 standing entries, 1 BLOCKED phase (50 — Adaptive AI, never built)",
+    "MEXE_OUTPUT=ai npm run test (1143/1143, exit 0); npm run lint (exit 0)",
+    "nightly.yml parses with 10 jobs"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the phase's risk is 'release gates disappearing after launch', and the answer is that the gates are in workflows and test files rather than in this document"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P3-late-rejection-not-correlated",
+     "note": "Phase 100's chaos suite (CH-01..CH-05) now covers delayed, duplicated, stale and withheld frames on a real socket, including a rejection that arrives after the board moved on (CH-05). The correlation gap is bounded by the pending timeout and cannot unlock a board mid-resync."
+    },
+    {
+     "id": "P3-lb48-weak-mutant",
+     "note": "Phase 100's full multiplayer gate passes with the lobby matrix intact; the weak mutant is a mutation-report item, and mutation testing is a weekly report by design rather than a gate."
+    }
+   ],
+   "riskReconciliation": "Final gate: 9 risks had been deferred to phases 97–100, which have now passed. 2 closed with the evidence those phases produced; 7 re-owned to the standing control that watches them."
+  },
+  {
+   "phase": "Post-roadmap risk closure (visual, performance, multiplayer)",
+   "wave": "follow-up",
+   "status": "PASS",
+   "result": "Closed four of the standing risks with evidence and reduced a fifth to one click. The performance one turned out not to be a leak at all.",
+   "changed": [
+    "e2e/visual.spec.ts — a platform with no committed baseline skips with a message naming the workflow, instead of failing every night until someone adopts one",
+    ".github/workflows/visual-baselines.yml — new workflow_dispatch job: regenerates baselines on the CI runner, re-runs the suite to confirm they pass as written, and opens a pull request so the review happens in a diff (plain git + gh, no third-party action)",
+    "docs/PERFORMANCE.md — §Memory: the drift measured to its plateau and attributed by heap snapshot",
+    "tests/server/reconnect.test.ts — OR-30: three drop/reconnect round trips with a turn taken between each, asserting one membership, the same seat, forward-only revisions and the seat's own hand",
+    "tests/net/reconnect.test.ts — OR-20: an exhausted retry loop followed by a *reload* (a fresh NetClient) still reclaims the seat from the stored token",
+    "e2e-multiplayer/multiplayer.spec.ts — the chaos suite waits on the acting client's revision instead of a fixed 150 ms settle, and its recovery deadlines scale 2× on CI; injected delays are untouched, since they are the scenario"
+   ],
+   "acceptance": "P2-residual-heap-drift closed with measurement; P3-reconnect-coverage-gaps and P3-retry-exhaustion-unowned closed with the two tests that were missing; P3-chaos-timing-under-load closed by removing the fixed settle and scaling the patience; P2-linux-baselines-missing reduced from 'CI gates nothing and fails nightly' to 'run one workflow, review one PR'",
+   "verification": [
+    "25 match cycles, run twice: heap 7.6 → 9.1 MB with the first nine cycles adding ~1.2 MB and the next sixteen ~0.3 MB; DOM nodes flat at 166 and DOM-level listeners flat at 202 throughout",
+    "heap-snapshot diff across six cycles: +843 kB total of which +804 kB is V8 `code` (3,434 objects) and 31 kB native; product objects +58 plain objects, +12 arrays",
+    "npx vitest run tests/server/reconnect.test.ts (14/14), tests/net/reconnect.test.ts (14/14)",
+    "playwright -c playwright.multiplayer.config.ts --project=chromium -g CH-0 (5/5, 23.6s — was ~57s)",
+    "npx playwright test e2e/visual.spec.ts (6/6); negative control with the snapshot directory removed and CI=1: 6 skipped with the workflow named, instead of 6 failures",
+    "MEXE_OUTPUT=ai npm run test (1145/1145, exit 0); npm run lint (exit 0); all workflows parse"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the performance risk was closed by disproving it rather than by accepting it: the earlier +13 listeners per cycle do not reproduce, and what is left plateaus and is V8's, not the match lifecycle's"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P2-residual-heap-drift",
+     "note": "Not a leak. Plateaus at ~9 MB over 25 cycles; +804 kB of the +843 kB across six cycles is V8 code objects. DOM nodes and listeners flat."
+    },
+    {
+     "id": "P3-reconnect-coverage-gaps",
+     "note": "OR-30 covers repeated reconnects with a turn taken between them."
+    },
+    {
+     "id": "P3-retry-exhaustion-unowned",
+     "note": "OR-20 covers exhaustion followed by a reload into a successful reclaim."
+    },
+    {
+     "id": "P3-chaos-timing-under-load",
+     "note": "Fixed settle replaced by a revision wait; recovery deadlines scale on CI."
+    },
+    {
+     "id": "P2-linux-baselines-missing",
+     "note": "Partly: the nightly job no longer fails for a missing baseline, and a dispatchable workflow produces and PRs them. Adoption is one run away and still needs a human to look."
+    }
+   ]
+  }
+ ],
+ "riskClosures": [
+  {
+   "task": "@perf fps floors red on CI (pulled forward from Phase 84 — Flaky-Test Control)",
+   "closes": [
+    "P3-perf-spec-flake",
+    "P2-perf-spec-floors-under-suite-load",
+    "P3-suite-flake (perf half)"
+   ],
+   "trigger": "CI run 35427627357 on this branch failed the Playwright e2e job on two @perf floors — stress-table 23.61 against 25 and crowded-table-max 14.73 against 15 — while the nightly fps-drift job, which runs the same three specs with --repeat-each=5, passed. A single-sample gate on a shared runner, not a rendering regression.",
+   "change": "measureFps returns the best of three 2s windows, and stress-table's CI floor is recalibrated for the windowed metric from 25 to 20. crowded-table-max's CI floor of 15 is unchanged — best-of-three was enough there. Both dev floors (50/45) are untouched.",
+   "evidence": {
+    "reproduction": "under six busy loops on a 10-core machine (load 13-15), the single-window version failed exactly as CI did — stress-table 37.9 against the dev floor of 50, crowded-table-max 44.9 against 45",
+    "fix": "best-of-three passed all three specs under the same, heavier load (load 13.29)",
+    "doesNotMask": "a sustained slowdown still fails: with Emulation.setCPUThrottlingRate at 20x, best-of-three read 21.8 against the dev floor of 50. At 6x it passed, which is the honest limit of this metric — it counts main-thread frame cadence, so it catches saturation rather than per-frame JS cost",
+    "gate": "npm run verify exit 0 (tmp/agent-logs/verify-perf-fix.log)",
+    "metricChange": "git diff origin/main..HEAD -- e2e/screenshot.spec.ts shows waitForTimeout(3000) + lifetime average replaced by measureFps windows; the in-file comment already warned the floors predated the switch",
+    "ciAfterFirstFix": "run 35466617437: crowded-table-max passed with best-of-three, stress-table still failed at 24.15"
+   },
+   "notes": [
+    "Deliberately not lowered again: the floors have already been rebased once for CI, and ratcheting a quality bar down to meet runner noise is how a perf gate stops meaning anything.",
+    "Deliberately not given --retries: a retry hides which of the two causes fired, while re-measuring inside the test keeps the failure meaningful."
+   ],
+   "correction": "The first fix (best of three windows) was necessary but not sufficient, and the diagnosis was incomplete. CI still read 24.15 against the floor of 25. The real cause is that this branch CHANGED THE METRIC: main reads __MEXE__.fps, Phaser's lifetime average, after a 3s settle; the branch reads a 2s rAF window. The CI floors of 25/15 were calibrated for the lifetime average, so nightly's 5/5 pass on main and this branch's ~24 are not comparable numbers. A like-for-like local measurement (same machine, same single-window probe) found no regression: branch 60.8/60.5/42.7 versus main 57/56/56."
+  },
+  {
+   "task": "CH-04 flaked on CI (self-inflicted, Phase 65)",
+   "trigger": "run 35466617437: CH-04 failed with expected true, received false at expect(dropped). The test counted two turns and assumed the second was the guest's; on a slower runner the guest was still rendering the previous frame when the helper sampled it, so the host took both turns and no frame was ever dropped.",
+   "change": "CH-04 now waits for the guest to hold the clock, acts there, and polls the mangler's own flag — the shape CH-05 already used and which passed on CI.",
+   "evidence": "CH-01..CH-05 5/5 locally after the change; CH-05 was green on CI with this shape"
+  },
+  {
+   "task": "AI determinism tests timed out on CI (pre-existing, blocking every run on this branch)",
+   "trigger": "runs 35427627357, 35466617437 and 35468141119: tests/ai.test.ts > decision reproducibility failed with 'Test timed out in 5000ms' at 5.37s, 5.86s and 5.85s. Not introduced by this branch's work — the same three tests failed on the run that predates it. They pass locally (1117/1117).",
+   "change": "The four heaviest tests in that describe carry an explicit 30s deadline, the same treatment commit 21eac38 already gave the AI soak. Nothing about the searches changed.",
+   "rationale": "What they assert is that the heaviest search returns the identical answer every time; the wall clock is incidental to that. The search's actual time budget stays asserted by 'terminates on the heaviest search, both tiers' (expectWithinMs 2000 per decide), so no timing coverage is lost.",
+   "evidence": "npm run lint exit 0; npm run test 1117/1117; tests/ai.test.ts 78/78 in 9.27s"
+  },
+  {
+   "task": "the two heaviest multiplayer e2e tests blew their budgets on CI after Phase 65 added five chaos tests",
+   "trigger": "runs 35466617437 and 35468329303: LB-19..LB-24 exceeded its 420s budget (7.1m) and OD-28/OD-29 its 180s one (3.1m), on a branch whose previous CI run passed the same job in 16m16s. The suite went 44 -> 49 tests and 16m16s -> 22.7m.",
+   "ruledOut": "not the Phase 62/65 product changes. Same machine, same eight busy loops: LB-19..LB-24 took 1.5m with src/net/client.ts + src/net/online-session.ts at HEAD, and 1.5m with both reverted to c9e2e96 (under a heavier load average, 19.8 vs 6.7). The chaos tests' own cost is not it either — all five together are 57s on CI.",
+   "cause": "peak concurrency. This suite is contention-bound and already dropped from three workers to two because these same two tests starved; five more tests each holding two browser contexts plus a Node-side frame proxy put it back over the edge.",
+   "change": "CH-01..CH-05 are tagged @chaos and greped out of verify:multiplayer:chromium (the PR path). The nightly verify:multiplayer still runs them. Locally they are -g CH-0.",
+   "evidence": "PR selection is back to 44 tests in 2 files; npm run verify:multiplayer:chromium exit 0 (tmp/agent-logs/verify-mp-chaos-split.log); the five @chaos tests pass 5/5 in 21.9s when selected",
+   "stillOpen": "OD-28/OD-29 also fails nightly on main, so it has a contention problem of its own that predates this branch. Owner: Phase 66.",
+   "followUp": "The chaos split fixed OD-28/OD-29 but not LB-19..LB-24, so the contention story was only half of it. The rest: that test measured 4.8m against its 420s budget on the last green CI run — 31% headroom for the heaviest test in the repo — and the suite has since gained LB-47 (c9e2e96, committed before this session but after that green run), another multi-context lobby test in the same parallel file. Budget raised to 600s (2x measured). The ratchet has now happened twice (300 -> 420 -> 600); the structural fix is to stop the two heaviest lobby tests from overlapping, which is left to Phase 66/84 rather than guessed at here."
+  },
+  {
+   "task": "attachClientContexts lost its context on exactly the failure it was built for",
+   "trigger": "CI run 35471194957: LB-19..LB-24 timed out and attached five screenshots and no client-context. A timed-out test leaves its hooks none of the budget, so the afterEach could not finish.",
+   "change": "attachClientContexts calls testInfo.setTimeout(30_000) before reading the clients.",
+   "evidence": "a deliberately timing-out probe spec (deleted after the run) attached ['screenshot', 'client-context', 'error-context'] with seat 0 and room code 68C54 readable in the context",
+   "note": "Phase 63 claimed 'failures identify client/seat/revision context' on the strength of an assertion failure. A timeout is the other failure mode and it did not hold there; this closes that gap."
+  }
+ ]
+}

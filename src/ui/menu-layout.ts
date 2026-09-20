@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { SURFACE } from './tokens';
 import { view } from './viewport';
 
 /**
@@ -43,11 +44,11 @@ export function panelW(w: number): number {
  */
 export function woodPanel(scene: Phaser.Scene, x: number, y: number, w: number, h: number): Phaser.GameObjects.Graphics {
   const g = scene.add.graphics();
-  g.fillStyle(0x2a1a10, 0.93);
+  g.fillStyle(SURFACE.panel, 0.93);
   g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 5);
-  g.lineStyle(2, 0xc0a878, 0.95);
+  g.lineStyle(2, SURFACE.panelBorder, 0.95);
   g.strokeRoundedRect(x - w / 2, y - h / 2, w, h, 5);
-  g.lineStyle(1, 0x6b4a2f, 0.9);
+  g.lineStyle(1, SURFACE.panelBorderInner, 0.9);
   g.strokeRoundedRect(x - w / 2 + 2, y - h / 2 + 2, w - 4, h - 4, 4);
   return g;
 }

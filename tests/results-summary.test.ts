@@ -38,7 +38,7 @@ describe('summarizeMoveKey', () => {
     const before: Meld[] = [meld('m1', [c('hearts', 9), c('spades', 9), c('clubs', 9)])];
     const after: Meld[] = [...before, meld('m2', [c('diamonds', 3), c('diamonds', 4), c('diamonds', 5)])];
     const { key, params } = summarizeMoveKey(before, after, 3);
-    expect(key).toBe('game.lastMove.played');
+    expect(key).toBe('game.lastMove.played.many');
     expect(params).toEqual({ n: 3, m: 0 });
   });
 

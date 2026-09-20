@@ -238,6 +238,39 @@ describe('LobbyMachine — refusals', () => {
     expect(lobby.errorMsg).not.toBeNull();
   });
 
+  it('a second room in the same session starts with open terms, not the first room\'s frozen ones', () => {
+    // Error screen -> RETRY -> new room is the one path that puts two rooms through one machine.
+    const lobby = fresh();
+    lobby.roomJoined(joined({ code: 'AAAAA' }));
+    lobby.roomState(roomState({ locked: true })); // room A's match started
+    expect(lobby.settingsLocked).toBe(true);
+    lobby.serverError({ code: 'not_ready' }); // a room-A line, answered on room A's lobby
+    expect(lobby.lobbyNotice).not.toBeNull();
+    lobby.reaction({ seat: 1, reaction: 'nice' });
+    lobby.serverError({ code: 'room_closed' });
+    expect(lobby.phase).toBe('error');
+    lobby.retry();
+    lobby.roomJoined(joined({ code: 'BBBBB' }));
+    expect(lobby.phase).toBe('lobby');
+    expect(lobby.code).toBe('BBBBB');
+    expect(lobby.settingsLocked).toBe(false);
+    expect(lobby.openCustom()).toBe(true); // the host can reach their own terms screen
+    // ...and nothing room A said is still on screen.
+    expect(lobby.lobbyNotice).toBeNull();
+    expect(lobby.lastReaction).toBeNull();
+    expect(lobby.rematch).toBe(false);
+  });
+
+  it('a resumed room keeps its rematch framing when the reconnect is answered', () => {
+    // The resume path sets `rematch` and the server answers `reconnect` with `room_joined`, so
+    // the flag must survive that answer — it is only a dead seat that retires it.
+    const lobby = new LobbyMachine();
+    lobby.start({ resume: { code: 'AAAAA', seat: 0 }, offline: false, socketOpen: true, linkedCode: null });
+    expect(lobby.rematch).toBe(true);
+    lobby.roomJoined(joined({ code: 'AAAAA' }));
+    expect(lobby.rematch).toBe(true);
+  });
+
   it('every refusal releases the in-flight guards so the buttons come back', () => {
     const lobby = fresh();
     lobby.inFlight.add('create');

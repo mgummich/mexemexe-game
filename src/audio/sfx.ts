@@ -33,7 +33,14 @@ export function playSfx(scene: Phaser.Scene, key: string, volume = 0.6): void {
     if (scene.cache.audio.exists(key)) {
       lastPlayedAt.set(key, now);
       const vary = !NO_VARIATION.has(key);
-      scene.sound.play(key, {
+      // Reuse the instance for this key instead of `sound.play(key, ...)`, which creates a new
+      // one per call. Phaser only removes such an instance when it emits COMPLETE, and a sound
+      // played while the audio context is still locked (or muted by the OS) never does — so a
+      // long session accumulated one live sound object per cue played, measured at +8 per match
+      // (docs/PERFORMANCE.md, Phase 77). The 80 ms retrigger guard above already means a single
+      // instance per key is enough: the same cue never has to overlap itself.
+      const sound = scene.sound.get(key) ?? scene.sound.add(key);
+      sound.play({
         volume: vary ? vol * (1 + (Math.random() * 2 - 1) * VOLUME_SPREAD) : vol,
         detune: vary ? Math.round((Math.random() * 2 - 1) * DETUNE_CENTS) : 0,
       });

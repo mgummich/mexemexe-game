@@ -529,6 +529,12 @@ export function deserializeGameState(json: string): GameState {
   ) {
     throw new RulesError('corrupt save: bad shape', 'corruptSave');
   }
+  // The active seat has to be a seat. Nothing downstream re-checks it — `drawAndEndTurn` indexes
+  // `players` directly — so an out-of-range index read as trusted state turns the next action
+  // into a `TypeError` instead of a refusal (INV-P1, INV-S5).
+  if (!Number.isInteger(s.activePlayerIndex) || s.activePlayerIndex < 0 || s.activePlayerIndex >= s.players.length) {
+    throw new RulesError('corrupt save: active player is not a seat', 'corruptSave');
+  }
   if (!cardsConserved(s)) {
     throw new RulesError('corrupt save: card conservation violated', 'corruptSave');
   }

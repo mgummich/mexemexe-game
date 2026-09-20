@@ -13,15 +13,16 @@
  */
 import fs from 'node:fs';
 import { createAi } from '../src/ai/ai';
+import { observeForAi } from '../src/ai/observation';
 import { GameStore } from '../src/game-state/store';
 import { parseReplay, runReplay, serializeReplay } from '../src/game-state/replay';
 import { createNewGame } from '../src/rules/rules';
 import { RulesError } from '../src/rules/types';
 
-/** `cida`/`juninho` run `SimpleAi`, which has no time budget, so recording twice from one seed
- * produces the same file. `bia`/`ze` rearrange under a wall-clock budget: their *recording* is
- * not reproducible, but the recorded actions replay deterministically like any other — which is
- * how a rearrangement-heavy fixture gets made. */
+/** Every personality records reproducibly: `cida`/`juninho` run `SimpleAi`, and `bia`/`ze`
+ * rearrange under a deterministic trial budget rather than the wall clock it used to be, so
+ * recording twice from one seed produces the same file either way. `bia`/`ze` are how a
+ * rearrangement-heavy fixture gets made. */
 type RecordPersonality = 'cida' | 'juninho' | 'bia' | 'ze';
 const DEFAULT_PERSONALITIES: RecordPersonality[] = ['cida', 'juninho'];
 const MAX_TURNS = 400;
@@ -36,7 +37,7 @@ function record(seed: number, out: string, maxActions: number, personalities: Re
   const ais = personalities.map((p) => createAi(p, 'smart'));
   for (let i = 0; i < Math.min(maxActions, MAX_TURNS) && store.get().phase === 'playing'; i++) {
     const actorIndex = store.get().activePlayerIndex;
-    const decision = ais[actorIndex]!.decide(store.get());
+    const decision = ais[actorIndex]!.decide(observeForAi(store.get()));
     const outcome = store.dispatch(
       decision.kind === 'confirm'
         ? { type: 'confirmTurn', actorIndex, draft: decision.draft }

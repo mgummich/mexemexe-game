@@ -81,7 +81,12 @@ export default defineConfig({
         'src/verification/**',
         'server/**',
       ],
-      exclude: ['**/*.d.ts', 'server/index.ts'],
+      // online-debug.ts is the same kind of glue as src/scenes: it holds no product decision —
+      // every entry reads an OnlineSession/LobbyMachine/NetClient getter or forwards a product
+      // action — and its only consumer is the Playwright multiplayer suite, which fails loudly on
+      // a broken entry. Counting it here reports 0% for a file no vitest spec can meaningfully
+      // exercise, so it is measured where it runs, like the scenes are.
+      exclude: ['**/*.d.ts', 'server/index.ts', 'src/verification/online-debug.ts'],
       // Global floor set a few points below the measured baseline (lines 88.10,
       // branches 82.60, funcs 83.84, stmts 86.52 as of 2026-09-11) so an unrelated
       // PR doesn't fail the gate; branches gets the tightest margin since it's the

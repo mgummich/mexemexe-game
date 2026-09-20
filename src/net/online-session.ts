@@ -1,7 +1,7 @@
 import { GameStore } from '../game-state/store';
 import type { GameState, ReasonCode } from '../rules/types';
 import { digestOfState, stateHash, type GameView, type RoomSettings } from './protocol';
-import { viewToState } from './viewToState';
+import { viewProjectionProblem, viewToState } from './viewToState';
 
 /**
  * What one `state_sync` did to this session. The caller renders it and performs the effects it
@@ -17,6 +17,12 @@ export type SyncResult =
    * for a fresh snapshot. A second consecutive mismatch is accepted rather than looped on.
    */
   | { kind: 'desync'; rev: number; localHash: string; serverHash: string }
+  /**
+   * The frame could not be projected at all (`viewProjectionProblem`), so nothing was applied and
+   * the previous state still stands. Same remedy as a desync — lock input and pull a fresh
+   * snapshot — but a different cause: a malformed frame rather than two honest peers disagreeing.
+   */
+  | { kind: 'invalid'; rev: number; problem: string }
   | {
       kind: 'applied';
       /** Dense player index of the seat whose turn produced this frame. */
@@ -85,6 +91,10 @@ export class OnlineSession {
   localSeat: number;
   private store: GameStore;
   private mexeBonusClaimed: boolean;
+  /** True once this session has accounted for its match ending — either by the final frame or by
+   * discovering, after a drop, that it already ended. What stops a second room frame from
+   * reporting the same missed finish twice. */
+  private finished = false;
 
   constructor(start: { view: GameView; seat: number; code: string }) {
     this.seat = start.seat;
@@ -116,7 +126,19 @@ export class OnlineSession {
    * edits in flight" — the one thing the session cannot see, because the draft is the editor's.
    */
   applySync(view: GameView, hadDraft: boolean): SyncResult {
+    // Match identity first, because the revision comparison below is only sound inside one match:
+    // `rev` restarts at 1 on every deal, so a frame belonging to another match would read as
+    // either stale (silently dropped, board frozen) or fresh (another match's board applied as
+    // this one's). No delivery path is known to produce one — one socket per client, ordered, and
+    // the server never re-sends a finished match's frames — so this refuses rather than repairs.
+    if (view.matchId !== this.matchId) {
+      return { kind: 'invalid', rev: view.rev, problem: `frame from match ${view.matchId}, session is ${this.matchId}` };
+    }
     if (view.rev < this.lastRev) return { kind: 'stale' };
+    // Checked before anything is written, so a frame this client cannot represent leaves the last
+    // good state — and `lastRev` — untouched instead of half-applied.
+    const problem = viewProjectionProblem(view);
+    if (problem !== null) return { kind: 'invalid', rev: view.rev, problem };
     const actingSeat = this.store.get().activePlayerIndex;
     this.lastRev = view.rev;
     this.store = new GameStore(viewToState(view));
@@ -150,8 +172,22 @@ export class OnlineSession {
 
   /** The final frame of the match. Replaces the projection so the results can be read off it. */
   applyGameOver(view: GameView): GameState {
+    this.finished = true;
     this.store = new GameStore(viewToState(view));
     return this.store.get();
+  }
+
+  /**
+   * A `room_state` frame arrived while this session is the one being rendered. `locked` is false
+   * only for a room with no match running, so an unlocked room this session never saw finish means
+   * the match ended while this client's socket was down (a drop over the finish, inside the
+   * reconnect grace): the room is already a rematch lobby and this board is dead. Reported once —
+   * the reconnect answer broadcasts room state more than once, and one handoff is enough.
+   */
+  roomState(locked: boolean): { missedFinish: boolean } {
+    const missedFinish = !locked && !this.finished;
+    if (missedFinish) this.finished = true;
+    return { missedFinish };
   }
 
   /** The server refused this client's proposal. */
