@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "4B",
-  "phase": "28 — Asset Families & Golden References",
+  "wave": "4C",
+  "phase": "30 — High-Resolution Asset Production",
   "status": "NOT_STARTED"
  },
- "head": "ae1c1f1",
+ "head": "cd04918",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1712,6 +1712,52 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — and a correction rather than a defence: the Phase 24 table was wrong about the card family because it trusted this document's own stale size column instead of the file headers, which is exactly the drift the measurement was supposed to catch"
+   }
+  },
+  {
+   "phase": "28 — Asset Families & Golden References",
+   "wave": "4B (deferred)",
+   "status": "PASS",
+   "result": "Named six families and gave each one a shipped anchor file, because 'matches the style' is unanswerable and 'matches this file' is not.",
+   "changed": [
+    "docs/ART_DIRECTION.md — §Families and their anchors: the anchor per family, what each anchor fixes (canvas, outline weight, shading, silhouette, readability floor), its members, and the rule that readability outranks family consistency where they conflict"
+   ],
+   "acceptance": "major families have approved anchors (6, each an asset already shipped and already passing); future assets judged consistently (a new member sits beside its anchor in a golden frame); references preserve readability — the tie-break is stated rather than left to taste",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the reference set is six files, not a gallery, which is the phase's 'reference set too broad' risk avoided"
+   }
+  },
+  {
+   "phase": "29 — Scalable UI Asset System",
+   "wave": "4B (deferred)",
+   "status": "PASS",
+   "result": "The UI asset system was already lean — one texture per button, four states as runtime tints, panels drawn as Graphics, labels drawn by the engine so they stay translatable. But it did not scale without distortion: a 168x60 slab was stretched with setDisplaySize to sizes from 128x24 to 16x14, so the same rim read 1px tall and nearly 2px wide on the menu's primary button, and the wood grain smeared with it.",
+   "changed": [
+    "src/ui/widgets.ts — PixelButton's slab is a Phaser nine-slice: geometry in texture pixels, uniformly scaled by 1/RENDER_SCALE, corner inset clamped so the 16x14 icon button degrades to 'almost all corner' rather than to a broken slice",
+    "docs/ARCHITECTURE.md, docs/ART_DIRECTION.md, docs/ASSETS.md — the widget contract, the Controls anchor and the button note now say one authored aspect serves every size",
+    "docs/screenshots/menu.png, game.png — refreshed, since they are the two images the README and docs site embed and this change is visible in both"
+   ],
+   "acceptance": "canonical states visually supported (normal/hover/pressed/disabled unchanged, still tints, plus the focus ring); assets scale without distortion (corners authored-size, middles stretch); interaction and accessibility semantics unchanged — same sizes, same hit boxes, same touch-target growth, same disabled behaviour",
+   "verification": [
+    "npm run screenshot (131 + 3 @perf passed) + node scripts/check-verify.mjs (exit 0): no console errors, no missing assets, fps floors held",
+    "visual comparison of menu.png before and after: crisp uniform rim, grain no longer smeared, layout identical",
+    "npx playwright test -c playwright.cross.config.ts: 85 passed across WebKit, iPad and the mobile profiles; the 7 failures are all Firefox failing to launch on this macOS build (known, P2-firefox-unverifiable-locally)",
+    "MEXE_OUTPUT=ai npm run test (exit 0), npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p29-shot.log",
+     "tmp/agent-logs/p29-check.log",
+     "tmp/agent-logs/p29-test.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no new asset was produced for a problem that was a drawing bug, and the change is confined to the one widget that owns button drawing"
    }
   }
  ],

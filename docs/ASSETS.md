@@ -61,7 +61,10 @@ free-drawing all 52 would scramble rank glyphs); see the note at the end.
 | SFX ×9 + ambience loop | procedural synthesis (PixelLab has no audio) | wav | /public/assets/audio/*.wav | ✅ done (scripts/gen-sfx.mjs) |
 
 Button hover/pressed/disabled states derive from `-normal` via runtime tint
-(see PixelButton) — fewer assets, i18n-safe (text drawn by engine).
+(see PixelButton) — fewer assets, i18n-safe (text drawn by engine). The slab is
+drawn as a nine-slice, so one authored aspect covers every button size in the
+game without stretching its rim: a button asset is authored once, at the family's
+source size, and never per size.
 
 ## Producing or regenerating an asset
 

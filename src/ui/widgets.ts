@@ -87,6 +87,42 @@ interface PixelButtonOpts {
   onBlocked?: () => void;
 }
 
+/**
+ * A button slab drawn at an arbitrary size without stretching its border.
+ *
+ * The three button textures are authored at one aspect (168x60 for the wooden slabs) and used at
+ * five or six different sizes, from 128x24 down to 16x14 world units. A plain `setDisplaySize`
+ * stretched the whole image, so the same rim read 1px tall and nearly 2px wide on the menu's
+ * primary button and the wood grain smeared with it.
+ *
+ * A nine-slice keeps the four corners at their authored size and stretches only the middles. The
+ * geometry is set in *texture* pixels and then scaled down by `TEXTURE_SCALE`, because the source
+ * art is authored at `RENDER_SCALE` (docs/ART_DIRECTION.md, §Resolution policy) — scaling the
+ * object uniformly is what keeps the corners square.
+ */
+const TEXTURE_SCALE = 3;
+/** Corner inset, in texture pixels: the rim plus its highlight, and never more than a third of the
+ * smallest side, so the tiny 16x14 icon button degrades to "almost all corner" rather than to a
+ * broken slice. */
+const SLAB_INSET = 12;
+
+function sliceFor(w: number, h: number): number {
+  return Math.max(2, Math.min(SLAB_INSET, Math.floor((Math.min(w, h) * TEXTURE_SCALE) / 3)));
+}
+
+function nineSliceSlab(scene: Phaser.Scene, key: string, w: number, h: number): Phaser.GameObjects.NineSlice {
+  const inset = sliceFor(w, h);
+  const slab = scene.add.nineslice(0, 0, key, inkFrame(scene, key), w * TEXTURE_SCALE, h * TEXTURE_SCALE, inset, inset, inset, inset);
+  slab.setScale(1 / TEXTURE_SCALE);
+  return slab;
+}
+
+function resizeSlab(slab: Phaser.GameObjects.NineSlice, w: number, h: number): void {
+  const inset = sliceFor(w, h);
+  slab.setSlices(w * TEXTURE_SCALE, h * TEXTURE_SCALE, inset, inset, inset, inset);
+  slab.setScale(1 / TEXTURE_SCALE);
+}
+
 /** Multiplies an RGB color by a brightness factor, clamped — used to derive hover/pressed/disabled shades from one base palette color. */
 function shade(hex: number, factor: number): number {
   const c = Phaser.Display.Color.ValueToColor(hex);
@@ -142,7 +178,7 @@ function inkFrame(scene: Phaser.Scene, key: string): string | undefined {
 
 /** Tactile button: texture-swap states or tinted rect fallback, with press squash. */
 export class PixelButton extends Phaser.GameObjects.Container {
-  private bgImage?: Phaser.GameObjects.Image;
+  private bgImage?: Phaser.GameObjects.NineSlice;
   private bgRect?: Phaser.GameObjects.Rectangle;
   private txt: Phaser.GameObjects.Text;
   private enabledState = true;
@@ -174,7 +210,7 @@ export class PixelButton extends Phaser.GameObjects.Container {
     this.paletteColor = opts.color ?? ACTION.native;
     if (this.base && scene.textures.exists(`${this.base}-normal`)) {
       const key = `${this.base}-normal`;
-      this.bgImage = scene.add.image(0, 0, key, inkFrame(scene, key)).setDisplaySize(w, h);
+      this.bgImage = nineSliceSlab(scene, key, w, h);
       this.add(this.bgImage);
     } else {
       this.bgRect = scene.add.rectangle(0, 0, w, h, opts.color ?? ACTION.primary).setStrokeStyle(1, PLATE_EDGE);
@@ -253,7 +289,7 @@ export class PixelButton extends Phaser.GameObjects.Container {
     if (this.bgImage && this.base && this.scene.textures.exists(`${this.base}-${state}`)) {
       const key = `${this.base}-${state}`;
       this.bgImage.setTexture(key, inkFrame(this.scene, key));
-      this.bgImage.setDisplaySize(this.visualW, this.visualH);
+      resizeSlab(this.bgImage, this.visualW, this.visualH);
       this.bgImage.setTint(this.paletteColor);
     } else if (this.bgImage) {
       // only a -normal texture shipped: derive hover/pressed/disabled by shading the palette color

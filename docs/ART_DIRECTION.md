@@ -79,6 +79,32 @@ after boot is ~17 MB against an 80 MB budget
   - **Bia** — woman with curly hair, headphones around neck, focused (puzzle-minded)
   - **Seu Zé** — older man, straw hat, mustache, relaxed smile (patient)
 
+## Families and their anchors
+
+Six families. Each one has a single **anchor** — the shipped file a new member is
+judged against — because "matches the style" is unanswerable and "matches this
+file" is not. An anchor is not the prettiest asset; it is the one that best fixes
+the family's rules.
+
+| Family | Anchor | What the anchor fixes | Members |
+|---|---|---|---|
+| **Cards** | `cards/back-0.png` | 72×96 canvas, 2px warm border, the cream/ink pair, a repeating motif that stays legible face-down at hand scale | blank face, 5 backs, the 53 runtime-composed faces |
+| **Characters** | `characters/avatar-cida.png` | 72×72 bust, front-facing, thick single-colour outline, flat cel shading, one silhouette-defining prop (glasses, hat, headphones), transparent ground | 9 avatars |
+| **Tables** | `tables/boteco.png` | 480×270 full frame, playing surface centred and unclutteredly readable under cards, props only at the edges, upper-left light | 5 landscape + 5 portrait backgrounds, the dominoes prop |
+| **Controls** | `ui/feito-normal.png` | a 168×60 wooden slab with a 1px darker rim and no baked-in text: the label is drawn by the engine (translatable), the four states are tints of it, and it is drawn as a **nine-slice**, so the same file serves 128×24 and 16×14 without smearing the rim or the grain | FEITO, COMPRAR, small button |
+| **Icons** | `ui/suit-hearts.png` | one shape, one colour plus its outline, readable at 8×8 world units, no gradient | 4 suit pips, 6 emote glyphs, the emote bubble |
+| **Effects** | `effects/sparkle.png` | additive-friendly on both the felt and the wood, no hard edge that reads as a sprite when it overlaps a card | sparkle, victory banner |
+
+A new member is accepted when it passes the eight checks below **and** sits
+beside its anchor in a golden frame without either of them looking like the odd
+one out. The anchor changes only when the whole family is regenerated, which
+makes replacing one a decision rather than a drift.
+
+Readability outranks family consistency where they conflict: a card face that
+matches the deck beautifully and cannot be read at 390×844 is rejected, and that
+has never yet been a real conflict because the anchors were chosen from assets
+that already pass.
+
 ## Accepting an asset
 
 A new or regenerated asset is accepted when every line here is true. They are
