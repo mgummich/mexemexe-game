@@ -23,14 +23,18 @@ const open = [];
 for (const phase of phases) {
   for (const risk of phase.deferredRisks ?? []) {
     if (resolved.has(risk.id)) continue;
+    // An owner without a phase number is a *standing* owner — a recurring control rather than a
+    // one-off phase. That is where a risk goes when the roadmap ends and the control does not.
     const owner = phaseNumber(risk.owner);
-    open.push({ ...risk, from: phaseNumber(phase.phase), owner, overdue: settledNumbers.has(owner) });
+    const standing = owner === 0;
+    open.push({ ...risk, ownerLabel: risk.owner, from: phaseNumber(phase.phase), owner, standing, overdue: !standing && settledNumbers.has(owner) });
   }
 }
 
 const bySeverity = (a, b) => a.id.localeCompare(b.id);
 const overdue = open.filter((r) => r.overdue).sort(bySeverity);
-const ahead = open.filter((r) => !r.overdue).sort((a, b) => a.owner - b.owner || bySeverity(a, b));
+const ahead = open.filter((r) => !r.overdue && !r.standing).sort((a, b) => a.owner - b.owner || bySeverity(a, b));
+const standing = open.filter((r) => r.standing).sort(bySeverity);
 const blocked = phases.filter((p) => p.status === 'BLOCKED');
 
 const counts = phases.reduce((acc, p) => ({ ...acc, [p.status]: (acc[p.status] ?? 0) + 1 }), {});
@@ -51,6 +55,10 @@ for (const r of overdue) console.log(`  ${r.id}  (from phase ${r.from}, owner ph
 console.log(`\nRISKS WAITING ON A PHASE STILL AHEAD (${ahead.length}):`);
 if (ahead.length === 0) console.log('  none');
 for (const r of ahead) console.log(`  phase ${r.owner}: ${r.id} (from phase ${r.from})`);
+
+console.log(`\nRISKS A STANDING CONTROL OWNS (${standing.length}) — no phase will close these; the control reports them:`);
+if (standing.length === 0) console.log('  none');
+for (const r of standing) console.log(`  ${r.id}  (from phase ${r.from}, owned by ${r.ownerLabel})\n      ${r.note}`);
 
 console.log(`
 NOT VISIBLE FROM HERE — read these directly:

@@ -36,6 +36,26 @@ jobs:
       # clock this job has and a PR does not.
       - run: MEXE_SOAK=1 npx vitest run tests/server/session-soak.integration.test.ts
 
+  perf-trend:
+    name: Performance trend
+    runs-on: ubuntu-latest
+    # Prints, never gates. The budgets in docs/PERFORMANCE.md are the contract and the three @perf
+    # fps tests are the gate; this job exists so boot time, heap and the per-cycle drift have a
+    # dated series to read when one of them starts moving, instead of being measured once a year
+    # by whoever notices.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Measure (PERF / PERF-THROTTLED / PROFILE-TOP / MEM-DELTA in the log)
+        run: npx playwright test e2e/perf-measure.spec.ts --workers=1 --retries=0
+
   visual-baseline:
     name: Visual baselines
     runs-on: ubuntu-latest

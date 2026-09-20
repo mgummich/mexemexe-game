@@ -85,6 +85,11 @@ risks deferred to a phase that has **already passed** (the actionable ones, sinc
 nobody is coming back for them by accident) and risks waiting on a phase still
 ahead.
 
+It prints three lists: risks deferred to a phase that has **already passed** (the
+actionable ones), risks waiting on a phase still ahead, and risks a **standing
+control** owns — the ones no phase will ever close, because the thing that
+watches them is a recurring job rather than a milestone.
+
 It prints no score. One number would hide which area is failing, which is the
 only thing worth knowing. And it restates nothing: every other signal is a
 command or a document that owns it, listed at the end of the output — CI and
@@ -93,6 +98,23 @@ nightly for gate status, `tests/boundaries.test.ts` for architecture,
 shipped config, [THREAT_MODEL.md](THREAT_MODEL.md) for anything not yet mitigated,
 [PERFORMANCE.md](PERFORMANCE.md) for budgets, and
 [ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md) §11 for structural debt.
+
+### What keeps running after the roadmap
+
+The controls below are scheduled, not remembered. Together they are what lets
+this repository keep changing without re-running a roadmap to find out what
+broke:
+
+| When | What | Gates? |
+|---|---|---|
+| Every pull request | lint, unit suites, build, multiplayer (Chromium), PWA, browser journeys, cross-browser layout, the server image booting unprivileged — scaled to what the change touches | yes |
+| Every run of `npm run test` | the five guard tests: boundaries, docs drift, deployment config, assets, no-telemetry | yes |
+| Nightly | extended fuzz and golden replays, the long session soak, WebKit touch flake detection, the screenshot suite untraced and retry-free, the full cross-browser matrix, fps drift, multiplayer on all three engines and under tracing, dependency advisories, the six visual baselines, and the performance trend | mostly no — they report |
+| Weekly | mutation testing over the core and wire modules | no, it is a report |
+| Weekly | Dependabot, grouped, three open at a time | no |
+
+Nothing in that table was added at the end as a ceremony: each row exists
+because something it now catches was found by hand at least once.
 
 ## Dependencies and bundle cost
 
