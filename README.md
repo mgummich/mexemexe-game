@@ -124,6 +124,7 @@ or read the sources here:
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module map, data flow, where new code goes |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Setup, scripts, env vars, troubleshooting |
 | [`docs/TESTING.md`](docs/TESTING.md) | Test suites, verification gates, CI |
+| [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Performance budgets and target devices |
 | [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) | Online protocol, server authority, alpha limits |
 | [`docs/PWA_OFFLINE.md`](docs/PWA_OFFLINE.md) | What works offline, service worker, updates |
 | [`docs/ASSETS.md`](docs/ASSETS.md) | Every generated asset, its path and how to replace it |

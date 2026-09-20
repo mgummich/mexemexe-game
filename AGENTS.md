@@ -13,6 +13,7 @@ in code comments. Link to them instead.**
 | System invariants, canonical scenarios | `docs/INVARIANTS.md` |
 | Setup, scripts, troubleshooting | `docs/DEVELOPMENT.md` |
 | Tests and verification gates | `docs/TESTING.md` |
+| Performance budgets and target devices | `docs/PERFORMANCE.md` |
 | Online protocol and authority | `docs/MULTIPLAYER.md` |
 | PWA / offline behaviour | `docs/PWA_OFFLINE.md` |
 | Assets | `docs/ASSETS.md` |

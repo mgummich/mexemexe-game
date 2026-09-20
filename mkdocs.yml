@@ -52,6 +52,7 @@ nav:
       - Self-hosting: SELF_HOSTING.md
       - Operations: OPERATIONS.md
       - Observability & privacy: OBSERVABILITY_PRIVACY.md
-      - Playtest guide: PLAYTEST_GUIDE.md
+      - Performance budgets: PERFORMANCE.md
+  - Playtest guide: PLAYTEST_GUIDE.md
   - History:
       - Changelog: CHANGELOG.md

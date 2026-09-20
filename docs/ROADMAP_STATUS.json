@@ -3,7 +3,7 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "9A",
-  "phase": "75 — Performance Budgets",
+  "phase": "76 — Performance Profiling",
   "status": "NOT_STARTED"
  },
  "head": "1fa315e",
@@ -894,6 +894,49 @@
      "id": "P3-no-real-playtest",
      "note": "No real playtest session has ever been logged — the program is now complete on paper and unexercised in practice. Only a human session can close this.",
      "owner": "Phase 97 — Final Product QA"
+    }
+   ]
+  },
+  {
+   "phase": "75 — Performance Budgets",
+   "wave": "9A",
+   "status": "PASS",
+   "result": "No product performance budgets existed: three fps gates and the AI trial budget were the only numbers, and TESTING.md §Runtime budgets is about suite duration, not player experience. Measured first, then wrote budgets with headroom.",
+   "changed": [
+    "docs/PERFORMANCE.md — new canonical doc: two target environments (desktop; 390x844 mobile at 4x CPU throttle), 9 budgets with the measurement behind each, and what is deliberately not budgeted",
+    "e2e/perf-measure.spec.ts — the measurement tool (prints, does not gate), kept for Phases 76/77/101",
+    "AGENTS.md, docs/index.md, README.md, mkdocs.yml — registered the doc"
+   ],
+   "acceptance": "budgets measurable and justified (every row carries its measurement and its reason); target environments explicit (two classes, reproduced by a named command and a named throttle); budgets map to user-visible risk (each row is named by what the player feels)",
+   "verification": [
+    "npm run build (exit 0)",
+    "npx playwright test e2e/perf-measure.spec.ts (2/2): desktop boot 350ms, FCP 200ms, scene switch 210ms, heap 17MB, 60fps; mobile 4x: boot 836ms, scene switch 836ms, 52fps",
+    "wire payload measured with the server harness: game_started 1104B, next state_sync 1172B, room_joined 424B (temporary spec, removed)",
+    "bundle: index 279kB/86kB gz, phaser 1.3MB/354kB gz, art 380kB, sfx 400kB, music 13MB unbudgeted",
+    "npm run lint (exit 0)"
+   ],
+   "evidence": {
+    "logs": [
+     "tmp/agent-logs/p75-build.log",
+     "tmp/agent-logs/p75-lint.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no budget was set without a measurement, and the AI budget stayed expressed in trials rather than milliseconds so determinism (INV-A5) is not quietly traded for a timing target"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P2-no-low-end-device-runtime-evidence",
+     "from": "Phase 52",
+     "note": "Partly closed: 4x-throttled mobile profile now has measured fps (52) and boot (836ms). AI decision time on that profile is still derived (~150ms from 36ms x4), not measured."
+    }
+   ],
+   "deferredRisks": [
+    {
+     "id": "P2-ai-decision-time-unmeasured-on-mobile",
+     "note": "Expert dense-table decision time under 4x throttle is derived, not measured. Bounded by the deterministic trial budget, so it cannot vary by device in trials — only in wall clock.",
+     "owner": "Phase 76 — Performance Profiling"
     }
    ]
   }
