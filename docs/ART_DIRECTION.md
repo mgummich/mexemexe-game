@@ -39,6 +39,39 @@ which is where a re-point of the interface happens; see
   - **Bia** — woman with curly hair, headphones around neck, focused (puzzle-minded)
   - **Seu Zé** — older man, straw hat, mustache, relaxed smile (patient)
 
+## Accepting an asset
+
+A new or regenerated asset is accepted when every line here is true. They are
+checks, not taste — taste is the pillars above, and this is what stops a
+pleasant-looking file from quietly breaking the screen it lands on.
+
+1. **Native at the size it is drawn.** `RENDER_SCALE = 3`, so a sprite drawn at
+   24×24 world units needs a 72×72 file. Under that is upscaling; far over it is
+   wasted bytes and a mismatched pixel grid. The measured state of every family
+   is in [ASSETS.md](ASSETS.md) §Visual debt.
+2. **One pixel grid with its neighbours.** Art that sits next to the cards shares
+   their block size. This is the rule the backgrounds currently bend.
+3. **Readable at a glance, on the smallest target.** Check it at 390×844
+   portrait, not only at 1280×720. A rank, a suit, an avatar's silhouette and a
+   button's label must survive the small screen; contrast beats decoration.
+4. **Transparent background for anything that is not a background.** Backgrounds
+   fill their frame exactly (480×270 landscape, 224×400 portrait).
+5. **Light from the upper left**, warm bounce fill, consistent with the table it
+   sits on.
+6. **Nothing critical carried by colour alone.** A state that matters is also a
+   shape, a position or a word — the accessibility rule in `AGENTS.md` applies to
+   art, not only to UI.
+7. **No copyrighted characters, no real-person likenesses, no stereotypes.**
+   Atmosphere comes from props, palette, names and language.
+8. **It arrives with a row in [ASSETS.md](ASSETS.md)** — path, size, prompt or
+   generating script — in the same change.
+
+**Golden examples.** The deterministic showcase states are the reference frames:
+`?showcase=menu`, `?showcase=game&seed=42`, `?showcase=mexe&seed=77`, and the
+same three at `390×844`. They render identically on a given machine, so a
+before/after capture is a valid comparison ([TESTING.md](TESTING.md) §Flake
+policy). Judge a new asset in those frames, in place, rather than on its own.
+
 ## Motion
 
 - Pickup: scale 1.15 + shadow, 80ms. Drop/snap: overshoot ease-back, 120ms. Deal: staggered slide from deck, 40ms apart.

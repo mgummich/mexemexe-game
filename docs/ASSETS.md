@@ -63,6 +63,38 @@ free-drawing all 52 would scramble rank glyphs); see the note at the end.
 Button hover/pressed/disabled states derive from `-normal` via runtime tint
 (see PixelButton) — fewer assets, i18n-safe (text drawn by engine).
 
+## Visual debt (Phase 24 audit)
+
+Measured, not eyeballed: every file under `public/assets/` was cross-checked
+against `src/assets/manifest.ts` and its pixel size compared with the size it is
+actually drawn at (`RENDER_SCALE = 3` in `src/main.ts` — the canvas renders three
+device pixels per world unit so sprites land on their native texture size).
+
+| Family | File size | Drawn at | Source ÷ drawn | Verdict |
+|---|---|---|---|---|
+| Table and menu backgrounds (10 files) | 480×270 landscape, 224×400 portrait | 1440×810 / 672×1200 | **0.33×** | **P2 — the only real debt.** Upscaled 3×, so the background's pixel grid is three device pixels wide while a card's is one and a half. Visible as a coarser block size behind a crisp foreground |
+| Cards (blank, 5 backs) | 48×64 | 72×96 | 0.5× | accepted — chunky by intent, and the rank/suit readability pillar holds at 1080p |
+| Avatars (9), emotes (6), bubble, buttons, banner, logo, sparkle, dominoes prop | native | native | **1.0×** | no debt, and no headroom: a higher `RENDER_SCALE` would put every one of these below native |
+| Suit pips (4) | 32×32 | 24×24 | 1.33× | no debt |
+
+Everything else the audit looked for is clean:
+
+- **No placeholders ship.** Every manifest path resolves on disk, and
+  `npm run verify` fails if `window.__MEXE__.missingAssets` is non-empty, so a
+  missing file cannot pass as art.
+- **No orphans.** Every file under `public/assets/` is reachable from the
+  manifest (or, for the five music tracks, from `src/audio/music.ts`, which
+  streams them outside the Phaser loader on purpose).
+- **No missing states.** Button hover/pressed/disabled are runtime tints of
+  `-normal`, which is why there are three button files rather than twelve.
+- **Provenance is recorded** per asset in the table above: PixelLab, or a
+  deterministic script that regenerates it byte-identically.
+
+**Replacement scope, explicitly.** One family — the ten backgrounds — and only
+if the resolution strategy decides the mixed pixel grid is wrong rather than
+stylistic. Nothing else in this repository needs regenerating for quality
+reasons. That decision is Phase 26's; production, if it happens, is Phase 30's.
+
 ## Later additions (integrated)
 
 | Asset | Prompt (short) | Size | Path | Status |

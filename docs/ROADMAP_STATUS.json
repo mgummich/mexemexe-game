@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "4A",
-  "phase": "24 — Asset Inventory & Visual Debt Audit (deferred Wave 4)",
+  "phase": "26 — Multi-Resolution Strategy",
   "status": "NOT_STARTED"
  },
- "head": "29a0567",
+ "head": "8bf4ff9",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1638,6 +1638,42 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — no wrapper was added (the phase's own named risk), and the troubleshooting rows describe the symptom as it presents rather than as the cause, which is what makes such a table usable"
+   }
+  },
+  {
+   "phase": "24 — Asset Inventory & Visual Debt Audit",
+   "wave": "4A (deferred)",
+   "status": "PASS",
+   "result": "The inventory already existed in docs/ASSETS.md with provenance per asset; what was missing was a measurement. Cross-checked every file on disk against the manifest and compared each one's pixel size with the size it is drawn at. Exactly one family is below native: the ten table/menu backgrounds, at a third of their drawn size.",
+   "changed": [
+    "docs/ASSETS.md — §Visual debt (Phase 24 audit): the per-family measurement table, the four things the audit found clean (no placeholders ship, no orphans, no missing states, provenance recorded), and an explicit replacement scope of one family"
+   ],
+   "acceptance": "inventory complete enough to plan production (59 files, every one reachable from the manifest or from music.ts); visual debt prioritized (one P2, the rest accepted with the ratio that justifies it); replacement scope explicit — ten backgrounds, and only if Phase 26 decides the mixed pixel grid is wrong rather than stylistic",
+   "verification": [
+    "scripted cross-check: 59 files on disk, 0 manifest paths missing, 0 orphans once loop-built paths are resolved",
+    "per-family source-to-drawn ratios computed from the manifest and RENDER_SCALE=3: backgrounds 0.33x, cards 0.5x, avatars/emotes/UI 1.0x, suit pips 1.33x",
+    "read docs/screenshots/game.png at 1280x720 to confirm the coarser background grid is visible but does not cost readability"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing healthy was scheduled for replacement (the phase's first named risk); the one debt item is measured rather than asserted, and its fix is deferred to the phase that owns the decision"
+   }
+  },
+  {
+   "phase": "25 — Art Direction Lock",
+   "wave": "4A (deferred)",
+   "status": "PASS",
+   "result": "The direction itself was already locked — pillars, palette, canvas maths, character briefs, motion. What no document answered was how to judge a finished asset, which is what 'lock' has to mean before production starts.",
+   "changed": [
+    "docs/ART_DIRECTION.md — §Accepting an asset: eight checks (native at RENDER_SCALE, one pixel grid with its neighbours, readable at 390x844, transparency, light direction, nothing critical by colour alone, no likenesses, and a row in ASSETS.md in the same change), plus the golden reference frames"
+   ],
+   "acceptance": "approved references exist (the deterministic showcase frames, named, and byte-stable per machine so a before/after is valid); visual rules concrete enough to judge an asset (eight pass/fail checks, not adjectives); readability and accessibility constraints preserved — two of the eight are exactly those",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4) — every path and doc link in both new sections resolves"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the checks are falsifiable, and the one the current art bends (the shared pixel grid) is named as such rather than quietly excused"
    }
   }
  ],
