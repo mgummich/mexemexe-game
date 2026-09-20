@@ -9,28 +9,7 @@ import {
   stateHash,
   TIMER_PRESETS,
 } from '../../src/net/protocol';
-import { createDeck, dealInitialHands, shuffleDeck } from '../../src/rules/rules';
-import { createRng } from '../../src/rules/rng';
-import { DEFAULT_RULES, type GameState } from '../../src/rules/types';
-
-function twoSeatState(): GameState {
-  const deck = shuffleDeck(createDeck(DEFAULT_RULES), createRng(9));
-  const { hands, drawPile } = dealInitialHands(deck, 2, DEFAULT_RULES.handSize);
-  return {
-    seed: 9,
-    players: [
-      { id: 'p0', name: 'A', isAi: false, hand: hands[0]! },
-      { id: 'p1', name: 'B', isAi: false, hand: hands[1]! },
-    ],
-    activePlayerIndex: 0,
-    table: [],
-    drawPile,
-    turn: 1,
-    winnerId: null,
-    phase: 'playing',
-    config: DEFAULT_RULES,
-  };
-}
+import { dealtMatch } from '../helpers/scenarios';
 
 describe('normalizeRoomSettings', () => {
   it('defaults to the Casual preset', () => {
@@ -105,17 +84,17 @@ describe('set_room_settings on the wire', () => {
 
 describe('GameView timer fields', () => {
   it('carries the room settings and the remaining time', () => {
-    const view = buildView(twoSeatState(), 0, 3, TIMER_PRESETS.fast, 12_345);
+    const view = buildView(dealtMatch(9), 0, 3, TIMER_PRESETS.fast, 12_345);
     expect(view.settings).toEqual(TIMER_PRESETS.fast);
     expect(view.turnMsLeft).toBe(12_345);
   });
 
   it('defaults to no clock, so an untimed room renders exactly as before', () => {
-    expect(buildView(twoSeatState(), 0, 3).turnMsLeft).toBeNull();
+    expect(buildView(dealtMatch(9), 0, 3).turnMsLeft).toBeNull();
   });
 
   it('the remaining time is outside the state digest — a ticking clock is not a desync', () => {
-    const state = twoSeatState();
+    const state = dealtMatch(9);
     const a = buildView(state, 0, 3, TIMER_PRESETS.casual, 90_000);
     const b = buildView(state, 0, 3, TIMER_PRESETS.casual, 1_000);
     expect(a.hash).toBe(b.hash);

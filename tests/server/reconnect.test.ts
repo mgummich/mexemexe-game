@@ -9,41 +9,14 @@
 import { describe, expect, it } from 'vitest';
 import { RoomManager } from '../../server/rooms';
 import { TIMER_PRESETS } from '../../src/net/protocol';
-
-function testManager(overrides: Partial<{ now: () => number }> = {}) {
-  let codeCounter = 0;
-  let tokenCounter = 0;
-  return new RoomManager({
-    now: () => 1000,
-    genCode: () => `CODE${++codeCounter}`,
-    genToken: () => `TOKEN${++tokenCounter}`,
-    genSeed: () => 7,
-    ...overrides,
-  });
-}
-
-/** A started room with `count` seats, returning every seat's token. */
-function startedRoom(mgr: RoomManager, count: number): { code: string; tokens: string[] } {
-  const host = mgr.createRoom('Ana');
-  if (!host.ok) throw new Error('unexpected room_limit in test setup');
-  const tokens = [host.token];
-  for (let i = 1; i < count; i++) {
-    const joined = mgr.joinRoom(host.code, `P${i}`);
-    if (!joined.ok) throw new Error(`join ${i} failed: ${joined.error}`);
-    tokens.push(joined.token);
-  }
-  for (let i = 0; i < count; i++) mgr.setReady(host.code, i, true);
-  const started = mgr.startGame(host.code, 0);
-  if (!started.ok) throw new Error(`start failed: ${started.error}`);
-  return { code: host.code, tokens };
-}
+import { startedRoom, testManager } from './manager';
 
 describe('OR-01 a valid session reclaims its exact seat', () => {
   for (const count of [2, 3, 4]) {
     // OR-31/32/33: the same reclaim contract at every supported table size, and no other seat's
     // presence may be disturbed by one seat's round trip.
     it(`${count}-player room: every seat reclaims the seat it left, and only that seat`, () => {
-      const mgr = testManager();
+      const mgr = testManager({ seed: 7 });
       const { code, tokens } = startedRoom(mgr, count);
       for (let seat = 0; seat < count; seat++) {
         mgr.disconnect(code, seat);
@@ -59,7 +32,7 @@ describe('OR-01 a valid session reclaims its exact seat', () => {
 
 describe('OR-02 identity is the token, never the name', () => {
   it('a second player with the same display name cannot reclaim the first one seat', () => {
-    const mgr = testManager();
+    const mgr = testManager({ seed: 7 });
     const host = mgr.createRoom('Ana');
     if (!host.ok) throw new Error('setup');
     const twin = mgr.joinRoom(host.code, 'Ana');
@@ -78,7 +51,7 @@ describe('OR-02 identity is the token, never the name', () => {
 
 describe('OR-06/OR-07 the reconnect snapshot restores own state without leaking any other', () => {
   it('returns this seat own hand identities, opponents as counts only', () => {
-    const mgr = testManager();
+    const mgr = testManager({ seed: 7 });
     const { code, tokens } = startedRoom(mgr, 3);
     mgr.disconnect(code, 1);
     const result = mgr.reconnect(tokens[1]!);
@@ -102,7 +75,7 @@ describe('OR-06/OR-07 the reconnect snapshot restores own state without leaking 
   });
 
   it('OR-08/OR-09 restores the committed table, the draw count and the current turn', () => {
-    const mgr = testManager();
+    const mgr = testManager({ seed: 7 });
     const { code, tokens } = startedRoom(mgr, 2);
     const before = mgr.getView(code, 0)!;
     mgr.disconnect(code, 0);
@@ -124,7 +97,7 @@ describe('OR-06/OR-07 the reconnect snapshot restores own state without leaking 
 
 describe('OR-25/OR-26 a reconnect never moves the game', () => {
   it('an inactive seat reconnecting leaves the turn, the revision and the table untouched', () => {
-    const mgr = testManager();
+    const mgr = testManager({ seed: 7 });
     const { code, tokens } = startedRoom(mgr, 3);
     const before = mgr.getRoom(code)!;
     const rev = before.rev;
@@ -137,7 +110,7 @@ describe('OR-25/OR-26 a reconnect never moves the game', () => {
   });
 
   it('a seat that reconnects after the turn moved on receives the new turn, not the old one', () => {
-    const mgr = testManager();
+    const mgr = testManager({ seed: 7 });
     const { code, tokens } = startedRoom(mgr, 2);
     mgr.disconnect(code, 1);
     // Seat 0 plays while seat 1 is away: the authoritative turn and revision both advance.
@@ -153,7 +126,7 @@ describe('OR-25/OR-26 a reconnect never moves the game', () => {
 
 describe('OR-27/OR-28 reconnect respects the room lifecycle it lands in', () => {
   it('a reconnect into a lobby restores the lobby, with no match view at all', () => {
-    const mgr = testManager();
+    const mgr = testManager({ seed: 7 });
     const host = mgr.createRoom('Ana');
     if (!host.ok) throw new Error('setup');
     mgr.joinRoom(host.code, 'Bia');
@@ -165,7 +138,7 @@ describe('OR-27/OR-28 reconnect respects the room lifecycle it lands in', () => 
   });
 
   it('a reconnect after the match was recycled for a rematch restores the rematch lobby', () => {
-    const mgr = testManager();
+    const mgr = testManager({ seed: 7 });
     const { code, tokens } = startedRoom(mgr, 2);
     expect(mgr.recycleForRematch(code)).toBe(true);
     mgr.disconnect(code, 1);
@@ -178,7 +151,7 @@ describe('OR-27/OR-28 reconnect respects the room lifecycle it lands in', () => 
   });
 
   it('a reconnect into a room that no longer exists fails rather than resurrecting it', () => {
-    const mgr = testManager();
+    const mgr = testManager({ seed: 7 });
     const { code, tokens } = startedRoom(mgr, 2);
     mgr.deleteRoom(code);
     expect(mgr.reconnect(tokens[0]!)).toEqual({ ok: false, error: 'invalid_token' });
@@ -187,7 +160,7 @@ describe('OR-27/OR-28 reconnect respects the room lifecycle it lands in', () => 
 
 describe('OR-16 reconnect is idempotent', () => {
   it('reconnecting twice with the same token yields the same seat and changes nothing', () => {
-    const mgr = testManager();
+    const mgr = testManager({ seed: 7 });
     const { code, tokens } = startedRoom(mgr, 3);
     mgr.disconnect(code, 1);
     const first = mgr.reconnect(tokens[1]!);
@@ -197,6 +170,46 @@ describe('OR-16 reconnect is idempotent', () => {
     expect(mgr.getPlayers(code)).toHaveLength(3);
     expect(mgr.getRoom(code)!.rev).toBe(1);
     expect(mgr.getRoom(code)!.state!.players).toHaveLength(3);
+  });
+});
+
+describe('OR-30 a seat that drops more than once', () => {
+  /**
+   * The gap this closes (P3-reconnect-coverage-gaps): every case above is one round trip. A phone
+   * on a bad train line does several, with the player taking a turn between them — which is the
+   * combination that could plausibly leave a stale hand, a doubled seat or a revision that walks
+   * backwards, and nothing drove it.
+   */
+  it('reconnects, plays, drops and reconnects again — same seat, no duplicate, state keeps moving forward', () => {
+    const mgr = testManager({ seed: 7 });
+    const { code, tokens } = startedRoom(mgr, 2);
+    const seat = 0;
+    const seen: number[] = [];
+
+    for (const round of [1, 2, 3]) {
+      mgr.disconnect(code, seat);
+      const back = mgr.reconnect(tokens[seat]!);
+      if (!back.ok || !back.view) throw new Error(`round ${round}: expected a view`);
+      expect(back.seat).toBe(seat);
+      // The room never grows a second membership for a seat that keeps coming back.
+      expect(mgr.getPlayers(code)).toHaveLength(2);
+      expect(mgr.getRoom(code)!.state!.players).toHaveLength(2);
+      // The reconnecting seat is the active one (it dropped on its own turn), and it plays.
+      expect(back.view.activeSeat).toBe(seat);
+      expect(mgr.drawEndTurn(code, seat, back.view.rev)).toMatchObject({ ok: true });
+      // …then the opponent plays, so the turn comes back around for the next round.
+      const afterMine = mgr.getRoom(code)!;
+      expect(mgr.drawEndTurn(code, 1, afterMine.rev)).toMatchObject({ ok: true });
+      seen.push(mgr.getRoom(code)!.rev);
+    }
+
+    // Revisions only ever move forward across the three round trips, two turns each.
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(new Set(seen).size).toBe(seen.length);
+    // And the seat still holds exactly its own hand, not a stale copy of an earlier one.
+    const final = mgr.reconnect(tokens[seat]!);
+    if (!final.ok || !final.view) throw new Error('expected a view');
+    expect(final.view.players[seat]!.hand).toHaveLength(mgr.getRoom(code)!.state!.players[seat]!.hand.length);
   });
 });
 

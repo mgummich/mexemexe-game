@@ -47,7 +47,11 @@ processed" — the latter would not be true.
 
 Structured, level-gated, one JSON object per line (`server/log.ts`). stdout carries `debug` and
 `info`; stderr carries only genuine errors, so a non-empty stderr is always worth reading.
-Nothing is written to disk by the application itself.
+Nothing is written to disk by the application itself. The first line a process writes is
+`server_listening`, which carries the `build` (the `package.json` version of the running code) —
+after a deploy or a rollback, the running build is a fact worth having next to the failures. It
+is in the log, not on the open `/health` endpoint, which still says nothing a stranger can
+fingerprint the deployment with.
 
 Privacy is enforced **inside the logger**, not at call sites, so a new call site cannot leak by
 forgetting:
@@ -205,7 +209,34 @@ It is on by default because the results screen reads its per-player counters; `?
 turns it off. A player can export it themselves from Settings → Advanced (it goes to the
 clipboard) and choose to attach it to a bug report. Nothing exports it for them.
 
+`window.__MEXE__.errors` is the other client-side buffer: the messages of uncaught errors and
+rejected promises, kept in memory for the e2e suites and for a developer looking at a stuck tab.
+It goes nowhere either — there is no reporting backend, and a failure never depends on one. It
+is capped at 50 entries and drops a repeat of the message already on top, because the failure
+worth reading is the first distinct one, not the thousandth copy of a throw that fires every
+frame in a tab an installed PWA keeps open for days.
+
 Player saves and settings are `localStorage` only; clearing site data resets them.
+
+### The verification surface ships in production
+
+`window.__MEXE__` (`src/verification/debug-api.ts`) exists in the production
+bundle, deliberately: the Playwright suites run against `dist/`, and a
+verification surface that only exists in a dev build proves nothing about what
+players get. It is a read surface over objects the product already owns
+(ARCH-011), so the privacy question is only ever "what can it reach":
+
+| Reachable | Not reachable |
+|---|---|
+| the local match state — the player's own game | any opponent hand: online it reads `OnlineSession.state()`, the redacted projection whose opponent cards are placeholders (INV-N2) |
+| the play log and its export | the reconnect token, in `sessionStorage` under its own key and never surfaced here |
+| rendered lobby/seat text, the connection notice, captured error messages | a replay of an online match — `replay()` returns `null` there, because a client-side replay of a redacted projection would be fiction |
+| a handful of product actions (join, ready, COMPRAR) — the same paths a tap takes | any privileged action: every one goes through the server, which validates it exactly as it validates a tap |
+
+So the surface is bounded by the client's own knowledge, and the client's own
+knowledge is bounded by the server. Opening a console gains a player nothing
+they could not already see, which is the property that makes shipping it
+acceptable rather than convenient.
 
 ## Replay artifacts
 

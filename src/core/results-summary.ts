@@ -1,4 +1,17 @@
+import { pluralKey } from '../localization/i18n';
 import type { Meld } from '../rules/types';
+
+/**
+ * Which `game.lastMove.*` key describes a confirmed turn. One owner: GameScene narrates the turn
+ * that just happened and this module narrates the one the results screen replays, and a key
+ * chosen twice is a key that drifts once. The play branch is quantity-dependent, so it resolves
+ * through `pluralKey` rather than gluing a count onto one English sentence.
+ */
+export function lastMoveKey(played: number, moved: number): string {
+  if (played <= 0) return 'game.lastMove.drew';
+  if (moved > 0) return 'game.lastMove.mexeu';
+  return pluralKey('game.lastMove.played', played);
+}
 import type { PlaylogSummary } from './playlog';
 
 interface PlayerRoundStats {
@@ -38,8 +51,7 @@ export function summarizeMoveKey(
       if (prevMeldOf.has(c.id) && prevMeldOf.get(c.id) !== m.id) moved++;
     }
   }
-  const key = played <= 0 ? 'game.lastMove.drew' : moved > 0 ? 'game.lastMove.mexeu' : 'game.lastMove.played';
-  return { key, params: { n: Math.max(0, played), m: moved } };
+  return { key: lastMoveKey(played, moved), params: { n: Math.max(0, played), m: moved } };
 }
 
 /** The subset of a results row that the match story is derived from (see WinScene.PlayerResult). */

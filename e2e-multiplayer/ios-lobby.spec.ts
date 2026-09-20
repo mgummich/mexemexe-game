@@ -1,7 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { OUT_DIR, consoleErrorsOf, newPhoneClient, shot, startTestServer, type TestServer } from './harness';
+import {
+  OUT_DIR, attachClientContexts, consoleErrorsOf, freePort, newPhoneClient, shot, startTestServer, type TestServer,
+} from './harness';
 
 /**
  * LB-35..LB-40 — the lobby on iOS-shaped WebKit viewports.
@@ -13,7 +15,6 @@ import { OUT_DIR, consoleErrorsOf, newPhoneClient, shot, startTestServer, type T
  */
 
 const LOG_PATH = path.join(OUT_DIR, 'verify-lobby-ios-log.json');
-const PORT = 8776; // see lobby.spec.ts PORTS — never the server's DEFAULT_PORT
 
 const PORTRAIT = [
   { name: '390x844', width: 390, height: 844 },
@@ -30,8 +31,12 @@ const evidence: Record<string, unknown> = {};
 const screenshots: string[] = [];
 
 test.beforeAll(async () => {
-  server = await startTestServer(PORT);
+  server = await startTestServer(await freePort());
 });
+
+// A failed test reports where every client it opened actually was — seat, revision, match, last
+// rejections and its final messages — instead of only the assertion that noticed.
+test.afterEach(async ({}, testInfo) => { await attachClientContexts(testInfo); });
 
 test.afterAll(async () => {
   server.stop();
@@ -177,6 +182,60 @@ test('LB-40: an orientation change preserves seat, host, ready and score', async
     expect(consoleErrorsOf(p).filter((e) => !e.includes('WebSocket connection'))).toEqual([]);
   }
   for (const p of pages) await p.context().close();
+});
+
+// LB-48: a background/foreground round trip is not a new session. This is the iOS behaviour the
+// unit tests can only mock: the OS suspends the page, the app comes back, and the resume path has
+// to ask the server what it missed on the socket it still holds — not open a second one, and not
+// re-enter the room as a new player.
+test('LB-48: backgrounding and resuming keeps one socket, the seat and the ready bit', async ({ browser }) => {
+  const portrait = { width: 390, height: 844 };
+  const a = await newPhoneClient(browser, server.url, portrait);
+  const b = await newPhoneClient(browser, server.url, portrait);
+  const code = await createRoom(a, 'Ana');
+  await joinRoom(b, code, 'Bruno', 1);
+  await waitForSeats([a, b], [0, 1]);
+  await b.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await a.waitForFunction(
+    () => window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === 1)?.status === 'ready',
+    undefined,
+    { timeout: 10_000 },
+  );
+  const before = await rows(b);
+
+  // Counted from here, so the session's own socket is not in the total.
+  let socketsOpened = 0;
+  b.on('websocket', () => {
+    socketsOpened++;
+  });
+
+  // `document.hidden` is a getter with no Playwright control, so it is redefined for the round
+  // trip and put back afterwards. The app reads visibility only through this pair of events.
+  await b.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await b.waitForTimeout(500);
+  await b.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+
+  await b.waitForFunction(() => window.__MEXE__.online?.status() === 'open', undefined, { timeout: 15_000 });
+  await waitForSeats([a, b], [0, 1]);
+  expect(socketsOpened, 'the resume opened a second socket instead of resyncing on the live one').toBe(0);
+  expect(await b.evaluate(() => window.__MEXE__.online!.seat())).toBe(1);
+  // Seat, host, ready bit and roster are exactly what they were before the app went away.
+  expect(await rows(b)).toEqual(before);
+  expect((await occupied(a)).map((r) => r.seat)).toEqual([0, 1]);
+  await shot({ resumed: b }, 'lb-ios-resume', screenshots);
+  evidence.resume = { socketsOpened, seat: 1 };
+
+  for (const p of [a, b]) {
+    expect(await p.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+    expect(consoleErrorsOf(p).filter((e) => !e.includes('WebSocket connection'))).toEqual([]);
+  }
+  for (const p of [a, b]) await p.context().close();
 });
 
 // LB-35: a real two-client WebKit match — ready, start, a real turn, reload back into the exact

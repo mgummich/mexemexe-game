@@ -224,6 +224,12 @@ export class NetClient {
    * party state (seats, session wins, history, activity) without owning a subscription from
    * before it arrived — see the assignment in `connect()` for why. */
   lastRoomState: RoomStateMsg | null = null;
+  /** Every turn proposal still awaiting an answer. A refusal carrying any other reqId answers a
+   * proposal the server has already superseded, and is dropped at this boundary rather than
+   * delivered to the app. A set, not one id: the product sends one proposal at a time (the
+   * scene's input lock), but `submitRaw` deliberately bypasses that lock, and a refusal it asked
+   * for must still arrive. */
+  private outstandingProposals = new Set<string>();
 
   getStatus(): ConnStatus {
     return this.status;
@@ -256,6 +262,9 @@ export class NetClient {
     this.explicitClose = false;
     this.clearReconnectTimer();
     this.wireConnectivity();
+    // A new socket answers none of the old one's proposals: whatever was in flight died with it,
+    // and the authoritative state arrives fresh on this one.
+    this.outstandingProposals.clear();
     if (!isRetry) this.setStatus('connecting');
     let ws: WebSocket;
     try {
@@ -338,7 +347,17 @@ export class NetClient {
         this.clearReconnectTimer();
         this.reconnectAttempt = RECONNECT_DELAYS_MS.length;
       }
-      if (msg.type === 'proposal_rejected') playlog.record('net:reject', { reason: msg.reasons[0] ?? '' });
+      // A refusal answers one proposal. Correlating it here — where the reqId ledger already
+      // lives — is what stops a late one from being delivered to an app that has moved on: an
+      // authoritative frame supersedes whatever was in flight, so a refusal arriving after it
+      // answers nothing and would only sound an error over a board that is already correct.
+      if (msg.type === 'state_sync' || msg.type === 'game_started' || msg.type === 'game_over') {
+        this.outstandingProposals.clear();
+      }
+      if (msg.type === 'proposal_rejected') {
+        if (!this.outstandingProposals.delete(msg.reqId)) return;
+        playlog.record('net:reject', { reason: msg.reasons[0] ?? '' });
+      }
       const set = this.listeners.get(msg.type);
       if (set) for (const cb of set) cb(msg);
     };
@@ -504,13 +523,17 @@ export class NetClient {
    * or null when the socket was not open and the proposal never went out. */
   submitTurn(rev: number, melds: SubmitTurnMeld[]): string | null {
     const reqId = this.nextReqId();
-    return this.sendRaw({ v: PROTOCOL_VERSION, type: 'submit_turn', reqId, rev, melds }) ? reqId : null;
+    if (!this.sendRaw({ v: PROTOCOL_VERSION, type: 'submit_turn', reqId, rev, melds })) return null;
+    this.outstandingProposals.add(reqId);
+    return reqId;
   }
 
   /** Null when the socket was not open — same contract as `submitTurn`. */
   drawEndTurn(rev: number): string | null {
     const reqId = this.nextReqId();
-    return this.sendRaw({ v: PROTOCOL_VERSION, type: 'draw_end_turn', reqId, rev }) ? reqId : null;
+    if (!this.sendRaw({ v: PROTOCOL_VERSION, type: 'draw_end_turn', reqId, rev })) return null;
+    this.outstandingProposals.add(reqId);
+    return reqId;
   }
 
   /** Send one preset reaction to the room. The server owns the cooldown and silently drops

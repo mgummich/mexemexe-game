@@ -2,8 +2,9 @@ import Phaser from 'phaser';
 import { setMusicContext } from '../audio/music';
 import { bus } from '../core/events';
 import { onAppVisible } from '../core/lifecycle';
+import { settings } from '../core/settings';
 import { isOffline, onConnectivityChange } from '../core/pwa';
-import { t } from '../localization/i18n';
+import { plural, t } from '../localization/i18n';
 import {
   forgetRoom, MAX_NAME_LENGTH, MIN_NAME_LENGTH, NetClient, readDisplayName, readRecentRooms,
   rememberRoom, writeDisplayName, type ConnStatus, type RecentRoom,
@@ -14,11 +15,12 @@ import {
   type ActivityEvent, type GameView, type PartyState, type QueueTarget, type ReactionId,
   type RoomListing, type RoomPlayerSummary, type RoomSettings, type RoomVisibility, type TimerMode,
 } from '../net/protocol';
-import { coverBackground, cx, cy, panelW, vy } from '../ui/menu-layout';
+import { coverBackground, cx, cy, panelW, vy, woodPanel } from '../ui/menu-layout';
 import { view } from '../ui/viewport';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
-import { debugApi, type RenderedSeatRow } from '../verification/debug-api';
+import { debugApi, type LobbyBox, type RenderedSeatRow } from '../verification/debug-api';
 import { lobbyDebugSurface } from '../verification/online-debug';
+import { SURFACE, TEXT } from '../ui/tokens';
 
 /** Lobby preset cycle — one tap moves between the three answers a room of friends actually
  * chooses between. `custom` is deliberately not in the cycle: it lives behind the CUSTOM screen,
@@ -42,6 +44,11 @@ const CUSTOM_ROWS = [
  * row that already spells out the name and the status word, never the only one. */
 const SEAT_COLORS = [0xc8543a, 0x3a7fc8, 0x3ea05a, 0xc8a33a];
 
+/** An empty chair's badge: seat identity with the identity taken out, so the row still reads as a
+ * seat. Named beside SEAT_COLORS rather than folded into the chrome tokens, for the same reason
+ * they are — this is seat identity, not panel furniture. */
+const EMPTY_SEAT_BADGE = 0x3a2c20;
+
 /** Room cards drawn on one browser screen. The server's answer is bounded much higher
  * (MAX_ROOM_LISTINGS); the rest becomes a "+N more" line rather than a scroll container, which
  * nothing on this screen needs yet. Portrait fits one fewer: its cards are taller (a phone needs
@@ -64,6 +71,13 @@ const QUEUE_TARGET_CYCLE = QUEUE_TARGETS;
 /** Recent-room codes offered as one-tap shortcuts under the entry screen's buttons. The stored
  * list is longer (MAX_RECENT_ROOMS); more than three on screen is clutter, not recall. */
 const RECENT_SHOWN = 3;
+
+/** Room code glyph size at 100% text. The lobby shrinks it (never below this) when the column is
+ * tight — see renderLobby's squeeze. */
+const CODE_SIZE = 20;
+
+/** Floor for a lobby seat row: below this the name and its status word start to touch. */
+const SEAT_ROW_MIN_H = 11;
 
 function nextTimerPreset(current: TimerMode): (typeof PRESET_CYCLE)[number] {
   const i = PRESET_CYCLE.indexOf(current as (typeof PRESET_CYCLE)[number]);
@@ -97,6 +111,9 @@ export class OnlineScene extends Phaser.Scene {
    * it through the accessors below and writes to it only by calling a named transition.
    */
   private lobby = new LobbyMachine();
+  /** What the lobby painted, block by block, on the last rebuild — the evidence the responsive
+   * gate asserts against (see `LobbyBox`). Rebuilt with the screen, never read by product code. */
+  private lobbyBoxes: LobbyBox[] = [];
   private get phase(): LobbyPhase { return this.lobby.phase; }
   private get code(): string | null { return this.lobby.code; }
   private get seat(): number | null { return this.lobby.seat; }
@@ -299,6 +316,10 @@ export class OnlineScene extends Phaser.Scene {
     // 1px, off-canvas but still focusable/tappable — a display:none input never opens a
     // soft keyboard on iOS/Android.
     el.style.cssText = 'position:fixed;left:-1px;top:-1px;width:1px;height:1px;opacity:0;border:0;padding:0;';
+    // The visible label for this field is painted on the canvas, where no assistive technology can
+    // reach it — so the input carries its own localized name instead of being announced as a
+    // nameless text box that just took focus.
+    el.setAttribute('aria-label', t(isCode ? 'online.enterCodePrompt' : 'online.namePrompt'));
     el.addEventListener('input', () => {
       const sanitized = isCode ? sanitizeCode(el.value) : sanitizeName(el.value);
       if (el.value !== sanitized) el.value = sanitized;
@@ -475,6 +496,7 @@ export class OnlineScene extends Phaser.Scene {
         label: this.focusIndex < 0 ? '' : this.focusables[this.focusIndex]?.labelText() ?? '',
       }),
       lobbySeats: () => this.renderedSeats,
+      lobbyBoxes: () => this.lobbyBoxes,
     });
   }
 
@@ -623,8 +645,10 @@ export class OnlineScene extends Phaser.Scene {
     this.focusLabel = this.focusIndex >= 0 ? this.focusables[this.focusIndex]?.labelText() ?? null : null;
   }
 
-  /** Runs `fn` unless `key` is already in flight, then disables it for `cooldownMs` (cleared
-   * earlier by a matching server response, e.g. room_joined/error above). */
+  /** Runs `fn` unless `key` is already in flight, then disables it for `cooldownMs` (released
+   * earlier by a server response that ends the attempt — a rejection clears every guard, and
+   * `room_state`/`queue_state` clear their own. `room_joined` deliberately does not: see the
+   * handler above). */
   private fireOnce(key: string, cooldownMs: number, fn: () => void): void {
     if (this.inFlight.has(key)) return;
     this.inFlight.add(key);
@@ -645,7 +669,7 @@ export class OnlineScene extends Phaser.Scene {
   private flashOfflineReason(): void {
     if (!isOffline()) return;
     // vy(270) is the bottom edge itself in portrait — the reason was drawn off-screen there.
-    const el = label(this, cx(), view().portrait ? vy(248) : vy(260), t('offline.online'), 7, '#ff6b5e');
+    const el = label(this, cx(), view().portrait ? vy(248) : vy(260), t('offline.online'), 7, TEXT.error);
     this.time.delayedCall(2000, () => el.destroy());
   }
 
@@ -696,7 +720,7 @@ export class OnlineScene extends Phaser.Scene {
 
   private flashCopied(key: string): void {
     if (this.copiedLabel?.active) this.copiedLabel.destroy();
-    const el = label(this, cx(), vy(106), t(key), 7, '#3ec06a');
+    const el = label(this, cx(), vy(106), t(key), 7, TEXT.success);
     this.copiedLabel = el;
     this.time.delayedCall(1500, () => {
       if (el.active) el.destroy(); // rebuild() may have already torn it down
@@ -732,6 +756,7 @@ export class OnlineScene extends Phaser.Scene {
 
   private rebuild(): void {
     this.renderedSeats = [];
+    this.lobbyBoxes = [];
     this.tweens.killAll();
     this.children.removeAll(true);
     // Destroyed with the rest of the display list; the once-a-second tick checks for it.
@@ -740,23 +765,26 @@ export class OnlineScene extends Phaser.Scene {
       this.ensureTextInput(this.phase === 'join' ? 'code' : 'name');
     } else this.destroyJoinInput();
     coverBackground(this, 'bg-menu');
-    this.add.rectangle(cx(), cy(), view().w, view().h, 0x1a0f0a, 0.45);
+    this.add.rectangle(cx(), cy(), view().w, view().h, SURFACE.base, 0.45);
     // backdrop panel so lobby text reads against the busy boteco scene, same treatment MenuScene
     // uses for its controls (L1) — legible by construction, not by luck of what's behind it.
-    this.add.rectangle(cx(), vy(138), panelW(280), vy(236), 0x1a0f0a, 0.62).setStrokeStyle(1, 0xc0a878, 0.6);
-    label(this, cx(), vy(26), t('online.title'), 15, '#f7d23e');
+    // `woodPanel`, not a near-transparent rect with a hairline stroke: that rect is exactly what
+    // the menu screens replaced when it read as a debug overlay in playtests, and at 0.62 over the
+    // boteco art the connection-error copy was competing with a lamp and a bar stool behind it.
+    woodPanel(this, cx(), vy(138), panelW(280), vy(236));
+    label(this, cx(), vy(26), t('online.title'), 15, TEXT.accent);
 
     // ONLINE-10: a working connection is the expected case and says nothing worth a line of the
     // player's attention. Only the states they can act on — connecting, reconnecting, dropped —
     // get promoted to a visible status.
     if (this.status !== 'open') {
-      const statusColor = this.status === 'connecting' || this.status === 'reconnecting' ? '#f7d23e' : '#d83a3a';
+      const statusColor = this.status === 'connecting' || this.status === 'reconnecting' ? TEXT.accent : TEXT.error;
       label(this, cx(), vy(44), t(`online.status.${this.status}`), 8, statusColor);
     }
 
     if (this.phase === 'error') {
       this.add
-        .text(cx(), vy(120), this.errorMsg ?? '', { ...fontStyle(9, '#ff6b5e'), align: 'center', wordWrap: { width: panelW(320) } })
+        .text(cx(), vy(120), this.errorMsg ?? '', { ...fontStyle(9, TEXT.error), align: 'center', wordWrap: { width: panelW(320) } })
         .setOrigin(0.5);
       // Only VOLTAR used to be offered here — a near dead end for a rejoinable failure (e.g. a
       // dropped connection). Retrying re-runs the same connect() path a fresh visit to this
@@ -845,7 +873,7 @@ export class OnlineScene extends Phaser.Scene {
       { textureBase: 'btn-feito', w: 160, h: 22, size: 9, primary: true, onBlocked: () => this.flashOfflineReason() },
     );
     quick.setEnabled(this.canAct('queue'));
-    const targetLine = label(this, cx(), vy(110), this.queueTargetLabel(this.queueTarget), 7, '#f7d23e');
+    const targetLine = label(this, cx(), vy(110), this.queueTargetLabel(this.queueTarget), 7, TEXT.accent);
     targetLine
       .setInteractive(
         new Phaser.Geom.Rectangle(-20, -14, targetLine.width + 40, Math.max(targetLine.height + 16, 34)),
@@ -863,11 +891,11 @@ export class OnlineScene extends Phaser.Scene {
     if (this.queueNotice !== null) {
       this.add
         .text(cx(), vy(120), this.queueNotice, {
-          ...fontStyle(7, '#f7d23e'), align: 'center', wordWrap: { width: panelW(250) },
+          ...fontStyle(7, TEXT.accent), align: 'center', wordWrap: { width: panelW(250) },
         })
         .setOrigin(0.5);
     } else {
-      label(this, cx(), vy(120), t('online.playWithFriends'), 6, '#8a7f6e');
+      label(this, cx(), vy(120), t('online.playWithFriends'), 6, TEXT.dim);
     }
 
     // Two stacks, one cursor. A returning player gets CONTINUAR above the create/join pair; a
@@ -875,16 +903,20 @@ export class OnlineScene extends Phaser.Scene {
     const last = this.recent[0];
     let y = last ? 164 : 136;
     if (last) {
+      // Secondary emphasis on purpose: QUICK MATCH above is this screen's one primary action, and
+      // a second full-strength green button beside it left the entry screen with two competing
+      // calls to action (Wave 5B control hierarchy). CONTINUAR keeps its size and its place at the
+      // top of the room stack, so it still outranks CREATE/JOIN without outshouting the primary.
       const cont = new PixelButton(
         this, cx(), vy(138), t('online.continue'),
         () => this.fireOnce('join', 3000, () => this.joinCode(last.code)),
-        { textureBase: 'btn-feito', w: 150, h: 20, size: 8, primary: true, onBlocked: () => this.flashOfflineReason() },
+        { textureBase: 'btn-comprar', w: 150, h: 20, size: 8, onBlocked: () => this.flashOfflineReason() },
       );
       cont.setEnabled(this.canAct('join'));
       label(
         this, cx(), vy(149),
         last.host ? t('online.continueRoom', { code: last.code, host: last.host }) : last.code,
-        6, '#c0b8a8',
+        6, TEXT.muted,
       );
     }
 
@@ -915,11 +947,11 @@ export class OnlineScene extends Phaser.Scene {
     // and gone from the list the moment the server says that room no longer exists.
     const others = this.recent.slice(1, 1 + RECENT_SHOWN);
     if (others.length > 0) {
-      label(this, cx(), vy(y), t('online.recent'), 6, '#8a7f6e');
+      label(this, cx(), vy(y), t('online.recent'), 6, TEXT.dim);
       const gap = 56;
       others.forEach((room, i) => {
         const x = cx() - ((others.length - 1) * gap) / 2 + i * gap;
-        const el = label(this, x, vy(y + 11), room.code, 8, '#f7d23e');
+        const el = label(this, x, vy(y + 11), room.code, 8, TEXT.accent);
         el.setInteractive(
           new Phaser.Geom.Rectangle(-12, -14, el.width + 24, Math.max(el.height + 20, 34)),
           Phaser.Geom.Rectangle.Contains,
@@ -940,10 +972,10 @@ export class OnlineScene extends Phaser.Scene {
    * still screenshot say exactly the same thing a moving one would.
    */
   private renderQueue(): void {
-    label(this, cx(), vy(72), t('online.queueSearching'), 11, '#f7d23e');
-    label(this, cx(), vy(88), this.queueTargetLabel(this.queueTarget), 8, '#f7f2e7');
+    label(this, cx(), vy(72), t('online.queueSearching'), 11, TEXT.accent);
+    label(this, cx(), vy(88), this.queueTargetLabel(this.queueTarget), 8, TEXT.primary);
     this.searchLabel = label(
-      this, cx(), vy(116), t('online.queueElapsed', { time: this.elapsedSearch() }), 9, '#c0b8a8',
+      this, cx(), vy(116), t('online.queueElapsed', { time: this.elapsedSearch() }), 9, TEXT.muted,
     );
     // The place in the queue is held server-side across a brief drop, so the honest line here is
     // "it continues", not "it failed". The status line at the top already names the connection
@@ -951,7 +983,7 @@ export class OnlineScene extends Phaser.Scene {
     if (this.status !== 'open') {
       this.add
         .text(cx(), vy(140), t('online.queueLost'), {
-          ...fontStyle(7, '#f7d23e'), align: 'center', wordWrap: { width: panelW(250) },
+          ...fontStyle(7, TEXT.accent), align: 'center', wordWrap: { width: panelW(250) },
         })
         .setOrigin(0.5);
     }
@@ -963,9 +995,9 @@ export class OnlineScene extends Phaser.Scene {
   /** The beat between the queue and the table. No action on it, because there is nothing left to
    * decide: the room, the seat and the deal already exist. */
   private renderMatchFound(): void {
-    label(this, cx(), vy(100), t('online.matchFound'), 14, '#f7d23e');
-    label(this, cx(), vy(122), t('online.matchPlayers', { n: this.matchPlayers }), 9, '#f7f2e7');
-    label(this, cx(), vy(140), t('online.matchJoining'), 8, '#c0b8a8');
+    label(this, cx(), vy(100), t('online.matchFound'), 14, TEXT.accent);
+    label(this, cx(), vy(122), plural('online.matchPlayers', this.matchPlayers), 9, TEXT.primary);
+    label(this, cx(), vy(140), t('online.matchJoining'), 8, TEXT.muted);
   }
 
   /** Ask the server for the currently discoverable rooms. Manual only — this fires when the
@@ -992,10 +1024,10 @@ export class OnlineScene extends Phaser.Scene {
    * is a room snapshot — there is no seat, no token, no revision and no hand count to leak.
    */
   private renderBrowse(): void {
-    label(this, cx(), vy(62), t('online.browseTitle'), 11, '#f7d23e');
+    label(this, cx(), vy(62), t('online.browseTitle'), 11, TEXT.accent);
     // One line, for the player who has never been in a room with strangers: what this list is
     // and what happens after the tap. Anything longer belongs in the room, not in front of it.
-    label(this, cx(), vy(74), t('online.browseIntro'), 6, '#8a7f6e');
+    label(this, cx(), vy(74), t('online.browseIntro'), 6, TEXT.dim);
 
     const portrait = view().portrait;
     const rowW = Math.min(panelW(260), view().w - 24);
@@ -1004,26 +1036,26 @@ export class OnlineScene extends Phaser.Scene {
     const top = 92;
 
     if (this.browseState === 'loading') {
-      label(this, cx(), vy(120), t('online.browseLoading'), 8, '#c0b8a8');
+      label(this, cx(), vy(120), t('online.browseLoading'), 8, TEXT.muted);
     } else if (this.browseState === 'failed') {
       this.add
         .text(cx(), vy(116), t('online.browseFailed'), {
-          ...fontStyle(8, '#ff6b5e'), align: 'center', wordWrap: { width: rowW },
+          ...fontStyle(8, TEXT.error), align: 'center', wordWrap: { width: rowW },
         })
         .setOrigin(0.5);
       // Discovery is not a dependency of private multiplayer — say so, and keep the door open.
-      label(this, cx(), vy(136), t('online.browseStillWorks'), 6, '#c0b8a8');
+      label(this, cx(), vy(136), t('online.browseStillWorks'), 6, TEXT.muted);
     } else if (this.listings.length === 0) {
       this.add
         .text(cx(), vy(120), t('online.browseEmpty'), {
-          ...fontStyle(8, '#c0b8a8'), align: 'center', wordWrap: { width: rowW },
+          ...fontStyle(8, TEXT.muted), align: 'center', wordWrap: { width: rowW },
         })
         .setOrigin(0.5);
     } else {
       const shown = this.listings.slice(0, browseRows(portrait));
       shown.forEach((room, i) => {
         const y = vy(top + i * step);
-        this.add.rectangle(cx(), y, rowW, vy(step - 4), 0x2a1a10, 0.75).setStrokeStyle(1, 0xc0a878, 0.5);
+        this.add.rectangle(cx(), y, rowW, vy(step - 4), SURFACE.panel, 0.75).setStrokeStyle(1, SURFACE.panelBorder, 0.5);
         // Both lines are clamped to the space the JOIN button leaves, rather than trusted to be
         // short: a 12-character name and the large-text scale together are enough to run a label
         // straight under the button. Least important word last, because that is what gets cut.
@@ -1033,11 +1065,11 @@ export class OnlineScene extends Phaser.Scene {
             .text(left + 8, ly, str, { ...fontStyle(size, color), wordWrap: { width: textW }, maxLines: 1 })
             .setOrigin(0, 0.5);
         };
-        cardLine(y - vy(6), t('online.cardHost', { host: room.hostName }), 7, '#f7f2e7');
+        cardLine(y - vy(6), t('online.cardHost', { host: room.hostName }), 7, TEXT.primary);
         cardLine(
           y + vy(6),
           `${t('online.cardSeats', { n: room.players, max: room.capacity })} · ${this.listingStatus(room)} · ${t(`online.timer.${room.timerMode}`)}`,
-          6, '#c0b8a8',
+          6, TEXT.muted,
         );
         const join = new PixelButton(this, left + rowW - 34, y, t('online.join'), () => {
           this.fireOnce('join', 3000, () => this.joinCode(room.code));
@@ -1046,7 +1078,7 @@ export class OnlineScene extends Phaser.Scene {
         join.setEnabled(room.status !== 'full' && this.canAct('join'));
       });
       if (this.listings.length > shown.length) {
-        label(this, cx(), vy(top + shown.length * step), t('online.browseMore', { n: this.listings.length - shown.length }), 6, '#8a7f6e');
+        label(this, cx(), vy(top + shown.length * step), t('online.browseMore', { n: this.listings.length - shown.length }), 6, TEXT.dim);
       }
     }
 
@@ -1055,7 +1087,7 @@ export class OnlineScene extends Phaser.Scene {
     if (this.browseNotice !== null) {
       this.add
         .text(cx(), portrait ? vy(212) : vy(200), this.browseNotice, {
-          ...fontStyle(7, '#f7d23e'), align: 'center', wordWrap: { width: rowW },
+          ...fontStyle(7, TEXT.accent), align: 'center', wordWrap: { width: rowW },
         })
         .setOrigin(0.5);
     }
@@ -1069,7 +1101,7 @@ export class OnlineScene extends Phaser.Scene {
    * can still be the last one before a seat is taken — the name is only editable up to that
    * point, so a screen that leads into a room must carry it. */
   private renderNameLine(y: number, captionY: number): void {
-    const nameLine = label(this, cx(), vy(y), t('online.playingAs', { name: this.playerName() }), 8, '#f7f2e7');
+    const nameLine = label(this, cx(), vy(y), t('online.playingAs', { name: this.playerName() }), 8, TEXT.primary);
     nameLine
       // A text line's own bounds are a thin strip; a coarse pointer needs a real target, so the
       // hit area is grown to the touch floor without moving the text.
@@ -1082,18 +1114,18 @@ export class OnlineScene extends Phaser.Scene {
         this.nameInput = readDisplayName() ?? '';
         this.rebuild();
       });
-    label(this, cx(), vy(captionY), t('online.changeName'), 6, '#8a7f6e');
+    label(this, cx(), vy(captionY), t('online.changeName'), 6, TEXT.dim);
   }
 
   private renderJoin(): void {
-    label(this, cx(), vy(86), t('online.enterCodePrompt'), 9, '#f7f2e7');
+    label(this, cx(), vy(86), t('online.enterCodePrompt'), 9, TEXT.primary);
     const shown = this.codeInput.padEnd(ROOM_CODE_LENGTH, '_');
     // tappable so a touch player who blurred the soft keyboard can bring it back
-    label(this, cx(), vy(118), shown, 20, this.codeInput ? '#f7d23e' : '#8a7f6e')
+    label(this, cx(), vy(118), shown, 20, this.codeInput ? TEXT.accent : TEXT.dim)
       .setInteractive({ useHandCursor: true })
       .on('pointerup', () => this.joinInputEl?.focus());
     // A phone has no ENTER key on screen — point at the tappable code/JOIN path instead.
-    label(this, cx(), vy(148), t(view().touch ? 'online.codeHintTouch' : 'online.codeHint'), 7, '#c0b8a8');
+    label(this, cx(), vy(148), t(view().touch ? 'online.codeHintTouch' : 'online.codeHint'), 7, TEXT.muted);
     const confirm = new PixelButton(this, cx(), vy(180), t('online.join'), () => this.fireOnce('join', 3000, () => this.submitJoin()), {
       textureBase: 'btn-feito', w: 120, h: 22, size: 8, onBlocked: () => this.flashOfflineReason(),
     });
@@ -1103,13 +1135,13 @@ export class OnlineScene extends Phaser.Scene {
 
   /** Name entry, deliberately the same shape as the code screen so there is one thing to learn. */
   private renderName(): void {
-    label(this, cx(), vy(86), t('online.namePrompt'), 9, '#f7f2e7');
+    label(this, cx(), vy(86), t('online.namePrompt'), 9, TEXT.primary);
     const shown = this.nameInput || '_';
-    label(this, cx(), vy(118), shown, 16, this.nameInput ? '#f7d23e' : '#8a7f6e')
+    label(this, cx(), vy(118), shown, 16, this.nameInput ? TEXT.accent : TEXT.dim)
       .setInteractive({ useHandCursor: true })
       .on('pointerup', () => this.joinInputEl?.focus());
-    label(this, cx(), vy(148), t(view().touch ? 'online.nameHintTouch' : 'online.nameHint'), 7, '#c0b8a8');
-    if (this.nameError) label(this, cx(), vy(160), t('online.nameTooShort'), 7, '#ff6b5e');
+    label(this, cx(), vy(148), t(view().touch ? 'online.nameHintTouch' : 'online.nameHint'), 7, TEXT.muted);
+    if (this.nameError) label(this, cx(), vy(160), t('online.nameTooShort'), 7, TEXT.error);
     new PixelButton(this, cx(), vy(180), t('online.nameOk'), () => this.commitName(), {
       textureBase: 'btn-feito', w: 120, h: 22, size: 8,
     });
@@ -1121,7 +1153,7 @@ export class OnlineScene extends Phaser.Scene {
    * the server's `room_state` answer is what redraws this line, so host and guests can never show
    * different terms.
    */
-  private renderRoomSummary(): void {
+  private renderRoomSummary(top: number): number {
     const s = this.roomSettings;
     const text =
       s.turnMs <= 0
@@ -1133,27 +1165,40 @@ export class OnlineScene extends Phaser.Scene {
             grace: Math.round(s.reconnectGraceMs / 1000),
           });
     const isHost = this.seat === this.hostSeat && !this.settingsLocked;
-    const line = label(this, cx(), vy(112), text, 7, isHost ? '#f7d23e' : '#c0b8a8');
-    if (!isHost) return;
+    // Wrapped to the panel, not laid out as one line: the four-clause pt-BR summary is wider than
+    // the 270-unit portrait world, so on a phone it ran out through both wooden edges.
+    const line = this.add
+      .text(cx(), top, text, {
+        ...fontStyle(7, isHost ? TEXT.accent : TEXT.muted), align: 'center', wordWrap: { width: panelW(250) },
+      })
+      .setOrigin(0.5, 0);
+    if (!isHost) return line.y + line.height;
     line.setInteractive({ useHandCursor: true }).on('pointerup', () => {
       this.fireOnce('settings', 300, () => this.client.setRoomSettings({ ...TIMER_PRESETS[nextTimerPreset(this.roomSettings.timerMode)] }));
     });
-    label(this, cx(), vy(121), t('online.timerTapHint'), 6, '#8a7f6e');
-    // Progressive disclosure: the presets answer the question for almost every room, and the
-    // five-field screen is one deliberate tap away for the room that wants its own numbers.
-    this.openCustomLink(vy(view().portrait ? 122 : 121));
+    // AJUSTAR and the tap hint share one row only while the row has space for both. A centred hint
+    // grows into the right-anchored link as soon as the text scale or the locale makes it longer,
+    // and the two used to run together into one unreadable word. Neither is dropped now — the
+    // lobby is a flow (see renderLobby), so the hint simply takes its own row underneath and
+    // everything below it moves down.
+    // `y` here is a row centre: every label() in this file is origin-centred.
+    const link = this.openCustomLink(line.y + line.height + 6);
+    const hint = label(this, cx(), link.y, t('online.timerTapHint'), 6, TEXT.dim);
+    if (hint.x + hint.width / 2 + 4 > link.x - link.width / 2) hint.setY(link.y + hint.height + 1);
+    return Math.max(link.y, hint.y) + hint.height / 2;
   }
 
   /** The host-only way into the custom screen. A separate target from the summary line above it,
    * so cycling presets and opening the editor can never be the same mis-tap. */
-  private openCustomLink(y: number): void {
-    const link = label(this, cx() + panelW(240) / 2 - 26, y, t('online.customize'), 6, '#f7d23e');
+  private openCustomLink(y: number): Phaser.GameObjects.Text {
+    const link = label(this, cx() + panelW(240) / 2 - 26, y, t('online.customize'), 6, TEXT.accent);
     link
       .setInteractive(
         new Phaser.Geom.Rectangle(-12, -12, link.width + 24, Math.max(link.height + 16, 30)),
         Phaser.Geom.Rectangle.Contains,
       )
       .on('pointerup', () => this.openCustomSettings());
+    return link;
   }
 
   /** Opens the custom screen on a copy of whatever the room is playing under now, so the host
@@ -1174,7 +1219,7 @@ export class OnlineScene extends Phaser.Scene {
     const draft = this.customDraft ?? { ...this.roomSettings, timerMode: 'custom' as const };
     this.customDraft = draft;
     const portrait = view().portrait;
-    label(this, cx(), vy(62), t('online.customTitle'), 10, '#f7f2e7');
+    label(this, cx(), vy(62), t('online.customTitle'), 10, TEXT.primary);
 
     const rowW = Math.min(panelW(250), view().w - 30);
     const left = cx() - rowW / 2;
@@ -1183,11 +1228,11 @@ export class OnlineScene extends Phaser.Scene {
       const y = vy(82 + i * step);
       const [lo, hi] = CUSTOM_BOUNDS[row.key];
       const value = draft[row.key];
-      label(this, left + 2, y, t(`online.custom.${row.key}`), 7, '#c0b8a8').setOrigin(0, 0.5);
+      label(this, left + 2, y, t(`online.custom.${row.key}`), 7, TEXT.muted).setOrigin(0, 0.5);
       const shown = row.unit === 'seconds'
         ? t('online.custom.seconds', { n: Math.round(value / 1000) })
         : t('online.custom.turns', { n: value });
-      label(this, left + rowW - 62, y, shown, 8, '#f7f2e7').setOrigin(1, 0.5);
+      label(this, left + rowW - 62, y, shown, 8, TEXT.primary).setOrigin(1, 0.5);
       // Each button states its own limit by going dead at it: a host cannot propose a value the
       // server would silently clamp, so what the screen shows is what the room will play under.
       const bump = (delta: number): void => {
@@ -1211,7 +1256,7 @@ export class OnlineScene extends Phaser.Scene {
     if (draft.warnMs > draft.turnMs) {
       this.add
         .text(cx(), bottom, t('online.customWarnCapped'), {
-          ...fontStyle(6, '#f7d23e'), align: 'center', wordWrap: { width: rowW },
+          ...fontStyle(6, TEXT.accent), align: 'center', wordWrap: { width: rowW },
         })
         .setOrigin(0.5);
     }
@@ -1250,30 +1295,33 @@ export class OnlineScene extends Phaser.Scene {
     const rowW = Math.min(panelW(240), view().w - 30);
     const left = cx() - rowW / 2;
     const filled = player !== null;
-    const badge = this.add.circle(left + 8, y, 7, filled ? SEAT_COLORS[seat % SEAT_COLORS.length]! : 0x3a2c20);
-    badge.setStrokeStyle(1, 0xc0a878, filled ? 0.9 : 0.4);
+    const badge = this.add.circle(left + 8, y, 7, filled ? SEAT_COLORS[seat % SEAT_COLORS.length]! : EMPTY_SEAT_BADGE);
+    badge.setStrokeStyle(1, SURFACE.panelBorder, filled ? 0.9 : 0.4);
     const name = filled ? player.name : t('online.emptySeat');
-    label(this, badge.x, y, filled ? name.slice(0, 1).toUpperCase() : '+', 8, '#f7f2e7');
+    label(this, badge.x, y, filled ? name.slice(0, 1).toUpperCase() : '+', 8, TEXT.primary);
 
     const isMe = filled && player.seat === this.seat;
     // Badges are spelled out, never carried by colour alone: the yellow name used to be the only
     // thing saying which row is yours, which is invisible to a colour-blind player and to anyone
     // reading a small phone screen in sunlight.
+    // "Você · Você · ANFITRIÃO": the default display name *is* the you-badge word (playerName()
+    // falls back to t('menu.you')), so an unnamed player's own row said the same word twice. The
+    // badge exists to answer "which row is mine" — a name that already answers it needs no badge.
     const badges = [
-      ...(isMe ? [t('menu.you')] : []),
+      ...(isMe && name !== t('menu.you') ? [t('menu.you')] : []),
       ...(seat === this.hostSeat && filled ? [t('online.host')] : []),
     ];
     const nameText = badges.length ? `${name} · ${badges.join(' · ')}` : name;
     const nameEl = this.add
-      .text(left + 20, y, nameText, fontStyle(8, filled ? (isMe ? '#f7d23e' : '#f7f2e7') : '#8a7f6e'))
+      .text(left + 20, y, nameText, fontStyle(8, filled ? (isMe ? TEXT.accent : TEXT.primary) : TEXT.dim))
       .setOrigin(0, 0.5);
 
     if (!filled) {
       this.renderedSeats.push({ seat, name: '', you: false, host: false, status: 'empty', wins: 0 });
       // An empty chair is an invitation, not dead space: it says what it is waiting for and hands
       // over the share/copy path on tap, which is the action a player actually wants there.
-      this.add.text(left + rowW, y, t('online.waitingPlayer'), fontStyle(7, '#8a7f6e')).setOrigin(1, 0.5);
-      const invite = label(this, left + 20 + nameEl.width + 10, y, t('online.invitePlayer'), 6, '#f7d23e').setOrigin(0, 0.5);
+      this.add.text(left + rowW, y, t('online.waitingPlayer'), fontStyle(7, TEXT.dim)).setOrigin(1, 0.5);
+      const invite = label(this, left + 20 + nameEl.width + 10, y, t('online.invitePlayer'), 6, TEXT.accent).setOrigin(0, 0.5);
       invite
         .setInteractive(
           new Phaser.Geom.Rectangle(-10, -12, invite.width + 20, Math.max(invite.height + 16, 30)),
@@ -1288,7 +1336,7 @@ export class OnlineScene extends Phaser.Scene {
       : player.ready
         ? `✓ ${readyWord}`
         : t('online.playerWaiting');
-    const statusColor = !player.connected ? '#d83a3a' : player.ready ? '#3ec06a' : '#c0b8a8';
+    const statusColor = !player.connected ? TEXT.error : player.ready ? TEXT.success : TEXT.muted;
     const statusEl = this.add
       .text(left + rowW, y, this.betweenMatches() ? `${player.wins} · ${statusText}` : statusText, fontStyle(7, statusColor))
       .setOrigin(1, 0.5);
@@ -1324,18 +1372,21 @@ export class OnlineScene extends Phaser.Scene {
    * agreed to play under (contrast renderRoomSummary / ON-09), so resetting the lobby over it
    * would be friction with no fairness behind it. Locked once the match starts, same as settings.
    */
-  private renderVisibility(): void {
+  /** Returns the bottom edge of the two-line visibility block, so the lobby's flow can start
+   * under it instead of assuming it ends above vy(74) — it does not at 125% text. */
+  private renderVisibility(): number {
     const listed = this.visibility === 'listed';
     const isHost = this.seat === this.hostSeat && !this.settingsLocked;
     const state = t(listed ? 'online.visibilityListed' : 'online.visibilityPrivate');
     const right = cx() + panelW(260) / 2 - 4;
-    const badge = label(this, right, vy(54), isHost ? `${state} · ${t('online.visibilityChange')}` : state, 6, listed ? '#7fd07f' : '#c0b8a8')
+    const badge = label(this, right, vy(54), isHost ? `${state} · ${t('online.visibilityChange')}` : state, 6, listed ? TEXT.success : TEXT.muted)
       .setOrigin(1, 0.5);
     // Ten grid units apart, not eight: at the large-text scale (1.25x) two size-6 lines eight
     // apart touch. The gap is the layout's, so it holds without the label knowing its own scale.
-    label(this, right, vy(64), t(listed ? 'online.visibilityListedHint' : 'online.visibilityPrivateHint'), 6, '#8a7f6e')
+    const hint = label(this, right, vy(64), t(listed ? 'online.visibilityListedHint' : 'online.visibilityPrivateHint'), 6, TEXT.dim)
       .setOrigin(1, 0.5);
-    if (!isHost) return;
+    const bottom = hint.y + hint.height / 2;
+    if (!isHost) return bottom;
     badge
       .setInteractive(
         new Phaser.Geom.Rectangle(-14, -14, badge.width + 28, Math.max(badge.height + 20, 34)),
@@ -1346,6 +1397,7 @@ export class OnlineScene extends Phaser.Scene {
         // thing that moves `this.visibility`.
         this.fireOnce('visibility', 300, () => this.client.setVisibility(listed ? 'private' : 'listed'));
       });
+    return bottom;
   }
 
   private renderReactions(y: number): void {
@@ -1381,45 +1433,88 @@ export class OnlineScene extends Phaser.Scene {
    */
   private renderParty(): void {
     const portrait = view().portrait;
-    label(this, cx(), vy(58), t('online.partyTitle'), 10, '#f7f2e7');
+    label(this, cx(), vy(58), t('online.partyTitle'), 10, TEXT.primary);
     const rowW = Math.min(panelW(250), view().w - 30);
     const left = cx() - rowW / 2;
 
     // Session score first: it is the one number anyone came to this screen for.
-    label(this, left + 2, vy(74), t('online.sessionScore'), 7, '#f7d23e').setOrigin(0, 0.5);
+    label(this, left + 2, vy(74), t('online.sessionScore'), 7, TEXT.accent).setOrigin(0, 0.5);
     const ranked = [...this.players].sort((a, b) => b.wins - a.wins || a.seat - b.seat);
     ranked.slice(0, MAX_SEATS).forEach((p, i) => {
       const y = vy(84 + i * 10);
-      label(this, left + 6, y, p.name, 7, p.seat === this.seat ? '#f7d23e' : '#f7f2e7').setOrigin(0, 0.5);
-      const wins = p.wins === 0 ? t('online.winsNone') : p.wins === 1 ? t('online.winsOne') : t('online.wins', { n: p.wins });
-      label(this, left + rowW - 4, y, wins, 7, '#c0b8a8').setOrigin(1, 0.5);
+      label(this, left + 6, y, p.name, 7, p.seat === this.seat ? TEXT.accent : TEXT.primary).setOrigin(0, 0.5);
+      const wins = plural('online.wins', p.wins);
+      label(this, left + rowW - 4, y, wins, 7, TEXT.muted).setOrigin(1, 0.5);
     });
 
     // Then the matches, newest first, bounded by what fits rather than by a scroll nobody can see.
     const matchesTop = 84 + ranked.length * 10 + 8;
-    label(this, left + 2, vy(matchesTop), t('online.matches'), 7, '#f7d23e').setOrigin(0, 0.5);
+    label(this, left + 2, vy(matchesTop), t('online.matches'), 7, TEXT.accent).setOrigin(0, 0.5);
     const matches = [...this.party.matches].reverse().slice(0, portrait ? 5 : 4);
-    if (matches.length === 0) label(this, left + 6, vy(matchesTop + 10), t('online.noMatches'), 6, '#8a7f6e').setOrigin(0, 0.5);
+    if (matches.length === 0) label(this, left + 6, vy(matchesTop + 10), t('online.noMatches'), 6, TEXT.dim).setOrigin(0, 0.5);
     matches.forEach((m, i) => {
       const key = m.stalemate ? 'online.matchLineStalemate' : 'online.matchLine';
-      label(this, left + 6, vy(matchesTop + 10 + i * 9), t(key, { n: m.seq, name: m.winnerName ?? t('online.emptySeat') }), 6, '#f7f2e7')
+      label(this, left + 6, vy(matchesTop + 10 + i * 9), t(key, { n: m.seq, name: m.winnerName ?? t('online.emptySeat') }), 6, TEXT.primary)
         .setOrigin(0, 0.5);
     });
 
     const activityTop = matchesTop + 10 + Math.max(1, matches.length) * 9 + 6;
-    label(this, left + 2, vy(activityTop), t('online.activity'), 7, '#f7d23e').setOrigin(0, 0.5);
+    label(this, left + 2, vy(activityTop), t('online.activity'), 7, TEXT.accent).setOrigin(0, 0.5);
     const feed = [...this.party.activity].reverse().slice(0, portrait ? 8 : 5);
-    if (feed.length === 0) label(this, left + 6, vy(activityTop + 10), t('online.noActivity'), 6, '#8a7f6e').setOrigin(0, 0.5);
+    if (feed.length === 0) label(this, left + 6, vy(activityTop + 10), t('online.noActivity'), 6, TEXT.dim).setOrigin(0, 0.5);
     feed.forEach((e, i) => {
-      label(this, left + 6, vy(activityTop + 10 + i * 9), this.activityLine(e), 6, '#c0b8a8').setOrigin(0, 0.5);
+      label(this, left + 6, vy(activityTop + 10 + i * 9), this.activityLine(e), 6, TEXT.muted).setOrigin(0, 0.5);
     });
   }
 
+  /**
+   * The lobby, laid out as a flow rather than at fixed y-coordinates.
+   *
+   * Every block used to be pinned (`vy(132 + seat * 13)` for the seats, `vy(180)` for the notice,
+   * `vy(194)` for the reactions), which meant the layout only held at one text scale in one
+   * locale: a summary that wrapped, a longer tap hint or 125% text pushed one block into the next
+   * and something had to be hidden to make room. Now the informational half flows down from the
+   * room code and the action half is anchored up from VOLTAR, so a block that grows moves what is
+   * below it instead of overlapping it, and the space left over is spent on the gaps.
+   *
+   * Everything is measured in world units already scaled by the large-text setting, so the same
+   * code holds at 100% and 125%.
+   */
   private renderLobby(): void {
-    this.renderVisibility();
-    label(this, cx(), vy(74), this.code ?? '', 20, '#f7f2e7');
-    // room-code text and its buttons must stay comfortably tappable in portrait
-    const btnH = view().portrait ? 24 : 16;
+    const portrait = view().portrait;
+    const scale = settings.fontScale();
+    const box = (id: string, top: number, h: number): void => { this.lobbyBoxes.push({ id, top, h }); };
+    // The visibility block is part of the column, not furniture floating above it: at 125% text
+    // its second line reaches below vy(74) and the room code used to be drawn straight through it.
+    const visTop = vy(54) - 6 * scale;
+    const visBottom = this.renderVisibility();
+    box('visibility', visTop, visBottom - visTop);
+
+    // ---- action half: measured first, anchored to the bottom, because these are the controls the
+    // screen exists for and they must never be the thing that gets pushed off it.
+    const reactH = (portrait ? 18 : 14) * scale;
+    const readyH = 20 * scale;
+    const startH = (portrait ? 24 : 20) * scale;
+    const backTop = (portrait ? vy(260) : vy(245)) - 12 * scale;
+    const isHost = this.seat === this.hostSeat;
+    const enoughPlayers = this.players.length >= 2;
+    const notReady = this.players.filter((p) => !p.ready);
+    const allReady = enoughPlayers && notReady.length === 0;
+    const startReason = isHost && !allReady
+      ? (!enoughPlayers
+          ? t('online.startNeedPlayers')
+          : t(this.betweenMatches() ? 'online.waitingRematch' : 'online.startNeedReadyNames', {
+              names: notReady.map((p) => p.name).join(', '),
+            }))
+      : '';
+    const reasonH = startReason ? this.measureText(startReason, 6, panelW(200)) + 3 : 0;
+    // Portrait stacks START under READY; landscape seats it beside READY, so it costs no height.
+    const stackedStartH = portrait && isHost ? startH + 4 : 0;
+
+    // ---- informational half: flows down from the room code.
+    const btnH = portrait ? 24 : 16;
+    const top = Math.max(vy(74) - this.measureText(this.code ?? '', CODE_SIZE, view().w) / 2, visBottom + 2);
+
     const canShare = typeof navigator.share === 'function';
     // Three actions at most — copy, share, history — laid out as one evenly spaced strip rather
     // than at hand-tuned offsets, so the row stays inside the panel whether or not this browser
@@ -1431,100 +1526,214 @@ export class OnlineScene extends Phaser.Scene {
       { key: 'online.partyOpen', run: () => { if (this.lobby.openParty()) this.rebuild(); } },
     ];
     const bw = actions.length > 2 ? 76 : 100;
-    const gap = 6;
-    const total = actions.length * bw + (actions.length - 1) * gap;
+    const bgap = 6;
+    const total = actions.length * bw + (actions.length - 1) * bgap;
+
+    // One spare seat row is drawn while the table is not full, so "someone else can still join" is
+    // visible rather than implied. Counted from the highest OCCUPIED seat, never from
+    // players.length: seats never move, so a room holding seats 0 and 3 has two players and four
+    // rows. Sizing by length dropped the occupant of every seat above a gap off the screen
+    // entirely (LB-04/05/06).
+    const highestOccupied = this.players.reduce((max, p) => Math.max(max, p.seat), -1);
+    let spare = this.players.length < MAX_SEATS ? 1 : 0;
+    const seatRows = (): number => Math.min(MAX_SEATS, Math.max(highestOccupied + 1, this.players.length + spare));
+    let seatCount = seatRows();
+    const seatPitch = 13 * scale;
+
+    const notice = this.lobbyNoticeText();
+    const noticeH = notice ? this.measureText(notice.text, 6, panelW(240)) : 0;
+    const summaryH = this.measureRoomSummary();
+
+    // What the column costs before any of it is drawn, so the squeeze below is a decision and not
+    // a discovery halfway down the screen.
+    const gaps = 4; // code→actions, actions→summary, summary→seats, seats→notice
+    const fixed = (): number => btnH + summaryH + seatCount * seatPitch + noticeH;
+
+    // Nothing is hidden when the column is tight — three things give, in order of how little they
+    // cost the player. First the gaps close, down to nothing (every block already carries its own
+    // padding, so a closed gap reads as tight, not as broken). Then the room code, which is the
+    // largest glyph on the screen by a wide margin, gives back the large-text bonus it does not
+    // need in order to stay the biggest thing there — never below its 100% size. Only if that is
+    // still not enough do the seat rows tighten, down to the height of the text in them. A
+    // landscape phone at 125% text in English is the case that needs all three.
+    let codeSize = CODE_SIZE;
+    let pitch = seatPitch;
+    // The reactions row is the one thing that may go, and only at the very end: four emotes are a
+    // nicety, and the alternative at this size is a seat row or the START button leaving the
+    // screen. Every player, every control and every word of explanation stays.
+    let showReactions = true;
+    const actionsH = (): number => (showReactions ? reactH + 6 : 0) + readyH + stackedStartH + reasonH;
+    let actionTop = backTop - actionsH();
+    let room = actionTop - top;
+    const gap = Phaser.Math.Clamp((room - fixed() - this.measureText(this.code ?? '', codeSize, view().w)) / gaps, 0, 10 * scale);
+    const over = (): number => fixed() + this.measureText(this.code ?? '', codeSize, view().w)
+      + gaps * gap + seatCount * (SEAT_ROW_MIN_H - seatPitch) - room;
+    if (over() > 0) {
+      codeSize = Math.max(CODE_SIZE / scale, CODE_SIZE - over() / scale);
+    }
+    if (over() > 0) {
+      showReactions = false;
+      actionTop = backTop - actionsH();
+      room = actionTop - top;
+    }
+    // Last of all, the spare chair. It is an affordance rather than information — an empty row
+    // saying "someone can still join", whose INVITE is the same action as the COPY button already
+    // at the top of this screen — so it is the only row that may go, and only once the emotes
+    // already have. No occupied seat is ever dropped: those are the room.
+    if (over() > 0 && spare > 0) {
+      spare = 0;
+      seatCount = seatRows();
+    }
+
+    const code = label(this, cx(), top + this.measureText(this.code ?? '', codeSize, view().w) / 2, this.code ?? '', codeSize, TEXT.primary);
+    box('code', code.y - code.height / 2, code.height);
+    let y = code.y + code.height / 2;
+
+    y += gap;
+    box('actions', y, btnH);
     actions.forEach((a, i) => {
-      new PixelButton(this, cx() - total / 2 + bw / 2 + i * (bw + gap), vy(94), t(a.key), a.run, {
+      new PixelButton(this, cx() - total / 2 + bw / 2 + i * (bw + bgap), y + btnH / 2, t(a.key), a.run, {
         textureBase: 'btn-comprar', w: bw, h: btnH, size: 7,
       });
     });
+    y += btnH + gap;
 
-    this.renderRoomSummary();
+    const summaryTop = y;
+    y = this.renderRoomSummary(y);
+    box('summary', summaryTop, y - summaryTop);
+    y += gap;
 
-    // Seat rows start below the summary line and its host hint, not at a fixed 128 — the two
-    // lines above would otherwise sit on top of the first seat. One spare row is drawn while the
-    // table is not full, so "someone else can still join" is visible rather than implied.
-    // Counted from the highest OCCUPIED seat, never from players.length: seats never move, so a
-    // room holding seats 0 and 3 has two players and four rows. Sizing by length dropped the
-    // occupant of every seat above a gap off the screen entirely (LB-04/05/06).
-    const highestOccupied = this.players.reduce((max, p) => Math.max(max, p.seat), -1);
-    const spare = this.players.length < MAX_SEATS ? 1 : 0;
-    const seatCount = Math.min(MAX_SEATS, Math.max(highestOccupied + 1, this.players.length + spare));
+    // The seat pitch is decided here, against the space that is actually left rather than against
+    // an estimate: everything above has been drawn and measured by now, so this is the one number
+    // that can guarantee the rows never reach the action stack. It only ever shrinks — a room with
+    // space keeps the authored 13-unit pitch.
+    pitch = Phaser.Math.Clamp(
+      (actionTop - y - noticeH - (notice ? gap : 0)) / seatCount,
+      SEAT_ROW_MIN_H,
+      seatPitch,
+    );
+
     for (let seat = 0; seat < seatCount; seat++) {
-      this.renderSeatRow(vy(132 + seat * 13), this.players.find((p) => p.seat === seat) ?? null, seat);
+      this.renderSeatRow(y + pitch / 2 + seat * pitch, this.players.find((p) => p.seat === seat) ?? null, seat);
+      box(`seat${seat}`, y + seat * pitch, pitch);
+    }
+    y += seatCount * pitch + gap;
+
+    if (notice) {
+      this.add
+        .text(cx(), y, notice.text, {
+          ...fontStyle(6, notice.color), align: 'center', wordWrap: { width: panelW(240) },
+        })
+        .setOrigin(0.5, 0);
+      box('notice', y, noticeH);
     }
 
-    if (this.lobbyNotice) {
-      this.add
-        .text(cx(), vy(180), this.lobbyNotice, {
-          ...fontStyle(6, '#ff9b5e'), align: 'center', wordWrap: { width: panelW(240) },
-        })
-        .setOrigin(0.5);
-    } else if (this.settingsChangedNotice) {
-      this.add
-        .text(cx(), vy(180), t('online.settingsChanged'), {
-          ...fontStyle(6, '#f7d23e'), align: 'center', wordWrap: { width: panelW(240) },
-        })
-        .setOrigin(0.5);
-    } else if (this.rematch) {
-      this.add
-        .text(cx(), vy(180), t('online.rematch'), {
-          ...fontStyle(6, '#f7d23e'), align: 'center', wordWrap: { width: panelW(240) },
-        })
-        .setOrigin(0.5);
-    } else if (this.lastReaction) {
-      label(
-        this, cx(), vy(180),
-        t('online.reactionFrom', {
-          name: this.seatName(this.lastReaction.seat),
-          reaction: t(`online.reaction.${this.lastReaction.reaction}`),
-        }),
-        7, '#f7d23e',
-      );
+    // ---- action half, placed.
+    let a = actionTop;
+    if (showReactions) {
+      this.renderReactions(a + reactH / 2);
+      box('reactions', a, reactH);
+      a += reactH + 6;
     }
-    this.renderReactions(view().portrait ? vy(192) : vy(194));
 
     // READY stays a real toggle: every click still sends exactly one `ready` message. The
     // short cooldown only blocks a second click before the first one's frame goes out.
-    const stacked = view().portrait;
-    const readyBtn = new PixelButton(this, cx(), stacked ? vy(208) : vy(216), this.ready ? t('online.readyOn') : t('online.ready'), () => {
+    const readyBtn = new PixelButton(this, portrait || !isHost ? cx() : cx() - 8, a + readyH / 2, this.ready ? t('online.readyOn') : t('online.ready'), () => {
       this.fireOnce('ready', 300, () => {
         this.lobby.readySent();
         this.client.setReady(!this.ready);
       });
     }, { textureBase: 'btn-feito', w: 100, h: 20, size: 8, primary: true });
     readyBtn.setEnabled(!this.inFlight.has('ready'));
+    box('ready', a, readyH);
 
-    if (this.seat === this.hostSeat) {
-      const enoughPlayers = this.players.length >= 2;
-      const notReady = this.players.filter((p) => !p.ready);
-      const allReady = enoughPlayers && notReady.length === 0;
+    if (isHost) {
       // Landscape seats START beside READY; a 270-wide portrait world has no room beside anything,
-      // so it stacks underneath instead of running off the right edge.
-      // Far enough from READY to read as a separate button, near enough that its right edge
-      // (95 + 82/2 = 136) stays inside the 280-wide backdrop panel's half-width of 140. At the
-      // old +110 the button hung off the panel on every desktop screen.
-      const startX = stacked ? cx() : cx() + 95;
-      const start = new PixelButton(this, startX, stacked ? vy(231) : vy(216), t('online.start'), () => this.fireOnce('start', 3000, () => this.client.startGame()), {
-        textureBase: 'btn-feito', w: stacked ? 110 : 82, h: stacked ? 24 : 20, size: 7,
-      });
+      // so it stacks underneath instead of running off the right edge. Far enough from READY to
+      // read as a separate button, near enough that its right edge stays inside the backdrop panel.
+      const start = new PixelButton(
+        this, portrait ? cx() : cx() + 95, portrait ? a + readyH + 4 + startH / 2 : a + readyH / 2,
+        t('online.start'), () => this.fireOnce('start', 3000, () => this.client.startGame()),
+        { textureBase: 'btn-feito', w: portrait ? 110 : 82, h: portrait ? 24 : 20, size: 7 },
+      );
       start.setEnabled(allReady && !this.inFlight.has('start'));
-      // ONLINE-06: a greyed-out button with no stated reason is the single most common lobby
-      // complaint, and "someone isn't ready" is barely better — name the seats being waited on.
-      if (!allReady) {
-        const reason = !enoughPlayers
-          ? t('online.startNeedPlayers')
-          : t(this.betweenMatches() ? 'online.waitingRematch' : 'online.startNeedReadyNames', {
-              names: notReady.map((p) => p.name).join(', '),
-            });
-        this.add
-          // Centred on the panel in landscape, not under START: wrapped at 200 it would run
-          // off the panel's right edge from an off-centre anchor.
-          .text(stacked ? startX : cx(), stacked ? vy(243) : vy(232), reason, {
-            ...fontStyle(6, '#c0b8a8'), align: 'center', wordWrap: { width: panelW(200) },
-          })
-          .setOrigin(0.5);
-      }
+      // Only portrait gives START a row of its own; in landscape it sits beside READY and is
+      // already covered by that row's box. Recording it separately there would describe two
+      // blocks at the same height as an overlap.
+      if (portrait) box('start', a + readyH + 4, startH);
     }
+    a += readyH + stackedStartH;
+
+    // ONLINE-06: a greyed-out button with no stated reason is the single most common lobby
+    // complaint, and "someone isn't ready" is barely better — name the seats being waited on.
+    // Centred on the panel, not under START: wrapped at 200 it would run off the panel's right
+    // edge from an off-centre anchor.
+    if (startReason) {
+      this.add
+        .text(cx(), a + 3, startReason, {
+          ...fontStyle(6, TEXT.muted), align: 'center', wordWrap: { width: panelW(200) },
+        })
+        .setOrigin(0.5, 0);
+      box('startReason', a + 3, reasonH);
+    }
+  }
+
+  /**
+   * The one line above the reactions row, and what it is about: a refusal, a terms change, a
+   * rematch invitation or somebody's emote. Only one is ever shown — they are all "the newest
+   * thing that happened" — and picking it here lets the layout ask for its height before drawing.
+   */
+  private lobbyNoticeText(): { text: string; color: string } | null {
+    if (this.lobbyNotice) return { text: this.lobbyNotice, color: TEXT.warning };
+    if (this.settingsChangedNotice) return { text: t('online.settingsChanged'), color: TEXT.accent };
+    if (this.rematch) return { text: t('online.rematch'), color: TEXT.accent };
+    if (this.lastReaction) {
+      return {
+        text: t('online.reactionFrom', {
+          name: this.seatName(this.lastReaction.seat),
+          reaction: t(`online.reaction.${this.lastReaction.reaction}`),
+        }),
+        color: TEXT.accent,
+      };
+    }
+    return null;
+  }
+
+  /** Height a wrapped block of copy will take, measured with the real font and the real scale —
+   * the layout above needs it before it decides where anything goes. */
+  private measureText(text: string, size: number, wrap: number): number {
+    const probe = this.add.text(0, 0, text, { ...fontStyle(size), align: 'center', wordWrap: { width: wrap } });
+    const h = probe.height;
+    probe.destroy();
+    return h;
+  }
+
+  /** How tall renderRoomSummary will be: the wrapped terms line, plus the host's hint/link row,
+   * plus a second row when the hint and AJUSTAR cannot share one. */
+  private measureRoomSummary(): number {
+    const s = this.roomSettings;
+    const text = s.turnMs <= 0
+      ? t('online.summaryNoTimer', { grace: Math.round(s.reconnectGraceMs / 1000) })
+      : t('online.roomSummary', {
+          timer: t(`online.timer.${s.timerMode}`),
+          turn: Math.round(s.turnMs / 1000),
+          bonus: Math.round(s.mexeBonusMs / 1000),
+          grace: Math.round(s.reconnectGraceMs / 1000),
+        });
+    const lineH = this.measureText(text, 7, panelW(250));
+    if (!(this.seat === this.hostSeat && !this.settingsLocked)) return lineH;
+    const hintW = this.measureWidth(t('online.timerTapHint'), 6);
+    const linkLeft = panelW(240) / 2 - 26 - this.measureWidth(t('online.customize'), 6) / 2;
+    const rowH = this.measureText(t('online.timerTapHint'), 6, panelW(240));
+    return lineH + 6 + rowH * (hintW / 2 + 4 > linkLeft ? 2 : 1);
+  }
+
+  /** Rendered width of one short label — the hint/link collision test needs it before either
+   * exists. */
+  private measureWidth(text: string, size: number): number {
+    const probe = this.add.text(0, 0, text, fontStyle(size));
+    const w = probe.width;
+    probe.destroy();
+    return w;
   }
 }

@@ -3,6 +3,7 @@
  * See docs/MULTIPLAYER.md for protocol and validation order.
  */
 import { timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -756,7 +757,7 @@ wss.on('connection', (ws: WebSocket, req) => {
       const raw = typeof data === 'string' ? data : data.toString('utf8');
       const parsed = parseClientMessage(raw);
       if ('error' in parsed) {
-        sendError(ws, 'bad_message', parsed.error);
+        sendError(ws, parsed.code ?? 'bad_message', parsed.error);
         return;
       }
       handleMessage(ws, conn, parsed);
@@ -910,11 +911,45 @@ function shutdown(signal: NodeJS.Signals): void {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+// A port that is already taken (a stale server, a local proxy, a second test worker) is a
+// startup failure, not an unhandled event: say which port and exit non-zero, so a supervisor —
+// or the e2e harness — reports "could not bind" instead of a stack trace, or worse, nothing.
+//
+// Both emitters, and `wss` first: `ws` forwards the HTTP server's 'error' to the WebSocketServer,
+// and an EventEmitter with no 'error' listener *throws*. With only the `server` handler below,
+// that forward reached an empty wss and the process died as an uncaught exception before this
+// ever ran — which is precisely the unreadable failure this exists to remove.
+const listenFailed = (err: NodeJS.ErrnoException): never => {
+  // `errno`, not `code`: the logger redacts every key containing "code" (room codes are shared
+  // secrets), and an operator reading this line needs to see EADDRINUSE. The message itself stays
+  // out — free-form error text is redacted by policy, and the errno is the actionable half.
+  log.error('server_listen_failed', { port: config.port, host: config.host, errno: err.code ?? 'UNKNOWN' });
+  process.exit(1);
+};
+wss.on('error', listenFailed);
+server.on('error', listenFailed);
+
+/**
+ * Which build is serving. After a deploy or a rollback the operator's first question is exactly
+ * this, and an image tag is what they *asked* for, not what is running. Startup log only: the
+ * open `/health` endpoint deliberately keeps saying nothing a stranger can fingerprint the
+ * deployment with (docs/OBSERVABILITY_PRIVACY.md).
+ */
+function buildVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: unknown };
+    return typeof pkg.version === 'string' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 server.listen(config.port, config.host, () => {
   log.info('server_listening', {
     port: config.port,
     host: config.host,
     mode: config.mode,
+    build: buildVersion(),
     protocol: PROTOCOL_VERSION,
     maxRooms: config.maxRooms,
   });

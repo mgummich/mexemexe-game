@@ -124,6 +124,9 @@ or read the sources here:
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module map, data flow, where new code goes |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Setup, scripts, env vars, troubleshooting |
 | [`docs/TESTING.md`](docs/TESTING.md) | Test suites, verification gates, CI |
+| [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Performance budgets and target devices |
+| [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Threat model and trust boundaries |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Durable decisions and rejected alternatives |
 | [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) | Online protocol, server authority, alpha limits |
 | [`docs/PWA_OFFLINE.md`](docs/PWA_OFFLINE.md) | What works offline, service worker, updates |
 | [`docs/ASSETS.md`](docs/ASSETS.md) | Every generated asset, its path and how to replace it |
@@ -152,8 +155,11 @@ or read the sources here:
 ## Contributing & license
 
 Bug reports and pull requests welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
-CI runs lint, unit tests, the build, and the Playwright e2e, cross-browser,
-multiplayer and PWA suites on every push and PR; `main` auto-deploys the game
-and docs to GitHub Pages.
+CI runs lint, unit tests, the build, the Playwright e2e, cross-browser,
+multiplayer and PWA suites, and a container check that the server image boots
+unprivileged — scaled to what the change touches, so a documentation-only pull
+request runs none of them
+([`docs/TESTING.md`](docs/TESTING.md)). A green `main` is what deploys the game
+and docs to GitHub Pages, not merely the newest commit.
 
 Licensed under the [MIT License](LICENSE).

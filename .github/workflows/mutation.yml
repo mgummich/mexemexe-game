@@ -1,0 +1,48 @@
+name: Mutation
+
+# Mutation testing asks the one question coverage cannot: do the tests actually *fail* when the
+# behaviour changes. It is a diagnostic, not a gate — `stryker.conf.json` enforces no score
+# threshold, so this workflow reports and never blocks. Its own schedule rather than a job in
+# nightly.yml because it runs in over an hour: daily would spend more runner time than the signal
+# is worth, and the survivors it finds are reviewed by hand anyway.
+on:
+  schedule:
+    # 03:00 UTC on Sundays
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation
+
+jobs:
+  mutation:
+    name: Mutation testing (core + wire contract)
+    runs-on: ubuntu-latest
+    # Measured ~75 min for the gameplay core alone, plus ~39 min for the wire-contract scope on an
+    # idle machine — and mutants now run to Stryker's timeout instead of being failed fast by a
+    # wall-clock assertion (see tests/helpers/timing.ts), which roughly doubled that half. The
+    # timeout carries both scopes on a slower shared runner without turning a long run into a
+    # false alarm.
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Scope lives in stryker.conf.json, not here, so a developer running `npm run test:mutation`
+      # locally measures exactly what this job measures.
+      - run: npm run test:mutation
+      # Uploaded unconditionally: the run passes whatever the score is, so the HTML report *is*
+      # the result. Without it a green check would be the only output and nobody would see a
+      # surviving mutant.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutation-report
+          path: tmp/mutation/
+          retention-days: 30

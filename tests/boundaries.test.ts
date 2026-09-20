@@ -50,8 +50,15 @@ const DOMAIN_ALLOWED_IMPORTS = [
  */
 const APPLICATION = ['src/game-state/match.ts', 'src/net/online-session.ts', 'src/net/lobby.ts'];
 
-/** DOMAIN plus the pure layout maths: no browser, no clock, no unseeded randomness. */
-const EFFECT_FREE = [...DOMAIN, 'src/table'];
+/**
+ * DOMAIN plus the pure layout maths and the AI engine: no browser, no clock, no unseeded
+ * randomness. The AI joined this list once its rearrange search stopped bounding itself with a
+ * `performance.now()` deadline — that clock was inside move selection, so the same state could
+ * produce a different move on a slower machine. The budget is a trial count now
+ * (`SEARCH_BUDGET_TRIALS`), and this is the guard that keeps a clock from coming back: the
+ * reproducibility tests in `ai.test.ts` can only observe that one machine agrees with itself.
+ */
+const EFFECT_FREE = [...DOMAIN, 'src/table', 'src/ai'];
 
 describe('architecture boundaries', () => {
   it('the domain core imports only rules, the seeded rng and the bus', () => {
@@ -153,6 +160,94 @@ describe('architecture boundaries', () => {
       const usesPhaser = imports(file).some((spec) => spec === 'phaser' || spec.startsWith('phaser/'));
       expect(`${rel(file)}: ${usesPhaser}`).toBe(`${rel(file)}: false`);
     }
+  });
+
+  /**
+   * ARCH-009: `src/core` sits below everything by convention but imports upward out of four higher
+   * modules. Reorganising it is Phase 4 work and churns every import; what is cheap today is to
+   * stop it growing, which is the actual complaint in the register ("probably core" is why it
+   * keeps growing). Every edge below was measured, not chosen. Deleting one is always fine;
+   * adding one means arguing here that `core` is still the right owner.
+   */
+  const CORE_UPWARD = [
+    'src/core/intensity.ts -> ../rules/types',
+    'src/core/objective.ts -> ../localization/i18n',
+    'src/core/persistence.ts -> ../ai/ai',
+    'src/core/persistence.ts -> ../cosmetics',
+    'src/core/persistence.ts -> ../localization/i18n',
+    'src/core/playlog.ts -> ../game-state/match',
+    'src/core/pwa.ts -> ../localization/i18n',
+    'src/core/pwa.ts -> ../ui/tokens',
+    'src/core/results-summary.ts -> ../localization/i18n',
+    'src/core/results-summary.ts -> ../rules/types',
+    'src/core/settings.ts -> ../ui/helpers',
+  ];
+
+  it('src/core grows no new upward dependency', () => {
+    const found = tsFiles(path.join(ROOT, 'src/core'))
+      .flatMap((file) => imports(file).filter((spec) => spec.startsWith('../')).map((spec) => `${rel(file)} -> ${spec}`))
+      .sort();
+    expect(found).toEqual([...CORE_UPWARD].sort());
+  });
+
+  /**
+   * ARCH-012 was two type-only cycles. Type-only means no runtime cycle and no bundling effect, so
+   * nothing but this test can notice one coming back — and the ones that existed were symptoms of
+   * ARCH-009 rather than independent bugs, which is exactly the class that regrows quietly.
+   */
+  it('no module in src imports itself back, even through a type', () => {
+    const resolve = (from: string, spec: string): string | null => {
+      if (!spec.startsWith('.')) return null;
+      const base = path.resolve(path.dirname(from), spec);
+      for (const candidate of [`${base}.ts`, path.join(base, 'index.ts')]) {
+        if (fs.existsSync(candidate)) return candidate;
+      }
+      return null;
+    };
+    const cycles: string[] = [];
+    const state = new Map<string, 'visiting' | 'done'>();
+    const walk = (file: string, stack: string[]): void => {
+      if (state.get(file) === 'done') return;
+      if (state.get(file) === 'visiting') {
+        cycles.push([...stack.slice(stack.indexOf(file)), file].map(rel).join(' -> '));
+        return;
+      }
+      state.set(file, 'visiting');
+      for (const spec of imports(file)) {
+        const target = resolve(file, spec);
+        if (target) walk(target, [...stack, file]);
+      }
+      state.set(file, 'done');
+    };
+    for (const file of tsFiles(path.join(ROOT, 'src'))) walk(file, []);
+    expect(cycles).toEqual([]);
+  });
+
+  /**
+   * Persistence is not a second gameplay authority (ARCHITECTURE.md §Persistence): the two modules
+   * that own a storage key are the only ones allowed to read or write web storage. A scene or store
+   * that started saving match state on its own would restore gameplay from disk instead of from the
+   * rules (local) or the server (online), which is the failure this keeps out.
+   */
+  it('only the two documented owners touch web storage', () => {
+    const touching = tsFiles(path.join(ROOT, 'src'))
+      .filter((file) => {
+        const code = fs.readFileSync(file, 'utf8').split('\n').filter((line) => !/^\s*(\/\/|\/?\*)/.test(line));
+        return code.some((line) => /\b(local|session)Storage\b/.test(line));
+      })
+      .map(rel)
+      .sort();
+    expect(touching).toEqual(['src/core/persistence.ts', 'src/net/client.ts']);
+  });
+
+  /**
+   * ARCH-014: `RoomManager`'s cohesion was confirmed by the audit — it owns one thing, rooms — and
+   * the finding was only "watch its growth". This is that watch: a ceiling near the measured size
+   * so the next few hundred lines of room policy have to be a decision instead of an accident.
+   */
+  it('RoomManager stays the size the audit confirmed as cohesive', () => {
+    const lines = fs.readFileSync(path.join(ROOT, 'server/rooms.ts'), 'utf8').split('\n').length;
+    expect(`server/rooms.ts is ${lines <= 1050 ? 'within' : 'over'} its ceiling`).toBe('server/rooms.ts is within its ceiling');
   });
 
   it('the server imports the shared rules and protocol, never the client presentation layer', () => {

@@ -49,8 +49,12 @@ accounts, ranking, chat, or cosmetics sync. The game labels the entry point
   bounds the server clamps to, and send one proposal on APPLY rather than one
   per field.
 - **Reconnect is a bounded retry loop**, not a persistent one: seven jittered
-  attempts spanning roughly the 60s seat-hold window, then the client returns
-  you to the local menu with a message. It never retries forever.
+  attempts spanning roughly the 60s seat-hold window of the presets, then the
+  client returns you to the local menu with a message. It never retries forever.
+  A room on a longer custom grace (up to 300s, §7b) outlives the loop; the seat is
+  not lost with it, because exhausting the attempts does not drop the token —
+  only `invalid_token` or `room_closed` does — so re-entering the online screen
+  still reclaims the seat while the room holds it.
 
 ## 1. Responsibilities
 
@@ -433,8 +437,15 @@ and `room_state` gained `settings`/`hostSeat`, and the client gained
 `set_room_settings` and `mexe_started`; v3 bumped from 2 in 1.2.0, when
 `GameView` gained a `hash` digest and the client gained `resync`; v2 bumped from 1 for the rules
 adaptation, when `GameView` gained `config` and card ids changed shape with the
-two-deck/joker model); a mismatch is refused at connect with a clear reason rather than
-producing subtle desyncs. Client-to-server messages carry a client-chosen
+two-deck/joker model); a mismatch is refused at the wire boundary rather than producing subtle
+desyncs: the version is the first thing `parseClientMessage` checks, so the
+refusal lands on the client's first frame, before any room state exists. It is
+the one parse failure that carries its own error code (`unsupported_version`,
+"reload the page to update") instead of the generic `bad_message` — a stale
+service-worker cache is the realistic way a player ends up on the wrong
+version, and that player needs an instruction, not an apology. Compatibility
+across versions is deliberately none, in both directions: see the compatibility
+policy in [ARCHITECTURE.md](ARCHITECTURE.md#compatibility-policy). Client-to-server messages carry a client-chosen
 `reqId`; every rejection echoes it, so a client can tie a rejection to the
 submission that caused it.
 
@@ -456,6 +467,7 @@ submission that caused it.
 | `list_rooms` | — | no filters are representable on the wire; the answer is bounded and rate-limited (§3d) |
 | `join_queue` | `target: 2 \| 3 \| 4 \| 'any'`, `name` | casual queue (§3e); idempotent per session, refused with `already_in_match` for a seated player and `queue_busy` at capacity |
 | `cancel_queue` | — | idempotent; answered with authoritative queue state, so a cancel that raced a formed match is told `matched` |
+| `reaction` | `reaction: ReactionId` | one of the four closed `REACTIONS` ids (§3c); anything else is dropped at the parser, and a seat inside `REACTION_COOLDOWN_MS` is dropped by the server |
 | `resync` | — | "resend authoritative state"; never carries client state |
 | `ping` | — | |
 
@@ -475,6 +487,7 @@ submission that caused it.
 | `error` | `code`, `message`, `reqId?` | protocol-level problems; a refusal about the room's own state (`not_ready`, `not_host`, `game_started`, `room_full`, `rate_limited`) is answered on the lobby itself rather than replacing it with an error screen — the caller is still seated and every other control still works; `reqId` echoes the request that failed, absent for server-initiated errors including `room_closed` (S1/S2: a reaped or abandoned room notifies every attached socket before dropping it) |
 | `queue_state` | `status`, `target`, `token?`, `players?` | the caller's own queue state and nothing else (§3e): `token` only while `queued`, `players` only on `matched`. Never a queue size, a position or another waiting player |
 | `room_list` | `reqId`, `rooms: RoomListing[]` | the discovery projection only (§3d): `code`, `hostName`, `players`, `capacity`, `status`, `timerMode`. Never a room snapshot, never a room the caller has not joined |
+| `player_reaction` | `seat`, `reaction: ReactionId` | relay of another seat's reaction (§3c). The id is the server's validated value, never the sender's payload echoed back, and the relay touches no `rev`, hash, turn or hand |
 | `pong` | — | |
 
 `ReasonCode` values are the existing localized keys (`reason.duplicateCard`,
@@ -516,6 +529,31 @@ message type; it rides `game_over` like any other win.
 The point of this ordering is that cheap, adversary-controlled checks happen
 before any game logic, and the shared rules function is the last word.
 
+### 5a. The server-to-client direction
+
+The server is trusted, but the wire is still a boundary, so the view a client
+receives is checked before it becomes local state. `viewProjectionProblem`
+(`src/net/viewToState.ts`) answers one question — can `activeSeat` be resolved
+to a player in this view? — and `viewToState` refuses to project a view that
+fails it rather than producing a `GameState` whose active player is
+`undefined`. Every reader of `players[activePlayerIndex]` asserts that player
+exists, so such a state is one no part of the game can represent.
+
+This check exists because it is the one inconsistency the state digest cannot
+see: `digestOfView` hashes `view.activeSeat` and `digestOfState` hashes the
+`activePlayerIndex` copied straight out of it, so a seat pointing at no player
+agrees with itself and passes §4a's desync comparison. Everything else a
+malformed frame can get wrong — hand counts, the draw count, the table — is
+re-derived on one side and taken from the view on the other, so the digest
+already catches it. The check is deliberately not a schema validator for the
+whole frame; a second one would be duplicated validation with no second
+failure it can find.
+
+It is not an anti-cheat measure and is not framed as one (§9): a hostile server
+already decides the entire match. It protects against server regressions,
+protocol changes landing on one side only, malformed fixtures and replay/debug
+tooling.
+
 ## 6. Client reconciliation
 
 The client keeps its rendered state derived from the last `state_sync` only.
@@ -527,12 +565,46 @@ localized reason and restores the last synced state — never a half-applied
 draft. A `state_sync` with a `rev` lower than the one already rendered is
 ignored (late/out-of-order delivery).
 
-All of those decisions are `OnlineSession.applySync`, which answers one of three
-things — `stale` (ignored), `desync` (input stays locked, a fresh snapshot is
-requested) or `applied` (with the acting seat, whether a draft was dropped, any
+The two ends compare revisions differently, on purpose. The server rejects a
+*proposal* whose `rev` is not exactly the room's current one (`reason.staleRevision`):
+a turn computed against any other board is a turn about a board that no longer
+exists. The client only ignores a *frame* strictly older than the one it has
+(`view.rev < lastRev`): an equal-`rev` frame is the same authoritative board
+restated — a duplicate delivery or the answer to a `resync` — so applying it
+again is idempotent and safer than second-guessing which copy was the real one.
+
+A refusal is correlated the same way, one layer lower: `NetClient` remembers the
+`reqId` of the proposal still in flight, clears it when any authoritative frame
+arrives (`state_sync`, `game_started`, `game_over`) and drops a
+`proposal_rejected` carrying any other `reqId`. A refusal that lands after the
+board was already replaced answers nothing — delivering it would sound the error
+over a correct board and rebuild the editor under a draft the player has since
+started. Correlation lives in the transport because that is where the `reqId`
+ledger is; the scene still handles every refusal it is given.
+
+That comparison is only sound inside one match, because `rev` restarts at 1 on
+every deal. So the client checks match identity first: a `state_sync` whose
+`view.matchId` is not the session's is answered `invalid` — nothing applied,
+`lastRev` untouched — rather than being ordered against a revision counter that
+belongs to a different board. No delivery path is known to produce such a frame
+(one socket per client, ordered; the server never re-sends a finished match's
+frames, and it refuses to start the next match while a seat is disconnected),
+so this refuses the frame rather than trying to repair anything.
+
+All of those decisions are `OnlineSession.applySync`, which answers one of four
+things — `stale` (ignored), `invalid` (the frame failed §5a's projection check;
+**nothing was applied**, so the last good state and `lastRev` both stand),
+`desync` (applied, but the local reconstruction does not hash to the server's
+digest) or `applied` (with the acting seat, whether a draft was dropped, any
 Mexe bonus granted and the remaining turn time). The scene turns that answer into
 notices and a repaint, and anchors `turnMsLeft` to its own clock; it decides
 none of it.
+
+`invalid` and `desync` get the same remedy — lock input, show the resyncing
+notice, send `resync` — for different causes: a frame that cannot be
+represented at all, versus two honest peers that have diverged. The difference
+matters on the `invalid` path, where the scene must not read a clock or a seat
+off the frame it just rejected.
 
 ## 7. Reconnect plan (as built)
 
@@ -594,6 +666,20 @@ including the lobby a finished match was recycled into — returns `room_joined`
 with no view at all, so no stale playing state can survive a rematch. Pinned in
 `tests/server/reconnect.test.ts` (OR-01/02/06/07/08/09/16/25/26/27/28/29, at 2,
 3 and 4 seats).
+
+**A drop over the finish.** A seat can be disconnected at the moment the match
+ends — the server draws and passes for it, the other seat's play finishes the
+game, and the `game_over` broadcast goes out while that socket is down. Its
+reconnect is therefore answered with a room, not a match, and no `game_over` is
+ever re-sent. The client decides what that means in `OnlineSession.roomState`:
+an unlocked room (`locked: false`, i.e. no match running) that this session
+never saw finish is the finish it missed, so `GameScene` says so and hands back
+to the lobby the room recycled into, on the live socket. Without that path the
+board the drop froze stays on screen as if it were live, and the seat can never
+cast the ready bit the room's next match needs — it is stuck in the match scene.
+Reported once per session, because the reconnect answer broadcasts room state
+more than once. Covered by LB-47 (`e2e-multiplayer/lobby.spec.ts`) end to end and
+by `tests/online-session.test.ts` for the policy.
 
 Seat presence changes — a disconnect, a reconnect, a hop — always re-broadcast
 `room_state` alongside the `player_disconnected`/`player_reconnected` event,
@@ -755,7 +841,8 @@ client publishes a `ConnStatus` plus a stable `ConnReason` (`unreachable`,
 `socket_failed`), never a browser exception string.
 
 Every inbound frame is parsed inside a try/catch; a parse failure or a failed
-shape check replies `error` and, on repeated abuse, closes the socket. No
+shape check replies `error` (`unsupported_version` for a version mismatch,
+`bad_message` for everything else — §4) and, on repeated abuse, closes the socket. No
 inbound value is ever used as an object key, array index, or loop bound before
 being range-checked. Handlers are wrapped so a thrown `RulesError` becomes a
 rejection message, never an unhandled exception. Per-room work is isolated: a
@@ -835,7 +922,9 @@ commands; a single `docker compose` service pair is the deployment shape.
 Server unit suites (`tests/server/`) cover room lifecycle, legal and rejected
 turns, redaction, reconnect and a malformed-message battery; the integration
 suite spawns the real process and drives raw `ws` clients (shared harness in
-`tests/server/harness.ts`). `tests/server/party.test.ts` and
+`tests/server/harness.ts`). A manager-level suite builds its `RoomManager`
+through `tests/server/manager.ts`, which injects the clock, room code,
+reconnect token and deal seed so every room test is reproducible. `tests/server/party.test.ts` and
 `tests/server/party.integration.test.ts` carry the `OS-*` party-session
 acceptance: session wins and their duplicate guard, rematch voting, between-match
 leave/join, bounded history and feed, and the room-scoped, rate-limited,
@@ -876,6 +965,16 @@ room resurrection, and a concurrent-room load that has to return to baseline. `n
 verify:multiplayer` runs two-plus real browser clients against the real server
 and gates on client console errors, server stderr, accepted illegal proposals,
 hand privacy and state-hash agreement.
+
+`CH-01..CH-05` in `e2e-multiplayer/multiplayer.spec.ts` are the adverse-delivery
+gate: one client's socket is intercepted with `page.routeWebSocket` and its
+incoming frames are delayed, duplicated, re-delivered stale, dropped, or (for a
+refusal) held until the board has moved past them. The host stays clean and is
+the control — whatever the other seat went through, both end on the same
+revision with `desyncs() === 0`. Withholding a frame the client is *waiting* on
+is CH-04's case and is recovered by the pending timeout, not by a later frame.
+They are tagged `@chaos` and run nightly rather than per PR — see
+[TESTING.md](TESTING.md) for why the PR path keeps its concurrency where it was.
 
 `e2e-multiplayer/lobby.spec.ts` carries the `LB-*` lobby acceptance and runs on
 **Chromium, Firefox and WebKit** — a Chrome pass is not evidence for another

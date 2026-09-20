@@ -18,7 +18,9 @@ import { applyGameAction, type GameAction } from './actions';
  * This is developer/QA reproduction, not a player-facing feature, and it is a different artifact
  * from the two it sits next to:
  *
- *   SAVE   (`serializeGameState`) — restore a match where the player left it
+ *   SAVE   (`serializeGameState`) — one whole state as one versioned envelope. Used by replay
+ *                                    snapshots and state hashes; nothing writes it to storage, so
+ *                                    there is no mid-match save (ARCHITECTURE.md §Persistence)
  *   REPLAY (this file)            — reproduce how a match got there
  *   PLAYLOG (`src/core/playlog.ts`) — a human-readable timeline of what the session looked like
  *

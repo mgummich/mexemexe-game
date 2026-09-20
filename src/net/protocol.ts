@@ -55,6 +55,7 @@ export const SERVER_ERROR_CODES = [
   'already_in_match',
   'queue_busy',
   'bad_message',
+  'unsupported_version',
   'internal_error',
 ] as const;
 
@@ -780,7 +781,13 @@ function isRev(v: unknown): v is number {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0;
 }
 
-export function parseClientMessage(raw: string): ClientMessage | { error: string } {
+/**
+ * A parse failure carries a `code` only when the failure has a cause the *player* can act on.
+ * A version mismatch does: the client is older or newer than this server, which is what a stale
+ * PWA cache looks like from the wire, and "reload to update" is a useful thing to say. Every
+ * other refusal is a developer detail and stays a generic `bad_message`.
+ */
+export function parseClientMessage(raw: string): ClientMessage | { error: string; code?: ServerErrorCode } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -791,7 +798,7 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
     return { error: 'not an object' };
   }
   const o = parsed as Record<string, unknown>;
-  if (o.v !== PROTOCOL_VERSION) return { error: 'unsupported protocol version' };
+  if (o.v !== PROTOCOL_VERSION) return { error: 'unsupported protocol version', code: 'unsupported_version' };
   if (!isStr(o.type, 32)) return { error: 'missing type' };
   if (!isStr(o.reqId)) return { error: 'missing reqId' };
   const reqId = o.reqId;

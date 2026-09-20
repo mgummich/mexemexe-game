@@ -34,6 +34,7 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.back': 'VOLTAR',
     'online.retry': 'TENTAR DE NOVO',
     'online.selfReconnected': 'Você voltou pra sala.',
+    'online.matchEndedAway': 'A partida terminou enquanto você estava sem conexão. Voltando pra sala...',
     'online.copy': 'COPIAR',
     'online.copied': 'Código copiado!',
     'online.waiting': 'Esperando o outro jogador...',
@@ -101,6 +102,7 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.err.already_in_match': 'Você já está numa partida.',
     'online.err.queue_busy': 'O matchmaking está cheio. Tente de novo em instantes.',
     'online.err.bad_message': 'Algo deu errado na comunicação com o servidor.',
+    'online.err.unsupported_version': 'Esta versão do jogo está desatualizada. Recarregue a página para atualizar.',
     'online.err.internal_error': 'Erro no servidor. Tente de novo.',
     'online.err.unreachable': 'Não foi possível conectar ao servidor. Ele está rodando?',
     'online.err.unknown': 'Algo deu errado. Tente de novo.',
@@ -250,6 +252,7 @@ const dict: Record<Locale, Record<string, string>> = {
     'tutorial.step11': 'Sem uma boa jogada? Aperte COMPRAR — você compra 1 carta e sua rodada acaba na hora (não existe monte de descarte).',
     'tutorial.step12': 'Última carta! Arraste o 9♦ e o 7♦ pros jogos da mesa e dê FEITO pra BATER!',
     'tutorial.complete': 'Parabéns, você bateu! JOGAR começa uma partida de verdade; JOGAR DE NOVO repete o tutorial.',
+    'tutorial.blocked': 'Não é a jogada deste passo. Nada mudou — tente de novo.',
     'tutorial.next': 'PRÓXIMO',
     'tutorial.skip': 'PULAR',
     'tutorial.play': 'JOGAR',
@@ -293,7 +296,8 @@ const dict: Record<Locale, Record<string, string>> = {
     'cosmetics.avatar.ivo': 'Seu Ivo',
     'setup.lastSeed': 'REPETIR SEMENTE {seed}',
     'game.lastMove.drew': '{name} comprou uma carta.',
-    'game.lastMove.played': '{name} baixou {n} carta(s).',
+    'game.lastMove.played.one': '{name} baixou 1 carta.',
+    'game.lastMove.played.many': '{name} baixou {n} cartas.',
     'game.lastMove.mexeu': '{name} baixou {n} e remexeu {m} da mesa.',
     'ai.why.minimal-meld': 'Baixou só um jogo, pra guardar o resto.',
     'ai.why.minimal-extend': 'Encaixou uma carta só e parou por aí.',
@@ -352,8 +356,8 @@ const dict: Record<Locale, Record<string, string>> = {
     'objective.canBater': 'PODE BATER!',
     'objective.unresolved.one': '(1 combinação pra fechar)',
     'objective.unresolved.many': '({n} combinações pra fechar)',
-    'win.statLine': '{name}: {turns} rodadas · {cards} cartas jogadas · {draws} compras',
-    'win.statCards': '{n} cartas jogadas',
+    'win.statCards.one': '1 carta jogada',
+    'win.statCards.many': '{n} cartas jogadas',
     'win.record': 'vs. você: {w}-{l}',
     'win.rematch': 'REVANCHE',
     'win.changePlayers': 'TROCAR JOGADORES',
@@ -396,9 +400,9 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.waitingRematch': 'Esperando revanche de: {names}',
     'online.rematchVotes': 'Querem revanche: {names}',
     'online.sessionScore': 'Placar da sala',
-    'online.wins': '{n} vitórias',
-    'online.winsOne': '1 vitória',
-    'online.winsNone': 'sem vitórias',
+    'online.wins.many': '{n} vitórias',
+    'online.wins.one': '1 vitória',
+    'online.wins.zero': 'sem vitórias',
     'online.partyOpen': 'HISTÓRICO',
     'online.partyTitle': 'HISTÓRICO DA SALA',
     'online.matches': 'PARTIDAS',
@@ -446,7 +450,8 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.queueExpired': 'Não achamos ninguém ainda.\nTente de novo ou crie uma sala.',
     'online.queueLost': 'Conexão caiu. Sua busca continua quando voltar.',
     'online.matchFound': 'PARTIDA ENCONTRADA!',
-    'online.matchPlayers': '{n} jogadores',
+    'online.matchPlayers.one': '1 jogador',
+    'online.matchPlayers.many': '{n} jogadores',
     'online.matchJoining': 'Entrando na mesa...',
     'online.playWithFriends': 'JOGAR COM AMIGOS',
     'online.cardHost': 'Sala de {host}',
@@ -493,6 +498,7 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.back': 'BACK',
     'online.retry': 'TRY AGAIN',
     'online.selfReconnected': "You're back in the room.",
+    'online.matchEndedAway': 'The match ended while you were offline. Back to the room...',
     'online.copy': 'COPY',
     'online.copied': 'Code copied!',
     'online.waiting': 'Waiting for the other player...',
@@ -560,6 +566,7 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.err.already_in_match': 'You\u2019re already in a match.',
     'online.err.queue_busy': 'Matchmaking is busy. Try again shortly.',
     'online.err.bad_message': 'Something went wrong talking to the server.',
+    'online.err.unsupported_version': 'This version of the game is out of date. Reload the page to update.',
     'online.err.internal_error': 'Server error. Please try again.',
     'online.err.unreachable': "Can't reach the game server. Is it running?",
     'online.err.unknown': 'Something went wrong. Please try again.',
@@ -709,6 +716,7 @@ const dict: Record<Locale, Record<string, string>> = {
     'tutorial.step11': "No good move? Press DRAW — you draw one card and your turn ends immediately (there's no discard pile).",
     'tutorial.step12': 'Last card! Drag the 9♦ and 7♦ onto the table melds and press DONE to go out!',
     'tutorial.complete': "Congratulations, you went out! PLAY starts a real match; REPLAY does the lesson again.",
+    'tutorial.blocked': 'Not this step\u2019s move. Nothing changed — try again.',
     'tutorial.next': 'NEXT',
     'tutorial.skip': 'SKIP',
     'tutorial.play': 'PLAY',
@@ -752,7 +760,8 @@ const dict: Record<Locale, Record<string, string>> = {
     'cosmetics.avatar.ivo': 'Seu Ivo',
     'setup.lastSeed': 'REPLAY SEED {seed}',
     'game.lastMove.drew': '{name} drew a card.',
-    'game.lastMove.played': '{name} played {n} card(s).',
+    'game.lastMove.played.one': '{name} played 1 card.',
+    'game.lastMove.played.many': '{name} played {n} cards.',
     'game.lastMove.mexeu': '{name} played {n} and rearranged {m} on the table.',
     'ai.why.minimal-meld': 'Laid down one meld and kept the rest.',
     'ai.why.minimal-extend': 'Added a single card and stopped there.',
@@ -811,8 +820,8 @@ const dict: Record<Locale, Record<string, string>> = {
     'objective.canBater': 'YOU CAN GO OUT!',
     'objective.unresolved.one': '(1 meld to close)',
     'objective.unresolved.many': '({n} melds to close)',
-    'win.statLine': '{name}: {turns} turns · {cards} cards played · {draws} draws',
-    'win.statCards': '{n} cards played',
+    'win.statCards.one': '1 card played',
+    'win.statCards.many': '{n} cards played',
     'win.record': 'vs. you: {w}-{l}',
     'win.rematch': 'REMATCH',
     'win.changePlayers': 'CHANGE PLAYERS',
@@ -854,9 +863,9 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.waitingRematch': 'Waiting on a rematch from: {names}',
     'online.rematchVotes': 'Want a rematch: {names}',
     'online.sessionScore': 'Room score',
-    'online.wins': '{n} wins',
-    'online.winsOne': '1 win',
-    'online.winsNone': 'no wins yet',
+    'online.wins.many': '{n} wins',
+    'online.wins.one': '1 win',
+    'online.wins.zero': 'no wins yet',
     'online.partyOpen': 'HISTORY',
     'online.partyTitle': 'ROOM HISTORY',
     'online.matches': 'MATCHES',
@@ -904,7 +913,8 @@ const dict: Record<Locale, Record<string, string>> = {
     'online.queueExpired': 'We couldn\u2019t find a match yet.\nTry again or create a room.',
     'online.queueLost': 'Connection lost. Your search resumes when you\u2019re back.',
     'online.matchFound': 'MATCH FOUND!',
-    'online.matchPlayers': '{n} players',
+    'online.matchPlayers.one': '1 player',
+    'online.matchPlayers.many': '{n} players',
     'online.matchJoining': 'Joining table...',
     'online.playWithFriends': 'PLAY WITH FRIENDS',
     'online.cardHost': '{host}\u2019s room',
@@ -924,6 +934,9 @@ let current: Locale = 'pt';
 
 export function setLocale(l: Locale): void {
   current = l;
+  // Keep the document language in step with the UI language: it is what a screen reader picks a
+  // voice/pronunciation from, and `index.html` can only ever declare the build-time default.
+  if (typeof document !== 'undefined') document.documentElement.lang = l === 'pt' ? 'pt-BR' : 'en';
 }
 
 export function getLocale(): Locale {
@@ -935,10 +948,43 @@ export function localeKeys(l: Locale): string[] {
   return Object.keys(dict[l]);
 }
 
+/** Is `key` declared in the active locale or in the `pt` fallback? Lets `plural()` pick an
+ * optional `.zero` form without the caller hardcoding which keys happen to declare one. */
+function declared(key: string): boolean {
+  return key in dict[current] || key in dict.pt;
+}
+
 export function t(key: string, params?: Record<string, string | number>): string {
   let s = dict[current][key] ?? dict.pt[key] ?? key;
+  if (import.meta.env?.DEV && !declared(key)) {
+    // Dev-only: a missing key still renders (its own name, above) rather than a blank string, but
+    // silently — which is exactly how a missing key ships. Production stays quiet.
+    console.warn(`[i18n] missing key: ${key}`);
+  }
   if (params) {
-    for (const [k, v] of Object.entries(params)) s = s.replace(`{${k}}`, String(v));
+    // replaceAll, not replace: a string may mention the same placeholder twice ("{name} vs {name}")
+    // and the second one must not survive into the UI as literal braces.
+    for (const [k, v] of Object.entries(params)) s = s.replaceAll(`{${k}}`, String(v));
   }
   return s;
+}
+
+/**
+ * Quantity-dependent copy. Resolves `<key>.one` / `<key>.many` (plus an optional `<key>.zero`)
+ * and passes the count through as `{n}` — so a locale decides its own wording for each form
+ * instead of a call site concatenating a number onto an English plural.
+ *
+ * This is the convention the dictionary already used by hand (`check.meldsUnresolved.one/.many`);
+ * it is a lookup rule, not a pluralization engine. Locales whose plural rules need more forms
+ * than these three would need a real CLDR plural selector — neither `pt` nor `en` does.
+ */
+export function plural(key: string, n: number, params?: Record<string, string | number>): string {
+  return t(pluralKey(key, n), { n, ...params });
+}
+
+/** `plural()` without the lookup, for the places that carry a key around and localize it later
+ * (e.g. the DONE checklist items in `src/core/objective.ts`). */
+export function pluralKey(key: string, n: number): string {
+  const form = n === 0 && declared(`${key}.zero`) ? 'zero' : n === 1 ? 'one' : 'many';
+  return `${key}.${form}`;
 }
