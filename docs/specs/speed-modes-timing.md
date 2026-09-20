@@ -142,3 +142,27 @@ future native/Godot client reimplements the adapter, not the timing rules.
 - integration points identified (table above)
 - existing non-speed contract understood: untimed and casual/fast rooms and every
   local match behave exactly as today until a Speed ruleset is selected
+
+## Shared Speed UX contract (Phase 3)
+
+Speed Modes reuse the timed-online UX rather than growing a parallel one. What
+exists and is the contract every Speed Mode renders against:
+
+| Requirement | Where it lives |
+|---|---|
+| Clock presentation, warning, critical | `turnClockReadout` (pure) → `GameScene.updateTurnTimer` paints it |
+| Non-color-only urgency | the readout's `scale` (1.25× at critical) and the seconds themselves, never colour alone |
+| Audio cue | `timerTickSound` setting → `sfx-snap`, own turn only |
+| Haptic cue | `haptic('tick')` at critical, own turn only, third channel only |
+| Reduced motion | `settings.motionScale()` (0 with reduced motion or battery saver) |
+| Immediate handoff, nonblocking feedback | the online notice line; no modal during a running clock |
+| Quick rematch | the room's rematch lobby, same code |
+| Mobile touch layout | the existing portrait/landscape HUD regions |
+
+Rules for every later phase:
+
+- a new Speed signal is added to `src/ui/turn-clock.ts` as arithmetic, not to a scene as a branch
+- no blocking dialog while a clock is running
+- no signal may be colour-only, sound-only or haptic-only
+- mode-specific chrome (Tempo meter, Heat bar, ability buttons) lands in the phase
+  that introduces the mechanic, where it has a consumer — not ahead of it

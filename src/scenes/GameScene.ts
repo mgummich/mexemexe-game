@@ -1678,8 +1678,12 @@ export class GameScene extends Phaser.Scene {
     if (clock.tone !== 'muted' && clock.secs !== this.ui.lastTickSecond && clock.secs > 0) {
       this.ui.lastTickSecond = clock.secs;
       // Own turn only: a cue for someone else's clock is noise, and the setting is off by choice.
-      if (settings.get().timerTickSound && this.state().activePlayerIndex === this.localSeat) {
-        playSfx(this, 'sfx-snap', clock.tone === 'critical' ? 0.35 : 0.2);
+      if (this.state().activePlayerIndex === this.localSeat) {
+        if (settings.get().timerTickSound) playSfx(this, 'sfx-snap', clock.tone === 'critical' ? 0.35 : 0.2);
+        // Third channel, never the only one: the readout already says it in size and in colour, so
+        // a device that cannot vibrate (every iOS browser) loses nothing. Critical only — a buzz
+        // every second of a 10s warning is a nag, not a cue.
+        if (clock.tone === 'critical') haptic('tick');
       }
     }
   }
