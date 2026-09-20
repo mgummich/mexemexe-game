@@ -1393,8 +1393,14 @@ async function measureFpsSamples(p: Page, ms = 2_000, samples = 3): Promise<{ be
   return { best, all };
 }
 
-/** `expect(fps).toBeGreaterThanOrEqual(floor)` with the spread in the message. */
+/**
+ * `expect(fps).toBeGreaterThanOrEqual(floor)` with the spread in the message — and in the log on
+ * the way past, so a *passing* run still leaves the numbers behind. The nightly fps-drift job
+ * repeats these five times precisely to watch that series; without this line it could only ever
+ * report pass or fail, which says nothing about a floor being approached.
+ */
 function expectFps({ best, all }: { best: number; all: number[] }, floor: number, what: string): void {
+  console.log(`FPS ${what}: ${all.join(' / ')} (floor ${floor})`);
   expect(best, `${what}: best ${best.toFixed(1)} fps of ${all.join(' / ')} against a floor of ${floor}`).toBeGreaterThanOrEqual(floor);
 }
 
