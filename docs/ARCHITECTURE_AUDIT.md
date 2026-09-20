@@ -367,6 +367,28 @@ Priorities: **P0** correctness/privacy/authority · **P1** blocks later work ·
 
 No P0 finding was identified. No correctness bug was found during this audit.
 
+### Debt review (Phase 93)
+
+Every register entry below was re-read against the code. The live list of
+*deferred* risks — which phase owns each one, and which are overdue because their
+owner phase has already passed — is `npm run health`, derived from
+`docs/ROADMAP_STATUS.json`; it is not copied here, because two copies of a risk
+list is how one of them goes stale.
+
+| Category | State | Owner |
+|---|---|---|
+| **Architecture** | 14 of 21 ARCH findings resolved or narrowed by Waves 2–3. Open and deliberate: **ARCH-009** (`src/core` is a bucket, not a layer) is *frozen* — the upward imports are pinned as an exact allowlist by `tests/boundaries.test.ts`, so it cannot grow; **ARCH-005** (`GameStore.get()` hands out the live object) is half resolved, with `readonly` types as the guard; **ARCH-013** (`server/index.ts` owns process, transport, dispatch and policy) is moderate risk on a 956-line single-threaded file with a 985-line `RoomManager` beside it, both under a size ceiling. | frozen by test, not by intention |
+| **Test** | No uncovered P0/P1 risk: GQA-01..GQA-24 each name a proving test. Known cost: the 2-cycle session soak is ~11 s of a ~13 s unit suite — **accepted**, because what it covers (long-session room bookkeeping) has no cheaper level. | `docs/TESTING.md` |
+| **Platform** | Firefox cannot launch on this development machine, so its evidence is nightly-only; the service-worker lifecycle is verified on Chromium alone. Both **deferred with a named owner**, neither hidden. | Phase 100 / Phase 97 |
+| **Performance** | Budgets exist and are measured (`docs/PERFORMANCE.md`). One residual: ~100 kB and ~4 listeners per match cycle inside Phaser/WebAudio rather than product code, bounded at ~10 MB per 100-match session against an 80 MB budget. | Phase 101 |
+| **Security** | Threat model complete; every row is mitigated or explicitly accepted with a reason (nginx master as root, `tsx` in the server image, denial of service at volume). No open P0/P1. | `docs/THREAT_MODEL.md` |
+| **UX / AI** | Two personalities play identically at the tier extremes, and the four difficulty tiers overlap per personality — **accepted**. Personality and difficulty are deliberately orthogonal configuration over one engine (Phase 48); the match-level ladder is intact and measured (129 → 94 average turns from beginner to expert). Fixing the overlap means either collapsing the tier ladder or putting personality weights inside the evaluator the architecture keeps neutral, and neither buys a player anything. | accepted, no owner needed |
+| **Documentation** | Drift is now a test (`tests/docs-drift.test.ts`) for the mechanical classes; prose staleness remains a human judgement. | Phase 103 |
+
+Nothing in this table is a P0 or an unowned P1. The two things that would change
+that — a new trust boundary or a new state owner — each have a rule that adds a
+row where they belong (`docs/THREAT_MODEL.md`, this register).
+
 ---
 
 ### ARCH-001 — GameScene hosts application and domain responsibilities

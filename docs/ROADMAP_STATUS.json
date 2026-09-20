@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "11A",
-  "phase": "93 — Technical Debt Review",
+  "wave": "11B",
+  "phase": "94 — Architectural Decision Records",
   "status": "NOT_STARTED"
  },
- "head": "6ef98d3",
+ "head": "b9a3bad",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1510,6 +1510,65 @@
    "findings": [
     {
      "note": "Kept deliberately: music/ holds the two unprocessed audio masters (documented in ASSETS.md); the pre-v1 settings migration is the one bounded migration the compatibility policy allows; 26 exported types have no external reference because they are read structurally."
+    }
+   ]
+  },
+  {
+   "phase": "93 — Technical Debt Review",
+   "wave": "11A",
+   "status": "PASS",
+   "result": "Re-read all 21 ARCH findings, the 19 live deferred risks, the threat model and the performance deferrals against the code, then decided the four risks that had been re-owned here. No P0 and no unowned P1 debt exists.",
+   "changed": [
+    "docs/ARCHITECTURE_AUDIT.md §11 — 'Debt review (Phase 93)': one prioritized table across architecture, test, platform, performance, security, UX/AI and documentation debt, each row with its state and owner, pointing at `npm run health` for the live risk list rather than copying it"
+   ],
+   "acceptance": "remaining debt prioritized (seven categories, each with the specific open item and its guard); accepted items carry a rationale (the AI tier overlap, the soak's suite cost, the accepted threat-model rows); no hidden P0/P1 — the only structural item still open (ARCH-009) is frozen by an exact-allowlist test, so it cannot grow unnoticed",
+   "decisions": [
+    {
+     "id": "P2-cida-bia-identical",
+     "decision": "ACCEPTED",
+     "why": "Personality and difficulty are orthogonal configuration over one engine (Phase 48's deliberate design). The match-level ladder is intact and measured; fixing the per-personality overlap means collapsing the ladder or putting personality weights inside the neutral evaluator."
+    },
+    {
+     "id": "P2-tier-overlap",
+     "decision": "ACCEPTED",
+     "why": "Same reason, same measurement."
+    },
+    {
+     "id": "P3-matchseats-identity-fallback",
+     "decision": "RESOLVED IN CODE",
+     "why": "server/rooms.ts no longer falls back to the identity mapping: both call sites now read `room.matchSeats[i] ?? -1` and skip, with a comment naming the invariant. Verified at lines 685 and 763."
+    },
+    {
+     "id": "P3-soak-adds-to-pr-suite",
+     "decision": "ACCEPTED",
+     "why": "Measured in Phase 83: ~11s of a ~13s unit suite, and the long-session room bookkeeping it covers has no cheaper level."
+    }
+   ],
+   "verification": [
+    "register re-read: 14 of 21 ARCH findings resolved or narrowed; ARCH-005 half resolved; ARCH-009 frozen by the boundaries allowlist; ARCH-013 moderate and size-capped",
+    "server/rooms.ts read at both matchSeats call sites to confirm the fallback is gone",
+    "npm run health after recording the decisions: no overdue risks"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the review closed items with evidence or accepted them with a reason, and did not reopen a deliberately accepted decision (the phase's own named risk); the debt table points at the derived list instead of duplicating it"
+   },
+   "resolvedRisks": [
+    {
+     "id": "P2-cida-bia-identical",
+     "note": "Accepted with rationale — see the Phase 93 debt table."
+    },
+    {
+     "id": "P2-tier-overlap",
+     "note": "Accepted with rationale — same row."
+    },
+    {
+     "id": "P3-matchseats-identity-fallback",
+     "note": "Already fixed in server/rooms.ts: `?? -1` and skip, at both call sites."
+    },
+    {
+     "id": "P3-soak-adds-to-pr-suite",
+     "note": "Accepted: measured cost, no cheaper level for the coverage."
     }
    ]
   }
