@@ -15,6 +15,7 @@ in code comments. Link to them instead.**
 | Tests and verification gates | `docs/TESTING.md` |
 | Performance budgets and target devices | `docs/PERFORMANCE.md` |
 | Security threats and trust boundaries | `docs/THREAT_MODEL.md` |
+| Durable decisions and what was rejected | `docs/DECISIONS.md` |
 | Online protocol and authority | `docs/MULTIPLAYER.md` |
 | PWA / offline behaviour | `docs/PWA_OFFLINE.md` |
 | Assets | `docs/ASSETS.md` |

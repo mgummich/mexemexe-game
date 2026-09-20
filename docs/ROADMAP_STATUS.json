@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "11B",
-  "phase": "94 — Architectural Decision Records",
+  "phase": "95 — Agent Regression Guardrails",
   "status": "NOT_STARTED"
  },
- "head": "b9a3bad",
+ "head": "34a8fdd",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1571,6 +1571,25 @@
      "note": "Accepted: measured cost, no cheaper level for the coverage."
     }
    ]
+  },
+  {
+   "phase": "94 — Architectural Decision Records",
+   "wave": "11B",
+   "status": "PASS",
+   "result": "One index instead of an ADR directory. Twenty durable decisions, each a single row naming where its reasoning already lives and what was rejected — the rationale stays in the canonical doc that owns the subject, so this file cannot become a second architecture document.",
+   "changed": [
+    "docs/DECISIONS.md — new: D1..D20 (legality authority, server authority, trial budgets, no lookahead, orthogonal AI config, persistence, compatibility, wire versioning, token storage, no database, no telemetry, error-class logging, the shipped debug surface, no code splitting, music preload, no pixel diffing, retry policy, mechanical drift only, CI scope routing, tsx in the image)",
+    "AGENTS.md, docs/index.md, README.md, mkdocs.yml — registered under Develop"
+   ],
+   "acceptance": "only significant decisions recorded (the bar is written into the file: a decision earns a row if reversing it ripples across modules or gets re-litigated); every row links to canonical architecture rather than restating it; the rejected alternative is the point of each row, and the file says how to keep it true",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4) — every path and link in the new file resolves",
+    "mkdocs.yml parses; the page sits under Develop beside the audit"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no ADR directory, no duplicated rationale, and the two risks the phase names (stale ADRs, duplicating architecture docs) are structurally avoided: a row has nowhere to go stale except its own rejected column"
+   }
   }
  ],
  "riskClosures": [
