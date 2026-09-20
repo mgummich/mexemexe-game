@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "11B",
-  "phase": "95 — Agent Regression Guardrails",
+  "phase": "96 — Developer Experience",
   "status": "NOT_STARTED"
  },
- "head": "34a8fdd",
+ "head": "9d49b7e",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1589,6 +1589,24 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — no ADR directory, no duplicated rationale, and the two risks the phase names (stale ADRs, duplicating architecture docs) are structurally avoided: a row has nowhere to go stale except its own rejected column"
+   }
+  },
+  {
+   "phase": "95 — Agent Regression Guardrails",
+   "wave": "11B",
+   "status": "PASS",
+   "result": "AGENTS.md was already concise and mostly accurate; what it did not know is what Waves 9–11 automated. An agent reading it could not tell which contracts are enforced by a test in seconds and which rely on care, so it either over-verified or worked around a failure it did not understand.",
+   "changed": [
+    "AGENTS.md — three invariants added from this wave's decisions (persistence is not an authority; a refused format fails loudly; the four documents that gain a row in the same change), plus a table of the five automated guards naming exactly what each catches, and the pre-push hook's opt-in command"
+   ],
+   "acceptance": "guidance concise and aligned with repository truth (a table of guards that exist, not rules to remember); critical regressions prevented by automation where possible (five guards, all inside `npm run test`, all listed with what they catch); prompts reference canonical sources — the additions link to the owning docs rather than restating them",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4) — every path named in the new AGENTS.md section resolves",
+    "AGENTS.md is 287 lines; the addition is 25"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing was duplicated into the prompt surface, and the one thing agents most often get wrong (not knowing a guard exists, then routing around its failure) is now a table with the guard's name next to the violation it reports"
    }
   }
  ],

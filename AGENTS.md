@@ -141,6 +141,31 @@ correctness / safety / privacy / determinism
 - Never weaken a test to make a behaviour change pass.
 - Every confirmed bug gets a regression test.
 - Visual changes require runtime evidence; compilation alone is not proof.
+- Persistence never decides a legality question, and no online state is restored
+  from disk — a reconnect resyncs from the server.
+- A refused format fails loudly. Preferences fall back per field; a snapshot,
+  replay or frame is rejected, never read best-effort.
+- The four things that must gain a row in the same change that creates them: a new
+  trust boundary (`docs/THREAT_MODEL.md`), a new storage key
+  (`docs/ARCHITECTURE.md` §Persistence), a new performance budget
+  (`docs/PERFORMANCE.md`), a decision whose reversal would ripple across modules
+  (`docs/DECISIONS.md`).
+
+### What is automated, so you cannot get it wrong quietly
+
+These run in seconds, are in `npm run test`, and fail on the specific violation —
+read the failure rather than working around it:
+
+| Guard | Catches |
+| --- | --- |
+| `tests/boundaries.test.ts` | a forbidden import, a clock or `Math.random` in domain code, Phaser outside presentation, legality declared outside `src/rules`, a new upward `src/core` dependency, web storage touched by a third module |
+| `tests/docs-drift.test.ts` | a doc naming a script, path or version constant that no longer exists |
+| `tests/deployment.test.ts` | a security header or the CSP's shape going missing from `nginx.conf` |
+| `tests/no-telemetry.test.ts` | an upload path, an analytics vendor, a persistent identifier |
+| `npm run health` | a risk deferred to a phase that has already passed |
+
+`.githooks/pre-push` runs `lint` + `test` — enable it with
+`git config core.hooksPath .githooks`.
 
 ## Start every task
 
