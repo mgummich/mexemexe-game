@@ -67,6 +67,26 @@ jobs:
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
           echo "server_only=$server_only" >> "$GITHUB_OUTPUT"
 
+  docs:
+    name: Docs site builds
+    needs: scope
+    # Runs for *every* change, including documentation-only ones — the only job that does.
+    # `mkdocs build --strict` is what the Pages deploy runs, and a broken cross-document link
+    # fails it; before this job that failure could only be discovered after merging, by the
+    # deploy itself (it was, once: CONTRIBUTING.md is symlinked into docs/, so a link written
+    # relative to the repository root resolves nowhere inside the site).
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - run: pip install -r docs/requirements.txt
+      - run: mkdocs build --strict -d /tmp/site
+
   test:
     name: Lint, unit tests & build
     needs: scope

@@ -868,9 +868,17 @@ the full set, which is the conservative direction:
 
 | Scope | Recognised as | Runs | Skips |
 |---|---|---|---|
-| Documentation only | Markdown, `docs/ROADMAP_STATUS.json`, `LICENSE` | nothing | every job |
+| Documentation only | Markdown, `docs/ROADMAP_STATUS.json`, `LICENSE` | `Docs site builds` (`mkdocs build --strict`) | every other job |
 | Server only | `server/**`, `tests/server/**` (plus docs) | lint + unit tests + build, `multiplayer`, `server-image` | `e2e`, `cross`, `pwa` — nothing in `server/` changes what a canvas paints |
 | Anything else | any touch of `src/`, `public/`, `index.html`, a config file, `package.json`, the lockfile, a workflow | everything | — |
+
+The one job that always runs is `Docs site builds`: `mkdocs build --strict` is
+exactly what the Pages deploy does, and a cross-document link that resolves from
+the repository root but not from inside the site fails it. That is not
+hypothetical — `CONTRIBUTING.md` and `CHANGELOG.md` are symlinked into `docs/`,
+so a link written `docs/OPERATIONS.md` is correct on GitHub and wrong in the
+site; use the absolute `https://github.com/…/blob/main/docs/…` form there, as the
+rest of those two files already do.
 
 A push to `main` never shrinks: that run is what promotes the public build
 ([OPERATIONS.md](OPERATIONS.md#release-channels)), and an empty or unreadable

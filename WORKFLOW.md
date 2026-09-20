@@ -163,7 +163,7 @@ Read `AGENTS.md` first, then use this table.
 | PWA / offline | `PWA_OFFLINE.md` | PWA/core/public SW/manifest | focused PWA tests | `npm run verify:pwa`; build |
 | Assets / art | `ASSETS.md`, `ART_DIRECTION.md` | referenced asset + loader only | build / focused runtime | screenshot evidence; relevant verify |
 | Audio | architecture + relevant asset docs | audio manager/assets/settings | targeted test/build | relevant runtime evidence |
-| Docs only | target canonical doc | docs only | `npx vitest run tests/docs-drift.test.ts` | the same drift test (it runs inside `npm run test`); no game e2e unless behaviour changed |
+| Docs only | target canonical doc | docs only | `npx vitest run tests/docs-drift.test.ts` | that drift test plus `mkdocs build --strict` (CI's `Docs site builds` job, the one that runs for every change); no game e2e unless behaviour changed |
 | Build / release / CI | `DEVELOPMENT.md`, `TESTING.md`, package/workflow | scripts/config/CI | targeted command | exact affected gate |
 | Deployment / container / headers | `THREAT_MODEL.md`, `OPERATIONS.md` §Release channels | `nginx.conf`, `Dockerfile`, compose files, `.github/workflows` | `npx vitest run tests/deployment.test.ts`; YAML parse | `tests/deployment.test.ts` + CI's `server-image` job. The browser suites run against Vite preview and send no headers, so they cannot catch a CSP regression |
 | Security | `THREAT_MODEL.md` | the boundary the threat names (wire, token, storage, logs) | the owning unit/server suite | the gate for that boundary, plus a new/updated row in `THREAT_MODEL.md` |
