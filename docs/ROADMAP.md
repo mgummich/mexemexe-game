@@ -4,6 +4,15 @@ What is done, what is being worked on, what is planned, and what has been
 deliberately set aside. Anything not listed under **Completed** is not
 implemented, regardless of how it reads elsewhere.
 
+## The remaining roadmap is finished
+
+`MexeMexe_Remaining_Roadmap_Detailed.md` — Waves 6 to 12 plus the deferred visual
+wave — has been executed phase by phase. What each phase changed, what it
+verified, what it deliberately did not do, and every risk it deferred is in
+`docs/ROADMAP_STATUS.json`; `npm run health` reads that file and prints the part
+that still needs a person. This document stays what it always was: the
+player-facing view of done, next and set aside.
+
 ## Current status
 
 The game is released and playable: local play against four AI opponents, the
@@ -30,12 +39,12 @@ Nothing is mid-flight. The repository is at a released, green state.
   screens are unconfirmed rather than known good.
 - **Mobile usability polish** — quick-move helpers (send a card to its obvious
   destination), clearer drag affordances on crowded tables.
-- **Playtest hardening** — the two flaky specs on record are addressed: @perf
-  tests now measure fps over their own window instead of reading Phaser's
-  lifetime average (`measureFps` in `e2e/screenshot.spec.ts`), and a select tap
-  re-taps while nothing is selected (`selectCard`). The CI fps floors still hold
-  numbers measured under the old lifetime-average read, so they are floors with
-  slack until a CI run re-measures them.
+- **Playtest hardening** — the two flaky specs on record were addressed, and
+  then measured: `@perf` tests read fps over their own window and now report every
+  window they measured (`measureFpsSamples` in `e2e/screenshot.spec.ts`), so a
+  failure says whether one window or all of them dropped. The CI floors still hold
+  numbers measured under the old lifetime-average read — floors with slack until a
+  CI run re-measures them.
 
 ## Deferred
 
@@ -47,8 +56,10 @@ Nothing is mid-flight. The repository is at a released, green state.
   and 20 zones; revisit only if a lower-end target dips below 50.
 - **Continuous responsive layout** — portrait is a second authored layout, not
   a fluid one; window shapes far from 16:9 or 9:16 letterbox.
-- **Per-IP rate limiting and hostile-scale hardening** — the alpha assumes
-  friends with a room code.
+- **Hostile-scale hardening** — the alpha assumes friends with a room code.
+  Per-IP connection caps and a per-IP room-creation budget *are* shipped; what
+  is not is protection against a large connection farm, stated as such in
+  [THREAT_MODEL.md](THREAT_MODEL.md) TM-06 and TM-18.
 
 ## Not planned now
 

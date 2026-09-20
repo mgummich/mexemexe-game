@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "12",
-  "phase": "103 — Final Documentation Reconciliation",
+  "phase": "104 — Continuous Architecture & Quality Health",
   "status": "NOT_STARTED"
  },
- "head": "b04fb7f",
+ "head": "c834361",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -2053,6 +2053,26 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — the defect found was not cosmetic: the release notes are the first thing a self-hoster follows, and it was broken in every published release"
+   }
+  },
+  {
+   "phase": "103 — Final Documentation Reconciliation",
+   "wave": "12",
+   "status": "PASS",
+   "result": "Most of this phase's work had already been done along the way — drift was the most common defect this roadmap found, and Phase 89 turned the mechanical half into a test. What was left was the prose a test cannot judge: three documents describing a product that had moved on.",
+   "changed": [
+    "docs/ROADMAP.md — says the remaining roadmap is executed and points at ROADMAP_STATUS.json and npm run health for the detail; the 'per-IP rate limiting' deferral corrected (per-IP caps and room-creation budgets are shipped; a connection farm is the part that is not); the flake note updated to measureFpsSamples",
+    "docs/PLAYTEST_GUIDE.md — 'rate limiting is per connection, not per IP' corrected to what the server actually enforces",
+    "README.md — CI description updated for the scope routing and the container check, and for the fact that a green main deploys rather than the newest commit"
+   ],
+   "acceptance": "canonical docs reflect the implementation (the mechanical classes are gated by tests/docs-drift.test.ts on every run; the prose claims above were re-read against the code); obsolete documentation is clearly historical (CHANGELOG.md and ARCHITECTURE_AUDIT.md are records, exempted from the path check by name and for that reason); operational instructions accurate (OPERATIONS env table complete against server/config.ts; .env.example documents every deployment variable; the release note link fixed in Phase 102)",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts tests/assets.test.ts tests/deployment.test.ts tests/boundaries.test.ts (25/25)",
+    "cross-checked every environment variable in .env.example against OPERATIONS.md and SELF_HOSTING.md, and every server/config.ts variable against OPERATIONS.md: no gaps"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — nothing historical was deleted for tidiness, which is this phase's stated out-of-scope"
    }
   }
  ],

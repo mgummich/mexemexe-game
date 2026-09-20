@@ -155,8 +155,11 @@ or read the sources here:
 ## Contributing & license
 
 Bug reports and pull requests welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
-CI runs lint, unit tests, the build, and the Playwright e2e, cross-browser,
-multiplayer and PWA suites on every push and PR; `main` auto-deploys the game
-and docs to GitHub Pages.
+CI runs lint, unit tests, the build, the Playwright e2e, cross-browser,
+multiplayer and PWA suites, and a container check that the server image boots
+unprivileged — scaled to what the change touches, so a documentation-only pull
+request runs none of them
+([`docs/TESTING.md`](docs/TESTING.md)). A green `main` is what deploys the game
+and docs to GitHub Pages, not merely the newest commit.
 
 Licensed under the [MIT License](LICENSE).

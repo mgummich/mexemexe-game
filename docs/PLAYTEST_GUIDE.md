@@ -174,7 +174,7 @@ These are known and in scope for a later phase. Reporting them again is not usef
   in the lobby, and `custom` values are validated on the wire but have no lobby control.
 - The four AI opponents are personalities; difficulty (Beginner / Casual / Smart / Expert), pace
   and move explanations are separate settings under ADVERSÁRIOS / OPPONENTS.
-- Rate limiting is per connection, not per IP.
+- Abuse controls are bounded, not solved: a per-connection message rate, a per-IP connection cap and a per-IP room-creation budget, with no protection against a large connection farm ([MULTIPLAYER.md](MULTIPLAYER.md) §9).
 - Pointer-drag is verified in tests through editor hooks rather than synthetic pointer drags.
 - Screenshots of the showcase states are captured by the e2e suite but never diffed against a
   stored baseline, so they document the UI rather than guard it.
