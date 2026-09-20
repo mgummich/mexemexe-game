@@ -76,10 +76,14 @@ On your turn:
 **Draw only happens when you pass, cannot play, or will not play.** There is no draw at the start
 of a turn.
 
-**Turn timer.** A local match is untimed unless the setup screen's BLITZ toggle is on: Blitz gives
-the human seat a fixed 7s per turn, the scene owns that deadline (there is no server in a local
+**Turn timer.** A local match is untimed unless a Blitz difficulty is picked on the setup screen
+(Easy 12s, Medium 9s, Hard 7s, Expert 5s, or Custom): Blitz gives the human seat a fixed budget per
+turn, the scene owns that deadline (there is no server in a local
 match), and running out does exactly what a timeout does online — drop the draft, draw one card,
 end the turn. The clock stops while the pause overlay is up, and AI seats keep their own pace.
+Two assists, each switchable on its own: the Panic Button (one emergency extension, spent by
+tapping the clock) and Last Breath (a short extra window when the clock reaches zero, once per
+turn). Expert brings neither.
 Online, the
 *server* owns the timer (Casual / Fast / Blitz / Off presets, or the host-only CUSTOM
 screen behind them, picked by the host and frozen at match start — see

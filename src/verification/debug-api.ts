@@ -1,6 +1,7 @@
 import type { DraftState, GameState } from '../rules/types';
 import { isOffline, onConnectivityChange } from '../core/pwa';
 import { settings } from '../core/settings';
+import type { BlitzDifficulty } from '../game-state/timing';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { Replay } from '../game-state/replay';
 import type { ConnStatus } from '../net/client';
@@ -433,8 +434,11 @@ export function installDebugApi(): void {
   // e2e hook — ?motion=0 flips reduced motion on for a11y screenshot capture.
   if (params.get('motion') === '0') settings.update({ reducedMotion: true });
   // e2e hook — ?blitz=1|0 picks the local Blitz clock without clicking through the setup screen.
+  // ?blitz=off|easy|medium|hard|expert|custom, with 1/0 kept as aliases for the common cases.
   const blitz = params.get('blitz');
-  if (blitz === '1' || blitz === '0') settings.update({ blitz: blitz === '1' });
+  if (blitz === '1') settings.update({ blitzMode: 'hard' });
+  else if (blitz === '0') settings.update({ blitzMode: 'off' });
+  else if (blitz !== null && BLITZ_MODE_FLAGS.includes(blitz as never)) settings.update({ blitzMode: blitz as BlitzDifficulty });
   // Each Blitz assist is disableable on its own, and each combination has to be reachable from a
   // test without clicking through a settings screen.
   const panic = params.get('panic');
@@ -442,6 +446,8 @@ export function installDebugApi(): void {
   const breath = params.get('breath');
   if (breath === '1' || breath === '0') settings.update({ blitzLastBreath: breath === '1' });
 }
+
+const BLITZ_MODE_FLAGS = ['off', 'easy', 'medium', 'hard', 'expert', 'custom'] as const;
 
 export function urlSeed(): number {
   const raw = new URLSearchParams(location.search).get('seed');

@@ -1,6 +1,7 @@
 import type { AiSpeed, Difficulty } from '../ai/ai';
 import type { Locale } from '../localization/i18n';
 import { AVATARS, CARD_BACKS, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, resolveCosmeticId, TABLE_THEMES } from '../cosmetics';
+import { BLITZ_TURN_BOUNDS, type BlitzDifficulty } from '../game-state/timing';
 
 /** Display-only helper aggressiveness. See `src/ui/helpers.ts` — never gates rules. */
 export type HelperMode = 'beginner' | 'standard' | 'expert';
@@ -41,9 +42,12 @@ export interface Settings {
   timerTickSound: boolean;
   /**
    * Local MexeMexe Blitz: the same game with a fixed per-turn clock, picked on the setup screen.
-   * Off by default — a clock a player did not ask for is a different game, not a nicer one.
+   * 'off' by default — a clock a player did not ask for is a different game, not a nicer one.
+   * A difficulty is a set of defaults (turn length + assist strengths), never a lock.
    */
-  blitz: boolean;
+  blitzMode: 'off' | BlitzDifficulty;
+  /** Turn length for the `custom` difficulty only, clamped to `BLITZ_TURN_BOUNDS`. */
+  blitzTurnMs: number;
   /** Blitz assistance, each independently disableable (never bundled into one "assists" switch):
    * the Panic Button's emergency extension, and the Last Breath window a turn gets when its clock
    * runs out. */
@@ -83,8 +87,15 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitz: false, blitzPanic: true, blitzLastBreath: true };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitzMode: 'off', blitzTurnMs: 9_000, blitzPanic: true, blitzLastBreath: true };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
+const BLITZ_MODES: readonly ('off' | BlitzDifficulty)[] = ['off', 'easy', 'medium', 'hard', 'expert', 'custom'];
+
+/** A stored number outside its bounds is clamped, like every other untrusted stored value here. */
+function clampMs(value: unknown, [lo, hi]: readonly [number, number], fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(hi, Math.max(lo, Math.round(value)));
+}
 export const AI_DIFFICULTIES: readonly Difficulty[] = ['beginner', 'casual', 'smart', 'expert'];
 export const AI_SPEEDS: readonly AiSpeed[] = ['instant', 'fast', 'normal', 'slow'];
 export const AI_EXPLAIN_MODES: readonly AiExplain[] = ['off', 'simple', 'detailed'];
@@ -120,7 +131,8 @@ function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
     aiExplain: oneOf(AI_EXPLAIN_MODES, merged.aiExplain, DEFAULT_SETTINGS.aiExplain),
     timerTickSound: typeof merged.timerTickSound === 'boolean' ? merged.timerTickSound : DEFAULT_SETTINGS.timerTickSound,
     haptics: typeof merged.haptics === 'boolean' ? merged.haptics : DEFAULT_SETTINGS.haptics,
-    blitz: typeof merged.blitz === 'boolean' ? merged.blitz : DEFAULT_SETTINGS.blitz,
+    blitzMode: oneOf(BLITZ_MODES, merged.blitzMode, DEFAULT_SETTINGS.blitzMode),
+    blitzTurnMs: clampMs(merged.blitzTurnMs, BLITZ_TURN_BOUNDS, DEFAULT_SETTINGS.blitzTurnMs),
     blitzPanic: typeof merged.blitzPanic === 'boolean' ? merged.blitzPanic : DEFAULT_SETTINGS.blitzPanic,
     blitzLastBreath: typeof merged.blitzLastBreath === 'boolean' ? merged.blitzLastBreath : DEFAULT_SETTINGS.blitzLastBreath,
   };

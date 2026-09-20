@@ -3,6 +3,7 @@ import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_B
 import { AI_DIFFICULTIES, AI_EXPLAIN_MODES, AI_SPEEDS, type HelperMode } from '../core/persistence';
 import { playlog } from '../core/playlog';
 import { settings } from '../core/settings';
+import { BLITZ_TURN_BOUNDS } from '../game-state/timing';
 import { getLocale, setLocale, t } from '../localization/i18n';
 import { debugApi } from '../verification/debug-api';
 import { panelW } from './menu-layout';
@@ -164,6 +165,15 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       settings.update({ locale: next });
       showGame();
     }, { w: 150, size: 7 });
+
+    // One tap steps a second and wraps at the bounds, like every other cycling row here. It only
+    // does anything for the Custom difficulty; the named ones bring their own turn length.
+    rowBtn(cx, rowY(GameRow.BlitzTurn), t('settings.blitzTurn', { s: Math.round(settings.get().blitzTurnMs / 1000) }), () => {
+      const [lo, hi] = BLITZ_TURN_BOUNDS;
+      const next = settings.get().blitzTurnMs + 1_000;
+      settings.update({ blitzTurnMs: next > hi ? lo : next });
+      showGame();
+    }, { tooltip: t('settings.blitzTurnHint') });
 
     rowBtn(cx, rowY(GameRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
   };

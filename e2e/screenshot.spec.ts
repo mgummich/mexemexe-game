@@ -3237,3 +3237,13 @@ test('blitz-clock: a local Blitz turn shows the clock and times itself out', asy
     await p.waitForFunction((t) => (window.__MEXE__.state?.()?.turn ?? t) > t, before, { timeout: 20_000 });
   });
 });
+
+// Phase 8 of the Speed Modes roadmap: the Blitz difficulty row. Captured at four seats and on
+// Custom, which is the tallest the panel ever gets — the row above PLAY is where a new control
+// collides first.
+test('setup-blitz: the difficulty row fits the fullest setup panel', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=setup&blitz=custom', 'setup-blitz', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'setup');
+    await p.mouse.click(...toScreen(290, 70));
+  });
+});

@@ -29,7 +29,7 @@ DEFERRED
 | 5 — Blitz Perfect Rhythm | COMPLETE | `Rhythm` in the timing domain (4 tests); pip run beside the clock; no toggle. Local Speed clock moved to its own HUD slot (`regions.speedClock`). |
 | 6 — Blitz Adrenaline | COMPLETE | `adrenaline` ramp in `turn-clock.ts` (3 tests) driving readout growth and cue volume; budget-aware critical window. Stateless, so reconnect-safe. |
 | 7 — Blitz Panic Button and Last Breath | PARTIAL | Domain + local Blitz: `usePanic`/`enterLastBreath`, four-combination tests, `?panic=`/`?breath=` hooks. Online rulesets carry neither yet — deferred to Phase 27. |
-| 8 — Blitz Difficulty Presets | NOT_STARTED | |
+| 8 — Blitz Difficulty Presets | COMPLETE | `BLITZ_PRESETS` (easy/medium/hard/expert/custom) + setup row with independent panic/breath switches; custom turn length in the settings panel. Evidence: `setup-blitz`. |
 | 9 — MexeMexe Time Attack Core | NOT_STARTED | |
 | 10 — Time Attack Perfect Rhythm | NOT_STARTED | |
 | 11 — Time Attack Adrenaline | NOT_STARTED | |

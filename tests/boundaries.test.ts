@@ -174,6 +174,9 @@ describe('architecture boundaries', () => {
     'src/core/objective.ts -> ../localization/i18n',
     'src/core/persistence.ts -> ../ai/ai',
     'src/core/persistence.ts -> ../cosmetics',
+    // The saved Blitz difficulty and its turn bounds are the timing domain's vocabulary; a second
+    // copy of either here would be a second owner of what a difficulty means.
+    'src/core/persistence.ts -> ../game-state/timing',
     'src/core/persistence.ts -> ../localization/i18n',
     'src/core/playlog.ts -> ../game-state/match',
     'src/core/pwa.ts -> ../localization/i18n',

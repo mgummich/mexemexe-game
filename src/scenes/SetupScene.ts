@@ -11,6 +11,13 @@ import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 import type { GameSceneConfig } from './GameScene';
 import { ACTION, SURFACE, TEXT } from '../ui/tokens';
+import { BLITZ_PRESETS, type BlitzDifficulty } from '../game-state/timing';
+
+const BLITZ_CYCLE = ['off', 'easy', 'medium', 'hard', 'expert', 'custom'] as const;
+
+function nextBlitzMode(current: 'off' | BlitzDifficulty): 'off' | BlitzDifficulty {
+  return BLITZ_CYCLE[(BLITZ_CYCLE.indexOf(current) + 1) % BLITZ_CYCLE.length]!;
+}
 
 type Personality = 'cida' | 'juninho' | 'bia' | 'ze';
 
@@ -155,12 +162,36 @@ export class SetupScene extends Phaser.Scene {
 
     // MexeMexe Blitz: the one setting here that changes how the match is *played* rather than who
     // plays it, so it sits with the summary rather than behind ADVANCED. Off is the classic game.
-    const blitzOn = settings.get().blitz;
-    new PixelButton(this, cx(), vy(belowSeats + 28), t(blitzOn ? 'setup.blitzOn' : 'setup.blitzOff'), () => {
-      settings.update({ blitz: !blitzOn });
-      this.rebuild();
-    }, { textureBase: 'btn-comprar', w: 130, h: 13, size: 6, color: blitzOn ? ACTION.primary : ACTION.secondary })
+    // One row: the difficulty cycles on tap, and the two assist switches appear beside it only
+    // once there is a clock for them to assist with.
+    const mode = settings.get().blitzMode;
+    const blitzOn = mode !== 'off';
+    const turnSecs = Math.round((mode === 'custom' ? settings.get().blitzTurnMs : blitzOn ? BLITZ_PRESETS[mode].turnMs : 0) / 1000);
+    // One row, three controls: 110 + 56 + 56 with 6 between them, centred. Wider buttons here
+    // overlapped each other at four seats, which is the fullest this panel ever is.
+    new PixelButton(this, cx() - (blitzOn ? 62 : 0), vy(belowSeats + 28),
+      blitzOn ? t(`setup.blitz.${mode}`, { s: turnSecs }) : t('setup.blitzOff'), () => {
+        settings.update({ blitzMode: nextBlitzMode(mode) });
+        this.rebuild();
+      }, { textureBase: 'btn-comprar', w: blitzOn ? 110 : 130, h: 13, size: 6, color: blitzOn ? ACTION.primary : ACTION.secondary })
       .setName('blitz-toggle');
+
+    if (blitzOn) {
+      // Each assist switches on its own — that is the rule the Speed Modes are built around, so
+      // there is deliberately no single "assists" switch to collapse them into.
+      const panicOn = settings.get().blitzPanic;
+      new PixelButton(this, cx() + 27, vy(belowSeats + 28), t(panicOn ? 'setup.panicOn' : 'setup.panicOff'), () => {
+        settings.update({ blitzPanic: !panicOn });
+        this.rebuild();
+      }, { textureBase: 'btn-comprar', w: 56, h: 13, size: 6, color: panicOn ? ACTION.primary : ACTION.secondary })
+        .setName('blitz-panic');
+      const breathOn = settings.get().blitzLastBreath;
+      new PixelButton(this, cx() + 89, vy(belowSeats + 28), t(breathOn ? 'setup.breathOn' : 'setup.breathOff'), () => {
+        settings.update({ blitzLastBreath: !breathOn });
+        this.rebuild();
+      }, { textureBase: 'btn-comprar', w: 56, h: 13, size: 6, color: breathOn ? ACTION.primary : ACTION.secondary })
+        .setName('blitz-breath');
+    }
 
     // Where the panel's free space starts — the seating preview fills whatever is left below.
     let freeY = belowSeats + 36;

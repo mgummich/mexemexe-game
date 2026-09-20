@@ -211,3 +211,19 @@ switch.
 
 Tested in all four ON/OFF combinations. Online rulesets do not carry either yet — that is Phase 27
 (lobby and ruleset policy), where they need a wire field and server ownership.
+
+## Blitz difficulty presets (Phase 8)
+
+`BLITZ_PRESETS` in the timing domain: Easy 12s, Medium 9s, Hard 7s (the online Blitz preset, so
+offline practice is practice for the real thing), Expert 5s and unassisted, Custom starting from
+Medium with a stored turn length (`BLITZ_TURN_BOUNDS`, floored at the server's own 5s).
+
+A difficulty sets *defaults*, never a lock:
+
+- Perfect Rhythm and Adrenaline are in every preset, because they are not settings
+- Panic and Last Breath keep their own switches, which override any preset's strength with off
+- the warning threshold is half the turn, whatever that turn is — a fixed 4s would be all of an
+  Expert turn and a third of an Easy one
+
+The setup screen carries one row (difficulty · panic · breath); Custom's turn length lives in the
+settings panel's Game section, because at four seats the setup panel has exactly one free row.

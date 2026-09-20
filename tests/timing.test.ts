@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   assistStateFor,
+  BLITZ_PRESETS,
+  BLITZ_TURN_BOUNDS,
   enterLastBreath,
   expired,
   grantBonus,
@@ -12,6 +14,7 @@ import {
   startTurn,
   usePanic,
   type Assists,
+  type BlitzDifficulty,
 } from '../src/game-state/timing';
 
 describe('shared turn clock', () => {
@@ -137,5 +140,31 @@ describe('Panic Button and Last Breath', () => {
     const next = startTurn(20_000, 7_000);
     expect(next.lastBreathUsed).toBe(false);
     expect(usePanic(next, panicked.state, both).granted).toBe(false);
+  });
+});
+
+describe('Blitz difficulty presets', () => {
+  it('get shorter and less forgiving down the ladder', () => {
+    const order: BlitzDifficulty[] = ['easy', 'medium', 'hard', 'expert'];
+    const turns = order.map((d) => BLITZ_PRESETS[d].turnMs);
+    expect(turns).toEqual([...turns].sort((a, b) => b - a));
+    const panic = order.map((d) => BLITZ_PRESETS[d].assists.panicMs * BLITZ_PRESETS[d].assists.panicUses);
+    expect(panic).toEqual([...panic].sort((a, b) => b - a));
+  });
+
+  it('Expert is the unassisted one, and nothing else is', () => {
+    expect(BLITZ_PRESETS.expert.assists).toEqual(NO_ASSISTS);
+    for (const d of ['easy', 'medium', 'hard', 'custom'] as BlitzDifficulty[]) {
+      expect(assistStateFor(BLITZ_PRESETS[d].assists).panicLeft).toBeGreaterThan(0);
+      expect(BLITZ_PRESETS[d].assists.lastBreathMs).toBeGreaterThan(0);
+    }
+  });
+
+  it('every preset turn length is one a custom match could also pick', () => {
+    const [lo, hi] = BLITZ_TURN_BOUNDS;
+    for (const preset of Object.values(BLITZ_PRESETS)) {
+      expect(preset.turnMs).toBeGreaterThanOrEqual(lo);
+      expect(preset.turnMs).toBeLessThanOrEqual(hi);
+    }
   });
 });

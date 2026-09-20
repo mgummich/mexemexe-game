@@ -19,9 +19,8 @@ import { AVATARS, CARD_BACKS, cosmeticTextureKey, DEFAULT_AVATAR, DEFAULT_CARD_B
 import { plural, t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
-import { TIMER_PRESETS } from '../net/protocol';
 import {
-  assistStateFor, enterLastBreath, NO_ASSISTS, NO_RHYTHM, noteTurnTaken, startTurn, usePanic,
+  assistStateFor, BLITZ_PRESETS, enterLastBreath, NO_ASSISTS, NO_RHYTHM, noteTurnTaken, startTurn, usePanic,
   type AssistState, type Assists, type Rhythm, type TurnClock,
 } from '../game-state/timing';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
@@ -140,13 +139,6 @@ const HESITATION_MS = 18_000;
 const RESET_CONFIRM_EDITS = 4;
 /** How long a confirm-armed Reset stays armed before it quietly disarms again. */
 const RESET_ARM_MS = 3000;
-
-/** Blitz assistance, in the one place both the config and the HUD read it from. A panic worth
- * most of a turn again, once a match; a breath long enough to finish a move already in your
- * hands, not long enough to start a new plan. Phase 8's difficulty presets vary these. */
-const PANIC_MS = 5_000;
-const PANIC_USES = 1;
-const LAST_BREATH_MS = 3_000;
 
 /** What each joker in a resolved meld is standing in for, keyed by card id, for the hint badge. */
 function jokerLabelsOf(assignments: readonly JokerAssignment[]): Map<string, string> {
@@ -551,14 +543,20 @@ export class GameScene extends Phaser.Scene {
       this.match = new LocalMatch(state, { localSeat: 0, personalities: this.personalities });
       // Not the tutorial: a lesson being read is not a turn being taken, and a clock would time
       // out the step the player is still reading.
-      if (settings.get().blitz && !config.tutorial) {
-        this.blitzMs = TIMER_PRESETS.blitz.turnMs;
-        this.turnBudgetMs = TIMER_PRESETS.blitz.turnMs;
-        this.turnWarnMs = TIMER_PRESETS.blitz.warnMs;
+      const mode = settings.get().blitzMode;
+      if (mode !== 'off' && !config.tutorial) {
+        const preset = BLITZ_PRESETS[mode];
+        this.blitzMs = mode === 'custom' ? settings.get().blitzTurnMs : preset.turnMs;
+        this.turnBudgetMs = this.blitzMs;
+        // The warning covers the back half of the turn, whatever the difficulty picked: a fixed
+        // 4s would be the whole of an Expert turn and a third of an Easy one.
+        this.turnWarnMs = Math.round(this.blitzMs * 0.5);
+        // The difficulty sets how strong each assist is; the two switches decide whether it is
+        // there at all. Neither can take the other's decision away.
         this.assists = {
-          panicMs: settings.get().blitzPanic ? PANIC_MS : 0,
-          panicUses: settings.get().blitzPanic ? PANIC_USES : 0,
-          lastBreathMs: settings.get().blitzLastBreath ? LAST_BREATH_MS : 0,
+          panicMs: settings.get().blitzPanic ? preset.assists.panicMs : 0,
+          panicUses: settings.get().blitzPanic ? preset.assists.panicUses : 0,
+          lastBreathMs: settings.get().blitzLastBreath ? preset.assists.lastBreathMs : 0,
         };
         this.assistState = assistStateFor(this.assists);
       }
@@ -1753,7 +1751,7 @@ export class GameScene extends Phaser.Scene {
       // clock), so it cannot chain into a turn that never ends.
       const breath = enterLastBreath(this.localClock(), this.assists);
       if (breath.entered) {
-        this.turnDeadlineAt = Date.now() + LAST_BREATH_MS;
+        this.turnDeadlineAt = Date.now() + this.assists.lastBreathMs;
         this.lastBreathTaken = true;
         this.setOnlineNotice(t('speed.lastBreath'));
         this.time.delayedCall(2000, () => this.setOnlineNotice(''));

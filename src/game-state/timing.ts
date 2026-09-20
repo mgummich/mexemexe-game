@@ -140,3 +140,33 @@ export function enterLastBreath(clock: TurnClock, assists: Assists): { clock: Tu
   if (clock.startedAt === null || assists.lastBreathMs <= 0 || clock.lastBreathUsed) return { clock, entered: false };
   return { clock: { ...clock, budgetMs: clock.budgetMs + assists.lastBreathMs, lastBreathUsed: true }, entered: true };
 }
+
+/**
+ * Blitz difficulty presets. A preset is a set of *defaults*, not a lock: Panic and Last Breath
+ * stay individually switchable afterwards, and Perfect Rhythm and Adrenaline are in every one of
+ * them because they are not settings at all.
+ *
+ * The ladder is turn length first and assistance second — Expert is short *and* unassisted, which
+ * is the same game with nothing between the player and the clock.
+ */
+export type BlitzDifficulty = 'easy' | 'medium' | 'hard' | 'expert' | 'custom';
+
+export interface BlitzPreset {
+  readonly turnMs: number;
+  readonly assists: Assists;
+}
+
+export const BLITZ_PRESETS: Record<BlitzDifficulty, BlitzPreset> = {
+  easy: { turnMs: 12_000, assists: { panicMs: 6_000, panicUses: 2, lastBreathMs: 4_000 } },
+  medium: { turnMs: 9_000, assists: { panicMs: 5_000, panicUses: 1, lastBreathMs: 3_000 } },
+  // Hard is the online Blitz preset's 7s, so a player practising offline is practising the real one.
+  hard: { turnMs: 7_000, assists: { panicMs: 4_000, panicUses: 1, lastBreathMs: 2_000 } },
+  expert: { turnMs: 5_000, assists: NO_ASSISTS },
+  // Custom starts from Medium and is then whatever the player set; the stored turn length and the
+  // two assist switches are the only things it carries.
+  custom: { turnMs: 9_000, assists: { panicMs: 5_000, panicUses: 1, lastBreathMs: 3_000 } },
+};
+
+/** Inclusive bounds for a custom Blitz turn. The floor matches the server's own
+ * `CUSTOM_BOUNDS.turnMs`, so offline practice cannot be faster than any room can be. */
+export const BLITZ_TURN_BOUNDS: readonly [number, number] = [5_000, 30_000];
