@@ -243,6 +243,16 @@ Not because it is 4,539 lines. Because it is the sole host of:
   adaptation, AI scheduling, turn orchestration) has a unit test; it is covered
   only through Playwright.
 
+**Phase 91 measured the remainder before touching it.** Every large function
+left in this file is sprite construction, input wiring or Phaser lifecycle —
+`layoutMelds` (380 lines) already delegates its geometry to `computeMeldLayout`
+in `src/table`, and `renderMexeEditor` (282) to the editor layout module. The one
+piece of arithmetic still inlined and reachable only through a browser was the
+online turn clock's readout, which moved to `src/ui/turn-clock.ts` with boundary
+tests (`tests/turn-clock.test.ts`). Moving the rest would relocate code without
+making anything easier to reason about, which is the churn this phase's scope
+excludes; the file's size is a symptom of ARCH-009/011, tracked there.
+
 The genuinely scene-shaped parts are rendering, input, layout, animation and
 Phaser lifecycle. The application/domain parts currently hosted here are:
 online state adaptation (`wireOnline`, `onOnlineStateSync`, `verifyOnlineHash`,

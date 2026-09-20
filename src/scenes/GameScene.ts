@@ -48,6 +48,7 @@ import { openRulesPanel } from '../ui/rules-panel';
 import { view } from '../ui/viewport';
 import { coverBackground } from '../ui/menu-layout';
 import { ACTION, CHROME_GOLD, CHROME_GOLD_TEXT, fitTextScale, FOCUS, STATE_FILL, SURFACE, TEXT } from '../ui/tokens';
+import { turnClockReadout } from '../ui/turn-clock';
 import { fontStyle, gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 import { matchDebugSurface } from '../verification/online-debug';
@@ -98,7 +99,6 @@ const CONFIRM_GUARD_MS = 250;
  * proposal, no socket close), the lock releases itself and a resync is requested. */
 const ONLINE_PENDING_TIMEOUT_MS = 10000;
 /** Last seconds of an online turn, where the clock escalates from warning to critical. */
-const TURN_CRITICAL_MS = 5000;
 /** How long an opponent stays quiet after reacting — see `lastEmoteBySeat`. */
 const EMOTE_COOLDOWN_MS = 2500;
 
@@ -1662,26 +1662,24 @@ export class GameScene extends Phaser.Scene {
    * nothing but show 0s until the server's own tick lands. */
   private updateTurnTimer(): void {
     if (!this.onlineTimerText) return;
-    if (this.turnDeadlineAt === null) {
+    // The arithmetic — and every threshold in it — lives in src/ui/turn-clock.ts, where it is
+    // unit-tested at its boundaries. What stays here is the two things only a scene can do:
+    // paint the readout, and decide whether to make a sound.
+    const clock = turnClockReadout(this.turnDeadlineAt, Date.now(), this.turnWarnMs);
+    if (!clock.visible) {
       this.onlineTimerText.setVisible(false);
       return;
     }
-    const msLeft = Math.max(0, this.turnDeadlineAt - Date.now());
-    const secs = Math.ceil(msLeft / 1000);
-    // Two steps, not one: a single threshold gives the same red at twenty seconds and at three.
-    // The last few seconds also grow the clock, so the pressure is legible without watching digits.
-    const warning = this.turnWarnMs > 0 && msLeft <= this.turnWarnMs;
-    const critical = msLeft <= TURN_CRITICAL_MS;
     this.onlineTimerText
       .setVisible(true)
-      .setText(t('online.turnTimeLeft', { secs }))
-      .setColor(critical ? TEXT.error : warning ? TEXT.warning : TEXT.muted)
-      .setScale(critical ? 1.25 : 1);
-    if (warning && secs !== this.ui.lastTickSecond && secs > 0) {
-      this.ui.lastTickSecond = secs;
+      .setText(t('online.turnTimeLeft', { secs: clock.secs }))
+      .setColor(clock.tone === 'critical' ? TEXT.error : clock.tone === 'warning' ? TEXT.warning : TEXT.muted)
+      .setScale(clock.scale);
+    if (clock.tone !== 'muted' && clock.secs !== this.ui.lastTickSecond && clock.secs > 0) {
+      this.ui.lastTickSecond = clock.secs;
       // Own turn only: a cue for someone else's clock is noise, and the setting is off by choice.
       if (settings.get().timerTickSound && this.state().activePlayerIndex === this.localSeat) {
-        playSfx(this, 'sfx-snap', critical ? 0.35 : 0.2);
+        playSfx(this, 'sfx-snap', clock.tone === 'critical' ? 0.35 : 0.2);
       }
     }
   }

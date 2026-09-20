@@ -70,7 +70,7 @@ legality.
 | `src/ai` | `observation.ts` (the seat's player view), `evaluate.ts` (the neutral comparison of legal candidates), `ai.ts` (`SimpleAi`, `RearrangerAi`, the four personalities and their presentation constants) |
 | `src/net` | `protocol.ts` (shared wire types, redaction, boundary validation), `client.ts` (browser socket), `viewToState.ts` (server view → local-shaped state), `online-session.ts` (`OnlineSession`: the online match's application state and every policy over a server frame — staleness, desync/resync, seat-gap translation, missed-turn limit), `lobby.ts` (`LobbyMachine`: the explicit lobby state and its transitions), `errors.ts` |
 | `src/table` | table layout, snapping, zoom, tap destinations, the portrait editor layout |
-| `src/ui` | widgets, overlays, panels (settings, rules, pause), helper modes, regions, viewport |
+| `src/ui` | widgets, overlays, panels (settings, rules, pause), helper modes, regions, viewport, the online turn clock's readout arithmetic (`turn-clock.ts`, pure) |
 | `src/scenes` | Boot, Menu, Setup, Game, Online, Tutorial, Win |
 | `src/assets` | asset manifest, procedural fallbacks, card composition |
 | `src/audio` | SFX player and the streamed music playlist |

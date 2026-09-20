@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "11A",
-  "phase": "91 — Complexity Reduction",
+  "phase": "92 — Dead-Code & Legacy Cleanup",
   "status": "NOT_STARTED"
  },
- "head": "288b41b",
+ "head": "bb8ff90",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1456,6 +1456,35 @@
      "owner": "Phase 93 — Technical Debt Review"
     }
    ]
+  },
+  {
+   "phase": "91 — Complexity Reduction",
+   "wave": "11A",
+   "status": "PASS",
+   "result": "Measured the hotspot before touching it. GameScene.ts is 4,580 lines, but every large function left in it is sprite construction, input wiring or Phaser lifecycle — layoutMelds (380 lines) already delegates its geometry to computeMeldLayout, renderMexeEditor (282) to the editor layout module, and earlier waves had already lifted out OnlineSession, LocalMatch, LobbyMachine, DraftEditor and MatchViewState. One piece of arithmetic was still inlined and reachable only through a browser: the online turn clock's readout.",
+   "changed": [
+    "src/ui/turn-clock.ts — new, pure: deadline + now + the room's warning threshold to visible/secs/tone/scale, with TURN_CRITICAL_MS moved beside it",
+    "src/scenes/GameScene.ts — updateTurnTimer now paints a readout and decides a sound; the thresholds and the rounding left with the arithmetic",
+    "tests/turn-clock.test.ts — the boundaries that were previously unasserted: exactly at the warning threshold, exactly at critical, past zero, and a room with no threshold at all",
+    "docs/ARCHITECTURE.md, docs/ARCHITECTURE_AUDIT.md — the ui module row, and the measurement that justified stopping"
+   ],
+   "acceptance": "the selected hotspot is easier to reason about where it counts (five thresholds and a rounding rule are now readable and tested in 38 lines instead of inline in a 4,580-line scene); behaviour unchanged (multiplayer room-timer e2e passes, unit suite green); complexity moved toward ownership, not abstraction — one pure module, no new indirection, no interface",
+   "verification": [
+    "MEXE_OUTPUT=ai npm run test (1138/1138, exit 0)",
+    "npx vitest run tests/turn-clock.test.ts (6/6) and tests/boundaries.test.ts (13/13)",
+    "npm run lint, npm run build (exit 0)",
+    "playwright -c playwright.multiplayer.config.ts --project=chromium --grep 'room timer' (1 passed) — the timer's own browser gate"
+   ],
+   "evidence": {
+    "measurement": "per-method line counts for GameScene.ts: layoutMelds 380, renderMexeEditor 282, renderAll 249, create 191, buildStaticUi 176 — all Phaser-shaped",
+    "logs": [
+     "tmp/agent-logs/p91-test.log"
+    ]
+   },
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the phase's own out-of-scope line (no rewrites without measurable payoff) is the reason the diff is 40 lines rather than 400, and the measurement that led there is recorded in the audit instead of being re-derived later"
+   }
   }
  ],
  "riskClosures": [
