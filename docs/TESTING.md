@@ -1099,7 +1099,20 @@ job is the one that is not about browsers: it runs the extended fuzz budget
 under ten seconds combined. Those are the checks that previously ran only when
 somebody remembered, which is the same as not running.
 
-Both multiplayer jobs there are sharded six ways at one worker each, the same
+`multiplayer-traced` runs `@race|@chaos` rather than the whole suite. Tracing
+costs 3-6x wall clock on a 4-core runner even at one test per runner, so every
+explicit inner timeout in `e2e-multiplayer` is under-budgeted under it; raising
+them one at a time was whack-a-mole (a 15s wait raised to 45s then failed at
+45s, with four more tests surfacing behind it once the 180s test timeout stopped
+killing runs early). The tests worth paying tracing's cost for are the ones
+whose invariant is ordering or duplicate suppression — which is what this job
+has ever caught, the double-click `create_room` duplicate at 5/5 under tracing
+and 0/5 without. Tag a test `@race` to put it on that path. A phone
+screenshot-readability sweep pays the full slowdown and proves nothing extra, so
+`OD-28/OD-29`, `OM-05` and `ON-09/ON-20` are not on it; full-suite coverage is
+`multiplayer-all-engines`' job, untraced.
+
+Both multiplayer jobs there are sharded at one worker each, the same
 shape and for the same reason as the PR job: they run strictly more tests
 concurrently than anything else — every engine's lobby replay, the iOS spec and
 `@chaos` on top of the full Chromium suite — and they were red every night from

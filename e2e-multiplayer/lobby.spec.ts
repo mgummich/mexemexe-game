@@ -376,7 +376,7 @@ test('LB-07/LB-08: a replacement takes the lowest free seat and inherits nothing
 
 // ---------- LB-09..LB-12: ready is the server's bit ----------
 
-test('LB-09/LB-12: the rendered ready state is the server\'s, and a ready/start race resolves once', async ({ browser }) => {
+test('LB-09/LB-12 @race: the rendered ready state is the server\'s, and a ready/start race resolves once', async ({ browser }) => {
   const pages = await clients(browser, 3);
   const [a, b, c] = pages as [Page, Page, Page];
   const code = await createRoom(a, 'Ana');
@@ -433,7 +433,7 @@ test('LB-09/LB-12: the rendered ready state is the server\'s, and a ready/start 
   await closeAll(pages);
 });
 
-test('LB-11: a fairness setting change clears every ready bit, once, on every client', async ({ browser }) => {
+test('LB-11 @race: a fairness setting change clears every ready bit, once, on every client', async ({ browser }) => {
   const pages = await clients(browser, 3);
   const [a, b, c] = pages as [Page, Page, Page];
   const code = await createRoom(a, 'Ana');
@@ -472,7 +472,7 @@ test('LB-11: a fairness setting change clears every ready bit, once, on every cl
 
 // ---------- LB-13..LB-15: host authority ----------
 
-test('LB-13/LB-14/LB-15: host transfer is deterministic, gap-safe, and a drop is not a departure', async ({ browser }) => {
+test('LB-13/LB-14/LB-15 @race: host transfer is deterministic, gap-safe, and a drop is not a departure', async ({ browser }) => {
   const pages = await clients(browser, 4);
   const [a, b, c, d] = pages as [Page, Page, Page, Page];
   const code = await createRoom(a, 'Ana');
@@ -751,7 +751,7 @@ test('LB-25/LB-10/LB-27: a reload in the lobby restores the exact seat and the s
   await closeAll(pages);
 });
 
-test('LB-28: a second tab holding the same token takes the seat and the old socket loses authority', async ({ browser }) => {
+test('LB-28 @race: a second tab holding the same token takes the seat and the old socket loses authority', async ({ browser }) => {
   const pages = await clients(browser, 2);
   const [a, b] = pages as [Page, Page];
   const code = await createRoom(a, 'Ana');

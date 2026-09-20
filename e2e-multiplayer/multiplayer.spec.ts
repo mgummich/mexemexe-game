@@ -65,7 +65,7 @@ const shot = (pages: Record<string, Page>, name: string, screenshots: string[]):
 // rejections and its final messages — instead of only the assertion that noticed.
 test.afterEach(async ({}, testInfo) => { await attachClientContexts(testInfo); });
 
-test('two clients: create, join, ready, legal turn, illegal proposal, reconnect/resync', async ({
+test('two clients @race: create, join, ready, legal turn, illegal proposal, reconnect/resync', async ({
   browser,
 }) => {
   const revisionsObserved: number[] = [];
@@ -414,7 +414,7 @@ test('three and four clients: host starts ready room and turns rotate through ev
   appendLog({ playerCountRuns });
 });
 
-test('in-canvas join code, hand privacy, and an explicit resync round-trip', async ({ browser }) => {
+test('in-canvas join code, hand privacy, and an explicit resync round-trip @race', async ({ browser }) => {
   const screenshots: string[] = [];
   const host = await newClient(browser);
   const guest = await newClient(browser);
@@ -550,7 +550,7 @@ test('server unavailable: shows a recoverable, non-frozen state and the player c
   await ctx.close();
 });
 
-test('impatient tester: double-clicking CREATE and JOIN sends exactly one request each', async ({ browser }) => {
+test('impatient tester @race: double-clicking CREATE and JOIN sends exactly one request each', async ({ browser }) => {
   const pageA = await newClient(browser);
   const [cx, cy] = toScreen(240, 136); // OnlineScene idle CREATE button
   await pageA.mouse.click(cx, cy);
