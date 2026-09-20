@@ -67,6 +67,7 @@ so a capture does not have to click through the settings panel.
 | `npm run verify` / `verify:multiplayer` / `verify:multiplayer:chromium` / `verify:cross` / `verify:pwa` / `verify:preview` | Verification gates — see [TESTING.md](TESTING.md) |
 | `npm run gen:cosmetics` | Regenerate procedural table/card-back/emote PNGs (deterministic) |
 | `npm run gen:icons` | Regenerate the PWA manifest icons (deterministic) |
+| `npm run health` | Roadmap and risk health, derived — see below |
 | `npm run release` | Version bump + CHANGELOG collapse + tag (see [CONTRIBUTING.md](CONTRIBUTING.md)) |
 
 `node scripts/gen-sfx.mjs` regenerates the synthesized sound effects; there is
@@ -236,3 +237,6 @@ stay in one place.
 | Server refuses to start | Invalid env value — it names the variable and exits rather than silently defaulting. See [OPERATIONS.md](OPERATIONS.md). |
 | A deal is not reproducible | Pass `?seed=`. Without it the seed comes from the clock; it is recorded in state and in the play log. |
 | The docs build fails in CI but not locally | `mkdocs build --strict` treats warnings as errors. Run it with `--strict` locally too. |
+| `tests/server` times out on the two baseline tests (`OH-34/OH-35`, the session soak) | A leftover `tsx server/index.ts` is holding :8787 — often from running the server by hand, since `npx` children outlive the shell wrapper. `ps aux \| grep "tsx server/index.ts"`, kill it, re-run. The failure looks like starvation, not a port conflict, which is why it reads as a regression in whatever you were changing. |
+| An `@perf` fps floor fails locally | Something else is using the machine — most often a second Playwright suite. The floors assume an idle machine and already take the best of three windows; the failure prints all three, and interference moves one while a real regression moves all ([TESTING.md](TESTING.md) §Flake policy). |
+| `git status` is full of modified PNGs after a verify run | Expected: the screenshot suite writes into `docs/screenshots/`. Consecutive runs are byte-identical, so this is staleness in the committed set, not a visual change. Revert them unless you meant to refresh. |

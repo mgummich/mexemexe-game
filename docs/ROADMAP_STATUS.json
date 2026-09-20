@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "11B",
-  "phase": "96 — Developer Experience",
+  "wave": "4A",
+  "phase": "24 — Asset Inventory & Visual Debt Audit (deferred Wave 4)",
   "status": "NOT_STARTED"
  },
- "head": "9d49b7e",
+ "head": "29a0567",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1607,6 +1607,37 @@
    "critic": {
     "round": 1,
     "result": "CRITIC PASS — nothing was duplicated into the prompt surface, and the one thing agents most often get wrong (not knowing a guard exists, then routing around its failure) is now a table with the guard's name next to the violation it reports"
+   }
+  },
+  {
+   "phase": "96 — Developer Experience",
+   "wave": "11B",
+   "status": "PASS",
+   "result": "The workflows were already documented and the script list short; what was missing were the three failures that cost me the most time in this roadmap run, none of which looked like what they were.",
+   "changed": [
+    "docs/DEVELOPMENT.md — `npm run health` added to the script table (it was missing since Phase 90); three troubleshooting rows: a stray `tsx server/index.ts` on :8787 (reads as starvation in the two baseline server tests, not a port conflict), an `@perf` fps floor failing next to another browser suite, and a `git status` full of modified PNGs after a verify run"
+   ],
+   "acceptance": "correct workflows identifiable quickly (script table complete, router in WORKFLOW.md §3, docs navigation registered for every doc added this wave); commands predictable (no new wrapper, no new alias beyond `health`); common debugging paths documented (the three real ones, with the symptom as it actually appears); tooling reduces friction rather than adding layers — nothing was added, one thing was named",
+   "verification": [
+    "npx vitest run tests/docs-drift.test.ts (4/4) — the script the table now names exists, and every path in the new rows resolves",
+    "npm outdated re-read: 5 dev patch/minor bumps and one TypeScript major available"
+   ],
+   "decisions": [
+    {
+     "id": "P3-dev-dep-updates-pending",
+     "decision": "ACCEPTED (closed)",
+     "why": "Dependabot opens these weekly, grouped into one production and one development pull request, capped at three open (.github/dependabot.yml). Taking them by hand here would duplicate that and land a lockfile change with no gate behind it."
+    }
+   ],
+   "resolvedRisks": [
+    {
+     "id": "P3-dev-dep-updates-pending",
+     "note": "Closed: dependabot owns it, weekly and grouped."
+    }
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no wrapper was added (the phase's own named risk), and the troubleshooting rows describe the symptom as it presents rather than as the cause, which is what makes such a table usable"
    }
   }
  ],
