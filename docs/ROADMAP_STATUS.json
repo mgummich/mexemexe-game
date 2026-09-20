@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "10A",
-  "phase": "85 — Risk-Based Quality Gates",
+  "wave": "10B",
+  "phase": "86 — Change-Scope Detection",
   "status": "NOT_STARTED"
  },
- "head": "46f29c3",
+ "head": "a4a4439",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1253,6 +1253,25 @@
      "owner": "Phase 33 — Visual Regression Baseline"
     }
    ]
+  },
+  {
+   "phase": "85 — Risk-Based Quality Gates",
+   "wave": "10A",
+   "status": "PASS",
+   "result": "The taxonomy already existed (TESTING.md §Which gate runs when, the GQA risk matrix, WORKFLOW.md's task router). What Wave 9 broke is completeness: deployment, security and performance changes had no router row, and the two new CI jobs were in no gate list. Closed the map rather than adding machinery.",
+   "changed": [
+    "WORKFLOW.md §3 — three new router rows (deployment/container/headers, security, performance) with their read-first doc, fast loop and final gate, including the warning that the browser suites cannot catch a CSP regression",
+    "docs/TESTING.md — server-image added to the PR gate, dependency-audit to the scheduled list, and two new risk-matrix rows: GQA-22 deployment config, GQA-23 long-session resource growth"
+   ],
+   "acceptance": "gates explicit (unchanged, now complete); every major risk category maps to verification (GQA-01..GQA-23, each naming its strongest proving test); developer loop unchanged — nothing was added to the inner loop",
+   "verification": [
+    "npm run lint (exit 0)",
+    "npx vitest run tests/deployment.test.ts (3/3)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no new gate or tool was introduced; the change is that the map now matches the gates that exist"
+   }
   }
  ],
  "riskClosures": [

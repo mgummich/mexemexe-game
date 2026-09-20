@@ -165,6 +165,9 @@ Read `AGENTS.md` first, then use this table.
 | Audio | architecture + relevant asset docs | audio manager/assets/settings | targeted test/build | relevant runtime evidence |
 | Docs only | target canonical doc | docs only | links/content check | strict docs build if configured; no game e2e unless behavior changed |
 | Build / release / CI | `DEVELOPMENT.md`, `TESTING.md`, package/workflow | scripts/config/CI | targeted command | exact affected gate |
+| Deployment / container / headers | `THREAT_MODEL.md`, `OPERATIONS.md` §Release channels | `nginx.conf`, `Dockerfile`, compose files, `.github/workflows` | `npx vitest run tests/deployment.test.ts`; YAML parse | `tests/deployment.test.ts` + CI's `server-image` job. The browser suites run against Vite preview and send no headers, so they cannot catch a CSP regression |
+| Security | `THREAT_MODEL.md` | the boundary the threat names (wire, token, storage, logs) | the owning unit/server suite | the gate for that boundary, plus a new/updated row in `THREAT_MODEL.md` |
+| Performance | `PERFORMANCE.md` | the owner of the budget in question | `npx playwright test e2e/perf-measure.spec.ts` (prints, gates nothing) | the three `@perf` fps tests; a changed budget needs a fresh measurement in the doc |
 | Bug fix | canonical doc for affected domain | reproduce first | failing regression test | domain gate |
 | Refactor | `ARCHITECTURE.md` | narrow ownership boundary | existing behavior tests | affected domain gate |
 

@@ -131,6 +131,9 @@ instead. That is usually the smaller, better change.
 | GQA-20 | Game setup | selected config not applied | `e2e` `setup: seat/personality picker` — asserts the dealt lineup is the 4 seats and 3 distinct opponents picked | E2E | Covered |
 | GQA-21 | Accessibility | critical flow inaccessible | `tests/motion.test.ts`, `feel.test.ts`, `persistence.test.ts` (OS reduced-motion/locale on first run), `tokens.test.ts` (`fitTextScale`), `menu/settings-layout` geometry; `e2e` `a11y-reduced-motion`, `*-large-text`, `keyboard`, `mobile-badge-reason` and `tutorial refusal` (non-colour-only, non-sound-only signalling) | unit + E2E | Covered, within the canvas limits documented in [ARCHITECTURE.md](ARCHITECTURE.md) |
 
+| GQA-22 | Deployment | shipped config weakens a boundary | `tests/deployment.test.ts` (the `nginx.conf` header set, CSP without a script escape hatch, access logging still off); CI's `server-image` job (the image boots, answers `/health`, and is not root); nightly `dependency-audit` | unit + CI | Covered |
+| GQA-23 | Long session | resource growth over a long session | `e2e/perf-measure.spec.ts` (10 match cycles: heap, DOM nodes, listeners, and the product-owned counters from `__MEXE__.lifecycle()`), bounded in the gated `second-match` journey | measurement + E2E | Covered |
+
 Severity is kept separate from priority. S1 = crash, softlock, card loss,
 hidden-information leak, seat/session theft, authoritative corruption, match
 cannot start or finish. S2 = wrong rule result, wrong turn, AI cannot finish,
@@ -847,7 +850,9 @@ not baseline-diffed.
 
 **PR gate** (`.github/workflows/ci.yml`, every push and PR): lint + unit tests +
 build; `verify:multiplayer:chromium`; `verify:pwa`; the screenshot suite plus
-`check-verify.mjs`; the cross-browser layout suite. Fast, deterministic,
+`check-verify.mjs`; the cross-browser layout suite; and `server-image`, which
+builds the server stage, boots it, reads `/health` and asserts the container is
+not running as root — the images were previously first exercised by a deploy. Fast, deterministic,
 high-signal — engine parity is deliberately *not* on this path. `npm run test`
 carries the fast property budget and the golden replays; they cost about a
 second between them and need no job of their own.
@@ -859,6 +864,11 @@ well as on demand, because "run it when you remember" is not a control.
   nightly's `specialized-tests` job. Under ten seconds of pure node, so the
   earlier objection — that scheduling them buys a number nobody reads — does not
   apply at this price. Still run it by hand before a rules or deal change lands.
+- `dependency-audit` runs in nightly: `npm audit` at `moderate` for runtime
+  dependencies and `high` for dev tooling, plus `npm outdated` reported without
+  failing. Nightly rather than per-PR on purpose — a gate that fails for an
+  advisory published mid-review teaches reviewers to ignore it
+  ([DEVELOPMENT.md](DEVELOPMENT.md#dependencies-and-bundle-cost)).
 - `npm run test:mutation` runs weekly in `.github/workflows/mutation.yml`,
   not nightly: it takes over an hour, and its output is a report to read rather
   than a pass/fail. Still run it by hand when a core module is being
