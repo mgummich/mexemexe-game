@@ -53,6 +53,13 @@ export interface Settings {
    * runs out. */
   blitzPanic: boolean;
   blitzLastBreath: boolean;
+  /**
+   * Commit play: no undo, no redo, no reset while a turn is being built. Exploration is still
+   * free — a card already on the table can be moved, split or merged — but the history is gone,
+   * so a placement is a decision rather than a draft. Off by default, and local play only until
+   * a matchmade room can advertise it.
+   */
+  commitPlay: boolean;
 }
 
 export interface Progress {
@@ -87,7 +94,7 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitzMode: 'off', blitzTurnMs: 9_000, blitzPanic: true, blitzLastBreath: true };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitzMode: 'off', blitzTurnMs: 9_000, blitzPanic: true, blitzLastBreath: true, commitPlay: false };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
 const BLITZ_MODES: readonly ('off' | BlitzDifficulty)[] = ['off', 'easy', 'medium', 'hard', 'expert', 'custom'];
 
@@ -135,6 +142,7 @@ function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
     blitzTurnMs: clampMs(merged.blitzTurnMs, BLITZ_TURN_BOUNDS, DEFAULT_SETTINGS.blitzTurnMs),
     blitzPanic: typeof merged.blitzPanic === 'boolean' ? merged.blitzPanic : DEFAULT_SETTINGS.blitzPanic,
     blitzLastBreath: typeof merged.blitzLastBreath === 'boolean' ? merged.blitzLastBreath : DEFAULT_SETTINGS.blitzLastBreath,
+    commitPlay: typeof merged.commitPlay === 'boolean' ? merged.commitPlay : DEFAULT_SETTINGS.commitPlay,
   };
 }
 

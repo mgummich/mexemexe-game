@@ -285,3 +285,61 @@ export const TIME_ATTACK_PRESETS: Record<BlitzDifficulty, TimeAttackPreset> = {
     assists: { panicMs: 6_000, panicUses: 1, lastBreathMs: 3_000, freezeMs: 10_000, freezeUses: 1, maxDebtMs: 20_000 },
   },
 };
+
+/**
+ * Heat: the risk side of playing fast. It rises when a seat keeps taking the clock to the wire and
+ * falls when it plays calmly, and at the top it overheats — a short cooldown in which the seat's
+ * time powers are unavailable.
+ *
+ * Tempo's core system (Phase 22), and an optional experimental modifier in Blitz and Time Attack
+ * (Phase 16), which is why it lives here rather than in a Tempo-only module. Off unless a mode
+ * asks for it: `HEAT_OFF` costs nothing and changes nothing.
+ */
+export type HeatLevel = 'calm' | 'warm' | 'hot' | 'overheat';
+
+export interface HeatConfig {
+  /** Heat added by a turn taken inside the critical window. 0 disables the whole system. */
+  readonly perCloseCallMs: number;
+  /** Heat shed by a turn taken in rhythm. */
+  readonly coolPerCalmTurn: number;
+  /** Heat at which the seat overheats. */
+  readonly overheatAt: number;
+  /** Turns an overheated seat spends without its time powers. */
+  readonly cooldownTurns: number;
+}
+
+export const HEAT_OFF: HeatConfig = { perCloseCallMs: 0, coolPerCalmTurn: 0, overheatAt: 0, cooldownTurns: 0 };
+
+export interface HeatState {
+  readonly heat: number;
+  /** Turns of cooldown left. Above zero means overheated: no time powers until it runs out. */
+  readonly cooldown: number;
+}
+
+export const NO_HEAT: HeatState = { heat: 0, cooldown: 0 };
+
+/** Where the seat is on the CALM -> WARM -> HOT -> OVERHEAT ladder, as a word the UI can show. */
+export function heatLevel(state: HeatState, config: HeatConfig): HeatLevel {
+  if (state.cooldown > 0) return 'overheat';
+  if (config.overheatAt <= 0) return 'calm';
+  const share = state.heat / config.overheatAt;
+  return share >= 0.66 ? 'hot' : share >= 0.33 ? 'warm' : 'calm';
+}
+
+/**
+ * Fold one completed turn into the heat. A close call heats, a turn in rhythm cools, and reaching
+ * `overheatAt` trips the cooldown and resets the heat — so overheating is a bounded event with a
+ * known end, never a state a seat can be stuck in.
+ */
+export function noteHeat(state: HeatState, config: HeatConfig, closeCall: boolean, inRhythm: boolean): HeatState {
+  if (config.overheatAt <= 0) return NO_HEAT;
+  if (state.cooldown > 0) return { heat: 0, cooldown: state.cooldown - 1 };
+  const next = Math.max(0, state.heat + (closeCall ? config.perCloseCallMs : 0) - (inRhythm ? config.coolPerCalmTurn : 0));
+  if (next >= config.overheatAt) return { heat: 0, cooldown: config.cooldownTurns };
+  return { heat: next, cooldown: 0 };
+}
+
+/** Whether the seat may spend a time power right now. Overheating is exactly this restriction. */
+export function powersAvailable(state: HeatState): boolean {
+  return state.cooldown === 0;
+}

@@ -1594,6 +1594,10 @@ export class GameScene extends Phaser.Scene {
     this.comprarBtn = new PixelButton(this, this.r.comprar.x, this.r.comprar.y, t('game.comprar'), () => this.onComprar(), {
       textureBase: 'btn-comprar', w: this.r.comprar.w, h: this.r.comprar.h, size: this.r.comprar.size, tooltip: t('tooltip.comprar'),
     });
+    // COMMIT-01: commit play removes the history controls outright rather than greying them. A
+    // dead button on a 7s turn is a target a player will still hit; an absent one is an answered
+    // question. Online rooms never take part — the server advertises no such ruleset yet.
+    const commitPlay = settings.get().commitPlay && !this.online;
     const undoBtn = new PixelButton(this, this.r.undo.x, this.r.undo.y, '↶', () => this.onUndo(), { textureBase: 'btn-small', w: this.r.undo.w, h: this.r.undo.h, size: this.r.undo.size, color: ACTION.icon, tooltip: t('tooltip.undo') });
     this.undoBtn = undoBtn;
     const redoBtn = new PixelButton(this, this.r.redo.x, this.r.redo.y, '↷', () => this.onRedo(), { textureBase: 'btn-small', w: this.r.redo.w, h: this.r.redo.h, size: this.r.redo.size, color: ACTION.icon, tooltip: t('tooltip.redo') });
@@ -1601,6 +1605,9 @@ export class GameScene extends Phaser.Scene {
     // which reset's row is directly beneath in every layout.
     const resetBtn = new PixelButton(this, this.r.reset.x, this.r.reset.y, '⟲', () => this.onReset(), { textureBase: 'btn-small', w: this.r.reset.w, h: this.r.reset.h, size: this.r.reset.size, color: ACTION.discard, tooltip: t('tooltip.reset'), tooltipSide: 'below' });
     this.resetBtn = resetBtn;
+    if (commitPlay) {
+      for (const btn of [undoBtn, redoBtn, resetBtn]) btn.setVisible(false).disableInteractive();
+    }
 
     // shifted off the corner: at (18,254) the table-frame art clipped this icon on both edges.
     const sortBtn = new PixelButton(this, this.r.sort.x, this.r.sort.y, '⇅', () => {

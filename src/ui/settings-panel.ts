@@ -175,6 +175,10 @@ export function openSettingsPanel(scene: Phaser.Scene, onClosed: () => void): ()
       showGame();
     }, { tooltip: t('settings.blitzTurnHint') });
 
+    toggleBtn(cx, rowY(GameRow.CommitPlay), 'settings.commitPlay',
+      () => settings.get().commitPlay, (v) => settings.update({ commitPlay: v }),
+      { tooltip: t('settings.commitPlayHint') });
+
     rowBtn(cx, rowY(GameRow.Back), t('settings.back'), showMain, { w: 90, size: 7 });
   };
 

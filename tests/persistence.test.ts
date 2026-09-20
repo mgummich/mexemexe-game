@@ -37,7 +37,7 @@ describe('parseSave', () => {
   it('round-trips a valid v1 save', () => {
     const save: Save = {
       version: 1,
-      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner', batterySaver: true, aiDifficulty: 'expert', aiSpeed: 'slow', aiExplain: 'detailed', timerTickSound: false, haptics: false, blitzMode: 'hard', blitzTurnMs: 9_000, blitzPanic: false, blitzLastBreath: true },
+      settings: { muted: true, sfxVolume: 10, musicVolume: 20, musicEnabled: false, musicContextAware: false, reducedMotion: true, locale: 'en', largeText: true, helperMode: 'beginner', batterySaver: true, aiDifficulty: 'expert', aiSpeed: 'slow', aiExplain: 'detailed', timerTickSound: false, haptics: false, blitzMode: 'hard', blitzTurnMs: 9_000, blitzPanic: false, blitzLastBreath: true, commitPlay: true },
       progress: { lastSeed: 1234, tutorialCompleted: true, gamesStarted: 3, headToHead: { cida: { wins: 2, losses: 1 } } },
       cosmetics: { tableTheme: 'quintal', cardBack: 'back-4', avatar: 'bia' },
     };
@@ -120,7 +120,7 @@ describe('loadSave', () => {
     const oldSettings = { muted: true, sfxVolume: 33, musicVolume: 44, reducedMotion: true, locale: 'en' };
     const storage = memoryStorage({ [OLD_SETTINGS_KEY]: JSON.stringify(oldSettings) });
     const result = loadSave(storage);
-    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: false, musicContextAware: true, largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitzMode: 'off', blitzTurnMs: 9_000, blitzPanic: true, blitzLastBreath: true }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
+    expect(result).toEqual({ version: 1, settings: { ...oldSettings, musicEnabled: false, musicContextAware: true, largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitzMode: 'off', blitzTurnMs: 9_000, blitzPanic: true, blitzLastBreath: true, commitPlay: false }, progress: DEFAULT_PROGRESS, cosmetics: DEFAULT_COSMETICS });
     expect(storage.getItem(SAVE_KEY)).toBe(JSON.stringify(result));
     expect(storage.getItem(OLD_SETTINGS_KEY)).toBeNull();
   });

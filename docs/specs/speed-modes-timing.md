@@ -276,3 +276,46 @@ answer, `startClockMs > 0`, whatever the preset is called.
 
 The clock face carries all of it as text: `+Ns` a panic is available, `❄Ns` once it is spent and a
 freeze is not, `−Ns` for debt owed, and the rhythm pips. Never colour alone.
+
+## Overheat outside Tempo, and Commit play (Phases 16–17)
+
+**Heat** (`HeatConfig`/`noteHeat`/`heatLevel`/`powersAvailable`) is in the shared domain, on the
+CALM → WARM → HOT → OVERHEAT ladder: close calls heat, turns in rhythm cool, the ceiling trips a
+bounded cooldown in which the seat's time powers are unavailable, and `HEAT_OFF` makes the whole
+system inert. It is Tempo's core system (Phase 22). Outside Tempo it stays **experimental and off**
+— the phase's own guardrail — because a fourth number on a 7s Blitz turn costs more clarity than
+the risk it adds is worth. The implementation is reusable the moment that trade changes.
+
+**Commit play** (Phase 17) is a local, off-by-default setting: no undo, redo or reset while a turn
+is being built. Exploration is still free — a card on the table can be moved, split or merged — it
+is the *history* that goes, so a placement is a decision. The controls are removed rather than
+greyed: a dead button on a short turn is still a target a player will hit. Online rooms are
+excluded outright until a room can advertise the ruleset (Phase 27).
+
+## Simultaneous Start (Phase 18) — designed, deferred
+
+The phase allows deferral if simultaneous resolution cannot be *proven* robust, and on this
+codebase it cannot yet. MexeMexe's authority is built on one active seat at a time: `claimTurn`
+refuses anything from a seat that is not `activePlayerIndex`, `rev` makes a turn a single
+serialised transition, and `analyzeMeld` validates a draft against one table. Two seats committing
+against the same table is not a timing change, it is a second legality question — whose meld
+claims a shared card — and inventing an answer under a clock is how a card game grows a duplicate.
+
+The design, for whoever picks it up:
+
+```text
+eligibility   every connected seat with cards, at the start of a round
+lifecycle     window opens (server) -> choices arrive -> window closes on last choice or timeout
+choice lock   first choice per seat wins; a later one is refused, not replaced (rev per seat)
+timeout       a seat with no choice draws and passes, exactly as timerExpireTurn does now
+conflicts     resolved in seat order from the dealer, each against the table as the previous one
+              left it; a choice that is no longer legal is refused and that seat draws instead
+order         deterministic and stated up front, never wall-clock arrival order
+disconnect    a window never waits on an absent seat; on reconnect the seat is told the resolved
+              round, never the choices it missed
+```
+
+The load-bearing property to prove first is the conflict rule: the same set of authoritative
+choices must produce the same resolved state on a replay, which is what `src/game-state/replay.ts`
+would have to cover before this ships. Until then Tempo Sync (Phase 26) stays off, since its own
+exit criterion depends on this one.

@@ -37,9 +37,9 @@ DEFERRED
 | 13 — Time Attack Freeze | COMPLETE | `useFreeze` + `use_freeze` (protocol v12), credited to both turn and personal clock, one use per match, no lag-based extension. |
 | 14 — Time Attack Time Debt | COMPLETE | `borrowTime` at zero (after Last Breath), bounded by `maxDebtMs`, repaid out of the increment first; `GameView.debtMs` renders it. |
 | 15 — Time Attack Presets | PARTIAL | `TIME_ATTACK_PRESETS` (easy/medium/hard/expert/custom), each expressible through the custom screen bounds; Hard is the lobby preset. Named-difficulty lobby UI is Phase 27. |
-| 16 — Optional Overheat Modifier Outside Tempo | NOT_STARTED | |
-| 17 — Commit / No Undo Thinking | NOT_STARTED | |
-| 18 — Simultaneous Start Prototype | NOT_STARTED | |
+| 16 — Optional Overheat Modifier Outside Tempo | COMPLETE | Heat ladder + cooldown in the shared domain (3 tests); left experimental and off outside Tempo, per the phase guardrail. |
+| 17 — Commit / No Undo Thinking | COMPLETE | `commitPlay` setting: undo/redo/reset removed while building a turn, local only, off by default. |
+| 18 — Simultaneous Start Prototype | DEFERRED | Designed in the spec (eligibility, lifecycle, lock, timeout, conflict order, reconnect). Deferred under the phase’s own clause: simultaneous commits raise a legality question (shared cards), not a timing one, and replay coverage must prove the conflict rule first. |
 | 19 — MexeMexe Tempo Core | NOT_STARTED | |
 | 20 — Tempo Generation | NOT_STARTED | |
 | 21 — Tempo Abilities v1 | NOT_STARTED | |

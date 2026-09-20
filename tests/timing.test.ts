@@ -19,8 +19,14 @@ import {
   useFreeze,
   usePanic,
   type Assists,
+  HEAT_OFF,
+  heatLevel,
+  NO_HEAT,
+  noteHeat,
+  powersAvailable,
   TIME_ATTACK_PRESETS,
   type BlitzDifficulty,
+  type HeatConfig,
 } from '../src/game-state/timing';
 
 describe('shared turn clock', () => {
@@ -261,5 +267,36 @@ describe('Time Attack difficulty presets', () => {
       expect(applied.panicUses).toBe(preset.assists.panicUses);
       expect(applied.maxDebtMs).toBe(preset.assists.maxDebtMs);
     }
+  });
+});
+
+describe('Heat and Overheat', () => {
+  const HEAT: HeatConfig = { perCloseCallMs: 30, coolPerCalmTurn: 10, overheatAt: 90, cooldownTurns: 2 };
+
+  it('climbs the ladder on close calls and comes back down on calm turns', () => {
+    let h = noteHeat(NO_HEAT, HEAT, true, false);
+    expect(heatLevel(h, HEAT)).toBe('warm');
+    h = noteHeat(h, HEAT, true, false);
+    expect(heatLevel(h, HEAT)).toBe('hot');
+    h = noteHeat(h, HEAT, false, true);
+    expect(heatLevel(h, HEAT)).toBe('warm');
+  });
+
+  it('overheats at the ceiling, and the cooldown ends by itself', () => {
+    let h = { heat: 80, cooldown: 0 };
+    h = noteHeat(h, HEAT, true, false);
+    expect(h).toEqual({ heat: 0, cooldown: 2 });
+    expect(heatLevel(h, HEAT)).toBe('overheat');
+    expect(powersAvailable(h)).toBe(false);
+    h = noteHeat(h, HEAT, true, false);
+    h = noteHeat(h, HEAT, true, false);
+    expect(h.cooldown).toBe(0);
+    expect(powersAvailable(h)).toBe(true);
+  });
+
+  it('never goes negative, and is inert when switched off', () => {
+    expect(noteHeat(NO_HEAT, HEAT, false, true)).toEqual(NO_HEAT);
+    expect(noteHeat({ heat: 50, cooldown: 0 }, HEAT_OFF, true, false)).toEqual(NO_HEAT);
+    expect(heatLevel({ heat: 999, cooldown: 0 }, HEAT_OFF)).toBe('calm');
   });
 });

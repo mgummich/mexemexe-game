@@ -52,7 +52,9 @@ export enum GameRow {
   /** Turn length for a custom local Blitz match. Lives here, not on the setup screen: at four
    * seats that panel has one free row, and it is spent on the difficulty itself. */
   BlitzTurn = 2,
-  Back = 3,
+  /** Commit play: no undo/redo/reset while building a turn. */
+  CommitPlay = 3,
+  Back = 4,
 }
 
 /** Rows in the Audio sub-panel. */
