@@ -78,8 +78,9 @@ even if nothing broke.
     the other player's game keep working while you are gone?
 15. Start the client with the server **not** running. Does the game explain that clearly, or does
     it just sit there?
-16. Play an online game to a win. Note: the win screen has no rematch stats or winning-move text
-    online (known limitation, not a bug — see below).
+16. Play an online game to a win, then use REMATCH. Does the result screen's session score and
+    rematch-vote line match what happened? The winning-move text is absent online (known
+    limitation, not a bug — see below).
 
 **Both languages**
 17. Repeat a short local game with `?lang=en`. Any untranslated or overflowing text? Cosmetics
@@ -164,11 +165,11 @@ Full rules with worked examples: [GAME_RULES.md](GAME_RULES.md). The short versi
 
 These are known and in scope for a later phase. Reporting them again is not useful.
 
-- **Online win screen has no rematch stats or winning-move text** — the client never observes
-  the server's per-turn state locally, so there's nothing to summarize; needs a protocol change.
-- No accounts, matchmaking, chat, or spectating.
-- No online rematch — an online match ends at the menu.
-- Rooms are private and code-only, and vanish when everyone leaves.
+- **The online win screen has no winning-move text** — the client never observes the server's
+  per-turn state locally, so there is nothing to summarize; it does show the session score and the
+  live rematch votes.
+- No accounts, chat or spectating. Casual matchmaking (Quick Match) and public room discovery do
+  exist; a room still vanishes when everyone leaves.
 - The turn timer is online-only and off in local play; online, the host picks Casual / Fast / Off
   in the lobby, and `custom` values are validated on the wire but have no lobby control.
 - The four AI opponents are personalities; difficulty (Beginner / Casual / Smart / Expert), pace
@@ -181,6 +182,46 @@ These are known and in scope for a later phase. Reporting them again is not usef
   summary does carry `session.gamesStarted` / `session.tutorialCompleted` — counts saved by the
   browser — so a log can still say "this was their second match, and they did the tutorial first".
 - Cosmetic issues already logged under **Known limitations** in `README.md`.
+
+## Triage: from observation to decision
+
+A session produces a pile of notes. This is how the pile becomes decisions, so that nothing is
+lost and nothing is acted on twice.
+
+**1. Classify each note.** The class decides who owns it, and three of the four classes are not
+bugs:
+
+| Class | What it is | Where it goes |
+|---|---|---|
+| **Defect** | the game did something it should not, reproducibly or with a seed | an issue, with a regression test when fixed (`AGENTS.md`: every confirmed bug gets one) |
+| **Friction** | the game worked, the player hesitated, guessed or backtracked | a product decision — the hesitation *is* the finding, and the fix is usually copy, feedback or pacing |
+| **Preference** | the tester wanted something different, and both answers are defensible | accept or reject explicitly, with the reason; never silently |
+| **Misread** | the tester misunderstood a real rule | check the rules panel and the tutorial first — a rule that has to be explained twice is a teaching defect, not a player error |
+
+**2. Give a defect a severity**, the same four the architecture audit uses
+([ARCHITECTURE_AUDIT.md](ARCHITECTURE_AUDIT.md) §11), so one vocabulary covers both:
+
+**P0** correctness, privacy or authority · **P1** blocks later work or breaks a lifecycle ·
+**P2** structural or scalability risk · **P3** organisation debt.
+
+Friction has no severity. It has a *frequency*: how many testers hit the same hesitation. Two
+testers stumbling in the same place outranks one tester's strong opinion.
+
+**3. Deduplicate before filing.** Check this file's *Known limitations* and the open issues first.
+A second report of a known limitation is not useful; a second report of the same friction **is** —
+add it to the existing note as another occurrence rather than opening a second one.
+
+**4. Record the decision, not just the finding.** Every note leaves triage as exactly one of:
+
+```text
+FIX        — an issue exists, with reproduction (seed, log, mode, seat)
+DEFER      — real, not now: name the phase or the condition that changes it
+REJECT     — deliberate design: name the reason, in one sentence
+LIMITATION — real and permanent: add it to Known limitations so nobody re-files it
+```
+
+A finding with no decision attached is the failure mode this section exists to prevent: it comes
+back next session, gets re-discussed, and costs more than it did the first time.
 
 ## How to report a bug
 

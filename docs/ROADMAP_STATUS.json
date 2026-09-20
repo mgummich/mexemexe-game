@@ -2,8 +2,8 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "8C",
-  "phase": "74 — Structured Playtest Program",
+  "wave": "9A",
+  "phase": "75 — Performance Budgets",
   "status": "NOT_STARTED"
  },
  "head": "1fa315e",
@@ -872,6 +872,30 @@
     "result": "CRITIC PASS — adding opt-in telemetry would have created a second data path to maintain, a consent surface to localize, and a privacy claim to re-verify, against no decision anyone is currently unable to make"
    },
    "roadmapMismatch": "None. The phase anticipates this outcome."
+  },
+  {
+   "phase": "74 — Structured Playtest Program",
+   "wave": "8C",
+   "status": "PASS",
+   "result": "docs/PLAYTEST_GUIDE.md already had repeatable scenarios, deterministic visual checkpoints, recording guidance and a reproduction-complete bug template. Missing: the half after the session — classification, severity, deduplication and a recorded decision. Also corrected drift: the guide still said online rematch, matchmaking and public rooms did not exist.",
+   "changed": [
+    "docs/PLAYTEST_GUIDE.md — new §'Triage: from observation to decision' (4 classes, the audit's own P0–P3 severities, dedup rule, 4 decision outcomes); Known limitations and test step 16 corrected against repo truth"
+   ],
+   "acceptance": "playtests repeatable (unchanged scenarios + showcase seeds); findings classified (defect/friction/preference/misread, severity for defects and frequency for friction); technical defects reproducible (seed, log, mode, seat — unchanged template); feedback accepted/deferred/rejected with rationale (FIX/DEFER/REJECT/LIMITATION, every note leaves triage as exactly one)",
+   "verification": [
+    "docs only; no code path changed. Claims re-checked against the code: online rematch vote + session score exist (src/scenes/WinScene.ts), Quick Match queue and public room discovery exist (src/net/protocol.ts), no chat or spectating exists."
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — the severity scale reuses ARCHITECTURE_AUDIT.md §11 rather than inventing a second vocabulary; no new process file, so no competing source of truth"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-no-real-playtest",
+     "note": "No real playtest session has ever been logged — the program is now complete on paper and unexercised in practice. Only a human session can close this.",
+     "owner": "Phase 97 — Final Product QA"
+    }
+   ]
   }
  ],
  "riskClosures": [
