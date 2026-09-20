@@ -251,10 +251,14 @@ describe('architecture boundaries', () => {
   });
 
   it('the server imports the shared rules and protocol, never the client presentation layer', () => {
+    // `game-state/timing` is on the list for the same reason the other two are: it is
+    // platform-free domain code the authority and the client must agree on to the millisecond, so
+    // a second copy in `server/` would be a second owner of the deadline arithmetic. The rest of
+    // `game-state/` stays off the list — a room is not a `GameStore` and must not become one.
     for (const file of tsFiles(path.join(ROOT, 'server'))) {
       for (const spec of imports(file)) {
         if (!spec.startsWith('../src/')) continue;
-        const shared = /^\.\.\/src\/(rules\/|net\/protocol)/.test(spec);
+        const shared = /^\.\.\/src\/(rules\/|net\/protocol|game-state\/timing)/.test(spec);
         expect(`${rel(file)} imports ${spec}: ${shared}`).toBe(`${rel(file)} imports ${spec}: true`);
       }
     }

@@ -18,6 +18,7 @@ import {
   timerExpireTurn,
 } from '../src/rules/rules';
 import type { GameState, ReasonCode } from '../src/rules/types';
+import { IDLE_CLOCK, expired, grantBonus, msLeft, startTurn, type TurnClock } from '../src/game-state/timing';
 import { DEFAULT_RULES, RulesError } from '../src/rules/types';
 import {
   buildView, DEFAULT_ROOM_SETTINGS, DEFAULT_ROOM_VISIBILITY, MAX_ACTIVITY, MAX_MATCH_HISTORY,
@@ -121,12 +122,9 @@ interface RoomInternal {
   settings: RoomSettings;
   /** Who may *find* this room. Always starts `private` — see setVisibility. */
   visibility: RoomVisibility;
-  /** When the current turn's clock started. null while the room has no running turn. */
-  turnStartedAt: number | null;
-  /** The current turn's budget: `settings.turnMs`, plus the Mexe bonus once claimed. */
-  turnBudgetMs: number;
-  /** Whether this turn's one-off Mexe extension has already been granted. */
-  mexeBonusClaimed: boolean;
+  /** The active seat's turn clock. Idle while the room has no running turn. The arithmetic lives
+   * in the shared timing domain, so the server and a client projection cannot drift. */
+  clock: TurnClock;
   /** Public summary of the play that ended the match, set the moment it finishes. Read once by
    * the game_over broadcast and cleared when the room is recycled for a rematch. */
   winningMove: WinningMove | null;
@@ -342,9 +340,7 @@ export class RoomManager {
       // OD-01: private, always. There is no create-time option and no migration path that can
       // produce anything else — a room becomes discoverable only by its host saying so later.
       visibility: DEFAULT_ROOM_VISIBILITY,
-      turnStartedAt: null,
-      turnBudgetMs: 0,
-      mexeBonusClaimed: false,
+      clock: IDLE_CLOCK,
       winningMove: null,
       matchId: null,
       matchSeq: 0,
@@ -554,20 +550,13 @@ export class RoomManager {
    * does a match that just ended: a finished game has no turn to time, and a clock left running
    * would keep counting down to a red 0:00 behind the results screen. */
   private startTurnClock(room: RoomInternal): void {
-    room.mexeBonusClaimed = false;
-    if (room.settings.turnMs <= 0 || room.state?.phase !== 'playing') {
-      room.turnStartedAt = null;
-      room.turnBudgetMs = 0;
-      return;
-    }
-    room.turnStartedAt = this.now();
-    room.turnBudgetMs = room.settings.turnMs;
+    const timed = room.state?.phase === 'playing';
+    room.clock = timed ? startTurn(this.now(), room.settings.turnMs) : IDLE_CLOCK;
   }
 
   /** ms left on the active seat's turn, or null when this room has no timer. Never negative. */
   private msLeft(room: RoomInternal): number | null {
-    if (room.turnStartedAt === null) return null;
-    return Math.max(0, room.turnStartedAt + room.turnBudgetMs - this.now());
+    return msLeft(room.clock, this.now());
   }
 
   /**
@@ -583,12 +572,9 @@ export class RoomManager {
     if (!room || !room.state || room.state.activePlayerIndex !== this.playerIndex(room, seat)) {
       return { ok: false, msLeft: null };
     }
-    if (room.turnStartedAt === null || room.mexeBonusClaimed || room.settings.mexeBonusMs <= 0) {
-      return { ok: false, msLeft: this.msLeft(room) };
-    }
-    room.mexeBonusClaimed = true;
-    room.turnBudgetMs += room.settings.mexeBonusMs;
-    return { ok: true, msLeft: this.msLeft(room) };
+    const { clock, granted } = grantBonus(room.clock, room.settings.mexeBonusMs);
+    room.clock = clock;
+    return { ok: granted, msLeft: this.msLeft(room) };
   }
 
   /** The host seat starts only a full-ready 2–4P lobby. Seats never move, so turn order is
@@ -766,7 +752,7 @@ export class RoomManager {
 
       const absentTooLong =
         !active.connected && active.disconnectedAt !== null && t - active.disconnectedAt > room.settings.reconnectGraceMs;
-      const timedOut = room.turnStartedAt !== null && t - room.turnStartedAt >= room.turnBudgetMs;
+      const timedOut = expired(room.clock, t);
       if (!absentTooLong && !timedOut) continue;
 
       // Per-room isolation: one room whose state can no longer advance legally must not stop
@@ -837,9 +823,7 @@ export class RoomManager {
     room.matchId = null;
     room.matchSeats = [];
     room.winningMove = null;
-    room.turnStartedAt = null;
-    room.turnBudgetMs = 0;
-    room.mexeBonusClaimed = false;
+    room.clock = IDLE_CLOCK;
     room.lastActivityAt = this.now();
     for (const s of room.seats) {
       if (!s) continue;
@@ -900,7 +884,7 @@ export class RoomManager {
     return buildView(
       room.state!, this.playerIndex(room, seat), room.rev, room.settings, this.msLeft(room),
       // Both arrays are indexed by dense player index, like everything else inside a view.
-      room.matchSeats.map((s) => room.seats[s]?.missedTurns ?? 0), room.mexeBonusClaimed,
+      room.matchSeats.map((s) => room.seats[s]?.missedTurns ?? 0), room.clock.bonusClaimed,
       room.matchId ?? '', room.matchSeats,
     );
   }

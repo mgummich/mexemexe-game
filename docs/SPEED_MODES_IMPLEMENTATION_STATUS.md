@@ -23,7 +23,7 @@ DEFERRED
 | Phase | Status | Notes |
 |---|---|---|
 | 1 — Architecture Audit and Shared Timing Design | COMPLETE | Design: `docs/specs/speed-modes-timing.md` |
-| 2 — Shared Authoritative Timing Foundation | NOT_STARTED | |
+| 2 — Shared Authoritative Timing Foundation | PARTIAL | `src/game-state/timing.ts` owns the turn-clock arithmetic; `server/rooms.ts` uses it. Per-seat resources (personal clock, Freeze, Time Debt, Tempo, Heat) land with the phases that introduce them. |
 | 3 — Shared Speed UX | NOT_STARTED | |
 | 4 — MexeMexe Blitz Core | NOT_STARTED | |
 | 5 — Blitz Perfect Rhythm | NOT_STARTED | |
