@@ -14,9 +14,14 @@ and those remain readable in git history.
   timeout, so `LB-17`, `LB-18` and `OD-28/OD-29` went red at 3.0-3.1m for being
   correct but slow, and `LB-13` blew an explicit 15s wait on server-side
   disconnect detection. The job now runs with `--timeout=540000`, and
-  `tracedMs()` stretches the one inner wait that tracing actually broke. Applied
-  only where the traced run has failed, not to all ~210 explicit timeouts in
-  that directory.
+  `tracedMs()` stretches the one inner wait that tracing actually broke.
+
+  Raising budgets turned out to be the wrong shape: the 45s wait failed at 45s
+  and four more tests surfaced once the 180s test timeout stopped killing runs
+  early. Tracing simply costs 3-6x on a 4-core runner, so `multiplayer-traced`
+  now runs `@race|@chaos` — the tests whose invariant is ordering or duplicate
+  suppression, which is what tracing has ever caught — instead of the whole
+  suite. Untraced full-suite coverage is `multiplayer-all-engines`' job.
 
 ## 1.11.1 — 2026-09-20
 
