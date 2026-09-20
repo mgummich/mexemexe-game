@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "10B",
-  "phase": "86 — Change-Scope Detection",
+  "wave": "10C",
+  "phase": "88 — Architecture Enforcement",
   "status": "NOT_STARTED"
  },
- "head": "a4a4439",
+ "head": "7be79eb",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1272,6 +1272,33 @@
     "round": 1,
     "result": "CRITIC PASS — no new gate or tool was introduced; the change is that the map now matches the gates that exist"
    }
+  },
+  {
+   "phase": "86 — Change-Scope Detection + 87 — Risk-Based CI",
+   "wave": "10B",
+   "status": "PASS",
+   "result": "Done as one change because the detection has exactly one consumer and splitting them would have meant landing a classifier nothing reads. CI ran every suite for every change, including a Markdown-only pull request. Now a `scope` job classifies the diff and two narrow shapes shrink the run; everything else falls through to the full set.",
+   "changed": [
+    ".github/workflows/ci.yml — new `scope` job (git diff, no third-party action) producing docs_only and server_only; every other job gained `needs: scope` and an `if:`",
+    "docs/TESTING.md — the scope table, what each shape runs and skips, and the required-status-check caveat"
+   ],
+   "acceptance": "high-risk shared changes detected conservatively (any touch of src/, public/, index.html, a config, package.json, the lockfile or a workflow runs everything); narrow changes avoid unrelated expensive suites (docs-only runs nothing; server-only skips e2e/cross/pwa); fallback exists and is the default (no pull-request context, an empty diff, or an unrecognised path all mean the full set); routing is understandable (two booleans, one job, a table in the docs); extended checks unchanged on their nightly/weekly schedules",
+   "verification": [
+    "the classifier's shell logic exercised locally against six diff shapes: docs-only, server-only, client, workflow, empty, lockfile — each produced the intended pair",
+    "all six workflow files parse as YAML",
+    "npm run lint (exit 0)"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no new dependency (git diff, not paths-filter), and the two skips are ones where the skipped suite provably cannot observe the change; a push to main still runs everything, which is what the public build is promoted from"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-required-checks-and-skips",
+     "note": "If branch protection lists the skipped jobs as required checks, it must treat a skipped job as satisfied. Cannot be verified from the repository.",
+     "owner": "Phase 102 — Production & Release Readiness"
+    }
+   ]
   }
  ],
  "riskClosures": [

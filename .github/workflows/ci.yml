@@ -13,8 +13,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which suites this change can possibly affect. Deliberately crude, because a wrong answer here
+  # costs coverage: only two narrow shapes shrink the run, and everything else falls through to
+  # the full set (docs/TESTING.md, "Which gate runs when").
+  #
+  #   docs_only    - only Markdown, the roadmap status JSON or LICENSE changed. No code runs.
+  #   server_only  - only server/ and tests/server/ changed. Client rendering cannot move, so the
+  #                  browser rendering/layout/PWA suites have nothing to prove; the multiplayer
+  #                  suite and the server image still run, because the server is what changed.
+  #   otherwise    - everything, including any touch of src/, public/, index.html, a config file,
+  #                  package.json, the lockfile or this workflow.
+  #
+  # A push to main never shrinks: that run is what promotes the public build.
+  scope:
+    name: Change scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      server_only: ${{ steps.classify.outputs.server_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: classify
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE:-}" ]; then
+            echo "not a pull request - running everything"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "server_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(git diff --name-only "$BASE" "$HEAD")"
+          echo "changed files:"; echo "$files"
+          docs_only=true; server_only=true
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              *.md|docs/ROADMAP_STATUS.json|LICENSE) ;;
+              *) docs_only=false ;;
+            esac
+            case "$f" in
+              server/*|tests/server/*|*.md|docs/ROADMAP_STATUS.json) ;;
+              *) server_only=false ;;
+            esac
+          done <<< "$files"
+          # An empty diff is not a licence to skip.
+          if [ -z "$files" ]; then docs_only=false; server_only=false; fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "server_only=$server_only" >> "$GITHUB_OUTPUT"
+
   test:
     name: Lint, unit tests & build
+    needs: scope
+    # Lint and the unit suites are cheap and cover the docs' own link and copy checks, so they run
+    # for everything except a pure documentation change.
+    if: needs.scope.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -30,6 +88,8 @@ jobs:
 
   server-image:
     name: Server image boots unprivileged
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
     # The images were only ever built at release time, so a Dockerfile change was first exercised
     # by a deploy. This builds the server stage and proves the two things the image has to do:
@@ -67,6 +127,8 @@ jobs:
 
   multiplayer:
     name: Multiplayer verification
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
     # Chromium only on the PR path. The three-engine run was the longest job on every PR (~18m)
     # and most of that is the lobby state machine replayed on Firefox and WebKit; that replay now
@@ -98,6 +160,9 @@ jobs:
 
   pwa:
     name: PWA offline verification
+    needs: scope
+    # A server-only change cannot move the service worker or the offline cache.
+    if: needs.scope.outputs.docs_only == 'false' && needs.scope.outputs.server_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -125,6 +190,9 @@ jobs:
 
   e2e:
     name: Playwright e2e
+    needs: scope
+    # Rendering and gameplay journeys: nothing in server/ changes what a canvas paints.
+    if: needs.scope.outputs.docs_only == 'false' && needs.scope.outputs.server_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -165,6 +233,9 @@ jobs:
 
   cross:
     name: Cross-browser layout
+    needs: scope
+    # Layout across engines and viewports - same reasoning as the e2e job.
+    if: needs.scope.outputs.docs_only == 'false' && needs.scope.outputs.server_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -857,6 +857,22 @@ high-signal — engine parity is deliberately *not* on this path. `npm run test`
 carries the fast property budget and the golden replays; they cost about a
 second between them and need no job of their own.
 
+**What a change's scope can skip.** The `scope` job classifies the pull request's
+diff and only two narrow shapes shrink the run; everything else falls through to
+the full set, which is the conservative direction:
+
+| Scope | Recognised as | Runs | Skips |
+|---|---|---|---|
+| Documentation only | Markdown, `docs/ROADMAP_STATUS.json`, `LICENSE` | nothing | every job |
+| Server only | `server/**`, `tests/server/**` (plus docs) | lint + unit tests + build, `multiplayer`, `server-image` | `e2e`, `cross`, `pwa` — nothing in `server/` changes what a canvas paints |
+| Anything else | any touch of `src/`, `public/`, `index.html`, a config file, `package.json`, the lockfile, a workflow | everything | — |
+
+A push to `main` never shrinks: that run is what promotes the public build
+([OPERATIONS.md](OPERATIONS.md#release-channels)), and an empty or unreadable
+diff is not a licence to skip. If required status checks are configured on the
+branch, they must tolerate a skipped job — the routing works by skipping jobs,
+not by making them pass trivially.
+
 **Scheduled, gating nothing:** both specialized suites now run on a clock as
 well as on demand, because "run it when you remember" is not a control.
 
