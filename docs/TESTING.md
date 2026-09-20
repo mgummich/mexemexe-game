@@ -859,7 +859,7 @@ not baseline-diffed.
 | `npm run verify` | `test` + `lint` + `screenshot` + `scripts/check-verify.mjs`: no console/page errors, every expected screenshot present, no asset fell back to placeholder art, fps floors met (the fps floors are asserted inside the three `@perf` tests). |
 | `npm run verify:multiplayer` | Build + the multiplayer suite on Chromium, Firefox and WebKit + `scripts/check-verify-multiplayer.mjs`: no client console errors, no server stderr, no accepted illegal proposal, hand privacy held, state hashes agree, and per-engine lobby evidence (rendered seat gaps, a three-match endurance run, the iOS orientation/rematch gate, and the background/foreground round trip that must resume on the live session rather than open a second one). |
 | `npm run verify:multiplayer:chromium` | The same, Chromium only, without `@chaos` and `@endurance`, and with the gate told not to demand the Firefox/WebKit lobby evidence or the three-match endurance run (`--engines=chromium --skip-endurance`). This is the PR-path variant. |
-| `npm run test:multiplayer:chromium` | Just the suite the variant above runs, without the gate. CI shards it across runners (`-- --shard=N/3`) and runs the gate once over the merged evidence. |
+| `npm run test:multiplayer:chromium` | Just the suite the variant above runs, without the gate. CI shards it across runners (`-- --shard=N/6 --workers=1`) and runs the gate once over the merged evidence. |
 | `npm run verify:cross` | Build + the cross-browser layout suite. |
 | `npm run verify:pwa` | Build + the offline/update suite. |
 | `npm run verify:preview` | Build + `scripts/check-preview.mjs`: `dist/` serves, every asset reference resolves, no credential-shaped strings in the bundle. |
@@ -1066,7 +1066,7 @@ unit tests + build, multiplayer verification, PWA verification, the e2e
 screenshot suite with its gate, and cross-browser layout.
 
 The multiplayer job installs **Chromium only** and runs
-`test:multiplayer:chromium` across **three shards, two workers each**, with a
+`test:multiplayer:chromium` across **six shards, one worker each**, with a
 separate `Multiplayer verification` job merging every shard's evidence and
 running the gate once. The three-engine run was the longest job on every PR
 (~18m), and most of that was the lobby state machine replayed on Firefox and
@@ -1076,8 +1076,18 @@ stayed the whole critical path — 44 tests, 43.8 worker-minutes, 22m of a 23m
 run — and raising `workers` inside one job was measured worse, so the
 parallelism comes from more runners instead. Sharding costs no coverage: the
 gate already merged per-worker evidence shards, so per-runner shards only add an
-artifact round trip. The shard count is a tuning knob, not a constant; the tail
-shard is whichever one draws the heaviest `LB-*` tests. The PWA and
+artifact round trip.
+
+`--workers=1` on the shards, against the config's `workers: 2`, is not a detail.
+Playwright shards by test count, not duration, so the first sharded run put
+eight nearly-all-heavy tests on one shard and both of its workers held a
+multi-context test for the whole job. Every test on it ran about twice its
+unsharded time — `OP-16` 46.2s → 1.6m, `OD-28/OD-29` 2.4m → 3.1m — which tipped
+`OD-28/OD-29` past its 180s budget and `OM-07`'s scene wait past 15s. That is
+the contention the config already documents, concentrated rather than relieved.
+One test per runner gives it 4 cores instead of 2; raising the timeouts would
+have hidden it. The config keeps `workers: 2` for local and the unsharded
+nightly runs. The shard count is a tuning knob, not a constant. The PWA and
 screenshot jobs are Chromium-only too — they drive the service-worker lifecycle
 and rendering, not cross-engine layout, which the cross job (all three engines)
 covers. Failures upload `test-results/` and the relevant log as artifacts.

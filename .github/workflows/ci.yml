@@ -146,7 +146,7 @@ jobs:
         run: docker rm -f mexe-server || true
 
   multiplayer:
-    name: Multiplayer verification (shard ${{ matrix.shard }}/3)
+    name: Multiplayer verification (shard ${{ matrix.shard }}/6)
     needs: scope
     if: needs.scope.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
@@ -156,17 +156,28 @@ jobs:
     # nightly guarantee, not a per-PR one — a WebSocket/storage/orientation regression that only
     # shows on Firefox or WebKit is caught within a day rather than at review time.
     #
-    # Three shards, two workers each. Raising `workers` inside one job was measured worse (see
+    # Six shards, ONE worker each. 44 tests / 43.8 worker-minutes on one runner was 22m of the
+    # PR's 23m wall clock, and raising `workers` inside one job was already measured worse (see
     # playwright.multiplayer.config.ts: every test drives 2-4 browser contexts plus a server
-    # against 4 shared cores), so the parallelism has to come from more runners, not more workers
-    # per runner. 44 tests / 43.8 worker-minutes on one runner was 22m of the PR's 23m wall clock.
+    # against 4 shared cores), so the parallelism has to come from more runners.
+    #
+    # --workers=1 rather than the config's 2, and six shards rather than three, because the first
+    # sharded run failed exactly where that contention lives. Playwright shards by test count, not
+    # duration, so shard 3/3 drew eight tests that were nearly all heavy ones and both workers held
+    # a multi-context test for the whole job: every test on it ran about twice its unsharded time
+    # (OP-16 46.2s -> 1.6m, OD-28/OD-29 2.4m -> 3.1m), which tipped OD-28/OD-29 past its 180s
+    # budget and OM-07's scene wait past 15s. Unsharded, fast tests diluted that mix. One test per
+    # runner gives it 4 cores instead of 2 and removes the contention rather than redistributing
+    # it; raising the timeouts instead would have hidden it, which is the same call the config
+    # makes. The config keeps workers: 2 for local and the unsharded nightly runs.
+    #
     # Each shard writes its own evidence shards and the `multiplayer-gate` job below merges them:
     # check-verify-multiplayer.mjs already merged per-worker shards, so per-runner shards need no
     # new merge logic, only the artifact round trip.
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5, 6]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -181,7 +192,7 @@ jobs:
       # full matches across departures, a replacement and a host transfer) was 7.3m of a 21.9m
       # suite on its own. The nightly `multiplayer-all-engines` job runs `verify:multiplayer` with
       # no invert, so both still run daily on all three engines.
-      - run: npm run test:multiplayer:chromium -- --shard=${{ matrix.shard }}/3
+      - run: npm run test:multiplayer:chromium -- --shard=${{ matrix.shard }}/6 --workers=1
       # The gate runs once, after every shard, so the evidence has to survive the runner. Staged
       # into one directory first: upload-artifact roots the artifact at the common prefix of the
       # files it finds, and a shard that happened to produce only one of the two parts directories

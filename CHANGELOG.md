@@ -19,10 +19,13 @@ and those remain readable in git history.
 
 ### Changes
 
-- **The PR multiplayer gate runs on three runners instead of one.** It was 22m
-  of a 23m CI run — 44 tests, 43.8 worker-minutes — and the config already
+- **The PR multiplayer gate runs on six runners instead of one.** It was 22m of
+  a 23m CI run — 44 tests, 43.8 worker-minutes — and the config already
   documents why more workers on one 4-core runner made it worse, so the
-  parallelism now comes from `--shard=N/3` across three jobs. A separate
+  parallelism now comes from `--shard=N/6 --workers=1` across six jobs. One
+  worker per shard, not the config's two: Playwright shards by test count rather
+  than duration, and a shard that draws only heavy tests runs every one of them
+  at about twice its unsharded time. A separate
   `Multiplayer verification` job merges every shard's evidence and runs
   `check-verify-multiplayer.mjs` once, which needed no new merge logic: the gate
   already merged per-worker shards. No coverage changes.
