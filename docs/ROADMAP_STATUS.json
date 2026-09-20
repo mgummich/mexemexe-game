@@ -3,10 +3,10 @@
  "updated": "2026-09-20",
  "current": {
   "wave": "9B",
-  "phase": "79 — Security Threat Model",
+  "phase": "80 — Security Hardening",
   "status": "NOT_STARTED"
  },
- "head": "664febe",
+ "head": "0cd0301",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1054,6 +1054,39 @@
      "owner": "Phase 80 — Security Hardening (re-examine under the threat model)"
     }
    ]
+  },
+  {
+   "phase": "79 — Security Threat Model",
+   "wave": "9B",
+   "status": "PASS",
+   "result": "Security facts existed but were scattered across MULTIPLAYER §9, OBSERVABILITY_PRIVACY, OPERATIONS and ARCHITECTURE, with no statement of assets, boundaries or priorities. Built the model from the code and found two open deployment gaps nobody had written down.",
+   "changed": [
+    "docs/THREAT_MODEL.md — new canonical doc: 6 assets, the trust-boundary map, 20 prioritized threats each pointing at the code/doc that owns its mitigation, and an explicit out-of-scope list",
+    "AGENTS.md, docs/index.md, README.md, mkdocs.yml — registered"
+   ],
+   "acceptance": "assets, boundaries and threats explicit (TM-01..TM-20); prioritized with the repo's own P0-P3 scale; every mitigation names a concrete owner file or an ops setting; 3 threats recorded as deliberately unmitigated with the reason",
+   "findings": [
+    {
+     "id": "TM-15",
+     "p": "P2",
+     "note": "No security headers on the static host (no CSP, nosniff, Referrer-Policy, frame policy) — nginx defaults only",
+     "owner": "Phase 80"
+    },
+    {
+     "id": "TM-16",
+     "p": "P2",
+     "note": "Neither container image declares USER; the server runs as root although it needs no privileged port and writes nothing",
+     "owner": "Phase 80"
+    }
+   ],
+   "verification": [
+    "Model built against the code, not the docs: re-read parseClientMessage, RoomManager seat/turn checks, token endpoint pairing, logger redaction, nginx.conf and the Dockerfile stages",
+    "no code changed, so no gate applies"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no generic checklist rows; every threat is one this product can actually meet, and the two new findings came from reading the deployment files rather than from a template"
+   }
   }
  ],
  "riskClosures": [

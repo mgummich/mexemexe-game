@@ -53,6 +53,7 @@ nav:
       - Operations: OPERATIONS.md
       - Observability & privacy: OBSERVABILITY_PRIVACY.md
       - Performance budgets: PERFORMANCE.md
+      - Threat model: THREAT_MODEL.md
   - Playtest guide: PLAYTEST_GUIDE.md
   - History:
       - Changelog: CHANGELOG.md
