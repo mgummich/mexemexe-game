@@ -5,6 +5,25 @@
 - Node 22+ (CI runs 22) and npm.
 - Playwright browsers, once per clone, if you want to run the e2e suites:
   `npx playwright install chromium firefox webkit`.
+- **macOS 26 and newer: Firefox needs `CFFIXED_USER_HOME` set.** Playwright's
+  bundled Firefox resolves its app-data directory to
+  `~/Library/Application Support/Firefox` — the same one a real Firefox install
+  uses — and macOS TCC-protects it. Firefox reads that registry before it looks
+  at the `-profile` Playwright hands it, decides the profile is missing, and
+  never finishes launching: newer builds exit with `Could not find profile
+  folder.`, older ones sit on an invisible "Profile Missing" dialog until
+  `browserType.launch: Timeout 180000ms exceeded`. Confirm with
+  `ls ~/Library/Application\ Support/Firefox/` returning `Operation not
+  permitted`, then point CoreFoundation's home at a scratch directory:
+
+  ```bash
+  CFFIXED_USER_HOME="$(mktemp -d)" npx playwright test --project=firefox
+  ```
+
+  Launch goes from a 180s timeout to about 1.5 seconds. Node, npm and the
+  `~/Library/Caches/ms-playwright` download cache still use the real `$HOME`, so
+  nothing else is affected. Upstream:
+  [microsoft/playwright#42768](https://github.com/microsoft/playwright/issues/42768).
 
 ## Install and run
 
