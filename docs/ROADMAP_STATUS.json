@@ -2,11 +2,11 @@
  "roadmapPath": "MexeMexe_Remaining_Roadmap_Detailed.md",
  "updated": "2026-09-20",
  "current": {
-  "wave": "9A",
-  "phase": "78 — Dependency & Bundle Governance",
+  "wave": "9B",
+  "phase": "79 — Security Threat Model",
   "status": "NOT_STARTED"
  },
- "head": "eb2046d",
+ "head": "664febe",
  "phases": [
   {
    "phase": "46 — Strategic Planning",
@@ -1018,6 +1018,40 @@
      "id": "P2-residual-heap-drift",
      "note": "~100 kB and ~4 DOM-level listeners per match cycle remain, inside Phaser/WebAudio rather than product code. Bounded: ~10 MB per 100-match session against an 80 MB budget, with DOM nodes and scene objects flat.",
      "owner": "Phase 101 — Final Performance Gate"
+    }
+   ]
+  },
+  {
+   "phase": "78 — Dependency & Bundle Governance",
+   "wave": "9A",
+   "status": "PASS",
+   "result": "Inventory is already lean — 3 runtime dependencies, 10 dev, 0 advisories, no duplicate that ships. Nothing to delete. What was missing was governance: no continuous advisory check anywhere, and no written reason for the one runtime dependency that is a build concern (tsx in the server image).",
+   "changed": [
+    ".github/workflows/nightly.yml — new dependency-audit job: runtime deps at --audit-level=moderate, dev tooling at high, npm outdated reported without failing",
+    "docs/DEVELOPMENT.md — §Dependencies and bundle cost: the three runtime deps with purpose/cost/replacement, the dev-tooling and lockfile counts, the explicit tsx-in-production trade with the conditions that would reverse it, and six governance rules"
+   ],
+   "acceptance": "dependencies have a clear stated purpose (table); no waste or shipped duplicates found (10 duplicate versions, all dev-only transitives; 33 of 391 lock entries are non-dev and mostly esbuild platform binaries); bundle cost understood (phaser 347 kB gzip = 80% of shipped JS, measured in Phase 75/76); high-risk runtime dependency addressed by an explicit decision with revisit conditions rather than churn",
+   "verification": [
+    "npm audit --omit=dev --audit-level=moderate (0 vulnerabilities, exit 0)",
+    "npm audit --audit-level=high (exit 0)",
+    "npm outdated: 5 dev patch/minor bumps available, typescript 7 major available — deliberately not taken here, per the 'updates land as their own change' rule",
+    "npm run lint (exit 0)",
+    "nightly.yml parses as YAML"
+   ],
+   "critic": {
+    "round": 1,
+    "result": "CRITIC PASS — no dependency was replaced for taste, and the audit job is nightly so it cannot fail a review for an advisory published while the review was open"
+   },
+   "deferredRisks": [
+    {
+     "id": "P3-dev-dep-updates-pending",
+     "note": "eslint, vite, vitest, @vitest/coverage-v8 and @types/node have patch/minor updates; typescript has a major. Left for their own change with the gates each affects.",
+     "owner": "Phase 96 — Developer Experience"
+    },
+    {
+     "id": "P2-tsx-in-runtime-image",
+     "note": "The production server image contains tsx + esbuild to run TypeScript directly. Deliberate, documented, with named revisit conditions.",
+     "owner": "Phase 80 — Security Hardening (re-examine under the threat model)"
     }
    ]
   }

@@ -72,6 +72,54 @@ so a capture does not have to click through the settings panel.
 `node scripts/gen-sfx.mjs` regenerates the synthesized sound effects; there is
 no npm alias for it.
 
+## Dependencies and bundle cost
+
+Three runtime dependencies. Each one is here for a reason that can be stated in
+a sentence, and the cost of each is measured rather than assumed
+([PERFORMANCE.md](PERFORMANCE.md)):
+
+| Dependency | Why | Cost | What would replace it |
+|---|---|---|---|
+| `phaser` | the game renders a canvas scene graph with input, tweens, audio and asset loading; all of it is used | 347 kB gzip — 80 % of the shipped JS | nothing realistic: this *is* the presentation layer |
+| `ws` | the room server needs a WebSocket implementation; Node has none for servers | server-side only, never shipped to a browser | Node's built-in server WebSocket, if it ever stabilises |
+| `tsx` | runs `server/index.ts` directly, so the server ships as the TypeScript it is reviewed as | server image only: `tsx` + `esbuild` and its platform binary | a compile step in the Dockerfile's server stage and plain `node` — see the note below |
+
+Everything else is dev tooling (10 direct packages: Vite, Vitest, Playwright,
+ESLint, TypeScript, Stryker, and their types). The lockfile has 391 entries, 358
+of them dev-only; of the 33 that are not, most are `esbuild`'s per-platform
+binaries, and exactly one is a transitive library (`eventemitter3`, via Phaser).
+Ten packages exist at two versions in the lockfile — all of them dev-only
+transitives (Babel, ESLint, ajv) that never reach the bundle or the server image.
+
+**`tsx` in production is a deliberate trade.** Running TypeScript directly keeps
+the deployed server identical to the reviewed source, with no build artefact to
+drift, and the server image is not player-facing. The cost is a transpiler and
+`esbuild` inside the runtime image. Revisit if any of these becomes true: the
+server image is exposed to untrusted input beyond the WebSocket boundary, startup
+time starts to matter, or `tsx`/`esbuild` acquires an advisory that has no patch.
+It is a one-stage Dockerfile change plus `OPERATIONS.md`, not an architecture
+change.
+
+### Rules
+
+- **A new runtime dependency needs a sentence in the table above.** If the
+  sentence is "it would be convenient", the answer is no — see the YAGNI ladder
+  in `AGENTS.md` (rung 7 is the last rung, not the first).
+- **A dev dependency still costs.** It runs in CI, on every contributor's
+  machine, and in the supply chain that produces the build.
+- **The lockfile is committed and CI installs with `npm ci`.** Every job, every
+  workflow: a resolved tree is part of what is being tested.
+- **Advisories are checked nightly**, not per PR (`.github/workflows/nightly.yml`,
+  `dependency-audit`): runtime dependencies at `--audit-level=moderate`, dev
+  tooling at `high`, and `npm outdated` reported without failing. A gate that
+  fails for reasons unrelated to the diff in front of a reviewer gets ignored.
+- **Updates land as their own change**, with the gates the dependency affects —
+  a Vite bump runs the build and the browser suites, a Vitest bump runs the unit
+  suites. Majors are never bundled with feature work.
+- **Duplicates are only a problem where they ship.** Dev-only duplicate versions
+  are npm doing its job; a duplicate inside `dist/` or the server image is a
+  defect.
+
 ## Reproducing a bug from a replay
 
 A replay is seed + ordered actions (`src/game-state/replay.ts`). It runs in

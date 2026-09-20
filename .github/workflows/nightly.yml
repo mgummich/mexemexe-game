@@ -36,6 +36,27 @@ jobs:
       # clock this job has and a PR does not.
       - run: MEXE_SOAK=1 npx vitest run tests/server/session-soak.integration.test.ts
 
+  dependency-audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    # Nightly, not per-PR: a new advisory published mid-review is not the reviewer's problem, and a
+    # gate that fails for reasons unrelated to the diff gets ignored. Runtime deps are audited at a
+    # lower threshold than dev tooling, because only they reach a player or a served room.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Runtime dependencies (phaser, tsx, ws)
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Dev tooling
+        run: npm audit --audit-level=high
+      - name: Report anything outdated (never fails the job)
+        run: npm outdated || true
+
   flake-detection:
     name: WebKit touch flake detection
     runs-on: ubuntu-latest
