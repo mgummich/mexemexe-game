@@ -15,6 +15,19 @@ import path from 'node:path';
 
 export const OUT_DIR = 'docs/screenshots';
 
+/**
+ * Stretches a wait for the traced nightly run (`MEXE_TRACE=1`, nightly's `multiplayer-traced`
+ * job). Tracing is *meant* to slow frame processing — that is how it loses races a fast machine
+ * always wins — so a budget sized for the untraced run is not a budget at all once it is on: the
+ * job was red on 2026-09-20 with `page.waitForFunction: Timeout 15000ms exceeded` where the
+ * untraced run of the same test passes comfortably.
+ *
+ * ponytail: applied only at the waits the traced run has actually blown, not to all ~210 explicit
+ * timeouts in this directory. If a later traced run times out somewhere new, wrap that wait too
+ * rather than raising every budget on the chance it helps.
+ */
+export const tracedMs = (ms: number): number => (process.env.MEXE_TRACE ? ms * 3 : ms);
+
 export interface TestServer {
   url: string;
   stdout: string[];

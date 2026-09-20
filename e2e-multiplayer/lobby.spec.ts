@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   OUT_DIR, consoleErrorsOf, freePort, newClient, newPhoneClient, shot, startTestServer, toScreen, type TestServer,
-  attachClientContexts,
+  attachClientContexts, tracedMs,
 } from './harness';
 
 /**
@@ -487,7 +487,9 @@ test('LB-13/LB-14/LB-15: host transfer is deterministic, gap-safe, and a drop is
     await p.waitForFunction(
       () => window.__MEXE__.online!.lobbySeats!().find((r) => r.seat === 0)?.status === 'offline',
       undefined,
-      { timeout: 15_000 },
+      // Server-side disconnect detection plus the client rendering the broadcast: comfortably
+      // under 15s untraced, over it under tracing.
+      { timeout: tracedMs(15_000) },
     );
     expect((await rows(p)).find((r) => r.host && r.status !== 'empty')?.seat).toBe(0);
   }

@@ -324,7 +324,11 @@ jobs:
       # why this job is sharded one-test-per-runner too: tracing is meant to lose races by
       # slowing frame processing, not by starving the runner of cores. It was red every night
       # from 2026-09-16 with the same `page.waitForFunction` timeouts as the job above.
-      - run: MEXE_TRACE=1 npx playwright test -c playwright.multiplayer.config.ts --project=chromium --shard=${{ matrix.shard }}/6 --workers=1
+      # --timeout raises the per-test budget for this run only: playwright.multiplayer.config.ts
+      # sets 180s, sized for the untraced suite, and LB-17, LB-18 and OD-28/OD-29 all landed at
+      # 3.0-3.1m under tracing on 2026-09-20. Tracing is supposed to cost wall clock; the budget
+      # has to say so rather than turning every slow-but-correct traced test red.
+      - run: MEXE_TRACE=1 npx playwright test -c playwright.multiplayer.config.ts --project=chromium --shard=${{ matrix.shard }}/6 --workers=1 --timeout=540000
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
