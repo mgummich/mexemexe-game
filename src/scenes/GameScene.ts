@@ -1711,6 +1711,9 @@ export class GameScene extends Phaser.Scene {
 
     // The turn clock is not an online-only widget any more: a local Blitz match runs the same
     // readout off its own deadline. Built before the online block so both paths share one ticker.
+    // Rebuilt with the rest of the static UI: buildStaticUi re-runs on every orientation flip, and
+    // a Tempo row left behind would sit at the previous layout's coordinates (D6).
+    if (this.tempoClockMs > 0) this.renderTempoButtons();
     if (this.online || this.blitzMs > 0 || this.tempoClockMs > 0) {
       const slot = this.online ? this.r.onlineTimer : this.r.speedClock;
       this.onlineTimerText = label(this, slot.x, slot.y, '', this.online ? 8 : 10, TEXT.muted)

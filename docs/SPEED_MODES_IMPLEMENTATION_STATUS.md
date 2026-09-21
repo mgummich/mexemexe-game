@@ -53,7 +53,20 @@ DEFERRED
 | 29 — Focused Speed QA Matrix | COMPLETE | Matrix in `docs/TESTING.md`. Added a two-client Time Attack e2e (clock agreement + double-pressed panic). Gates: verify, verify:multiplayer 94 passed, 1207 unit tests. Gaps stated: simultaneous windows (deferred), AI risk tolerance (no AI holds the resources), timed-match iOS is manual. |
 | 30 — Balancing and Telemetry | COMPLETE | All tunables centralised in `src/game-state/timing.ts`; evidence rides the existing local play log (`speed:*`, `tempo:spend`), no analytics platform. Numbers marked provisional, pending playtest. |
 | 31 — Documentation Synchronization | COMPLETE | GAME_RULES, MULTIPLAYER §7b, ARCHITECTURE (module + protocol version), TESTING (QA matrix), OPERATIONS (the “local play is never on a clock” line was stale), ROADMAP, AGENTS (open spec). |
-| 32 — Release Hardening and Final Acceptance | NOT_STARTED | |
+| 32 — Release Hardening and Final Acceptance | COMPLETE | Audit table in the spec; one real fix (the Tempo row survived an orientation flip at stale coordinates). All gates green: verify, verify:multiplayer 94, verify:pwa 14, verify:cross 106, 1207 unit tests, lint. |
+
+## Where the work landed
+
+- design, contracts and every deferral's reasoning: `docs/specs/speed-modes-timing.md`
+- the timing domain itself: `src/game-state/timing.ts` (with `server/speed-rules.ts` for room policy)
+- player-facing rules: `docs/GAME_RULES.md`; room terms and the wire: `docs/MULTIPLAYER.md` §7b
+- test coverage and its gaps: `docs/TESTING.md`
+
+Deferred, each under a clause its own phase provides: Simultaneous Start (18), Advanced Tempo
+Powers (25), Tempo Sync (26). Partial, with the remainder named: Shared Timing Foundation (2, the
+per-seat resources landed with the phases that introduced them), Time Attack Presets (15, no
+named-difficulty lobby UI), Speed AI (28, no risk tolerance because no AI seat holds the
+resources).
 
 ## Phase detail template
 

@@ -392,3 +392,29 @@ analytics platform is explicitly out of scope for this phase.
 **All Speed numbers are provisional and marked as needing playtest evidence.** Nothing here has
 been balanced against real play: the ladders are shaped (shorter is harder, assistance thins out),
 and the individual values are first guesses.
+
+## Release hardening audit (Phase 32)
+
+| Checked | Finding |
+| --- | --- |
+| Races | Online timing is decided by the server's own `now` against `turnStartedAt`/`budgetMs`; duplicate protection is the existing `rev` check. The deadline millisecond belongs to the timeout, in both `expired` and the readout. |
+| Duplicate timers | One 250 ms ticker for every mode, removed in `resetForNewMatch` and before each rebuild in `buildStaticUi`. No per-room `setTimeout` on the server — the sweep is the only clock. |
+| Leaked listeners | The Tempo row is destroyed and rebuilt together, including on an orientation flip (fixed here: it previously stayed at the old layout's coordinates). |
+| Stale state | Per-match timing state is cleared in `resetForNewMatch`, not left to field initialisation; room clocks, panic budgets and debt are dealt in `startGame` and cleared in the rematch recycle. |
+| Negative clocks | `msLeft`, `spendClock` and `borrowTime` all floor at zero; debt is a separate non-negative number, and a flagged clock earns nothing. |
+| Duplicate ability requests | Every grant is a domain function that refuses the second call. Server-side, a press from a non-active seat, a spent budget or a room that grants none is a silent no-op. |
+| Stale previous-match requests | `use_panic`/`use_freeze` are refused unless the sender is the active seat of the room's current match; a recycled room has no match to act on. |
+| Rematch reset | Covered by tests on both sides: fresh clocks and fresh Panic Buttons server-side, `NEW_TEMPO`/`NO_ASSISTS` client-side. |
+| Reconnect | Timing rides on the frame (`turnMsLeft`, `clocksMs`, `panicLeft`, `freezeLeft`, `debtMs`); nothing is persisted or reconstructed, including mid-Last-Breath. |
+| Desync | The new fields are presentation state and stay out of `stateHash`, so they cannot cause a resync — the same rule `missedTurns` follows. |
+| Serialization | All new wire fields are plain numbers and number arrays, clamped at the boundary; a named preset accepts only an assist *off* switch. |
+| Accessibility | Every Speed signal is text or size, never colour alone; the haptic and the tick sound are each a third channel; Adrenaline escalates by size and volume, not motion. |
+| Mobile layout | Blitz and Tempo HUDs captured in portrait and landscape; the Tempo row lives in the top bar because the band below carries the banner, last-move line and notice. |
+| Localization | Every new string exists in pt-BR and en-US (`tests/i18n.test.ts`). |
+| Performance | `npm run verify` fps readings unchanged on every captured scene. |
+| Logs and errors | New play-log events carry counts and durations only; `tests/no-telemetry.test.ts` passes. |
+| Client trust boundaries | No new boundary: the two new messages are ordinary client input, validated at the wire, refused by seat and budget, and covered by the existing per-connection flood guard (TM-07). |
+
+Final verification: `npm run verify`, `npm run verify:multiplayer` (94 passed, evidence checker OK
+on chromium/firefox/webkit), `npm run verify:pwa` (14), `npm run verify:cross` (106), `npm run
+test` (1207), `npm run lint`.

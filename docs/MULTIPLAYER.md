@@ -465,6 +465,8 @@ submission that caused it.
 | `ready` | `ready: boolean` | idempotent |
 | `set_room_settings` | `settings` | seat-0 host only, lobby only; normalized at the parser *and* again in the room manager, so an out-of-range value is clamped rather than applied |
 | `mexe_started` | — | claims this turn's one-off Mexe extension; active seat only, granted at most once per turn |
+| `use_panic` | — | spends one Panic Button; active seat only, refused when the budget is spent or the room grants none, silent either way |
+| `use_freeze` | — | spends one Freeze; same refusals, and the frozen span is credited to the seat's personal clock so the turn costs it nothing |
 | `start_game` | — | host seat only; requires every occupied 2–4P seat ready and connected. A gap between occupied seats is dealt, not refused (§3f) |
 | `submit_turn` | `rev`, `melds: [{ id, cardIds[] }]` | card **ids only** |
 | `draw_end_turn` | `rev` | |
