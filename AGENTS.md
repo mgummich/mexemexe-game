@@ -21,7 +21,7 @@ in code comments. Link to them instead.**
 | Assets | `docs/ASSETS.md` |
 | Visual quality, PixelLab | `docs/ART_DIRECTION.md` |
 | Current roadmap | `docs/ROADMAP.md` |
-| Active feature specs | `docs/specs/` (created on demand; none open) |
+| Active feature specs | `docs/specs/speed-modes-timing.md` (Speed Modes: Blitz, Time Attack, Tempo) |
 | Scripts, dependencies, version | `package.json` |
 
 ## Priority

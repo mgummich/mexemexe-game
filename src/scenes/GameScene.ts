@@ -21,10 +21,9 @@ import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
 import {
   assistStateFor, BLITZ_PRESETS, enterLastBreath, heatLevel, NEW_TEMPO, NO_ASSISTS, NO_RHYTHM,
-  noteTempoTurn, noteTurnTaken, noteTurnUsed, spendClock, startTurn, TEMPO_DEFAULTS, tempoCost,
-  usePanic, useTempo,
-  type AssistState, type Assists, type HeatConfig, type Rhythm, type TempoAbility, type TempoState,
-  type TurnClock,
+  noteTempoTurn, noteTurnTaken, noteTurnUsed, spendClock, startTurn, TEMPO_DEFAULTS, TEMPO_HEAT,
+  TEMPO_START_CLOCK_MS, TEMPO_WARN_MS, tempoCost, usePanic, useTempo,
+  type AssistState, type Assists, type Rhythm, type TempoAbility, type TempoState, type TurnClock,
 } from '../game-state/timing';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
 import { OnlineSession } from '../net/online-session';
@@ -143,12 +142,6 @@ const RESET_CONFIRM_EDITS = 4;
 /** How long a confirm-armed Reset stays armed before it quietly disarms again. */
 const RESET_ARM_MS = 3000;
 
-/** Tempo's own numbers. The clock is survival and nothing refills it by itself — Recover is the
- * increment, and it has to be earned (docs/specs/speed-modes-timing.md). */
-const TEMPO_START_CLOCK_MS = 90_000;
-const TEMPO_WARN_MS = 20_000;
-/** Heat for a Tempo match: three close calls (or three surging turns) overheat a seat. */
-const TEMPO_HEAT: HeatConfig = { perCloseCallMs: 34, coolPerCalmTurn: 12, overheatAt: 100, cooldownTurns: 2 };
 
 /** What each joker in a resolved meld is standing in for, keyed by card id, for the hint badge. */
 function jokerLabelsOf(assignments: readonly JokerAssignment[]): Map<string, string> {
@@ -1828,6 +1821,7 @@ export class GameScene extends Phaser.Scene {
           this.tempoClockMs = saved.clockMs;
           this.turnDeadlineAt = Date.now() + saved.clockMs;
           this.lastBreathTaken = true;
+          playlog.record('speed:lastBreath', { mode: 'tempo' });
           this.setOnlineNotice(t('speed.lastBreath'));
           this.time.delayedCall(2000, () => this.setOnlineNotice(''));
           haptic('bump');
@@ -1844,6 +1838,7 @@ export class GameScene extends Phaser.Scene {
       if (breath.entered) {
         this.turnDeadlineAt = Date.now() + this.assists.lastBreathMs;
         this.lastBreathTaken = true;
+        playlog.record('speed:lastBreath', { mode: 'blitz' });
         this.setOnlineNotice(t('speed.lastBreath'));
         this.time.delayedCall(2000, () => this.setOnlineNotice(''));
         haptic('bump');
@@ -1852,6 +1847,7 @@ export class GameScene extends Phaser.Scene {
       // Fold the timeout in before clearing the deadline: a turn the clock took is exactly the
       // turn that breaks the streak, and a cleared deadline would make the fold a no-op.
       this.noteRhythm();
+      playlog.record('speed:timeout', { budgetMs: this.turnBudgetMs, streak: this.rhythm.streak });
       this.turnDeadlineAt = null;
       playSfx(this, 'sfx-invalid', 0.3);
       this.dispatch({ type: 'drawAndEndTurn', actorIndex: this.state().activePlayerIndex });
@@ -1914,6 +1910,7 @@ export class GameScene extends Phaser.Scene {
     const result = usePanic(this.localClock(), this.assistState, this.assists);
     if (!result.granted) return;
     this.assistState = result.state;
+    playlog.record('speed:panic', { leftMs: Math.max(0, this.turnDeadlineAt - Date.now()) });
     this.turnDeadlineAt += this.assists.panicMs;
     this.turnBudgetMs += this.assists.panicMs;
     playSfx(this, 'sfx-feito', 0.4);
@@ -2019,6 +2016,9 @@ export class GameScene extends Phaser.Scene {
     }
     this.tempo = result.state;
     this.tempoClockMs += result.clockMs;
+    // Local evidence only: the session play log the player can export, never an upload
+    // (tests/no-telemetry.test.ts). Counts and durations, no identifiers.
+    playlog.record('tempo:spend', { ability, tempoLeft: result.state.tempo, clockMs: this.tempoClockMs });
     if (this.turnDeadlineAt !== null) this.turnDeadlineAt += result.turnMs + (ability === 'recover' ? result.clockMs : 0);
     playSfx(this, 'sfx-feito', 0.4);
     haptic('bump');

@@ -376,3 +376,19 @@ Deliberately not built: per-personality risk tolerance over Panic, Freeze, debt,
 and Heat. Those are choices only a seat that *holds* those resources can make, and today no AI seat
 does — the assists and Tempo are the human seat's in every mode that has them. It becomes real work
 the day an AI plays Tempo, and speculative work before that.
+
+## Balancing and evidence (Phase 30)
+
+Every tunable number lives in `src/game-state/timing.ts` — the Blitz and Time Attack preset tables,
+`TEMPO_DEFAULTS`, `TEMPO_HEAT`, the rhythm fraction, the critical fraction — so tuning is one file
+and a playtest report can point at it. The wire's own numbers stay in `TIMER_PRESETS`, which is the
+only place a room's terms may come from.
+
+Evidence is the existing session play log and nothing else: `speed:timeout`, `speed:panic`,
+`speed:lastBreath` and `tempo:spend` join the events it already records. Counts and durations, no
+identifiers, no upload path — `tests/no-telemetry.test.ts` fails on any of those, and building an
+analytics platform is explicitly out of scope for this phase.
+
+**All Speed numbers are provisional and marked as needing playtest evidence.** Nothing here has
+been balanced against real play: the ladders are shaped (shorter is harder, assistance thins out),
+and the individual values are first guesses.

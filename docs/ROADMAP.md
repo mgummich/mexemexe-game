@@ -27,7 +27,17 @@ release, in [CHANGELOG.md](CHANGELOG.md). This document does not repeat it.
 
 ## In progress
 
-Nothing is mid-flight. The repository is at a released, green state.
+**Speed Modes** — MexeMexe under time pressure, on one shared timing domain
+(`src/game-state/timing.ts`). Shipped so far: **Blitz** (a fixed per-turn clock,
+online as a lobby preset and offline with four difficulties plus custom),
+**Time Attack** (server-owned personal clocks with an increment, Freeze and
+Time Debt in a custom room) and **Tempo** (a local mode where the clock is
+survival, Tempo is power and Heat is risk). Perfect Rhythm and Adrenaline are
+native to every timed mode and are not settings; the Panic Button and Last
+Breath are always individually disableable. Simultaneous Start, Tempo Sync and
+the advanced Tempo powers are deferred with reasons in
+[specs/speed-modes-timing.md](specs/speed-modes-timing.md). **Every Speed number
+is provisional and awaiting playtest evidence.**
 
 ## Planned next
 

@@ -377,6 +377,13 @@ export interface TempoConfig {
   readonly surgeTurns: number;
 }
 
+/** The local Tempo match's own numbers, here with the rest of the balancing rather than in the
+ * scene that spends them: one file to tune, and one file a playtest report can point at. */
+export const TEMPO_START_CLOCK_MS = 90_000;
+export const TEMPO_WARN_MS = 20_000;
+/** Three close calls (or three surging turns) overheat a seat. */
+export const TEMPO_HEAT: HeatConfig = { perCloseCallMs: 34, coolPerCalmTurn: 12, overheatAt: 100, cooldownTurns: 2 };
+
 export const TEMPO_DEFAULTS: TempoConfig = {
   gainInRhythm: 2, gainPerPlay: 1, gainCloseCall: 2, max: 12,
   freezeCost: 3, freezeMs: 8_000,
