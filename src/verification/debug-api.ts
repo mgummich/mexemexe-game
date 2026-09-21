@@ -83,6 +83,11 @@ export interface MexeOnlineDebugApi {
   /** Verification-only: ms left on the active seat's turn as of the last state_sync, or null in
    * a room with no timer. Rendered, never authoritative. */
   turnMsLeft: () => number | null;
+  /** Verification-only: the Speed resources this seat can see — personal clocks, panic budget,
+   * freezes and debt, exactly as the last server frame reported them. */
+  speed: () => { clocksMs: number[]; panicLeft: number[]; freezeLeft: number[]; debtMs: number[] };
+  /** Verification-only: presses the Panic Button. The server still decides whether it lands. */
+  usePanic: () => void;
   /** Verification-only: where the keyboard focus ring is and how many buttons this screen has.
    * `index` is -1 until the keyboard has been used. Canvas-only UI has no DOM focus to query. */
   focus: () => { index: number; count: number; label: string };

@@ -50,7 +50,7 @@ DEFERRED
 | 26 — Tempo Sync | DEFERRED | Depends on Phase 18, which is deferred: simultaneous resolution is unproven, and the phase says to enable Sync only if it is. |
 | 27 — Matchmaking, Lobby, and Ruleset Policy | COMPLETE | Casual queue stays on one preset; Speed rooms are private/custom only, experimental parts behind CUSTOM. Lobby summary states clock/increment/assists and never lists Rhythm or Adrenaline. |
 | 28 — Speed AI | PARTIAL | Pace scales with the Speed budget; search budget stays a trial count, so strength is unchanged and nothing leaks. Risk-tolerance over Panic/Freeze/Tempo is unbuilt: no AI seat holds those resources yet. |
-| 29 — Focused Speed QA Matrix | NOT_STARTED | |
+| 29 — Focused Speed QA Matrix | COMPLETE | Matrix in `docs/TESTING.md`. Added a two-client Time Attack e2e (clock agreement + double-pressed panic). Gates: verify, verify:multiplayer 94 passed, 1207 unit tests. Gaps stated: simultaneous windows (deferred), AI risk tolerance (no AI holds the resources), timed-match iOS is manual. |
 | 30 — Balancing and Telemetry | NOT_STARTED | |
 | 31 — Documentation Synchronization | NOT_STARTED | |
 | 32 — Release Hardening and Final Acceptance | NOT_STARTED | |

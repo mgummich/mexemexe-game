@@ -2002,3 +2002,63 @@ test('CH-05 @chaos: a rejection that arrives after the board moved on is ignored
   for (const p of [host, guest]) expect(consoleErrorsOf(p)).toEqual([]);
   for (const p of [host, guest]) await p.context().close();
 });
+
+// Phase 29 of the Speed Modes roadmap, real-multi-client half: Time Attack across two browsers.
+// What a server unit test cannot show is that both clients agree about a clock that is being spent
+// by only one of them, and that a Panic Button pressed on one is visible on the other.
+test('time attack @race: two clients agree on personal clocks, and a panic lands once', async ({ browser }) => {
+  const screenshots: string[] = [];
+  const pageA = await newClient(browser);
+  const pageB = await newClient(browser);
+  await pageA.evaluate(() => window.__MEXE__.online!.createRoom('A'));
+  await pageA.waitForFunction(() => window.__MEXE__.online?.code() !== null, undefined, { timeout: 10_000 });
+  const code = await pageA.evaluate(() => window.__MEXE__.online!.code());
+  await pageB.evaluate((c) => window.__MEXE__.online!.joinRoom(c!, 'B'), code);
+  await pageB.waitForFunction(() => window.__MEXE__.online?.seat() === 1, undefined, { timeout: 10_000 });
+
+  await pageA.evaluate(() => window.__MEXE__.online!.setRoomSettings({ timerMode: 'timeattack' } as never));
+  for (const p of [pageA, pageB]) {
+    await p.waitForFunction(() => window.__MEXE__.online!.roomSettings()?.timerMode === 'timeattack', undefined, { timeout: 10_000 });
+  }
+  for (const p of [pageA, pageB]) await p.evaluate(() => window.__MEXE__.online!.setReady(true));
+  await pageA.waitForFunction(
+    () => window.__MEXE__.online!.players().length === 2 && window.__MEXE__.online!.players().every((pl) => pl.ready),
+    undefined,
+    { timeout: 10_000 },
+  );
+  await pageA.evaluate(() => window.__MEXE__.online!.startGame());
+  for (const p of [pageA, pageB]) {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game', undefined, { timeout: 10_000 });
+  }
+
+  // Both seats are dealt the same clock, and both clients are told both clocks.
+  for (const p of [pageA, pageB]) {
+    await p.waitForFunction(() => window.__MEXE__.online!.speed().clocksMs.length === 2, undefined, { timeout: 10_000 });
+    expect(await p.evaluate(() => window.__MEXE__.online!.speed().clocksMs)).toEqual([60_000, 60_000]);
+  }
+
+  // Panic: pressed twice, granted once — the budget is the server's, not the button's.
+  const aIsActive = await pageA.evaluate(() => (window.__MEXE__.online!.localSeat?.() ?? 0) === window.__MEXE__.state!()!.activePlayerIndex);
+  const active = aIsActive
+    ? pageA
+    : pageB;
+  const waiting = active === pageA ? pageB : pageA;
+  const seat = await active.evaluate(() => window.__MEXE__.online!.localSeat?.() ?? 0);
+  await active.evaluate(() => {
+    window.__MEXE__.online!.usePanic();
+    window.__MEXE__.online!.usePanic();
+  });
+  for (const p of [active, waiting]) {
+    await p.waitForFunction((s) => window.__MEXE__.online!.speed().panicLeft[s] === 0, seat, { timeout: 10_000 });
+  }
+  // The extension landed on the personal clock too, and the seat that did not press still has its own.
+  expect(await waiting.evaluate((s: number) => window.__MEXE__.online!.speed().clocksMs[s] ?? 0, seat)).toBeGreaterThan(60_000);
+  expect(await waiting.evaluate((s: number) => window.__MEXE__.online!.speed().panicLeft[1 - s] ?? 0, seat)).toBe(1);
+  await shot({ active, waiting }, 'time-attack-clocks', screenshots);
+
+  expect(await pageA.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  expect(await pageB.evaluate(() => window.__MEXE__.errors)).toEqual([]);
+  appendLog({ screenshots });
+  await pageA.context().close();
+  await pageB.context().close();
+});
