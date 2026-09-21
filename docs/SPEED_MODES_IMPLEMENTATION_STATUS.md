@@ -48,8 +48,8 @@ DEFERRED
 | 24 — Tempo Survival Systems | COMPLETE | Recover is Tempo’s Panic (Tempo-to-Clock); Last Breath costs Tempo, once per turn. No separate assists to overwhelm the three numbers. |
 | 25 — Advanced Tempo Powers | DEFERRED | Explicitly permitted by the phase: Focus, Tempo Shield, alternate Surge and Time Domains are all variations on v1’s multipliers and answer no open question. Revisit after play. |
 | 26 — Tempo Sync | DEFERRED | Depends on Phase 18, which is deferred: simultaneous resolution is unproven, and the phase says to enable Sync only if it is. |
-| 27 — Matchmaking, Lobby, and Ruleset Policy | NOT_STARTED | |
-| 28 — Speed AI | NOT_STARTED | |
+| 27 — Matchmaking, Lobby, and Ruleset Policy | COMPLETE | Casual queue stays on one preset; Speed rooms are private/custom only, experimental parts behind CUSTOM. Lobby summary states clock/increment/assists and never lists Rhythm or Adrenaline. |
+| 28 — Speed AI | PARTIAL | Pace scales with the Speed budget; search budget stays a trial count, so strength is unchanged and nothing leaks. Risk-tolerance over Panic/Freeze/Tempo is unbuilt: no AI seat holds those resources yet. |
 | 29 — Focused Speed QA Matrix | NOT_STARTED | |
 | 30 — Balancing and Telemetry | NOT_STARTED | |
 | 31 — Documentation Synchronization | NOT_STARTED | |

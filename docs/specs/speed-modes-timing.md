@@ -358,3 +358,21 @@ Shield, alternate Surge and Time Domains are all variations on multipliers v1 al
 none of them has a question v1 leaves unanswered. Revisit after Tempo has been played.
 
 **Tempo Sync** (Phase 26) is deferred with Phase 18: its exit criterion is that phase's.
+
+## Speed AI (Phase 28)
+
+The AI is *told* about time; it is never given a clock. Its search budget stays a trial count
+(`SEARCH_BUDGET_TRIALS`), which `tests/boundaries.test.ts` enforces, so the move it makes in a
+Blitz match is the move it would have made untimed and nothing about its strength depends on the
+machine it runs on. What changes is pace: `speedPaceScale` shrinks the personality's thinking beat
+with the human's own budget (half in Tempo, proportional in Blitz, floored at 0.3 so a character
+never becomes a machine gun). A 7s turn next to an opponent that pauses a full second before every
+move is a game where most of the clock belongs to a seat that is not on one.
+
+Online there are no AI seats, so no timing resource is ever exposed to one, and nothing here can
+leak hidden information: the observation an AI gets is still the seat's own view.
+
+Deliberately not built: per-personality risk tolerance over Panic, Freeze, debt, Tempo spending
+and Heat. Those are choices only a seat that *holds* those resources can make, and today no AI seat
+does — the assists and Tempo are the human seat's in every mode that has them. It becomes real work
+the day an AI plays Tempo, and speculative work before that.

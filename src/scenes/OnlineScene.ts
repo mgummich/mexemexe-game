@@ -1153,10 +1153,32 @@ export class OnlineScene extends Phaser.Scene {
    * the server's `room_state` answer is what redraws this line, so host and guests can never show
    * different terms.
    */
+  /** Which assists this room grants, as a short list — or "none", which is a term too. */
+  private assistSummary(s: RoomSettings): string {
+    const on: string[] = [];
+    if (s.panicMs > 0 && s.panicUses > 0) on.push(t('online.assist.panic'));
+    if (s.lastBreathMs > 0) on.push(t('online.assist.breath'));
+    if (s.freezeMs > 0 && s.freezeUses > 0) on.push(t('online.assist.freeze'));
+    if (s.maxDebtMs > 0) on.push(t('online.assist.debt'));
+    return on.length === 0 ? t('online.assist.none') : on.join(', ');
+  }
+
   private renderRoomSummary(top: number): number {
     const s = this.roomSettings;
+    // A Speed room states its own terms: the personal clock and increment, and which assists it
+    // grants. Perfect Rhythm and Adrenaline are deliberately absent — they are native to every
+    // timed mode, and listing them as modifiers would read as if they could be switched off
+    // (docs/specs/speed-modes-timing.md).
     const text =
-      s.turnMs <= 0
+      s.startClockMs > 0
+        ? t('online.summarySpeed', {
+            timer: t(`online.timer.${s.timerMode}`),
+            clock: Math.round(s.startClockMs / 1000),
+            inc: Math.round(s.incrementMs / 1000),
+            assists: this.assistSummary(s),
+            grace: Math.round(s.reconnectGraceMs / 1000),
+          })
+        : s.turnMs <= 0
         ? t('online.summaryNoTimer', { grace: Math.round(s.reconnectGraceMs / 1000) })
         : t('online.roomSummary', {
             timer: t(`online.timer.${s.timerMode}`),

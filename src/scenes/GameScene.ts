@@ -1171,7 +1171,25 @@ export class GameScene extends Phaser.Scene {
   private aiThinkDelay(personality: Personality, state: GameState): number {
     const style = PERSONALITY_STYLE[personality];
     const complexityBonus = personality === 'bia' ? Math.min(400, state.table.length * 60) : 0;
-    return Math.round(this.motion((style.thinkMs + complexityBonus) * AI_SPEED_SCALE[settings.get().aiSpeed]));
+    const base = this.motion((style.thinkMs + complexityBonus) * AI_SPEED_SCALE[settings.get().aiSpeed]);
+    return Math.round(base * this.speedPaceScale());
+  }
+
+  /**
+   * How much of its usual thinking beat an AI seat keeps in a Speed match. A 7s Blitz turn next to
+   * an opponent that pauses a full second before every move is a game where most of the clock
+   * belongs to someone who is not on one — so the pause shrinks with the human's own budget.
+   *
+   * Presentation only. The AI's search budget is a trial count and stays untouched (ARCH: no clock
+   * inside move selection), so the move it makes is the move it would have made untimed, and no
+   * seat learns anything it could not already see.
+   */
+  private speedPaceScale(): number {
+    if (this.tempoClockMs > 0) return 0.5;
+    if (this.blitzMs <= 0) return 1;
+    // Roughly proportional to the turn, floored so a personality never becomes instant: the tells
+    // are how the four characters read as people.
+    return Math.max(0.3, Math.min(1, this.blitzMs / 12_000));
   }
 
   /** Draft undo/redo/reset — shared by the toolbar buttons, keyboard shortcuts and the e2e hook,

@@ -806,6 +806,19 @@ and a rematch deals fresh ones with the match. `custom` never carries personal
 clocks: they are the Time Attack preset's, so "which mode is this?" has one
 answer.
 
+**Ruleset availability.** One queue, one set of terms: the casual matchmaking
+queue stays on `TIMER_PRESETS.casual` and is never widened to a Speed preset —
+fragmenting a small queue by ruleset is how a queue stops matching anyone. Speed
+rooms are **private/custom only**: a host picks Blitz or Time Attack in their own
+lobby, and the experimental corners (Freeze, Time Debt, a non-default difficulty)
+live in the CUSTOM screen behind them. There is no ranked ladder to keep stable
+yet; when there is, it takes the named presets and not `custom`.
+
+The lobby summary states a Speed room's own terms — personal clock, increment
+and which assists it grants. Perfect Rhythm and Adrenaline are deliberately not
+listed: they are native to every timed mode, and showing them among the
+modifiers would read as if they could be switched off.
+
 **Blitz** is the first Speed Mode (`docs/specs/speed-modes-timing.md`): the same
 game with fixed per-turn pressure, not a different rule set. It grants no Mexe
 bonus — a one-off extension worth three turns is not a bonus — and it allows one
