@@ -10,7 +10,7 @@ import type { Card, GameState, Meld, ReasonCode, RulesConfig } from '../rules/ty
  * and the server gained `queue_state`. A v7 client cannot queue at all, so it must not be left
  * believing it can. (7 was the public-room reaction set: `hurry` left `REACTIONS` and `gg` took
  * its place, so a v6 client's reaction id is no longer one this server will relay.) */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 12;
 
 // ---------------------------------------------------------------------------
 // Shared room shape (one owner for facts both runtimes state)
@@ -65,7 +65,7 @@ export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number];
 // Room settings (docs/MULTIPLAYER.md §7)
 // ---------------------------------------------------------------------------
 
-export type TimerMode = 'off' | 'casual' | 'fast' | 'custom';
+export type TimerMode = 'off' | 'casual' | 'fast' | 'blitz' | 'timeattack' | 'custom';
 
 /**
  * Fairness-affecting room configuration. Chosen by the host in the lobby and frozen the moment
@@ -87,12 +87,55 @@ export interface RoomSettings {
   reconnectGraceMs: number;
   /** Consecutive turns a seat may lose to the timer before the match is ended. */
   missedTurnLimit: number;
+  /**
+   * Time Attack only: the personal clock each seat starts with. 0 everywhere else, which is what
+   * makes "is this Time Attack?" a property of the settings rather than a second flag to keep in
+   * agreement with `timerMode`.
+   */
+  startClockMs: number;
+  /** Time Attack only: what a seat's clock earns for taking its turn. */
+  incrementMs: number;
+  /**
+   * Speed assistance. Each is disabled by its own zero — never one shared switch — so a room can
+   * always run one without the other (docs/specs/speed-modes-timing.md).
+   */
+  panicMs: number;
+  panicUses: number;
+  lastBreathMs: number;
+  /** Time Attack Freeze: one activation stops the personal clock for this long. 0 disables it. */
+  freezeMs: number;
+  freezeUses: number;
+  /** Time Attack Time Debt: the most a seat may borrow against its future increments. 0 disables. */
+  maxDebtMs: number;
 }
 
-export const TIMER_PRESETS: Record<'off' | 'casual' | 'fast', RoomSettings> = {
-  off: { timerMode: 'off', turnMs: 0, mexeBonusMs: 0, warnMs: 0, reconnectGraceMs: 60_000, missedTurnLimit: 2 },
-  casual: { timerMode: 'casual', turnMs: 90_000, mexeBonusMs: 45_000, warnMs: 10_000, reconnectGraceMs: 60_000, missedTurnLimit: 2 },
-  fast: { timerMode: 'fast', turnMs: 45_000, mexeBonusMs: 20_000, warnMs: 10_000, reconnectGraceMs: 30_000, missedTurnLimit: 2 },
+export const TIMER_PRESETS: Record<'off' | 'casual' | 'fast' | 'blitz' | 'timeattack', RoomSettings> = {
+  off: { timerMode: 'off', turnMs: 0, mexeBonusMs: 0, warnMs: 0, reconnectGraceMs: 60_000, missedTurnLimit: 2, startClockMs: 0, incrementMs: 0, panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 },
+  casual: { timerMode: 'casual', turnMs: 90_000, mexeBonusMs: 45_000, warnMs: 10_000, reconnectGraceMs: 60_000, missedTurnLimit: 2, startClockMs: 0, incrementMs: 0, panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 },
+  fast: { timerMode: 'fast', turnMs: 45_000, mexeBonusMs: 20_000, warnMs: 10_000, reconnectGraceMs: 30_000, missedTurnLimit: 2, startClockMs: 0, incrementMs: 0, panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 },
+  // MexeMexe Blitz: fixed per-turn pressure, and no Mexe bonus — a one-off +20s on a 7s turn is
+  // not an extension, it is a different game. Warning covers most of the turn on purpose: at this
+  // budget the useful signal is "you are on the clock", not "you have ten seconds left".
+  blitz: {
+    timerMode: 'blitz', turnMs: 7_000, mexeBonusMs: 0, warnMs: 4_000, reconnectGraceMs: 30_000,
+    missedTurnLimit: 3, startClockMs: 0, incrementMs: 0,
+    // Matches the offline Hard difficulty, so practice and the real room agree.
+    panicMs: 4_000, panicUses: 1, lastBreathMs: 2_000, freezeMs: 0, freezeUses: 0, maxDebtMs: 0,
+  },
+  // MexeMexe Time Attack: no per-turn budget at all — a turn may take as long as the seat's own
+  // clock still allows, and the clock is what ends the match. `missedTurnLimit` is 1 because a
+  // seat with no clock left has already lost; there is no second chance to count towards.
+  timeattack: {
+    timerMode: 'timeattack', turnMs: 0, mexeBonusMs: 0, warnMs: 15_000, reconnectGraceMs: 30_000,
+    missedTurnLimit: 1, startClockMs: 60_000, incrementMs: 3_000,
+    // Assistance is part of the preset, not a separate negotiation: a Time Attack panic is worth
+    // a tenth of the starting clock, and the breath is the same three seconds the increment is.
+    panicMs: 6_000, panicUses: 1, lastBreathMs: 3_000,
+    // Freeze and Time Debt are off in the standard room: both change how a clock is managed rather
+    // than how long it is, and a default room should teach the clock first. A custom room turns
+    // them on (CUSTOM_BOUNDS below).
+    freezeMs: 0, freezeUses: 0, maxDebtMs: 0,
+  },
 };
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = TIMER_PRESETS.casual;
@@ -270,11 +313,21 @@ export const EMPTY_PARTY: PartyState = { matches: [], activity: [] };
  * Exported so the lobby's custom controls stop at the same numbers the server enforces, rather
  * than keeping a second copy that can drift out of agreement with this one. */
 export const CUSTOM_BOUNDS = {
-  turnMs: [15_000, 600_000],
+  // The floor is Blitz-shaped rather than comfort-shaped: a custom room may go as fast as the
+  // Blitz preset does, and no faster. Below this a turn is shorter than the deal animation.
+  turnMs: [5_000, 600_000],
   mexeBonusMs: [0, 300_000],
   warnMs: [0, 60_000],
   reconnectGraceMs: [10_000, 300_000],
   missedTurnLimit: [1, 10],
+  startClockMs: [30_000, 1_800_000],
+  incrementMs: [0, 60_000],
+  panicMs: [0, 60_000],
+  panicUses: [0, 5],
+  lastBreathMs: [0, 30_000],
+  freezeMs: [0, 60_000],
+  freezeUses: [0, 5],
+  maxDebtMs: [0, 120_000],
 } as const;
 
 function clampInt(value: unknown, [lo, hi]: readonly [number, number], fallback: number): number {
@@ -291,7 +344,19 @@ export function normalizeRoomSettings(raw: unknown): RoomSettings {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_ROOM_SETTINGS };
   const o = raw as Record<string, unknown>;
   const mode = o.timerMode;
-  if (mode === 'off' || mode === 'casual' || mode === 'fast') return { ...TIMER_PRESETS[mode] };
+  if (mode === 'off' || mode === 'casual' || mode === 'fast' || mode === 'blitz' || mode === 'timeattack') {
+    const preset = { ...TIMER_PRESETS[mode] };
+    // A named preset ignores every other field with exactly two exceptions: either assist may be
+    // switched *off*. That is the Speed Modes' standing rule — Panic and Last Breath are always
+    // individually disableable — and it stays safe because a payload can only ever weaken them,
+    // never lengthen a turn or buy a second press.
+    if (o.panicMs === 0 || o.panicUses === 0) {
+      preset.panicMs = 0;
+      preset.panicUses = 0;
+    }
+    if (o.lastBreathMs === 0) preset.lastBreathMs = 0;
+    return preset;
+  }
   if (mode !== 'custom') return { ...DEFAULT_ROOM_SETTINGS };
   const turnMs = clampInt(o.turnMs, CUSTOM_BOUNDS.turnMs, DEFAULT_ROOM_SETTINGS.turnMs);
   return {
@@ -303,6 +368,20 @@ export function normalizeRoomSettings(raw: unknown): RoomSettings {
     warnMs: Math.min(turnMs, clampInt(o.warnMs, CUSTOM_BOUNDS.warnMs, DEFAULT_ROOM_SETTINGS.warnMs)),
     reconnectGraceMs: clampInt(o.reconnectGraceMs, CUSTOM_BOUNDS.reconnectGraceMs, DEFAULT_ROOM_SETTINGS.reconnectGraceMs),
     missedTurnLimit: clampInt(o.missedTurnLimit, CUSTOM_BOUNDS.missedTurnLimit, DEFAULT_ROOM_SETTINGS.missedTurnLimit),
+    // A custom room may deal personal clocks too: `startClockMs` above zero is what makes a room a
+    // Time Attack room, whatever its preset is called, so this is the one place a host can run
+    // Time Attack on their own numbers — including Freeze and Time Debt, which no named preset
+    // turns on.
+    startClockMs: o.startClockMs === undefined || o.startClockMs === 0
+      ? 0
+      : clampInt(o.startClockMs, CUSTOM_BOUNDS.startClockMs, TIMER_PRESETS.timeattack.startClockMs),
+    incrementMs: clampInt(o.incrementMs, CUSTOM_BOUNDS.incrementMs, 0),
+    panicMs: clampInt(o.panicMs, CUSTOM_BOUNDS.panicMs, 0),
+    panicUses: clampInt(o.panicUses, CUSTOM_BOUNDS.panicUses, 0),
+    lastBreathMs: clampInt(o.lastBreathMs, CUSTOM_BOUNDS.lastBreathMs, 0),
+    freezeMs: clampInt(o.freezeMs, CUSTOM_BOUNDS.freezeMs, 0),
+    freezeUses: clampInt(o.freezeUses, CUSTOM_BOUNDS.freezeUses, 0),
+    maxDebtMs: clampInt(o.maxDebtMs, CUSTOM_BOUNDS.maxDebtMs, 0),
   };
 }
 
@@ -343,6 +422,19 @@ export interface GameView {
    * has no timer. Display only: the client counts down from it, and the server alone decides
    * when a turn has actually expired. A client's own countdown reaching zero changes nothing. */
   turnMsLeft: number | null;
+  /**
+   * Time Attack: each seat's personal clock in ms, by player index. Empty in every other mode.
+   * Public by nature — a personal clock is the thing the table is watching — and presentation
+   * state like `missedTurns`, so it is never part of the hash.
+   */
+  clocksMs: number[];
+  /** Panic Buttons each seat has left, by player index. Empty when the room grants none. Public
+   * and presentation state, like `missedTurns`: never part of the hash. */
+  panicLeft: number[];
+  /** Freezes each seat has left, by player index. Empty when the room grants none. */
+  freezeLeft: number[];
+  /** Time borrowed against future increments, by player index. Empty when Time Debt is off. */
+  debtMs: number[];
   /**
    * Consecutive turns each seat has let expire. Public by nature — every seat watched the clock
    * run out — and the client needs it to warn that a match is about to end on `missedTurnLimit`
@@ -434,6 +526,10 @@ export function buildView(
   mexeBonusClaimed = false,
   matchId = '',
   seats: number[] = [],
+  clocksMs: number[] = [],
+  panicLeft: number[] = [],
+  freezeLeft: number[] = [],
+  debtMs: number[] = [],
 ): GameView {
   const view: GameView = {
     seat,
@@ -456,6 +552,10 @@ export function buildView(
     settings,
     turnMsLeft,
     missedTurns: state.players.map((_, i) => missedTurns[i] ?? 0),
+    clocksMs: clocksMs.length === 0 ? [] : state.players.map((_, i) => clocksMs[i] ?? 0),
+    panicLeft: panicLeft.length === 0 ? [] : state.players.map((_, i) => panicLeft[i] ?? 0),
+    freezeLeft: freezeLeft.length === 0 ? [] : state.players.map((_, i) => freezeLeft[i] ?? 0),
+    debtMs: debtMs.length === 0 ? [] : state.players.map((_, i) => debtMs[i] ?? 0),
     // Defaults to the identity mapping, which is what a gapless room (and every local/offline
     // caller that builds a view without a room behind it) already has.
     seats: state.players.map((_, i) => seats[i] ?? i),
@@ -513,6 +613,21 @@ interface SetRoomSettingsMsg {
 interface MexeStartedMsg {
   v: number;
   type: 'mexe_started';
+  reqId: string;
+}
+/** "I pressed the Panic Button": spends one of the seat's emergency extensions. Active seat only,
+ * refused once the budget is gone, so a double press can only ever buy one. */
+interface UsePanicMsg {
+  v: number;
+  type: 'use_panic';
+  reqId: string;
+}
+/** "I froze the clock": stops the personal clock for the room's freeze duration. Active seat only,
+ * bounded by the room's budget, and never extended by a slow connection — the server grants a
+ * fixed span rather than waiting for the client to say when it ended. */
+interface UseFreezeMsg {
+  v: number;
+  type: 'use_freeze';
   reqId: string;
 }
 export interface SubmitTurnMeld {
@@ -602,6 +717,8 @@ export type ClientMessage =
   | ReadyMsg
   | SetRoomSettingsMsg
   | MexeStartedMsg
+  | UsePanicMsg
+  | UseFreezeMsg
   | StartGameMsg
   | SubmitTurnMsg
   | DrawEndTurnMsg
@@ -845,6 +962,10 @@ export function parseClientMessage(raw: string): ClientMessage | { error: string
       return { v: PROTOCOL_VERSION, type: 'list_rooms', reqId };
     case 'mexe_started':
       return { v: PROTOCOL_VERSION, type: 'mexe_started', reqId };
+    case 'use_panic':
+      return { v: PROTOCOL_VERSION, type: 'use_panic', reqId };
+    case 'use_freeze':
+      return { v: PROTOCOL_VERSION, type: 'use_freeze', reqId };
     case 'start_game':
       return { v: PROTOCOL_VERSION, type: 'start_game', reqId };
     case 'submit_turn': {

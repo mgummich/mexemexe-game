@@ -46,6 +46,13 @@ describe('gameRegions landscape desktop regression', () => {
       onlineNotice: { x: 240, y: 58, wrap: 300 },
       onlineDot: { x: 6, y: 264 },
       onlineTimer: { x: 16, y: 253 },
+      speedClock: { x: 206, y: 14 },
+      tempoHud: { x: 250, y: 14 },
+      tempoButtons: [
+        { x: 330, y: 14, w: 26, h: 18, size: 7 },
+        { x: 362, y: 14, w: 26, h: 18, size: 7 },
+        { x: 394, y: 14, w: 26, h: 18, size: 7 },
+      ],
 
       tableTop: 80,
       tableBottom: 188,

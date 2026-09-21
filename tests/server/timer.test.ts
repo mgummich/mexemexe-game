@@ -50,7 +50,7 @@ describe('room settings lifecycle', () => {
     const mgr = testManager({ clock, code: 'ROOM', seed: 7 });
     mgr.createRoom('Host');
     mgr.setRoomSettings('ROOM', 0, normalizeRoomSettings({ timerMode: 'custom', turnMs: 1 }));
-    expect(mgr.getRoomInfo('ROOM')!.settings.turnMs).toBe(15_000);
+    expect(mgr.getRoomInfo('ROOM')!.settings.turnMs).toBe(5_000);
   });
 
   it('fairness settings lock the moment the match starts', () => {
@@ -245,7 +245,7 @@ describe('reconnect grace and anti-stall', () => {
   it('holds a disconnected seat for the room\'s grace, then plays its turn', () => {
     const clock = { t: 1000 };
     // A named preset carries its own grace, so this has to be a custom room to pin 30s.
-    const mgr = startedRoom(clock, normalizeRoomSettings({ timerMode: 'custom', turnMs: 600_000, reconnectGraceMs: 30_000 }));
+    const mgr = startedRoom(clock, normalizeRoomSettings({ timerMode: 'custom', turnMs: 600_000, reconnectGraceMs: 30_000, startClockMs: 0, incrementMs: 0 }));
     mgr.disconnect('ROOM', 0);
     clock.t += 20_000;
     expect(mgr.advanceStalledTurns()).toEqual([]);
@@ -265,7 +265,7 @@ describe('reconnect grace and anti-stall', () => {
 
   it('repeated reconnects cannot hold a turn open forever', () => {
     const clock = { t: 1000 };
-    const mgr = startedRoom(clock, normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 10 }));
+    const mgr = startedRoom(clock, normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 10, startClockMs: 0, incrementMs: 0 }));
     for (let i = 0; i < 4; i++) {
       mgr.disconnect('ROOM', 0);
       clock.t += 5_000;
@@ -277,7 +277,7 @@ describe('reconnect grace and anti-stall', () => {
 
   it('ends the match once a seat passes the missed-turn limit', () => {
     const clock = { t: 1000 };
-    const mgr = startedRoom(clock, normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 2 }));
+    const mgr = startedRoom(clock, normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 2, startClockMs: 0, incrementMs: 0 }));
     // Seat 0 misses, seat 1 misses, seat 0 misses again — that is two in a row for seat 0.
     for (let i = 0; i < 2; i++) {
       clock.t += 45_000;
@@ -290,7 +290,7 @@ describe('reconnect grace and anti-stall', () => {
 
   it('ONLINE-14: the public view carries each seat\'s missed-turn count, for every viewer', () => {
     const clock = { t: 1000 };
-    const mgr = startedRoom(clock, normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 2 }));
+    const mgr = startedRoom(clock, normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 2, startClockMs: 0, incrementMs: 0 }));
     expect(mgr.getView('ROOM', 0)!.missedTurns).toEqual([0, 0]);
     clock.t += 45_000;
     mgr.advanceStalledTurns(); // seat 0 misses once
@@ -302,7 +302,7 @@ describe('reconnect grace and anti-stall', () => {
 
   it('a turn the seat actually takes clears its missed-turn streak', () => {
     const clock = { t: 1000 };
-    const mgr = startedRoom(clock, normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 2 }));
+    const mgr = startedRoom(clock, normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 2, startClockMs: 0, incrementMs: 0 }));
     clock.t += 45_000;
     mgr.advanceStalledTurns(); // seat 0 misses once
     // seat 1 plays, then seat 0 plays: the streak is broken, so the next miss is not the second.
@@ -328,7 +328,7 @@ describe('a timeout that both finishes the match and crosses the missed-turn lim
     const clock = { t: 1000 };
     const mgr = startedRoom(
       clock,
-      normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 1 }),
+      normalizeRoomSettings({ ...TIMER_PRESETS.fast, timerMode: 'custom', missedTurnLimit: 1, startClockMs: 0, incrementMs: 0 }),
     );
     // Drain the pile with real draws, so both streaks are 0 and the next timeout is each seat's
     // first miss. Draw-pile exhaustion is what ends the match on that timeout.
@@ -362,5 +362,178 @@ describe('a gapped match on the clock', () => {
     // The room seat on the wire is chair 2, and the streak lands on player index 1 in the view.
     expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, timedOut: 2 }]);
     expect(mgr.getView('ROOM', 0)!.missedTurns).toEqual([0, 1]);
+  });
+});
+
+describe('Time Attack personal clocks', () => {
+  const TA = TIMER_PRESETS.timeattack;
+
+  it('deals every seat the starting clock and budgets a turn with it', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TA);
+    expect(mgr.getView('ROOM', 0)!.clocksMs).toEqual([TA.startClockMs, TA.startClockMs]);
+    // No per-turn allowance: the turn is as long as the seat's own clock still is.
+    expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBe(TA.startClockMs);
+    clock.t += 4_000;
+    expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBe(TA.startClockMs - 4_000);
+  });
+
+  it('charges the seat that moved and pays it the increment', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TA);
+    clock.t += 4_000;
+    expect(mgr.drawEndTurn('ROOM', 0, mgr.getView('ROOM', 0)!.rev).ok).toBe(true);
+    const view = mgr.getView('ROOM', 0)!;
+    expect(view.clocksMs[0]).toBe(TA.startClockMs - 4_000 + TA.incrementMs);
+    // The seat that was waiting is untouched, and its own turn starts on its own clock.
+    expect(view.clocksMs[1]).toBe(TA.startClockMs);
+    expect(view.turnMsLeft).toBe(TA.startClockMs);
+  });
+
+  it('a clock that runs out takes its Last Breath, then ends the match for that seat', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TA);
+    clock.t += TA.startClockMs;
+    // The preset grants a breath, so the first expiry buys one more window rather than the match.
+    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, breath: 0 }]);
+    expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBe(TA.lastBreathMs);
+    clock.t += TA.lastBreathMs;
+    // missedTurnLimit is 1 in this preset: a seat with no clock left has already lost, so there
+    // is no second chance to count towards.
+    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, closed: true, timedOut: 0 }]);
+  });
+
+  it('a rematch deals full clocks rather than inheriting the last match', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TA);
+    clock.t += 10_000;
+    expect(mgr.drawEndTurn('ROOM', 0, mgr.getView('ROOM', 0)!.rev).ok).toBe(true);
+    expect(mgr.getView('ROOM', 0)!.clocksMs[0]).toBeLessThan(TA.startClockMs);
+    expect(mgr.recycleForRematch('ROOM')).toBe(true);
+    for (let i = 0; i < 2; i++) mgr.setReady('ROOM', i, true);
+    expect(mgr.startGame('ROOM', 0).ok).toBe(true);
+    expect(mgr.getView('ROOM', 0)!.clocksMs).toEqual([TA.startClockMs, TA.startClockMs]);
+  });
+
+  it('every other mode carries no personal clocks at all', () => {
+    const clock = { t: 1000 };
+    expect(startedRoom(clock, TIMER_PRESETS.fast).getView('ROOM', 0)!.clocksMs).toEqual([]);
+    expect(startedRoom({ t: 1000 }, TIMER_PRESETS.off, 'ROOMB').getView('ROOMB', 0)!.clocksMs).toEqual([]);
+  });
+});
+
+describe('Speed assistance, server-side', () => {
+  const TA = TIMER_PRESETS.timeattack;
+  // Switched off the way a lobby would: the preset, with both assists explicitly zeroed. A named
+  // preset accepts exactly these two opt-outs and nothing else.
+  const BARE = normalizeRoomSettings({ timerMode: 'timeattack', panicMs: 0, panicUses: 0, lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 });
+
+  it('the Panic Button extends the turn and the seat clock, exactly once', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TA);
+    clock.t += 50_000;
+    expect(mgr.usePanicButton('ROOM', 0)).toEqual({ ok: true, msLeft: 10_000 + TA.panicMs });
+    // Time Attack spends a personal clock, so the extension has to land there too.
+    expect(mgr.getView('ROOM', 0)!.clocksMs[0]).toBe(TA.startClockMs + TA.panicMs);
+    expect(mgr.getView('ROOM', 0)!.panicLeft).toEqual([0, TA.panicUses]);
+    expect(mgr.usePanicButton('ROOM', 0).ok).toBe(false);
+  });
+
+  it('only the active seat may press it', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TA);
+    expect(mgr.usePanicButton('ROOM', 1).ok).toBe(false);
+    expect(mgr.getView('ROOM', 0)!.panicLeft).toEqual([TA.panicUses, TA.panicUses]);
+  });
+
+  it('a turn saved by Last Breath still earns its increment', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TA);
+    clock.t += TA.startClockMs;
+    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, breath: 0 }]);
+    // Moving inside the breath: the seat is charged for the whole turn, is left with the breath
+    // it was given, and is paid the increment like any other completed turn.
+    clock.t += 1_000;
+    expect(mgr.drawEndTurn('ROOM', 0, mgr.getView('ROOM', 0)!.rev).ok).toBe(true);
+    expect(mgr.getView('ROOM', 0)!.clocksMs[0]).toBe(TA.lastBreathMs - 1_000 + TA.incrementMs);
+  });
+
+  it('a reconnect during the breath is told the extended clock, not the original one', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TA);
+    clock.t += TA.startClockMs;
+    mgr.advanceStalledTurns();
+    clock.t += 1_000;
+    expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBe(TA.lastBreathMs - 1_000);
+  });
+
+  it('a rematch deals fresh Panic Buttons', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, TA);
+    expect(mgr.usePanicButton('ROOM', 0).ok).toBe(true);
+    expect(mgr.recycleForRematch('ROOM')).toBe(true);
+    for (let i = 0; i < 2; i++) mgr.setReady('ROOM', i, true);
+    expect(mgr.startGame('ROOM', 0).ok).toBe(true);
+    expect(mgr.getView('ROOM', 0)!.panicLeft).toEqual([TA.panicUses, TA.panicUses]);
+  });
+
+  it('both disabled: no button to press and no breath to take', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, BARE);
+    expect(mgr.getView('ROOM', 0)!.panicLeft).toEqual([0, 0]);
+    expect(mgr.usePanicButton('ROOM', 0).ok).toBe(false);
+    clock.t += BARE.startClockMs;
+    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, closed: true, timedOut: 0 }]);
+  });
+});
+
+describe('Freeze and Time Debt', () => {
+  /** Time Attack on a room's own numbers: the one place Freeze and Time Debt are turned on. */
+  const CUSTOM_TA = normalizeRoomSettings({
+    timerMode: 'custom', turnMs: 60_000, warnMs: 10_000, reconnectGraceMs: 30_000, missedTurnLimit: 1,
+    startClockMs: 60_000, incrementMs: 3_000, freezeMs: 10_000, freezeUses: 1, maxDebtMs: 20_000,
+    lastBreathMs: 0, panicMs: 0, panicUses: 0,
+  });
+
+  it('a custom room with a starting clock is a Time Attack room', () => {
+    expect(CUSTOM_TA.startClockMs).toBe(60_000);
+    const mgr = startedRoom({ t: 1000 }, CUSTOM_TA);
+    expect(mgr.getView('ROOM', 0)!.clocksMs).toEqual([60_000, 60_000]);
+  });
+
+  it('Freeze costs the seat nothing for the frozen span, once', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, CUSTOM_TA);
+    expect(mgr.useFreezeButton('ROOM', 0).ok).toBe(true);
+    expect(mgr.getView('ROOM', 0)!.freezeLeft).toEqual([0, 1]);
+    // Ten seconds of thinking under a ten-second freeze leave the clock where it started.
+    clock.t += 10_000;
+    expect(mgr.drawEndTurn('ROOM', 0, mgr.getView('ROOM', 0)!.rev).ok).toBe(true);
+    expect(mgr.getView('ROOM', 0)!.clocksMs[0]).toBe(60_000 + 3_000);
+    expect(mgr.useFreezeButton('ROOM', 0).ok).toBe(false);
+  });
+
+  it('a clock at zero borrows instead of losing, and the increment repays the debt first', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, CUSTOM_TA);
+    clock.t += 60_000;
+    // No Last Breath in this room: the borrow is what keeps the match alive.
+    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, breath: 0 }]);
+    expect(mgr.getView('ROOM', 0)!.debtMs).toEqual([20_000, 0]);
+    expect(mgr.getView('ROOM', 0)!.turnMsLeft).toBe(20_000);
+    // Move immediately: the 3s increment pays down the debt rather than growing the clock.
+    expect(mgr.drawEndTurn('ROOM', 0, mgr.getView('ROOM', 0)!.rev).ok).toBe(true);
+    const view = mgr.getView('ROOM', 0)!;
+    expect(view.debtMs[0]).toBe(17_000);
+    expect(view.clocksMs[0]).toBe(20_000);
+  });
+
+  it('borrowing is bounded: a seat cannot borrow its way out twice', () => {
+    const clock = { t: 1000 };
+    const mgr = startedRoom(clock, CUSTOM_TA);
+    clock.t += 60_000;
+    mgr.advanceStalledTurns();
+    clock.t += 20_000;
+    expect(mgr.advanceStalledTurns()).toEqual([{ code: 'ROOM', gameOver: false, closed: true, timedOut: 0 }]);
   });
 });

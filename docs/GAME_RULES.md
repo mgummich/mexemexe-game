@@ -76,8 +76,22 @@ On your turn:
 **Draw only happens when you pass, cannot play, or will not play.** There is no draw at the start
 of a turn.
 
-**Turn timer — online only.** A local hot-seat or AI match is never on a clock. Online, the
-*server* owns the timer (Casual / Fast / Off presets, or the host-only CUSTOM
+**Turn timer.** A local match is untimed unless a Blitz difficulty is picked on the setup screen
+(Easy 12s, Medium 9s, Hard 7s, Expert 5s, or Custom): Blitz gives the human seat a fixed budget per
+turn, the scene owns that deadline (there is no server in a local
+match), and running out does exactly what a timeout does online — drop the draft, draw one card,
+end the turn. The clock stops while the pause overlay is up, and AI seats keep their own pace.
+Two assists, each switchable on its own: the Panic Button (one emergency extension, spent by
+tapping the clock) and Last Breath (a short extra window when the clock reaches zero, once per
+turn). Expert brings neither.
+**MexeMexe Tempo** is a separate local mode, picked at the end of the same setup cycle. It runs on
+a 90s survival clock that nothing refills by itself, and turns playing well into Tempo, which buys
+Freeze (stop the clock), Recover (turn Tempo back into clock) and Surge (double gain, more risk).
+Spending heats the seat; the ceiling is a two-turn lockout. Running out of clock with no Tempo
+left ends the match for that seat. See `docs/specs/speed-modes-timing.md`.
+
+Online, the
+*server* owns the timer (Casual / Fast / Blitz / Off presets, or the host-only CUSTOM
 screen behind them, picked by the host and frozen at match start — see
 [MULTIPLAYER.md](MULTIPLAYER.md) §7b). Expiry runs `timerExpireTurn`: discard whatever draft was
 in progress, draw one card, end the turn. Because a Mexe draft never leaves the client until

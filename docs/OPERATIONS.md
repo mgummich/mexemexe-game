@@ -440,7 +440,9 @@ three-engine form, not the Chromium-only PR variant — see [TESTING.md](TESTING
 - **No online results summary.** The win screen's per-player stats are local-only; the
   client never observes the other seats' turn history online, so the line is hidden rather
   than faked. Fixing it needs a protocol change.
-- **Local play is never on a clock.** The turn timer exists online only: a server-owned room
-  setting (`MEXE_DISCONNECT_GRACE_MS` seeds a new room's reconnect grace; the host picks the
-  preset in the lobby). See `docs/MULTIPLAYER.md` §7b.
+- **Local play is untimed unless a Speed Mode is picked.** The setup screen offers Blitz (a fixed
+  per-turn clock, four difficulties plus custom) and Tempo (a survival clock with its own powers);
+  both are local and scene-owned. Online, the clock is always the server's: a room setting the host
+  picks in the lobby, with `MEXE_DISCONNECT_GRACE_MS` seeding a new room's reconnect grace. See
+  `docs/MULTIPLAYER.md` §7b and `docs/specs/speed-modes-timing.md`.
 - **No persistence of any kind** — no accounts, no cloud saves, no server-side history.

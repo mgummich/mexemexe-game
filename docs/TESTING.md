@@ -1220,3 +1220,19 @@ conserved id set), not a snapshot of everything the call returned.
   clock.
 - Offline or update behaviour: `e2e-pwa/`, which is the only place the real
   service worker lifecycle runs.
+
+## Speed Modes coverage (Phase 29 matrix)
+
+| Layer | Covers | Where |
+| --- | --- | --- |
+| Domain | deadlines, race rule, Mexe bonus, personal clock + increment, Panic, Last Breath, Freeze, Time Debt, Rhythm (both folds), Adrenaline ramp, Tempo gain/spend, Heat/Overheat, presets | `tests/timing.test.ts`, `tests/turn-clock.test.ts` |
+| Wire | Speed presets, assist opt-outs, custom Time Attack bounds, protocol version | `tests/net/room-settings.test.ts`, `tests/viewToState.test.ts` |
+| Server | budget from the seat's own clock, charge + increment, flagged clock ends the match, Last Breath then borrow, panic once and active-seat-only, rematch resets clocks/panic/debt, Freeze credit | `tests/server/timer.test.ts` |
+| Browser, single client | Blitz clock renders and times its own turn out; the Tempo HUD (Clock/Tempo/Heat + three powers); the setup difficulty row at four seats | `e2e/screenshot.spec.ts` (`blitz-clock`, `tempo-hud`, `setup-blitz`) |
+| Browser, multi client | two clients agree on both personal clocks; a double-pressed Panic lands once and is visible on the other seat | `e2e-multiplayer/multiplayer.spec.ts` (`time attack @race`) |
+| Regression | untimed local play and the Casual/Fast rooms behave exactly as before | the existing suites, unchanged |
+
+Known gaps, deliberately: simultaneous windows (Phase 18 is deferred, so there is nothing to
+test), AI risk tolerance over Speed resources (no AI seat holds them), and iOS Safari, which is
+covered for the lobby by the WebKit project but not for a timed match — a timed match on a real
+device is manual coverage today.

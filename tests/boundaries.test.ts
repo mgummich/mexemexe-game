@@ -174,6 +174,9 @@ describe('architecture boundaries', () => {
     'src/core/objective.ts -> ../localization/i18n',
     'src/core/persistence.ts -> ../ai/ai',
     'src/core/persistence.ts -> ../cosmetics',
+    // The saved Blitz difficulty and its turn bounds are the timing domain's vocabulary; a second
+    // copy of either here would be a second owner of what a difficulty means.
+    'src/core/persistence.ts -> ../game-state/timing',
     'src/core/persistence.ts -> ../localization/i18n',
     'src/core/playlog.ts -> ../game-state/match',
     'src/core/pwa.ts -> ../localization/i18n',
@@ -246,15 +249,23 @@ describe('architecture boundaries', () => {
    * so the next few hundred lines of room policy have to be a decision instead of an accident.
    */
   it('RoomManager stays the size the audit confirmed as cohesive', () => {
+    // Raised once, from 1050, for the Speed Modes: personal clocks, the two time powers and the
+    // debt ledger are room state a room has to own, and the arithmetic over them already lives
+    // outside (server/speed-rules.ts + src/game-state/timing.ts). The next raise should extract
+    // something instead — the point of the ceiling is that growth is argued, not that it is 1050.
     const lines = fs.readFileSync(path.join(ROOT, 'server/rooms.ts'), 'utf8').split('\n').length;
-    expect(`server/rooms.ts is ${lines <= 1050 ? 'within' : 'over'} its ceiling`).toBe('server/rooms.ts is within its ceiling');
+    expect(`server/rooms.ts is ${lines <= 1100 ? 'within' : 'over'} its ceiling`).toBe('server/rooms.ts is within its ceiling');
   });
 
   it('the server imports the shared rules and protocol, never the client presentation layer', () => {
+    // `game-state/timing` is on the list for the same reason the other two are: it is
+    // platform-free domain code the authority and the client must agree on to the millisecond, so
+    // a second copy in `server/` would be a second owner of the deadline arithmetic. The rest of
+    // `game-state/` stays off the list — a room is not a `GameStore` and must not become one.
     for (const file of tsFiles(path.join(ROOT, 'server'))) {
       for (const spec of imports(file)) {
         if (!spec.startsWith('../src/')) continue;
-        const shared = /^\.\.\/src\/(rules\/|net\/protocol)/.test(spec);
+        const shared = /^\.\.\/src\/(rules\/|net\/protocol|game-state\/timing)/.test(spec);
         expect(`${rel(file)} imports ${spec}: ${shared}`).toBe(`${rel(file)} imports ${spec}: true`);
       }
     }

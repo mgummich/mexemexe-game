@@ -1,6 +1,7 @@
 import type { AiSpeed, Difficulty } from '../ai/ai';
 import type { Locale } from '../localization/i18n';
 import { AVATARS, CARD_BACKS, DEFAULT_AVATAR, DEFAULT_CARD_BACK, DEFAULT_TABLE_THEME, resolveCosmeticId, TABLE_THEMES } from '../cosmetics';
+import { BLITZ_TURN_BOUNDS, type BlitzDifficulty } from '../game-state/timing';
 
 /** Display-only helper aggressiveness. See `src/ui/helpers.ts` — never gates rules. */
 export type HelperMode = 'beginner' | 'standard' | 'expert';
@@ -39,6 +40,26 @@ export interface Settings {
   haptics: boolean;
   /** Ticking cue over the last seconds of an online turn timer. Mixed through the SFX volume. */
   timerTickSound: boolean;
+  /**
+   * Local MexeMexe Blitz: the same game with a fixed per-turn clock, picked on the setup screen.
+   * 'off' by default — a clock a player did not ask for is a different game, not a nicer one.
+   * A difficulty is a set of defaults (turn length + assist strengths), never a lock.
+   */
+  speedMode: 'off' | BlitzDifficulty | 'tempo';
+  /** Turn length for the `custom` difficulty only, clamped to `BLITZ_TURN_BOUNDS`. */
+  blitzTurnMs: number;
+  /** Blitz assistance, each independently disableable (never bundled into one "assists" switch):
+   * the Panic Button's emergency extension, and the Last Breath window a turn gets when its clock
+   * runs out. */
+  blitzPanic: boolean;
+  blitzLastBreath: boolean;
+  /**
+   * Commit play: no undo, no redo, no reset while a turn is being built. Exploration is still
+   * free — a card already on the table can be moved, split or merged — but the history is gone,
+   * so a placement is a decision rather than a draft. Off by default, and local play only until
+   * a matchmade room can advertise it.
+   */
+  commitPlay: boolean;
 }
 
 export interface Progress {
@@ -73,8 +94,15 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, speedMode: 'off', blitzTurnMs: 9_000, blitzPanic: true, blitzLastBreath: true, commitPlay: false };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
+const SPEED_MODES: readonly Settings['speedMode'][] = ['off', 'easy', 'medium', 'hard', 'expert', 'custom', 'tempo'];
+
+/** A stored number outside its bounds is clamped, like every other untrusted stored value here. */
+function clampMs(value: unknown, [lo, hi]: readonly [number, number], fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(hi, Math.max(lo, Math.round(value)));
+}
 export const AI_DIFFICULTIES: readonly Difficulty[] = ['beginner', 'casual', 'smart', 'expert'];
 export const AI_SPEEDS: readonly AiSpeed[] = ['instant', 'fast', 'normal', 'slow'];
 export const AI_EXPLAIN_MODES: readonly AiExplain[] = ['off', 'simple', 'detailed'];
@@ -110,6 +138,11 @@ function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
     aiExplain: oneOf(AI_EXPLAIN_MODES, merged.aiExplain, DEFAULT_SETTINGS.aiExplain),
     timerTickSound: typeof merged.timerTickSound === 'boolean' ? merged.timerTickSound : DEFAULT_SETTINGS.timerTickSound,
     haptics: typeof merged.haptics === 'boolean' ? merged.haptics : DEFAULT_SETTINGS.haptics,
+    speedMode: oneOf(SPEED_MODES, merged.speedMode, DEFAULT_SETTINGS.speedMode),
+    blitzTurnMs: clampMs(merged.blitzTurnMs, BLITZ_TURN_BOUNDS, DEFAULT_SETTINGS.blitzTurnMs),
+    blitzPanic: typeof merged.blitzPanic === 'boolean' ? merged.blitzPanic : DEFAULT_SETTINGS.blitzPanic,
+    blitzLastBreath: typeof merged.blitzLastBreath === 'boolean' ? merged.blitzLastBreath : DEFAULT_SETTINGS.blitzLastBreath,
+    commitPlay: typeof merged.commitPlay === 'boolean' ? merged.commitPlay : DEFAULT_SETTINGS.commitPlay,
   };
 }
 

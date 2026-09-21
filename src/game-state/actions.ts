@@ -9,8 +9,9 @@ import type { DraftState, GameState, ReasonCode } from '../rules/types';
  * Only state-*changing* gameplay intent belongs here: opening a panel, zooming the table or
  * starting a scene are not actions.
  *
- * Deliberately not modelled: a timer expiry action. Local play never starts a turn clock; the
- * online clock is the server's (`RoomManager.advanceStalledTurns`), and the server owns its own
+ * Deliberately not modelled: a timer expiry action. A timeout is not its own transition anywhere
+ * — online the server applies `timerExpireTurn`, and a local Blitz turn that runs out dispatches
+ * the ordinary `drawAndEndTurn` from the scene that owns the deadline. The server keeps its own
  * precondition path (`claimTurn`) because it also has `rev` and seat authority to check.
  */
 export type GameAction =

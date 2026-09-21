@@ -1,6 +1,7 @@
 import type { DraftState, GameState } from '../rules/types';
 import { isOffline, onConnectivityChange } from '../core/pwa';
 import { settings } from '../core/settings';
+import type { BlitzDifficulty } from '../game-state/timing';
 import { playlog, type PlaylogEntry, type PlaylogSummary } from '../core/playlog';
 import type { Replay } from '../game-state/replay';
 import type { ConnStatus } from '../net/client';
@@ -82,6 +83,11 @@ export interface MexeOnlineDebugApi {
   /** Verification-only: ms left on the active seat's turn as of the last state_sync, or null in
    * a room with no timer. Rendered, never authoritative. */
   turnMsLeft: () => number | null;
+  /** Verification-only: the Speed resources this seat can see — personal clocks, panic budget,
+   * freezes and debt, exactly as the last server frame reported them. */
+  speed: () => { clocksMs: number[]; panicLeft: number[]; freezeLeft: number[]; debtMs: number[] };
+  /** Verification-only: presses the Panic Button. The server still decides whether it lands. */
+  usePanic: () => void;
   /** Verification-only: where the keyboard focus ring is and how many buttons this screen has.
    * `index` is -1 until the keyboard has been used. Canvas-only UI has no DOM focus to query. */
   focus: () => { index: number; count: number; label: string };
@@ -432,7 +438,23 @@ export function installDebugApi(): void {
   if (params.get('textscale') === '125') settings.update({ largeText: true });
   // e2e hook — ?motion=0 flips reduced motion on for a11y screenshot capture.
   if (params.get('motion') === '0') settings.update({ reducedMotion: true });
+  // e2e hook — ?blitz=1|0 picks the local Blitz clock without clicking through the setup screen.
+  // ?blitz=off|easy|medium|hard|expert|custom, with 1/0 kept as aliases for the common cases.
+  const blitz = params.get('blitz');
+  if (blitz === '1') settings.update({ speedMode: 'hard' });
+  else if (blitz === '0') settings.update({ speedMode: 'off' });
+  else if (blitz !== null && BLITZ_MODE_FLAGS.includes(blitz as never)) {
+    settings.update({ speedMode: blitz as BlitzDifficulty | 'off' | 'tempo' });
+  }
+  // Each Blitz assist is disableable on its own, and each combination has to be reachable from a
+  // test without clicking through a settings screen.
+  const panic = params.get('panic');
+  if (panic === '1' || panic === '0') settings.update({ blitzPanic: panic === '1' });
+  const breath = params.get('breath');
+  if (breath === '1' || breath === '0') settings.update({ blitzLastBreath: breath === '1' });
 }
+
+const BLITZ_MODE_FLAGS = ['off', 'easy', 'medium', 'hard', 'expert', 'custom', 'tempo'] as const;
 
 export function urlSeed(): number {
   const raw = new URLSearchParams(location.search).get('seed');

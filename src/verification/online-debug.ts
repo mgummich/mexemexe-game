@@ -84,6 +84,13 @@ export function matchDebugSurface(
     openParty: noop,
     openCustomSettings: noop,
     turnMsLeft: scene.turnMsLeft,
+    speed: () => ({
+      clocksMs: [...session.clocksMs],
+      panicLeft: [...session.panicLeft],
+      freezeLeft: [...session.freezeLeft],
+      debtMs: [...session.debtMs],
+    }),
+    usePanic: () => client.usePanic(),
     phase: () => 'match',
     focus: () => ({ index: -1, count: 0, label: '' }),
     // Discovery belongs to the lobby: a running match is neither listed nor browsable, and its
@@ -134,6 +141,8 @@ export function lobbyDebugSurface(
     react: (reaction) => client.sendReaction(reaction),
     setReady: (ready) => client.setReady(ready),
     startGame: () => client.startGame(),
+    speed: () => ({ clocksMs: [], panicLeft: [], freezeLeft: [], debtMs: [] }),
+    usePanic: noop,
     setRoomSettings: (s) => client.setRoomSettings(s),
     roomSettings: () => lobby.roomSettings,
     party: () => lobby.party,

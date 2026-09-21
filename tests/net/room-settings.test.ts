@@ -22,7 +22,7 @@ describe('normalizeRoomSettings', () => {
   });
 
   it('a named preset ignores every other field in the payload', () => {
-    const out = normalizeRoomSettings({ timerMode: 'fast', turnMs: 1, missedTurnLimit: 999 });
+    const out = normalizeRoomSettings({ timerMode: 'fast', turnMs: 1, missedTurnLimit: 999, startClockMs: 0, incrementMs: 0 });
     expect(out).toEqual(TIMER_PRESETS.fast);
   });
 
@@ -36,7 +36,7 @@ describe('normalizeRoomSettings', () => {
     const out = normalizeRoomSettings({
       timerMode: 'custom', turnMs: 1, mexeBonusMs: -5, warnMs: 999_999, reconnectGraceMs: 1, missedTurnLimit: 0,
     });
-    expect(out.turnMs).toBe(15_000);
+    expect(out.turnMs).toBe(5_000);
     expect(out.mexeBonusMs).toBe(0);
     expect(out.reconnectGraceMs).toBe(10_000);
     expect(out.missedTurnLimit).toBe(1);
@@ -67,7 +67,7 @@ describe('set_room_settings on the wire', () => {
     );
     expect('error' in msg).toBe(false);
     if ('error' in msg || msg.type !== 'set_room_settings') throw new Error('unreachable');
-    expect(msg.settings.turnMs).toBe(15_000);
+    expect(msg.settings.turnMs).toBe(5_000);
   });
 
   it('a missing settings payload becomes the default preset, not a parse error', () => {
@@ -99,5 +99,49 @@ describe('GameView timer fields', () => {
     const b = buildView(state, 0, 3, TIMER_PRESETS.casual, 1_000);
     expect(a.hash).toBe(b.hash);
     expect(a.hash).toBe(stateHash(digestOfView(b)));
+  });
+});
+
+describe('the Blitz preset', () => {
+  it('is a named preset, so a payload cannot smuggle extra time into it', () => {
+    const out = normalizeRoomSettings({ timerMode: 'blitz', turnMs: 600_000, mexeBonusMs: 300_000 });
+    expect(out).toEqual(TIMER_PRESETS.blitz);
+    expect(out.turnMs).toBe(7_000);
+    // No one-off extension: a Mexe bonus on a 7s turn would be the whole game, not a bonus.
+    expect(out.mexeBonusMs).toBe(0);
+  });
+
+  it('is the floor a custom room may go down to, and no faster', () => {
+    const out = normalizeRoomSettings({ timerMode: 'custom', turnMs: 1 });
+    expect(out.turnMs).toBeLessThanOrEqual(TIMER_PRESETS.blitz.turnMs);
+    expect(out.turnMs).toBe(5_000);
+  });
+
+  it('warns for most of its own turn, and never longer than it', () => {
+    expect(TIMER_PRESETS.blitz.warnMs).toBeLessThan(TIMER_PRESETS.blitz.turnMs);
+  });
+});
+
+describe('assists on a named preset', () => {
+  it('may be switched off individually, and never strengthened', () => {
+    const noPanic = normalizeRoomSettings({ timerMode: 'timeattack', panicMs: 0, panicUses: 0 });
+    expect(noPanic.panicMs).toBe(0);
+    expect(noPanic.panicUses).toBe(0);
+    expect(noPanic.lastBreathMs).toBe(TIMER_PRESETS.timeattack.lastBreathMs);
+
+    const noBreath = normalizeRoomSettings({ timerMode: 'timeattack', lastBreathMs: 0, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 });
+    expect(noBreath.lastBreathMs).toBe(0);
+    expect(noBreath.panicMs).toBe(TIMER_PRESETS.timeattack.panicMs);
+
+    // Anything but an off switch is ignored, so no payload can buy a longer panic or a second one.
+    const greedy = normalizeRoomSettings({ timerMode: 'timeattack', panicMs: 600_000, panicUses: 9, lastBreathMs: 600_000, freezeMs: 0, freezeUses: 0, maxDebtMs: 0 });
+    expect(greedy).toEqual(TIMER_PRESETS.timeattack);
+  });
+
+  it('carries no assists at all in the untimed and per-turn presets', () => {
+    for (const mode of ['off', 'casual', 'fast'] as const) {
+      const out = normalizeRoomSettings({ timerMode: mode });
+      expect([out.panicMs, out.panicUses, out.lastBreathMs]).toEqual([0, 0, 0]);
+    }
   });
 });

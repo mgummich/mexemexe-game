@@ -3239,3 +3239,45 @@ test.afterAll(() => {
     JSON.stringify({ generatedAt: new Date().toISOString(), shots: logs }, null, 2),
   );
 });
+
+// Phase 4 of the Speed Modes roadmap: local Blitz. Runtime evidence that the clock is rendered in
+// a local match (it used to be an online-only widget) and that reaching zero actually spends the
+// turn — the scene owns the deadline here, because there is no server to own it.
+test('blitz-clock: a local Blitz turn shows the clock and times itself out', async ({ page }) => {
+  // Assists off: this is evidence about the clock itself, so the turn ends at the budget rather
+  // than at the budget plus a Last Breath. Their own coverage is tests/timing.test.ts.
+  await capture(page, '/?seed=77&showcase=mexe&blitz=1&panic=0&breath=0', 'blitz-clock', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    const before = await p.evaluate(() => window.__MEXE__.state!()!.turn);
+    // 7s budget plus the deal it waits for, plus slack for a loaded runner.
+    await p.waitForFunction((t) => (window.__MEXE__.state?.()?.turn ?? t) > t, before, { timeout: 20_000 });
+  });
+});
+
+// Phase 8 of the Speed Modes roadmap: the Blitz difficulty row. Captured at four seats and on
+// Custom, which is the tallest the panel ever gets — the row above PLAY is where a new control
+// collides first.
+test('setup-blitz: the difficulty row fits the fullest setup panel', async ({ page }) => {
+  await capture(page, '/?seed=42&showcase=setup&blitz=custom', 'setup-blitz', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'setup');
+    await p.mouse.click(...toScreen(290, 70));
+  });
+});
+
+// Phases 19-24 of the Speed Modes roadmap: Tempo. Runtime evidence that the mode's three numbers
+// and its three powers render in the top bar, and that the survival clock is what ends the match.
+test('tempo-hud: a local Tempo match shows Clock, Tempo and Heat with its three powers', async ({ page }) => {
+  await capture(page, '/?seed=77&showcase=mexe&blitz=tempo', 'tempo-hud', async (p) => {
+    await p.waitForFunction(() => window.__MEXE__.scene === 'game' && window.__MEXE__.mexe !== null);
+    // Three quick turns bank enough Tempo for the row to show something worth reading.
+    for (let i = 0; i < 3; i++) {
+      const before = await p.evaluate(() => window.__MEXE__.state!()!.turn);
+      await p.evaluate(() => window.__MEXE__.mexe!.comprar());
+      await p.waitForFunction((t) => (window.__MEXE__.state?.()?.turn ?? t) > t, before, { timeout: 20_000 });
+      await p.waitForFunction(() => {
+        const s = window.__MEXE__.state?.();
+        return s !== null && s !== undefined && !s.players[s.activePlayerIndex]!.isAi;
+      }, undefined, { timeout: 20_000 });
+    }
+  });
+});

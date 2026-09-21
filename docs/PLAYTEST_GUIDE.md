@@ -170,7 +170,7 @@ These are known and in scope for a later phase. Reporting them again is not usef
   live rematch votes.
 - No accounts, chat or spectating. Casual matchmaking (Quick Match) and public room discovery do
   exist; a room still vanishes when everyone leaves.
-- The turn timer is online-only and off in local play; online, the host picks Casual / Fast / Off
+- Local play is untimed unless BLITZ is on in setup (7s per turn); online, the host picks Casual / Fast / Blitz / Off
   in the lobby, and `custom` values are validated on the wire but have no lobby control.
 - The four AI opponents are personalities; difficulty (Beginner / Casual / Smart / Expert), pace
   and move explanations are separate settings under ADVERSÁRIOS / OPPONENTS.

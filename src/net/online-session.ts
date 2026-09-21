@@ -81,6 +81,14 @@ export class OnlineSession {
   settings: RoomSettings;
   /** Last view's `missedTurns` per dense seat — sizes the timeout warning. */
   missedTurns: readonly number[];
+  /** Last view's Time Attack clocks per dense seat, empty in every other mode. */
+  clocksMs: readonly number[];
+  /** Last view's Panic Buttons left per dense seat, empty when the room grants none. */
+  panicLeft: readonly number[];
+  /** Last view's Freezes left per dense seat, empty when the room grants none. */
+  freezeLeft: readonly number[];
+  /** Last view's borrowed time per dense seat, empty when Time Debt is off. */
+  debtMs: readonly number[];
   /** Count of detected state-hash mismatches this match — surfaced to `verify:multiplayer`. */
   desyncs = 0;
   /** Reasons the server gave for refusing this client's last proposal. Empty until one is. */
@@ -104,6 +112,10 @@ export class OnlineSession {
     this.lastRev = start.view.rev;
     this.settings = start.view.settings;
     this.missedTurns = start.view.missedTurns;
+    this.clocksMs = start.view.clocksMs;
+    this.panicLeft = start.view.panicLeft;
+    this.freezeLeft = start.view.freezeLeft;
+    this.debtMs = start.view.debtMs;
     this.mexeBonusClaimed = start.view.mexeBonusClaimed;
     this.localSeat = start.view.seat;
     this.store = new GameStore(viewToState(start.view));
@@ -145,6 +157,10 @@ export class OnlineSession {
     this.settings = view.settings;
     this.seats = view.seats;
     this.missedTurns = view.missedTurns;
+    this.clocksMs = view.clocksMs;
+    this.panicLeft = view.panicLeft;
+    this.freezeLeft = view.freezeLeft;
+    this.debtMs = view.debtMs;
     const bonusJustClaimed = view.mexeBonusClaimed && !this.mexeBonusClaimed;
     this.mexeBonusClaimed = view.mexeBonusClaimed;
 

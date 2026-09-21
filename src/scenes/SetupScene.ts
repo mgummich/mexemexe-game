@@ -11,6 +11,17 @@ import { gotoScene, label, PixelButton } from '../ui/widgets';
 import { debugApi, urlSeed } from '../verification/debug-api';
 import type { GameSceneConfig } from './GameScene';
 import { ACTION, SURFACE, TEXT } from '../ui/tokens';
+import { BLITZ_PRESETS, type BlitzDifficulty } from '../game-state/timing';
+
+/** The setup screen's one Speed control: the Blitz ladder, then Tempo, then back to the classic
+ * untimed game. Tempo is its own mode rather than a Blitz difficulty, which is why it sits at the
+ * end of the cycle instead of inside the ladder. */
+const SPEED_CYCLE = ['off', 'easy', 'medium', 'hard', 'expert', 'custom', 'tempo'] as const;
+type SpeedMode = (typeof SPEED_CYCLE)[number];
+
+function nextSpeedMode(current: SpeedMode): SpeedMode {
+  return SPEED_CYCLE[(SPEED_CYCLE.indexOf(current) + 1) % SPEED_CYCLE.length]!;
+}
 
 type Personality = 'cida' | 'juninho' | 'bia' | 'ze';
 
@@ -153,12 +164,49 @@ export class SetupScene extends Phaser.Scene {
       TEXT.primary,
     );
 
+    // MexeMexe Blitz: the one setting here that changes how the match is *played* rather than who
+    // plays it, so it sits with the summary rather than behind ADVANCED. Off is the classic game.
+    // One row: the difficulty cycles on tap, and the two assist switches appear beside it only
+    // once there is a clock for them to assist with.
+    const mode = settings.get().speedMode;
+    const blitzOn = mode !== 'off';
+    const isTempo = mode === 'tempo';
+    const turnSecs = Math.round(
+      (mode === 'custom' ? settings.get().blitzTurnMs : blitzOn && !isTempo ? BLITZ_PRESETS[mode as BlitzDifficulty].turnMs : 0) / 1000,
+    );
+    // One row, three controls: 110 + 56 + 56 with 6 between them, centred. Wider buttons here
+    // overlapped each other at four seats, which is the fullest this panel ever is.
+    new PixelButton(this, cx() - (blitzOn ? 62 : 0), vy(belowSeats + 28),
+      isTempo ? t('setup.tempo') : blitzOn ? t(`setup.blitz.${mode}`, { s: turnSecs }) : t('setup.blitzOff'), () => {
+        settings.update({ speedMode: nextSpeedMode(mode) });
+        this.rebuild();
+      }, { textureBase: 'btn-comprar', w: blitzOn ? 110 : 130, h: 13, size: 6, color: blitzOn ? ACTION.primary : ACTION.secondary })
+      .setName('blitz-toggle');
+
+    // Tempo brings its own powers; the Blitz assists are not part of it.
+    if (blitzOn && !isTempo) {
+      // Each assist switches on its own — that is the rule the Speed Modes are built around, so
+      // there is deliberately no single "assists" switch to collapse them into.
+      const panicOn = settings.get().blitzPanic;
+      new PixelButton(this, cx() + 27, vy(belowSeats + 28), t(panicOn ? 'setup.panicOn' : 'setup.panicOff'), () => {
+        settings.update({ blitzPanic: !panicOn });
+        this.rebuild();
+      }, { textureBase: 'btn-comprar', w: 56, h: 13, size: 6, color: panicOn ? ACTION.primary : ACTION.secondary })
+        .setName('blitz-panic');
+      const breathOn = settings.get().blitzLastBreath;
+      new PixelButton(this, cx() + 89, vy(belowSeats + 28), t(breathOn ? 'setup.breathOn' : 'setup.breathOff'), () => {
+        settings.update({ blitzLastBreath: !breathOn });
+        this.rebuild();
+      }, { textureBase: 'btn-comprar', w: 56, h: 13, size: 6, color: breathOn ? ACTION.primary : ACTION.secondary })
+        .setName('blitz-breath');
+    }
+
     // Where the panel's free space starts — the seating preview fills whatever is left below.
-    let freeY = belowSeats + 26;
+    let freeY = belowSeats + 36;
     const lastSeed = settings.progress().lastSeed;
     if (lastSeed !== null) {
-      freeY = belowSeats + 40;
-      const advY = vy(belowSeats + 32);
+      freeY = belowSeats + 50;
+      const advY = vy(belowSeats + 42);
       // Open state keeps both buttons on one row — a second row would collide with PLAY at 4 seats.
       new PixelButton(this, this.advancedOpen ? cx() - 80 : cx(), advY, this.advancedOpen ? t('setup.advancedHide') : t('setup.advanced'), () => {
         this.advancedOpen = !this.advancedOpen;

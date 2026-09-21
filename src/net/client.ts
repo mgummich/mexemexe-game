@@ -511,6 +511,14 @@ export class NetClient {
 
   /** Claim this turn's one-off Mexe extension. Safe to call more than once: the server grants it
    * at most once per turn and answers a repeat with nothing. */
+  useFreeze(): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'use_freeze', reqId: this.nextReqId() });
+  }
+
+  usePanic(): void {
+    this.sendRaw({ v: PROTOCOL_VERSION, type: 'use_panic', reqId: this.nextReqId() });
+  }
+
   mexeStarted(): void {
     this.sendRaw({ v: PROTOCOL_VERSION, type: 'mexe_started', reqId: this.nextReqId() });
   }

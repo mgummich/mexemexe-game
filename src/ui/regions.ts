@@ -43,6 +43,15 @@ export interface GameRegions {
    * badge sits at the bottom edge in landscape and near the top in portrait, so a fixed offset
    * pushes the clock off screen in one of them. */
   onlineTimer: { x: number; y: number };
+  /** Where a locally-owned Speed clock (Blitz and friends) sits: the top bar, beside the deck
+   * count, not the online badge's corner. Offline there is no badge to hang it under, and the
+   * corner slot is half under the hand — for a 7s turn the clock is the HUD, not a footnote. */
+  speedClock: { x: number; y: number };
+  /** Tempo's three ability buttons (Freeze, Recover, Surge), in that order. Built only in Tempo
+   * matches, so no other mode pays for the space. */
+  tempoButtons: readonly ButtonSpec[];
+  /** Tempo's own readout (banked Tempo + heat word), on the same row as its buttons. */
+  tempoHud: { x: number; y: number };
 
   tableTop: number;
   tableBottom: number;
@@ -133,6 +142,15 @@ function landscape(p: ViewProfile): GameRegions {
     onlineNotice: { x: w / 2, y: 58, wrap: 300 + dx },
     onlineDot: { x: 6, y: 264 },
     onlineTimer: { x: 16, y: 253 },
+    speedClock: { x: 206 + half, y: 14 },
+    // All of it stays in the top bar: the band below it carries the banner, the last-move line
+    // and the online notice, and a row parked there collides with one of the three.
+    tempoHud: { x: 250 + half, y: 14 },
+    tempoButtons: [
+      { x: 330 + half, y: 14, w: 26, h: 18, size: 7 },
+      { x: 362 + half, y: 14, w: 26, h: 18, size: 7 },
+      { x: 394 + half, y: 14, w: 26, h: 18, size: 7 },
+    ],
 
     tableTop: 80,
     tableBottom: 188,
@@ -210,6 +228,17 @@ function portrait(p: ViewProfile): GameRegions {
     onlineNotice: { x: 135, y: 78, wrap: 250 },
     onlineDot: { x: 8, y: 40 },
     onlineTimer: { x: 18, y: 50 },
+    speedClock: { x: 210, y: 14 },
+    // Portrait has no room beside the clock, so the row sits just under the top bar, above the
+    // table area (tableTop is 88).
+    // Portrait's bar is 44 tall, so the Tempo row takes its second line rather than the band
+    // below, which belongs to the banner and the last-move line.
+    tempoHud: { x: 6, y: 34 },
+    tempoButtons: [
+      { x: 150, y: 34, w: 30, h: 16, size: 7 },
+      { x: 186, y: 34, w: 30, h: 16, size: 7 },
+      { x: 222, y: 34, w: 30, h: 16, size: 7 },
+    ],
 
     tableTop: 88,
     tableBottom: 320,
