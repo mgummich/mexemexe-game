@@ -13,10 +13,14 @@ import type { GameSceneConfig } from './GameScene';
 import { ACTION, SURFACE, TEXT } from '../ui/tokens';
 import { BLITZ_PRESETS, type BlitzDifficulty } from '../game-state/timing';
 
-const BLITZ_CYCLE = ['off', 'easy', 'medium', 'hard', 'expert', 'custom'] as const;
+/** The setup screen's one Speed control: the Blitz ladder, then Tempo, then back to the classic
+ * untimed game. Tempo is its own mode rather than a Blitz difficulty, which is why it sits at the
+ * end of the cycle instead of inside the ladder. */
+const SPEED_CYCLE = ['off', 'easy', 'medium', 'hard', 'expert', 'custom', 'tempo'] as const;
+type SpeedMode = (typeof SPEED_CYCLE)[number];
 
-function nextBlitzMode(current: 'off' | BlitzDifficulty): 'off' | BlitzDifficulty {
-  return BLITZ_CYCLE[(BLITZ_CYCLE.indexOf(current) + 1) % BLITZ_CYCLE.length]!;
+function nextSpeedMode(current: SpeedMode): SpeedMode {
+  return SPEED_CYCLE[(SPEED_CYCLE.indexOf(current) + 1) % SPEED_CYCLE.length]!;
 }
 
 type Personality = 'cida' | 'juninho' | 'bia' | 'ze';
@@ -164,19 +168,23 @@ export class SetupScene extends Phaser.Scene {
     // plays it, so it sits with the summary rather than behind ADVANCED. Off is the classic game.
     // One row: the difficulty cycles on tap, and the two assist switches appear beside it only
     // once there is a clock for them to assist with.
-    const mode = settings.get().blitzMode;
+    const mode = settings.get().speedMode;
     const blitzOn = mode !== 'off';
-    const turnSecs = Math.round((mode === 'custom' ? settings.get().blitzTurnMs : blitzOn ? BLITZ_PRESETS[mode].turnMs : 0) / 1000);
+    const isTempo = mode === 'tempo';
+    const turnSecs = Math.round(
+      (mode === 'custom' ? settings.get().blitzTurnMs : blitzOn && !isTempo ? BLITZ_PRESETS[mode as BlitzDifficulty].turnMs : 0) / 1000,
+    );
     // One row, three controls: 110 + 56 + 56 with 6 between them, centred. Wider buttons here
     // overlapped each other at four seats, which is the fullest this panel ever is.
     new PixelButton(this, cx() - (blitzOn ? 62 : 0), vy(belowSeats + 28),
-      blitzOn ? t(`setup.blitz.${mode}`, { s: turnSecs }) : t('setup.blitzOff'), () => {
-        settings.update({ blitzMode: nextBlitzMode(mode) });
+      isTempo ? t('setup.tempo') : blitzOn ? t(`setup.blitz.${mode}`, { s: turnSecs }) : t('setup.blitzOff'), () => {
+        settings.update({ speedMode: nextSpeedMode(mode) });
         this.rebuild();
       }, { textureBase: 'btn-comprar', w: blitzOn ? 110 : 130, h: 13, size: 6, color: blitzOn ? ACTION.primary : ACTION.secondary })
       .setName('blitz-toggle');
 
-    if (blitzOn) {
+    // Tempo brings its own powers; the Blitz assists are not part of it.
+    if (blitzOn && !isTempo) {
       // Each assist switches on its own — that is the rule the Speed Modes are built around, so
       // there is deliberately no single "assists" switch to collapse them into.
       const panicOn = settings.get().blitzPanic;

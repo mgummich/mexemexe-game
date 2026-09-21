@@ -319,3 +319,42 @@ The load-bearing property to prove first is the conflict rule: the same set of a
 choices must produce the same resolved state on a replay, which is what `src/game-state/replay.ts`
 would have to cover before this ships. Until then Tempo Sync (Phase 26) stays off, since its own
 exit criterion depends on this one.
+
+## MexeMexe Tempo (Phases 19–25)
+
+The third Speed Mode, offline first. Three numbers, one per question:
+
+```text
+Clock = survival   90s, and nothing refills it by itself
+Tempo = power      what playing well buys
+Heat  = risk       what spending it costs
+```
+
+`noteTempoTurn` folds one completed turn: a turn in rhythm, a turn that played rather than drew,
+and a turn survived inside the critical window each pay Tempo, capped at `max`. **Adrenaline**
+(Phase 23) is the clock share — under 25% left, gains *and* heat double, so the comeback and the
+risk are the same lever. **Surge** doubles them again and heats every turn while it runs; the two
+multipliers stack deliberately, which makes a surging seat on a low clock both the mode's best
+play and its fastest way to overheat.
+
+**Abilities v1** (Phase 21), all explicit-cost, all refused rather than queued when unaffordable:
+
+| ability | cost | effect |
+|---|---|---|
+| Freeze | 3 | stops the clock for 8s (credited to both turn and clock) |
+| Recover | 5 | +15s of clock — the Tempo-to-Clock conversion Phase 24 prefers as Panic |
+| Surge | 4 | 3 turns of doubled gain and unavoidable heat |
+
+**Heat** (Phase 22) reuses the shared ladder: close calls and surging turns heat, turns in rhythm
+cool, the ceiling trips a two-turn cooldown in which no power may be spent and no Tempo is earned.
+Bounded and explained — never instant death, never an unexplained clock loss.
+
+**Survival** (Phase 24): Recover *is* Panic here, and Last Breath costs Tempo — a seat that banked
+power survives its clock reaching zero once per turn, a seat that spent everything on Surge does
+not. Out of time and out of power ends the match for that seat, with the ordinary result screen.
+
+**Advanced powers** (Phase 25) are deferred, which the phase explicitly allows: Focus, Tempo
+Shield, alternate Surge and Time Domains are all variations on multipliers v1 already has, and
+none of them has a question v1 leaves unanswered. Revisit after Tempo has been played.
+
+**Tempo Sync** (Phase 26) is deferred with Phase 18: its exit criterion is that phase's.

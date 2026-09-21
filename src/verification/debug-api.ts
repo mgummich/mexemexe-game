@@ -436,9 +436,11 @@ export function installDebugApi(): void {
   // e2e hook — ?blitz=1|0 picks the local Blitz clock without clicking through the setup screen.
   // ?blitz=off|easy|medium|hard|expert|custom, with 1/0 kept as aliases for the common cases.
   const blitz = params.get('blitz');
-  if (blitz === '1') settings.update({ blitzMode: 'hard' });
-  else if (blitz === '0') settings.update({ blitzMode: 'off' });
-  else if (blitz !== null && BLITZ_MODE_FLAGS.includes(blitz as never)) settings.update({ blitzMode: blitz as BlitzDifficulty });
+  if (blitz === '1') settings.update({ speedMode: 'hard' });
+  else if (blitz === '0') settings.update({ speedMode: 'off' });
+  else if (blitz !== null && BLITZ_MODE_FLAGS.includes(blitz as never)) {
+    settings.update({ speedMode: blitz as BlitzDifficulty | 'off' | 'tempo' });
+  }
   // Each Blitz assist is disableable on its own, and each combination has to be reachable from a
   // test without clicking through a settings screen.
   const panic = params.get('panic');
@@ -447,7 +449,7 @@ export function installDebugApi(): void {
   if (breath === '1' || breath === '0') settings.update({ blitzLastBreath: breath === '1' });
 }
 
-const BLITZ_MODE_FLAGS = ['off', 'easy', 'medium', 'hard', 'expert', 'custom'] as const;
+const BLITZ_MODE_FLAGS = ['off', 'easy', 'medium', 'hard', 'expert', 'custom', 'tempo'] as const;
 
 export function urlSeed(): number {
   const raw = new URLSearchParams(location.search).get('seed');

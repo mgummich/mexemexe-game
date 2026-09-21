@@ -40,14 +40,14 @@ DEFERRED
 | 16 — Optional Overheat Modifier Outside Tempo | COMPLETE | Heat ladder + cooldown in the shared domain (3 tests); left experimental and off outside Tempo, per the phase guardrail. |
 | 17 — Commit / No Undo Thinking | COMPLETE | `commitPlay` setting: undo/redo/reset removed while building a turn, local only, off by default. |
 | 18 — Simultaneous Start Prototype | DEFERRED | Designed in the spec (eligibility, lifecycle, lock, timeout, conflict order, reconnect). Deferred under the phase’s own clause: simultaneous commits raise a legality question (shared cards), not a timing one, and replay coverage must prove the conflict rule first. |
-| 19 — MexeMexe Tempo Core | NOT_STARTED | |
-| 20 — Tempo Generation | NOT_STARTED | |
-| 21 — Tempo Abilities v1 | NOT_STARTED | |
-| 22 — Tempo Heat and Overheat | NOT_STARTED | |
-| 23 — Tempo Adrenaline | NOT_STARTED | |
-| 24 — Tempo Survival Systems | NOT_STARTED | |
-| 25 — Advanced Tempo Powers | NOT_STARTED | |
-| 26 — Tempo Sync | NOT_STARTED | |
+| 19 — MexeMexe Tempo Core | COMPLETE | Local mode on the shared clock: Clock/Tempo/Heat, setup cycle entry, top-bar HUD. Evidence: `tempo-hud`. |
+| 20 — Tempo Generation | COMPLETE | `noteTempoTurn`: rhythm, play and close-call sources, capped, deterministic, Adrenaline and Surge as the two multipliers. |
+| 21 — Tempo Abilities v1 | COMPLETE | Freeze 3 / Recover 5 / Surge 4, explicit cost on the button face, refused when unaffordable, overheated or already surging. |
+| 22 — Tempo Heat and Overheat | COMPLETE | Shared heat ladder: close calls and Surge heat, rhythm cools, ceiling trips a two-turn power lockout with no Tempo gain. |
+| 23 — Tempo Adrenaline | COMPLETE | Clock share under 25% doubles both gain and heat — comeback and risk on one lever. Not a toggle. |
+| 24 — Tempo Survival Systems | COMPLETE | Recover is Tempo’s Panic (Tempo-to-Clock); Last Breath costs Tempo, once per turn. No separate assists to overwhelm the three numbers. |
+| 25 — Advanced Tempo Powers | DEFERRED | Explicitly permitted by the phase: Focus, Tempo Shield, alternate Surge and Time Domains are all variations on v1’s multipliers and answer no open question. Revisit after play. |
+| 26 — Tempo Sync | DEFERRED | Depends on Phase 18, which is deferred: simultaneous resolution is unproven, and the phase says to enable Sync only if it is. |
 | 27 — Matchmaking, Lobby, and Ruleset Policy | NOT_STARTED | |
 | 28 — Speed AI | NOT_STARTED | |
 | 29 — Focused Speed QA Matrix | NOT_STARTED | |

@@ -24,7 +24,11 @@ import {
   NO_HEAT,
   noteHeat,
   powersAvailable,
+  NEW_TEMPO,
+  noteTempoTurn,
+  TEMPO_DEFAULTS,
   TIME_ATTACK_PRESETS,
+  useTempo,
   type BlitzDifficulty,
   type HeatConfig,
 } from '../src/game-state/timing';
@@ -298,5 +302,58 @@ describe('Heat and Overheat', () => {
     expect(noteHeat(NO_HEAT, HEAT, false, true)).toEqual(NO_HEAT);
     expect(noteHeat({ heat: 50, cooldown: 0 }, HEAT_OFF, true, false)).toEqual(NO_HEAT);
     expect(heatLevel({ heat: 999, cooldown: 0 }, HEAT_OFF)).toBe('calm');
+  });
+});
+
+describe('Tempo', () => {
+  const HEAT: HeatConfig = { perCloseCallMs: 30, coolPerCalmTurn: 10, overheatAt: 90, cooldownTurns: 2 };
+  const calm = { played: true, inRhythm: true, closeCall: false, clockShare: 1 };
+
+  it('pays for playing well, and stops at the ceiling', () => {
+    let s = noteTempoTurn(NEW_TEMPO, TEMPO_DEFAULTS, HEAT, calm);
+    expect(s.tempo).toBe(TEMPO_DEFAULTS.gainInRhythm + TEMPO_DEFAULTS.gainPerPlay);
+    for (let i = 0; i < 20; i++) s = noteTempoTurn(s, TEMPO_DEFAULTS, HEAT, calm);
+    expect(s.tempo).toBe(TEMPO_DEFAULTS.max);
+  });
+
+  it('Adrenaline doubles the take on a low clock', () => {
+    const normal = noteTempoTurn(NEW_TEMPO, TEMPO_DEFAULTS, HEAT, calm);
+    const desperate = noteTempoTurn(NEW_TEMPO, TEMPO_DEFAULTS, HEAT, { ...calm, clockShare: 0.1 });
+    expect(desperate.tempo).toBe(normal.tempo * 2);
+  });
+
+  it('Freeze and Recover buy time; Surge buys gain and pays in Heat', () => {
+    const rich = { ...NEW_TEMPO, tempo: TEMPO_DEFAULTS.max };
+    const freeze = useTempo(rich, TEMPO_DEFAULTS, 'freeze');
+    expect(freeze).toMatchObject({ granted: true, clockMs: TEMPO_DEFAULTS.freezeMs, turnMs: TEMPO_DEFAULTS.freezeMs });
+    expect(freeze.state.tempo).toBe(TEMPO_DEFAULTS.max - TEMPO_DEFAULTS.freezeCost);
+
+    const recover = useTempo(rich, TEMPO_DEFAULTS, 'recover');
+    // Recover is clock, not turn: it buys another turn's worth of life, not this turn's length.
+    expect(recover).toMatchObject({ granted: true, clockMs: TEMPO_DEFAULTS.recoverMs, turnMs: 0 });
+
+    const surge = useTempo(rich, TEMPO_DEFAULTS, 'surge');
+    expect(surge.state.surgeTurns).toBe(TEMPO_DEFAULTS.surgeTurns);
+    // Already surging: refused rather than stacked.
+    expect(useTempo(surge.state, TEMPO_DEFAULTS, 'surge').granted).toBe(false);
+    // A surging turn heats even when it was not a close call.
+    expect(noteTempoTurn(surge.state, TEMPO_DEFAULTS, HEAT, calm).heat.heat).toBeGreaterThan(0);
+  });
+
+  it('refuses everything it cannot pay for', () => {
+    expect(useTempo(NEW_TEMPO, TEMPO_DEFAULTS, 'freeze').granted).toBe(false);
+    expect(useTempo({ ...NEW_TEMPO, tempo: 12 }, TEMPO_DEFAULTS, 'recover').granted).toBe(true);
+  });
+
+  it('an overheated seat has no powers and earns nothing while it cools', () => {
+    const hot = { tempo: TEMPO_DEFAULTS.max, heat: { heat: 0, cooldown: 2 }, surgeTurns: 0 };
+    expect(useTempo(hot, TEMPO_DEFAULTS, 'freeze').granted).toBe(false);
+    const after = noteTempoTurn(hot, TEMPO_DEFAULTS, HEAT, calm);
+    expect(after.tempo).toBe(TEMPO_DEFAULTS.max);
+    expect(after.heat.cooldown).toBe(1);
+  });
+
+  it('a rematch starts from nothing, by construction', () => {
+    expect(NEW_TEMPO).toEqual({ tempo: 0, heat: NO_HEAT, surgeTurns: 0 });
   });
 });

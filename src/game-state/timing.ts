@@ -343,3 +343,115 @@ export function noteHeat(state: HeatState, config: HeatConfig, closeCall: boolea
 export function powersAvailable(state: HeatState): boolean {
   return state.cooldown === 0;
 }
+
+/**
+ * MexeMexe Tempo: the third Speed Mode, and the only one where time is a resource you spend rather
+ * than only a budget you keep. Three numbers, one per question the mode asks:
+ *
+ * ```text
+ * Clock = survival   how long you last
+ * Tempo = power      what playing well buys you
+ * Heat  = risk       what spending it costs
+ * ```
+ *
+ * Every transition here is pure and bounded, and none of them touches legality — Tempo buys time,
+ * never a move. It reuses the same clock, rhythm and heat the other modes run on.
+ */
+export interface TempoConfig {
+  /** Tempo for a turn taken in rhythm — this is where Perfect Rhythm stops being decoration. */
+  readonly gainInRhythm: number;
+  /** Tempo for a turn that committed cards rather than drawing. */
+  readonly gainPerPlay: number;
+  /** Extra Tempo for surviving a turn decided inside the critical window. */
+  readonly gainCloseCall: number;
+  /** Ceiling. Tempo is a working resource, not a score to hoard. */
+  readonly max: number;
+  readonly freezeCost: number;
+  /** What one Freeze stops the clock for. */
+  readonly freezeMs: number;
+  readonly recoverCost: number;
+  /** Clock returned by one Recover. */
+  readonly recoverMs: number;
+  readonly surgeCost: number;
+  /** Turns a Surge lasts. While it runs, gains are doubled and every turn heats. */
+  readonly surgeTurns: number;
+}
+
+export const TEMPO_DEFAULTS: TempoConfig = {
+  gainInRhythm: 2, gainPerPlay: 1, gainCloseCall: 2, max: 12,
+  freezeCost: 3, freezeMs: 8_000,
+  recoverCost: 5, recoverMs: 15_000,
+  surgeCost: 4, surgeTurns: 3,
+};
+
+export interface TempoState {
+  readonly tempo: number;
+  readonly heat: HeatState;
+  /** Turns of Surge left. Above zero doubles Tempo gain and heats every turn. */
+  readonly surgeTurns: number;
+}
+
+export const NEW_TEMPO: TempoState = { tempo: 0, heat: NO_HEAT, surgeTurns: 0 };
+
+/** What a completed turn did, as the three facts Tempo scores. */
+export interface TempoTurn {
+  readonly played: boolean;
+  readonly inRhythm: boolean;
+  readonly closeCall: boolean;
+  /** Share of the personal clock left, 0..1. Adrenaline: a seat near zero earns and heats more. */
+  readonly clockShare: number;
+}
+
+/** Below this share of the clock, Adrenaline is in effect: gains and heat are both raised. */
+export const TEMPO_ADRENALINE_SHARE = 0.25;
+
+/**
+ * Fold one completed turn into Tempo, Heat and Surge. Deterministic and bounded: gains are capped
+ * at `max`, Surge counts down by exactly one turn, and an overheated seat earns nothing while it
+ * cools — which is what stops a Surge from paying for its own risk.
+ */
+export function noteTempoTurn(state: TempoState, config: TempoConfig, heatConfig: HeatConfig, turn: TempoTurn): TempoState {
+  const heat = noteHeat(state.heat, heatConfig, turn.closeCall || state.surgeTurns > 0, turn.inRhythm && state.surgeTurns === 0);
+  if (!powersAvailable(state.heat)) {
+    // Overheated: the cooldown is the whole turn's effect. No gain, no Surge progress.
+    return { tempo: state.tempo, heat, surgeTurns: state.surgeTurns };
+  }
+  const base =
+    (turn.inRhythm ? config.gainInRhythm : 0) +
+    (turn.played ? config.gainPerPlay : 0) +
+    (turn.closeCall ? config.gainCloseCall : 0);
+  // Adrenaline and Surge are the two multipliers, and they stack: a surging seat on a low clock is
+  // exactly the comeback the mode is built around, and exactly the fastest way to overheat.
+  const multiplier = (state.surgeTurns > 0 ? 2 : 1) * (turn.clockShare <= TEMPO_ADRENALINE_SHARE ? 2 : 1);
+  return {
+    tempo: Math.min(config.max, state.tempo + base * multiplier),
+    heat,
+    surgeTurns: Math.max(0, state.surgeTurns - 1),
+  };
+}
+
+export type TempoAbility = 'freeze' | 'recover' | 'surge';
+
+export function tempoCost(config: TempoConfig, ability: TempoAbility): number {
+  return ability === 'freeze' ? config.freezeCost : ability === 'recover' ? config.recoverCost : config.surgeCost;
+}
+
+/**
+ * Spend Tempo on an ability. Refused — with nothing changed — when the seat cannot afford it, when
+ * it is already surging, or while it is overheated, which is the lockout Overheat exists to be.
+ * `clockMs` and `turnMs` are what the caller must add to the personal clock and the running turn.
+ */
+export function useTempo(
+  state: TempoState,
+  config: TempoConfig,
+  ability: TempoAbility,
+): { state: TempoState; granted: boolean; clockMs: number; turnMs: number } {
+  const cost = tempoCost(config, ability);
+  const refused = { state, granted: false, clockMs: 0, turnMs: 0 };
+  if (!powersAvailable(state.heat) || state.tempo < cost) return refused;
+  if (ability === 'surge' && state.surgeTurns > 0) return refused;
+  const spent = { ...state, tempo: state.tempo - cost };
+  if (ability === 'freeze') return { state: spent, granted: true, clockMs: config.freezeMs, turnMs: config.freezeMs };
+  if (ability === 'recover') return { state: spent, granted: true, clockMs: config.recoverMs, turnMs: 0 };
+  return { state: { ...spent, surgeTurns: config.surgeTurns }, granted: true, clockMs: 0, turnMs: 0 };
+}

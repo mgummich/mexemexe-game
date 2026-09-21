@@ -84,6 +84,12 @@ end the turn. The clock stops while the pause overlay is up, and AI seats keep t
 Two assists, each switchable on its own: the Panic Button (one emergency extension, spent by
 tapping the clock) and Last Breath (a short extra window when the clock reaches zero, once per
 turn). Expert brings neither.
+**MexeMexe Tempo** is a separate local mode, picked at the end of the same setup cycle. It runs on
+a 90s survival clock that nothing refills by itself, and turns playing well into Tempo, which buys
+Freeze (stop the clock), Recover (turn Tempo back into clock) and Surge (double gain, more risk).
+Spending heats the seat; the ceiling is a two-turn lockout. Running out of clock with no Tempo
+left ends the match for that seat. See `docs/specs/speed-modes-timing.md`.
+
 Online, the
 *server* owns the timer (Casual / Fast / Blitz / Off presets, or the host-only CUSTOM
 screen behind them, picked by the host and frozen at match start — see

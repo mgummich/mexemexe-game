@@ -20,9 +20,11 @@ import { plural, t } from '../localization/i18n';
 import { DraftEditor } from '../mexe-mode/draft';
 import type { ConnStatus, NetClient } from '../net/client';
 import {
-  assistStateFor, BLITZ_PRESETS, enterLastBreath, NO_ASSISTS, NO_RHYTHM, noteTurnTaken, noteTurnUsed,
-  startTurn, usePanic,
-  type AssistState, type Assists, type Rhythm, type TurnClock,
+  assistStateFor, BLITZ_PRESETS, enterLastBreath, heatLevel, NEW_TEMPO, NO_ASSISTS, NO_RHYTHM,
+  noteTempoTurn, noteTurnTaken, noteTurnUsed, spendClock, startTurn, TEMPO_DEFAULTS, tempoCost,
+  usePanic, useTempo,
+  type AssistState, type Assists, type HeatConfig, type Rhythm, type TempoAbility, type TempoState,
+  type TurnClock,
 } from '../game-state/timing';
 import type { ErrorMsg, GameOverMsg, GameView, SubmitTurnMeld } from '../net/protocol';
 import { OnlineSession } from '../net/online-session';
@@ -140,6 +142,13 @@ const HESITATION_MS = 18_000;
 const RESET_CONFIRM_EDITS = 4;
 /** How long a confirm-armed Reset stays armed before it quietly disarms again. */
 const RESET_ARM_MS = 3000;
+
+/** Tempo's own numbers. The clock is survival and nothing refills it by itself — Recover is the
+ * increment, and it has to be earned (docs/specs/speed-modes-timing.md). */
+const TEMPO_START_CLOCK_MS = 90_000;
+const TEMPO_WARN_MS = 20_000;
+/** Heat for a Tempo match: three close calls (or three surging turns) overheat a seat. */
+const TEMPO_HEAT: HeatConfig = { perCloseCallMs: 34, coolPerCalmTurn: 12, overheatAt: 100, cooldownTurns: 2 };
 
 /** What each joker in a resolved meld is standing in for, keyed by card id, for the hint badge. */
 function jokerLabelsOf(assignments: readonly JokerAssignment[]): Map<string, string> {
@@ -375,6 +384,12 @@ export class GameScene extends Phaser.Scene {
   private assistState: AssistState = assistStateFor(NO_ASSISTS);
   /** Whether this turn already took its Last Breath. Per turn: cleared by onTurnStart. */
   private lastBreathTaken = false;
+  /** Local Tempo match: the human seat's survival clock, or 0 when this is not a Tempo match. */
+  private tempoClockMs = 0;
+  /** Local Tempo match: Tempo, Heat and Surge for the human seat. */
+  private tempo: TempoState = NEW_TEMPO;
+  /** The Tempo row: its readout and its three ability buttons, destroyed and rebuilt together. */
+  private tempoRow: Phaser.GameObjects.GameObject[] = [];
   /** Repaints the reconnect notice once a second while the socket is down. One ticker for the
    * whole scene: a per-component timer is exactly the leak this phase is meant to avoid. */
   private reconnectTicker: Phaser.Time.TimerEvent | null = null;
@@ -484,6 +499,9 @@ export class GameScene extends Phaser.Scene {
     this.rhythm = NO_RHYTHM;
     this.assists = NO_ASSISTS;
     this.assistState = assistStateFor(NO_ASSISTS);
+    this.tempoClockMs = 0;
+    this.tempo = NEW_TEMPO;
+    this.tempoRow = [];
   }
 
 
@@ -546,8 +564,14 @@ export class GameScene extends Phaser.Scene {
       this.match = new LocalMatch(state, { localSeat: 0, personalities: this.personalities });
       // Not the tutorial: a lesson being read is not a turn being taken, and a clock would time
       // out the step the player is still reading.
-      const mode = settings.get().blitzMode;
-      if (mode !== 'off' && !config.tutorial) {
+      const mode = settings.get().speedMode;
+      if (mode === 'tempo' && !config.tutorial) {
+        // Tempo runs on a personal clock like Time Attack, but nothing tops it up on its own:
+        // Recover is the increment, and it has to be earned.
+        this.tempoClockMs = TEMPO_START_CLOCK_MS;
+        this.tempo = NEW_TEMPO;
+        this.turnWarnMs = TEMPO_WARN_MS;
+      } else if (mode !== 'off' && mode !== 'tempo' && !config.tutorial) {
         const preset = BLITZ_PRESETS[mode];
         this.blitzMs = mode === 'custom' ? settings.get().blitzTurnMs : preset.turnMs;
         this.turnBudgetMs = this.blitzMs;
@@ -1037,7 +1061,10 @@ export class GameScene extends Phaser.Scene {
    * `state_sync` (see `onFeitoOnline`/`onComprarOnline`).
    */
   private dispatch(action: GameAction): ActionOutcome {
-    if (action.actorIndex === this.localSeat) this.noteRhythm();
+    if (action.actorIndex === this.localSeat) {
+      this.noteRhythm();
+      this.noteTempoTurn(action.type === 'confirmTurn');
+    }
     const outcome = this.match!.dispatch(action);
     if (!outcome.ok) {
       // Nothing local should reach this: the human path is gated by feitoAccepted() and the AI
@@ -1083,7 +1110,15 @@ export class GameScene extends Phaser.Scene {
 
     // A local Blitz clock runs on the human's turn only: an AI seat already has its own pace
     // (aiThinkDelay), and timing it out would just be the scene racing itself.
-    if (this.blitzMs > 0) {
+    if (this.tempoClockMs > 0) {
+      // Tempo's turn is as long as the seat's own clock still is, like Time Attack — the mode's
+      // pressure is the clock running out, not a per-turn buzzer.
+      this.turnDeadlineAt = isMyTurn ? Date.now() + this.tempoClockMs : null;
+      this.turnBudgetMs = this.tempoClockMs;
+      this.lastBreathTaken = false;
+      this.ui.lastTickSecond = -1;
+      this.renderTempoButtons();
+    } else if (this.blitzMs > 0) {
       this.turnDeadlineAt = isMyTurn ? Date.now() + this.blitzMs : null;
       // Budget and breath are per turn: a turn that was extended must not hand the extension, or
       // its spent breath, to the next one.
@@ -1665,7 +1700,7 @@ export class GameScene extends Phaser.Scene {
 
     // The turn clock is not an online-only widget any more: a local Blitz match runs the same
     // readout off its own deadline. Built before the online block so both paths share one ticker.
-    if (this.online || this.blitzMs > 0) {
+    if (this.online || this.blitzMs > 0 || this.tempoClockMs > 0) {
       const slot = this.online ? this.r.onlineTimer : this.r.speedClock;
       this.onlineTimerText = label(this, slot.x, slot.y, '', this.online ? 8 : 10, TEXT.muted)
         .setOrigin(0, 0.5)
@@ -1765,6 +1800,28 @@ export class GameScene extends Phaser.Scene {
       // Last Breath first: one extra window per turn, granted by the clock itself rather than by
       // anything the player has to press. Once per turn by construction (the flag rides on the
       // clock), so it cannot chain into a turn that never ends.
+      if (this.tempoClockMs > 0) {
+        // Tempo's Last Breath costs Tempo: a seat that banked power survives on it, once per turn,
+        // and a seat that spent everything on Surge does not. Same conversion Recover uses, which
+        // is also Tempo's Panic Button — one mechanic, not three.
+        const saved = this.lastBreathTaken ? null : useTempo(this.tempo, TEMPO_DEFAULTS, 'recover');
+        if (saved?.granted) {
+          this.tempo = saved.state;
+          this.tempoClockMs = saved.clockMs;
+          this.turnDeadlineAt = Date.now() + saved.clockMs;
+          this.lastBreathTaken = true;
+          this.setOnlineNotice(t('speed.lastBreath'));
+          this.time.delayedCall(2000, () => this.setOnlineNotice(''));
+          haptic('bump');
+          this.renderTempoButtons();
+          return;
+        }
+        // Out of time and out of power: Tempo's clock is survival, so that is the match.
+        this.tempoClockMs = 0;
+        this.turnDeadlineAt = null;
+        this.onTempoLoss();
+        return;
+      }
       const breath = enterLastBreath(this.localClock(), this.assists);
       if (breath.entered) {
         this.turnDeadlineAt = Date.now() + this.assists.lastBreathMs;
@@ -1868,6 +1925,110 @@ export class GameScene extends Phaser.Scene {
 
   /** The streak as a quiet run of pips beside the clock — never a number, never a colour of its
    * own, and nothing at all below two in a row, so it reads as a rhythm rather than a score. */
+  /**
+   * The local seat's Tempo clock hit zero. Survival is the whole mode, so the match is over: the
+   * next seat is credited with the win, the result screen is the ordinary one, and nothing about
+   * the board is rewritten — the cards stay exactly as the clock left them.
+   */
+  private onTempoLoss(): void {
+    const state = this.state();
+    const winner = state.players.find((_, i) => i !== this.localSeat);
+    playSfx(this, 'sfx-invalid');
+    this.setOnlineNotice(t('tempo.clockOut'));
+    const perPlayer = playlog.summary().perPlayer;
+    const results = state.players.map((p, i) => ({
+      name: p.name,
+      cardsLeft: p.hand.length,
+      isWinner: p.id === winner?.id,
+      avatarKey: this.avatarKey(i),
+      personality: this.personalities[i] ?? undefined,
+      ...playerStats(p.id, perPlayer),
+    }));
+    for (const [i, personality] of this.personalities.entries()) {
+      if (personality && i !== this.localSeat) settings.recordMatchResult(personality, false);
+    }
+    this.time.delayedCall(Math.max(400, feelMs('major')), () => {
+      gotoScene(this, 'win', {
+        winnerName: winner?.name ?? '',
+        stalemate: false,
+        config: this.config,
+        results,
+        finalTable: state.table,
+      });
+    });
+  }
+
+  /** Tempo's three abilities, as a row of buttons that says what each one costs. Rebuilt per turn
+   * (costs do not change, affordability does), and absent entirely outside a Tempo match. */
+  private renderTempoButtons(): void {
+    for (const o of this.tempoRow) o.destroy();
+    this.tempoRow = [];
+    if (this.tempoClockMs <= 0 || this.state().activePlayerIndex !== this.localSeat) return;
+    const abilities: { key: TempoAbility; glyph: string }[] = [
+      { key: 'freeze', glyph: '\u2744' },
+      { key: 'recover', glyph: '+' },
+      { key: 'surge', glyph: '\u26a1' },
+    ];
+    // Tempo's two other numbers, in words, on the same row as the powers they pay for.
+    const level = heatLevel(this.tempo.heat, TEMPO_HEAT);
+    const hud = label(this, this.r.tempoHud.x, this.r.tempoHud.y,
+      t('tempo.hud', { tempo: this.tempo.tempo, heat: t(`tempo.heat.${level}`) }), 8,
+      level === 'overheat' ? TEXT.error : level === 'hot' ? TEXT.warning : TEXT.muted).setOrigin(0, 0.5);
+    this.tempoRow.push(hud);
+    abilities.forEach(({ key, glyph }, i) => {
+      const spec = this.r.tempoButtons[i]!;
+      const cost = tempoCost(TEMPO_DEFAULTS, key);
+      const afford = this.tempo.tempo >= cost && heatLevel(this.tempo.heat, TEMPO_HEAT) !== 'overheat';
+      // The cost is on the face, so what a power takes is never a thing to remember.
+      const btn = new PixelButton(this, spec.x, spec.y, `${glyph}${cost}`, () => this.onTempoAbility(key), {
+        textureBase: 'btn-small', w: spec.w, h: spec.h, size: spec.size,
+        color: afford ? ACTION.primary : ACTION.secondary,
+        tooltip: t(`tempo.${key}`),
+      });
+      btn.setAlpha(afford ? 1 : 0.55);
+      this.tempoRow.push(btn);
+    });
+  }
+
+  /** Spend Tempo. The domain refuses what cannot be paid for, what is already running and
+   * anything at all while the seat is overheated — the lockout Overheat exists to be. */
+  private onTempoAbility(ability: TempoAbility): void {
+    if (this.tempoClockMs <= 0 || this.state().activePlayerIndex !== this.localSeat) return;
+    const result = useTempo(this.tempo, TEMPO_DEFAULTS, ability);
+    if (!result.granted) {
+      playSfx(this, 'sfx-invalid', 0.3);
+      return;
+    }
+    this.tempo = result.state;
+    this.tempoClockMs += result.clockMs;
+    if (this.turnDeadlineAt !== null) this.turnDeadlineAt += result.turnMs + (ability === 'recover' ? result.clockMs : 0);
+    playSfx(this, 'sfx-feito', 0.4);
+    haptic('bump');
+    this.setOnlineNotice(t(`tempo.used.${ability}`));
+    this.time.delayedCall(2000, () => this.setOnlineNotice(''));
+    this.renderTempoButtons();
+    this.updateTurnTimer();
+  }
+
+  /**
+   * One completed Tempo turn: the clock is charged what the turn cost, and Tempo, Heat and Surge
+   * are folded from what the turn was. Adrenaline rides on the clock share, so a seat near zero
+   * earns double and heats double — the comeback and the risk are the same lever.
+   */
+  private noteTempoTurn(played: boolean): void {
+    if (this.tempoClockMs <= 0 || this.turnDeadlineAt === null) return;
+    const left = Math.max(0, this.turnDeadlineAt - Date.now());
+    const used = Math.max(0, this.turnBudgetMs - left);
+    const closeCall = turnClockReadout(this.turnDeadlineAt, Date.now(), this.turnWarnMs, this.turnBudgetMs).adrenaline > 0;
+    this.tempoClockMs = spendClock(this.tempoClockMs, used, 0).clockMs;
+    this.tempo = noteTempoTurn(this.tempo, TEMPO_DEFAULTS, TEMPO_HEAT, {
+      played,
+      inRhythm: this.rhythm.streak > 0,
+      closeCall,
+      clockShare: this.tempoClockMs / TEMPO_START_CLOCK_MS,
+    });
+  }
+
   /** A seat's Time Attack clock in ms, or null in any mode that has no personal clocks. The
    * active seat's own figure comes from the running deadline instead, so it ticks rather than
    * standing still until the next frame lands. */
@@ -1893,6 +2054,7 @@ export class GameScene extends Phaser.Scene {
   /** What else the clock face is carrying: a freeze still available, and time already borrowed.
    * Both are words and numbers, never a colour on its own. */
   private speedMarkers(): string {
+    if (this.tempoClockMs > 0) return '';
     if (!this.online || this.state().activePlayerIndex !== this.localSeat) return '';
     let out = '';
     if (this.panicLeftHere() <= 0 && (this.online.freezeLeft[this.localSeat] ?? 0) > 0) {

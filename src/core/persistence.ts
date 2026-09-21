@@ -45,7 +45,7 @@ export interface Settings {
    * 'off' by default — a clock a player did not ask for is a different game, not a nicer one.
    * A difficulty is a set of defaults (turn length + assist strengths), never a lock.
    */
-  blitzMode: 'off' | BlitzDifficulty;
+  speedMode: 'off' | BlitzDifficulty | 'tempo';
   /** Turn length for the `custom` difficulty only, clamped to `BLITZ_TURN_BOUNDS`. */
   blitzTurnMs: number;
   /** Blitz assistance, each independently disableable (never bundled into one "assists" switch):
@@ -94,9 +94,9 @@ export interface Save {
   cosmetics: Cosmetics;
 }
 
-export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, blitzMode: 'off', blitzTurnMs: 9_000, blitzPanic: true, blitzLastBreath: true, commitPlay: false };
+export const DEFAULT_SETTINGS: Settings = { muted: false, sfxVolume: 80, musicVolume: 55, musicEnabled: false, musicContextAware: true, reducedMotion: false, locale: 'pt', largeText: false, helperMode: 'standard', batterySaver: false, aiDifficulty: 'smart', aiSpeed: 'normal', aiExplain: 'simple', timerTickSound: true, haptics: false, speedMode: 'off', blitzTurnMs: 9_000, blitzPanic: true, blitzLastBreath: true, commitPlay: false };
 const HELPER_MODES: readonly HelperMode[] = ['beginner', 'standard', 'expert'];
-const BLITZ_MODES: readonly ('off' | BlitzDifficulty)[] = ['off', 'easy', 'medium', 'hard', 'expert', 'custom'];
+const SPEED_MODES: readonly Settings['speedMode'][] = ['off', 'easy', 'medium', 'hard', 'expert', 'custom', 'tempo'];
 
 /** A stored number outside its bounds is clamped, like every other untrusted stored value here. */
 function clampMs(value: unknown, [lo, hi]: readonly [number, number], fallback: number): number {
@@ -138,7 +138,7 @@ function sanitizeSettings(partial: Partial<Settings> | undefined): Settings {
     aiExplain: oneOf(AI_EXPLAIN_MODES, merged.aiExplain, DEFAULT_SETTINGS.aiExplain),
     timerTickSound: typeof merged.timerTickSound === 'boolean' ? merged.timerTickSound : DEFAULT_SETTINGS.timerTickSound,
     haptics: typeof merged.haptics === 'boolean' ? merged.haptics : DEFAULT_SETTINGS.haptics,
-    blitzMode: oneOf(BLITZ_MODES, merged.blitzMode, DEFAULT_SETTINGS.blitzMode),
+    speedMode: oneOf(SPEED_MODES, merged.speedMode, DEFAULT_SETTINGS.speedMode),
     blitzTurnMs: clampMs(merged.blitzTurnMs, BLITZ_TURN_BOUNDS, DEFAULT_SETTINGS.blitzTurnMs),
     blitzPanic: typeof merged.blitzPanic === 'boolean' ? merged.blitzPanic : DEFAULT_SETTINGS.blitzPanic,
     blitzLastBreath: typeof merged.blitzLastBreath === 'boolean' ? merged.blitzLastBreath : DEFAULT_SETTINGS.blitzLastBreath,
