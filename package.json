@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "phaser": "^4.2.1",
-    "tsx": "^4.23.14",
+    "tsx": "^4.23.15",
     "ws": "^8.21.3"
   },
   "devDependencies": {
