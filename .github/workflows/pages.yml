@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The commit CI actually tested, not whatever main points at by the time this starts.
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
