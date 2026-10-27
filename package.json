@@ -34,14 +34,14 @@
   },
   "dependencies": {
     "phaser": "^4.2.1",
-    "tsx": "^4.23.14",
-    "ws": "^8.21.3"
+    "tsx": "^4.23.15",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@stryker-mutator/core": "^10.0.0",
     "@types/node": "^26.6.2",
-    "@types/ws": "^8.18.1",
+    "@types/ws": "^8.18.2",
     "@vitest/coverage-v8": "^5.0.0",
     "eslint": "^10.11.0",
     "typescript": "^6.0.3",
