@@ -1078,35 +1078,23 @@ test('stress-table: many melds on the table still hold fps >= 50 @perf', async (
     // crowded board rather than the one-off opening deal.
     await waitForSettledBoard(p);
     const fps = await measureFpsSamples(p);
-    // CI gets its own floor, from measurement, not aspiration. The 35 floor here was set from a
-    // 42/57 measurement taken under the *old* 1s settle window; b03fce5 widened the window to
-    // waitForSettledBoard()+3s for a truer steady-state read (see comment above) without
-    // re-measuring CI against it. Two later CI runs on this branch (34724299446, 34724491678),
-    // with *no rendering-path source change* between them and the prior green run (diff is
-    // e2e-only waits — see be4a6c9), both read 31 under the new window — reproducible, not a
-    // one-off blip. A same-machine branch-vs-merge-base(2632b0b) comparison, repeated and also
-    // under CPU throttling up to 8x via CDP, found no systematic fps gap between the two, so the
-    // drop is the CI runner/measurement window, not a rendering regression. Floor rebased below
-    // that reproducible 31 with headroom for run-to-run runner variance; still comfortably above
-    // zero so a genuine catastrophic regression still fails. The dev-machine 50 is unchanged and
-    // remains the real quality bar.
-    // The CI floor is calibrated for the WINDOWED metric, which is not the one the 25 was set
-    // for: that number came from `__MEXE__.fps`, Phaser's lifetime average, read after a 3s
-    // settle. On this runner the window reads lower than the average did — 23.6 with one window
-    // and 24.2 with the best of three, on two runs of the same commit whose local like-for-like
-    // measurement showed no slowdown against main (60.8/60.5/42.7 here versus main's 57/56/56,
-    // same machine, same probe). 20 sits below both CI readings with headroom for a runner that
-    // is having a worse day, and still fails a catastrophic regression (a 20x CPU throttle reads
-    // 21.8 on the dev machine). The dev floor of 50 is untouched and remains the real bar.
-    // Calibration pass: the ratio is measured and logged on every run, but not yet gated on —
-    // its floor has to come from CI readings, the same way every absolute floor here was set.
-    // Once a few runs have reported `FPS stress-table ratio`, replace the CI branch below with
-    // that ratio and a low absolute catastrophe floor.
+    const ratio = fps.best / reference.best;
     console.log(
       `FPS stress-table ratio: crowded ${fps.best.toFixed(1)} / reference ${reference.best.toFixed(1)}`
-      + ` = ${(fps.best / reference.best).toFixed(3)} (reference spread ${reference.all.join(' / ')})`,
+      + ` = ${ratio.toFixed(3)} (reference spread ${reference.all.join(' / ')})`,
     );
-    expectFps(fps, process.env.CI ? 20 : 50, 'stress-table');
+    if (!process.env.CI) {
+      // The dev-machine 50 is the real quality bar.
+      expectFps(fps, 50, 'stress-table');
+      return;
+    }
+    // CI gates on the ratio. Ten CI readings (runs 35533401534..40600447940) put crowded fps
+    // anywhere from 18.4 to 41.8 with no rendering change, while the ratio stayed in 0.72-1.30;
+    // the absolute 20 floor failed a docker/login-action bump at 18.4 (ratio 0.717). 0.6 sits
+    // below every reading; the 10 fps catastrophe floor still fails a renderer that falls over.
+    expectFps(fps, 10, 'stress-table');
+    expect(ratio, `stress-table: crowded/reference ratio ${ratio.toFixed(3)} against a floor of 0.6`)
+      .toBeGreaterThanOrEqual(0.6);
   });
 });
 
