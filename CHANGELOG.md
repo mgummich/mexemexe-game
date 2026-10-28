@@ -4,7 +4,9 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased — Speed Modes
+## 1.12.0 — 2026-10-28
+
+### Speed Modes
 
 ### Added
 
