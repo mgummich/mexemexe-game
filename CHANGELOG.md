@@ -4,9 +4,35 @@ All notable changes to MEXEMEXE!. Entries below are historical and are kept as
 written: some name phase audits and status files that have since been deleted,
 and those remain readable in git history.
 
-## Unreleased
+## 1.12.0 — 2026-10-28
+
+### Speed Modes
+
+### Added
+
+- **MexeMexe Blitz.** Local matches can run on a per-turn clock, picked on the
+  setup screen as a difficulty (Easy 12s, Medium 9s, Hard 7s, Expert 5s, or
+  Custom). Running out does what an online timeout does: drop the draft, draw
+  one card, end the turn. Two assists switch on independently — Panic Button
+  (one emergency extension, tap the clock) and Last Breath (a short extra
+  window at zero, once per turn); Expert brings neither. Online rooms gain a
+  Blitz timer preset (7s turns, no Mexe bonus).
+- **MexeMexe Time Attack** (online). A fifth lobby timer preset: each seat
+  plays on a personal clock, with Freeze and Time Debt. The server owns every
+  deadline.
+- **MexeMexe Tempo** (local). A 90s survival clock that nothing refills by
+  itself; playing well earns Tempo, spent on Freeze, Recover and Surge.
+  Spending builds Heat, capped by a two-turn lockout.
+- **Clock feel.** Perfect Rhythm, Adrenaline in the last seconds, a haptic
+  buzz as the turn runs out, and AI seats that play at the table's pace.
+
+Protocol is now v12 (was v9): older clients are refused at the handshake.
+Rules: `docs/GAME_RULES.md`; design and audit: `docs/specs/speed-modes-timing.md`.
 
 ### Fixed
+
+- **The Tempo row stayed at the old layout's coordinates after an orientation
+  flip.** It is now rebuilt with the rest of the static UI.
 
 - **LB-15 was racing an 820ms window.** `offline` is a transient render, not a
   resting state: the dropped client reconnects on `RECONNECT_DELAYS_MS[0]`
