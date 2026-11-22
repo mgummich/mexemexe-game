@@ -1,5 +1,5 @@
 # Shared install layer for the browser bundle: vite, typescript and phaser.
-FROM node:26-alpine AS deps
+FROM node:26.13.1-alpine3.24@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts && npm rebuild esbuild
@@ -9,7 +9,7 @@ RUN npm ci --ignore-scripts && npm rebuild esbuild
 # and nothing else, so dev tooling is omitted and phaser — a dependency of the
 # browser bundle alone — is dropped. All three in one RUN, since a later layer
 # deleting files cannot shrink an earlier one.
-FROM node:26-alpine AS server
+FROM node:26.13.1-alpine3.24@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS server
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts \
@@ -38,7 +38,7 @@ COPY src ./src
 RUN npm run build
 
 # Default target: the static game.
-FROM nginx:alpine AS web
+FROM nginx:1.31.9-alpine3.24@sha256:fb4658584bd9a916ffb6f6e365f97c25cfdb2923801f551ea08356e695f14ff7 AS web
 # Access logging off, error logging kept — see nginx.conf and docs/OBSERVABILITY_PRIVACY.md.
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html

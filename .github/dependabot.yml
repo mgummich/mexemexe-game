@@ -21,3 +21,14 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+
+  # Base images are pinned by version and digest; this keeps the pins current.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    ignore:
+      # Odd Node majors never become LTS; move LTS lines by hand.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
