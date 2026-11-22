@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node 22+ (CI runs 22) and npm.
+- Node 26+ (CI runs 26) and npm.
 - Playwright browsers, once per clone, if you want to run the e2e suites:
   `npx playwright install chromium firefox webkit`.
 - **macOS 26 and newer: Firefox needs `CFFIXED_USER_HOME` set.** Playwright's
@@ -182,6 +182,9 @@ change.
   weekly, grouped into one production and one development pull request and capped
   at three open at a time (`.github/dependabot.yml`), which is what keeps this
   rule from turning into a backlog.
+- **Base images are pinned by version and digest** in the `Dockerfile`, so a
+  rebuild gets the same image. Dependabot's `docker` updater bumps the pins
+  weekly; moving to a new Node LTS major is done by hand.
 - **Duplicates are only a problem where they ship.** Dev-only duplicate versions
   are npm doing its job; a duplicate inside `dist/` or the server image is a
   defect.
