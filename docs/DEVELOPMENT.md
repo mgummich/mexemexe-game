@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node 22+ (CI runs 22) and npm.
+- Node 26+ (CI runs 26) and npm.
 - Playwright browsers, once per clone, if you want to run the e2e suites:
   `npx playwright install chromium firefox webkit`.
 - **macOS 26 and newer: Firefox needs `CFFIXED_USER_HOME` set.** Playwright's
